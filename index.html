@@ -1,1 +1,29 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}#root{min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:20px}</style></head><body><div id="root"><div style="color:#F5C200;font-size:24px;font-weight:800">NAC Electrical</div><div style="color:#fff;font-size:16px">Quote Tool — Loading...</div><div id="status" style="color:#666;font-size:13px;margin-top:8px">Setting up...</div></div><script>document.getElementById('status').textContent='App deployed successfully. Full tool loading...'</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>NAC Electrical — Quote Tool</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:#0c0c24;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;min-height:100vh}
+#app{padding:40px 20px;max-width:500px;margin:0 auto;text-align:center}
+h1{color:#F5C200;font-size:28px;margin-bottom:8px}
+p{color:#aaa;margin-bottom:32px}
+.btn{background:linear-gradient(135deg,#2B6CB8,#3B2D8F);color:#fff;border:none;border-radius:12px;padding:16px 32px;font-size:16px;font-weight:700;cursor:pointer;width:100%;margin-bottom:12px}
+.note{color:#555;font-size:12px;margin-top:24px}
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>NAC Electrical</h1>
+  <p>Ducted Quote Tool — Loading full app...</p>
+  <div id="status" style="color:#F5C200;font-size:14px">Initialising...</div>
+</div>
+<script>
+// Full app loading - redirect to Claude for now while we deploy
+document.getElementById('status').textContent = 'Full quote tool deploying - check back in 60 seconds';
+setTimeout(()=>{ document.getElementById('status').textContent = 'Reload this page to check if the full tool is ready'; }, 3000);
+</script>
+</body>
+</html>
