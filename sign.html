@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>NAC Electrical - Your Quote</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{background:#f0f2f5;min-height:100vh;padding:20px 16px}
+.wrap{max-width:620px;margin:0 auto}
+.hdr{background:linear-gradient(135deg,#3B2D8F,#2B6CB8);border-radius:12px 12px 0 0;padding:24px 20px}
+.hdr h1{color:#F5C200;font-size:20px;font-weight:800;margin-bottom:4px}
+.hdr p{color:rgba(255,255,255,0.6);font-size:12px}
+.bdy{background:#fff;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;padding:24px 20px}
+h2{font-size:14px;font-weight:700;color:#2B6CB8;border-bottom:2px solid #2B6CB8;padding-bottom:6px;margin:0 0 16px}
+.opt{border:2px solid #e0e0e0;border-radius:10px;padding:16px;margin-bottom:12px;cursor:pointer}
+.opt.sel{border-color:#2B6CB8;background:#eef4ff}
+.oh{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.rb{width:20px;height:20px;border-radius:50%;border:2px solid #ccc;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.opt.sel .rb{border-color:#2B6CB8;background:#2B6CB8}
+.dt{width:8px;height:8px;border-radius:50%;background:#fff;display:none}
+.opt.sel .dt{display:block}
+.on{font-weight:700;font-size:15px;color:#333}
+.od{font-size:13px;color:#555;margin:4px 0 4px 30px}
+.op{font-size:13px;color:#666;margin-left:30px}
+.op b{font-size:16px;color:#2B6CB8}
+.ol{display:block;margin:6px 0 0 30px;font-size:12px;color:#2B6CB8}
+.adb{background:#fffdf0;border:1px solid #F5C200;border-radius:10px;padding:14px;margin-bottom:20px}
+.adr{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.tgl{width:44px;height:26px;border-radius:13px;background:#ddd;position:relative;cursor:pointer;flex-shrink:0}
+.tgl.on{background:#F5C200}
+.kn{width:22px;height:22px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left 0.15s;box-shadow:0 1px 3px rgba(0,0,0,0.2)}
+.tgl.on .kn{left:20px}
+.adname{font-weight:700;font-size:14px;color:#b8860b}
+.incl{background:#f0fff0;border-left:4px solid #2a8a2a;padding:12px 14px;margin-bottom:20px;border-radius:0 8px 8px 0}
+.incl b{font-size:13px;color:#2a8a2a;display:block;margin-bottom:6px}
+.incl ul{padding-left:18px}.incl li{font-size:12px;color:#444;line-height:1.9}
+.sum{background:#f8f9fb;border-radius:10px;padding:14px 16px;margin-bottom:16px;border:1px solid #e0e0e0;display:none}
+.sr{display:flex;justify-content:space-between;font-size:13px;color:#666;margin-bottom:4px}
+.st{display:flex;justify-content:space-between;font-size:18px;font-weight:800;color:#2B6CB8;border-top:1px solid #ddd;padding-top:10px;margin-top:6px}
+.lbl{font-size:13px;font-weight:600;color:#555;margin:16px 0 8px}
+input[type=text]{width:100%;padding:10px 12px;border:1.5px solid #ccc;border-radius:8px;font-size:14px;outline:none}
+input[type=text]:focus{border-color:#2B6CB8}
+.sp{border:1.5px solid #ccc;border-radius:8px;background:#fafafa;position:relative;overflow:hidden;margin-top:8px}
+canvas{display:block;width:100%;height:120px;touch-action:none;cursor:crosshair}
+.sh{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#bbb;font-size:13px;pointer-events:none}
+.sc{position:absolute;top:8px;right:8px;background:#ff444422;color:#cc0000;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer}
+.btn{width:100%;background:linear-gradient(135deg,#2B6CB8,#3B2D8F);color:#fff;border:none;border-radius:10px;padding:16px;font-size:16px;font-weight:800;cursor:pointer;margin-top:16px}
+.btn:disabled{opacity:0.45;cursor:not-allowed}
+.ft{font-size:11px;color:#999;text-align:center;margin-top:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="hdr"><h1>NAC Electrical Air &amp; Refrigeration</h1><p>ABN: 97 636 392 982 &middot; nacelectrical.com.au &middot; 0427 101 685</p></div>
+<div class="bdy" id="main">
+<p style="font-size:15px;color:#333;margin-bottom:6px">Hi Kathryn,</p>
+<p style="font-size:13px;color:#666;margin-bottom:24px">Please review your three options, select the one you would like, toggle Airtouch 5 if you want it, then sign and accept.</p>
+<h2>Select your system</h2>
+<div class="opt" id="o0" onclick="pick(0)"><div class="oh"><div class="rb"><div class="dt"></div></div><div class="on">Option 1 &mdash; Daikin 18kW Ducted</div></div><div class="od">High-efficiency ducted reverse cycle system</div><div class="op">Supply &amp; install: <b>$18,130.20 inc GST</b></div><a class="ol" href="https://www.daikin.com.au/products/residential/ducted-system-air-conditioning" target="_blank">Daikin product information &rarr;</a></div>
+<div class="opt" id="o1" onclick="pick(1)"><div class="oh"><div class="rb"><div class="dt"></div></div><div class="on">Option 2 &mdash; Mitsubishi Electric Ducted</div></div><div class="od">Premium low-profile ducted reverse cycle system</div><div class="op">Supply &amp; install: <b>$18,206.10 inc GST</b></div><a class="ol" href="https://www.mitsubishielectric.com.au/products/air-conditioning/residential/ducted/" target="_blank">Mitsubishi Electric product information &rarr;</a></div>
+<div class="opt" id="o2" onclick="pick(2)"><div class="oh"><div class="rb"><div class="dt"></div></div><div class="on">Option 3 &mdash; Fujitsu 14kW Ducted</div></div><div class="od">Reliable and efficient 14kW ducted reverse cycle system</div><div class="op">Supply &amp; install: <b>$16,489.00 inc GST</b></div><a class="ol" href="https://www.fujitsugeneral.com.au/residential-products/whole-home-solutions" target="_blank">Fujitsu product information &rarr;</a></div>
+<div class="adb"><div class="adr"><div class="tgl" id="at5" onclick="toggleAt5()"><div class="kn"></div></div><div class="adname">Add Airtouch 5 Smart Controller &mdash; $1,815.00 inc GST</div></div><div style="font-size:12px;color:#666;margin-bottom:4px">Zone control, scheduling &amp; smartphone app. Compatible with all options.</div><a href="https://www.airtouch.net.au/wp-content/uploads/2022/08/AirTouch-5-Brochure.pdf" target="_blank" style="font-size:12px;color:#b8860b">Airtouch 5 brochure &rarr;</a></div>
+<div class="incl"><b>All options include:</b><ul><li>Supply &amp; installation of all zone cone diffusers</li><li>Return air grille supply &amp; installation</li><li>All copper pipework (refrigerant lines)</li><li>Dedicated electrical circuit with isolator &amp; RCD protection</li><li>Full rubbish removal &amp; site clean-up on completion</li><li>System commissioning &amp; performance testing</li></ul></div>
+<div class="sum" id="sum"><div class="sr"><span id="sl">System</span><span id="sp"></span></div><div class="sr" id="ar" style="display:none"><span>Airtouch 5</span><span>$1,815.00</span></div><div class="st"><span>Total inc GST</span><span id="st"></span></div></div>
+<div class="lbl">Your full name</div><input type="text" id="nm" placeholder="Kathryn Cretney" oninput="chk()">
+<div class="lbl">Sign below to accept</div>
+<div class="sp"><canvas id="cv" width="680" height="160"></canvas><div class="sh" id="sh">Sign here</div><button class="sc" onclick="clr()">Clear</button></div>
+<button class="btn" id="btn" onclick="go()" disabled>Select an option to continue</button>
+<p class="ft">By signing you confirm acceptance of this quote. Valid 30 days. NAC Electrical Air &amp; Refrigeration &middot; ABN: 97 636 392 982</p>
+</div></div>
+<script>
+var s=-1,a5=false,sg=false;
+var P=[18130.20,18206.10,16489.00];
+var N=["Daikin 18kW Ducted","Mitsubishi Electric Ducted","Fujitsu 14kW Ducted"];
+function pick(i){s=i;document.querySelectorAll(".opt").forEach(function(e,j){e.classList.toggle("sel",j===i)});upd();chk();}
+function toggleAt5(){a5=!a5;document.getElementById("at5").classList.toggle("on",a5);upd();chk();}
+function upd(){if(s<0)return;document.getElementById("sum").style.display="block";document.getElementById("sl").textContent=N[s];document.getElementById("sp").textContent="$"+P[s].toFixed(2);document.getElementById("ar").style.display=a5?"flex":"none";document.getElementById("st").textContent="$"+(P[s]+(a5?1815:0)).toFixed(2);}
+function chk(){var b=document.getElementById("btn"),nm=document.getElementById("nm").value.trim();if(s<0){b.textContent="Select an option to continue";b.disabled=true;}else if(!nm){b.textContent="Enter your name to continue";b.disabled=true;}else if(!sg){b.textContent="Please sign above to continue";b.disabled=true;}else{b.textContent="Accept Quote ✔";b.disabled=false;}}
+function go(){var nm=document.getElementById("nm").value.trim(),tot=(P[s]+(a5?1815:0)).toFixed(2),msg=N[s]+(a5?" + Airtouch 5":"")+" | $"+tot+" inc GST | Signed: "+nm;document.getElementById("main").innerHTML='<div style="text-align:center;padding:40px 20px"><div style="font-size:52px;margin-bottom:16px">✅</div><h2 style="font-size:24px;color:#2a8a2a;border:none;margin-bottom:12px">Quote accepted!</h2><p style="font-size:14px;color:#555;line-height:1.7">Thank you Kathryn. We have received your acceptance and will be in touch shortly to confirm your installation date.<br><br><strong>'+msg+'</strong></p></div>';fetch("https://icnznjhwybryizbdqrgx.supabase.co/rest/v1/nac_quotes",{method:"POST",headers:{"apikey":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw","Content-Type":"application/json"},body:JSON.stringify({client:"Kathryn Cretney",email:"rosetuffey7@gmail.com",system:N[s],airtouch:a5,total:parseFloat(tot),signed_by:nm,accepted_at:new Date().toISOString(),status:"accepted"})}).catch(function(){});}
+var cv=document.getElementById("cv"),ctx=cv.getContext("2d"),dr=false;
+function pp(e){var r=cv.getBoundingClientRect(),sx=cv.width/r.width,sy=cv.height/r.height;return e.touches?[(e.touches[0].clientX-r.left)*sx,(e.touches[0].clientY-r.top)*sy]:[(e.clientX-r.left)*sx,(e.clientY-r.top)*sy];}
+cv.addEventListener("mousedown",function(e){dr=true;var p=pp(e);ctx.beginPath();ctx.moveTo(p[0],p[1]);});
+cv.addEventListener("mousemove",function(e){if(!dr)return;var p=pp(e);ctx.lineTo(p[0],p[1]);ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();sg=true;document.getElementById("sh").style.display="none";chk();});
+cv.addEventListener("mouseup",function(){dr=false;});cv.addEventListener("mouseleave",function(){dr=false;});
+cv.addEventListener("touchstart",function(e){e.preventDefault();dr=true;var p=pp(e);ctx.beginPath();ctx.moveTo(p[0],p[1]);});
+cv.addEventListener("touchmove",function(e){e.preventDefault();if(!dr)return;var p=pp(e);ctx.lineTo(p[0],p[1]);ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();sg=true;document.getElementById("sh").style.display="none";chk();});
+cv.addEventListener("touchend",function(){dr=false;});
+function clr(){ctx.clearRect(0,0,cv.width,cv.height);sg=false;document.getElementById("sh").style.display="block";chk();}
+</script>
+</body>
+</html>
