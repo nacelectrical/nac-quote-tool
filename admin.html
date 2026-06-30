@@ -202,7 +202,7 @@ async function generateQuote(){
       var parts = modelVal.split('|');
       var brand = brands.find(function(b){return b.id===brandId;});
       options.push({
-        name: brand.name + ' ' + parts[1] + 'kW Ducted',
+        name: brand.name + ' ' + parts[0] + ' ' + parts[1] + 'kW',
         desc: parts[1] + 'kW ' + parts[2] + ' ducted reverse cycle system',
         price: parseFloat(price),
         link: brand.url
