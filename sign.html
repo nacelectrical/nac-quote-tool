@@ -180,14 +180,15 @@ function go(){
   var tot=totRaw.toFixed(2);
   var totFmt=fmt(totRaw);
   document.getElementById('main').innerHTML='<div style="text-align:center;padding:40px 20px">'
-    +'<div style="font-size:52px;margin-bottom:16px">â</div>'
+    +'<div style="font-size:52px;margin-bottom:16px">Ã¢ÂÂ</div>'
     +'<h2 style="font-size:24px;color:#4aad4a;border:none;margin-bottom:12px;text-transform:none;letter-spacing:0">Quote accepted!</h2>'
     +'<p style="font-size:14px;color:#8080b0;line-height:1.7">Thank you'+(Q.clientName?' '+Q.clientName:'')+'. We have received your acceptance and will be in touch with payment details for your 50% deposit to confirm your installation date.<br><br>'
     +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | '+totFmt+' inc GST | Signed: '+nm+'</strong></p></div>';
   fetch(SUPA_URL+'/rest/v1/nac_quotes?id=eq.'+encodeURIComponent(Q.quoteId),{method:'PATCH',headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json'},
     body:JSON.stringify({accepted:true,accepted_time:new Date().toISOString(),chosen_brand:o.name,total:parseFloat(tot)})}).catch(function(){});
   if(WEBHOOK_URL){
-    fetch(WEBHOOK_URL+'?client='+encodeURIComponent(Q.clientName||nm)+'&system='+encodeURIComponent(o.name+(a5?' + Airtouch 5':''))+'&total='+encodeURIComponent(totFmt)+'&signed_by='+encodeURIComponent(nm)).catch(function(){});
+    var summary='NEW QUOTE ACCEPTED -- Client: '+(Q.clientName||nm)+' | Quote ID: '+Q.quoteId+' | System Chosen: '+o.name+(a5?' + Airtouch 5 Controller':'')+' | Total: '+totFmt+' inc GST | Signed By: '+nm+' | Accepted: '+new Date().toLocaleString('en-AU');
+    fetch(WEBHOOK_URL+'?summary='+encodeURIComponent(summary)+'&client_name='+encodeURIComponent(Q.clientName||nm)+'&quote_id='+encodeURIComponent(Q.quoteId)+'&system_chosen='+encodeURIComponent(o.name+(a5?' + Airtouch 5':''))+'&total_inc_gst='+encodeURIComponent(totFmt)+'&signed_by='+encodeURIComponent(nm)+'&accepted_at='+encodeURIComponent(new Date().toLocaleString('en-AU'))).catch(function(){});
   }
 }
 function initSig(){
