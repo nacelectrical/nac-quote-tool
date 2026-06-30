@@ -73,6 +73,7 @@ canvas{display:block;width:100%;height:120px;touch-action:none;cursor:crosshair}
 </div>
 <script>
 var s=-1,a5=false,sg=false,Q={};
+function fmt(n){return '
 var SUPA_URL='https://icnznjhwybryizbdqrgx.supabase.co';
 var SUPA='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
 
@@ -85,7 +86,7 @@ function render(){
     return '<div class="opt" id="o'+i+'" onclick="pick('+i+')">'
       +'<div class="oh"><div class="rb"><div class="dt"></div></div><div class="on">Option '+(i+1)+' &mdash; '+o.name+'</div></div>'
       +'<div class="od">'+o.desc+'</div>'
-      +'<div class="op">Supply &amp; install: <b>$'+o.price.toFixed(2)+' inc GST</b></div>'
+      +'<div class="op">Supply &amp; install: <b>'+fmt(o.price)+' inc GST</b></div>'
       +(o.link?'<a class="ol" href="'+o.link+'" target="_blank">Product information &rarr;</a>':'')
       +'</div>';
   }).join('');
@@ -96,7 +97,7 @@ function render(){
     +'<h2>Select your system</h2>'
     +optsHTML
     +'<div class="adb"><div class="adr"><div class="tgl" id="at5" onclick="toggleAt5()"><div class="kn"></div></div>'
-    +'<div class="adname">Add Airtouch 5 Smart Controller &mdash; $'+atPrice.toFixed(2)+' inc GST</div></div>'
+    +'<div class="adname">Add Airtouch 5 Smart Controller &mdash; '+fmt(atPrice)+' inc GST</div></div>'
     +'<div style="font-size:12px;color:#8080b0;margin-bottom:6px">Zone control, scheduling, temperature sensors &amp; smartphone app.</div>'
     +'<a href="https://www.airtouch.net.au/wp-content/uploads/2022/08/AirTouch-5-Brochure.pdf" target="_blank" style="font-size:12px;color:#F5C200">Airtouch 5 brochure &rarr;</a></div>'
     +'<div class="incl"><b>All options include:</b><ul>'
@@ -155,9 +156,9 @@ function upd(){
   var o=Q.options[s],atPrice=Q.airtouchPrice||1815;
   document.getElementById('sum').style.display='block';
   document.getElementById('sl').textContent=o.name;
-  document.getElementById('sp').textContent='$'+o.price.toFixed(2);
+  document.getElementById('sp').textContent=fmt(o.price);
   document.getElementById('ar').style.display=a5?'flex':'none';
-  document.getElementById('st').textContent='$'+(o.price+(a5?atPrice:0)).toFixed(2);
+  document.getElementById('st').textContent=fmt(o.price+(a5?atPrice:0));
 }
 function chk(){
   var b=document.getElementById('btn'),nm=document.getElementById('nm').value.trim();
@@ -170,12 +171,135 @@ function go(){
   var nm=document.getElementById('nm').value.trim();
   var o=Q.options[s];
   var atPrice=Q.airtouchPrice||1815;
-  var tot=(o.price+(a5?atPrice:0)).toFixed(2);
+  var tot=(o.price+(a5?atPrice:0)).toFixed(2); var totFmt=fmt(o.price+(a5?atPrice:0));
   document.getElementById('main').innerHTML='<div style="text-align:center;padding:40px 20px">'
-    +'<div style="font-size:52px;margin-bottom:16px">â</div>'
+    +'<div style="font-size:52px;margin-bottom:16px">Ã¢ÂÂ</div>'
     +'<h2 style="font-size:24px;color:#4aad4a;border:none;margin-bottom:12px;text-transform:none;letter-spacing:0">Quote accepted!</h2>'
     +'<p style="font-size:14px;color:#8080b0;line-height:1.7">Thank you'+(Q.clientName?' '+Q.clientName:'')+'. We have received your acceptance and will be in touch with payment details for your 50% deposit to confirm your installation date.<br><br>'
-    +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | $'+tot+' inc GST | Signed: '+nm+'</strong></p></div>';
+    +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | '+totFmt+' inc GST | Signed: '+nm+'</strong></p></div>';
+  fetch(SUPA_URL+'/rest/v1/nac_quotes?id=eq.'+encodeURIComponent(Q.quoteId),{method:'PATCH',headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json'},
+    body:JSON.stringify({accepted:true,accepted_time:new Date().toISOString(),chosen_brand:o.name,total:parseFloat(tot)})}).catch(function(){});
+}
+function initSig(){
+  var cv=document.getElementById('cv');
+  if(!cv)return;
+  var ctx=cv.getContext('2d'),dr=false;
+  function pp(e){var r=cv.getBoundingClientRect(),sx=cv.width/r.width,sy=cv.height/r.height;return e.touches?[(e.touches[0].clientX-r.left)*sx,(e.touches[0].clientY-r.top)*sy]:[(e.clientX-r.left)*sx,(e.clientY-r.top)*sy];}
+  cv.addEventListener('mousedown',function(e){dr=true;var p=pp(e);ctx.beginPath();ctx.moveTo(p[0],p[1]);});
+  cv.addEventListener('mousemove',function(e){if(!dr)return;var p=pp(e);ctx.lineTo(p[0],p[1]);ctx.strokeStyle='#F5C200';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();sg=true;document.getElementById('sh').style.display='none';chk();});
+  cv.addEventListener('mouseup',function(){dr=false;});
+  cv.addEventListener('mouseleave',function(){dr=false;});
+  cv.addEventListener('touchstart',function(e){e.preventDefault();dr=true;var p=pp(e);ctx.beginPath();ctx.moveTo(p[0],p[1]);});
+  cv.addEventListener('touchmove',function(e){e.preventDefault();if(!dr)return;var p=pp(e);ctx.lineTo(p[0],p[1]);ctx.strokeStyle='#F5C200';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();sg=true;document.getElementById('sh').style.display='none';chk();});
+  cv.addEventListener('touchend',function(){dr=false;});
+  window.clr=function(){ctx.clearRect(0,0,cv.width,cv.height);sg=false;document.getElementById('sh').style.display='block';chk();}
+}
+init();
+</script>
+</body></html>+Number(n||0).toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');}
+var SUPA_URL='https://icnznjhwybryizbdqrgx.supabase.co';
+var SUPA='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
+
+function render(){
+  var opts=Q.options||[];
+  var atPrice=Q.airtouchPrice||1815;
+  var greeting=Q.clientName?'Hi '+Q.clientName+',':'Hi,';
+  
+  var optsHTML=opts.map(function(o,i){
+    return '<div class="opt" id="o'+i+'" onclick="pick('+i+')">'
+      +'<div class="oh"><div class="rb"><div class="dt"></div></div><div class="on">Option '+(i+1)+' &mdash; '+o.name+'</div></div>'
+      +'<div class="od">'+o.desc+'</div>'
+      +'<div class="op">Supply &amp; install: <b>'+fmt(o.price)+' inc GST</b></div>'
+      +(o.link?'<a class="ol" href="'+o.link+'" target="_blank">Product information &rarr;</a>':'')
+      +'</div>';
+  }).join('');
+
+  document.getElementById('main').innerHTML=
+    '<p class="greeting">'+greeting+'</p>'
+    +'<p class="sub">Please review your options, select the one you would like, toggle Airtouch 5 if you want it, then sign and accept.</p>'
+    +'<h2>Select your system</h2>'
+    +optsHTML
+    +'<div class="adb"><div class="adr"><div class="tgl" id="at5" onclick="toggleAt5()"><div class="kn"></div></div>'
+    +'<div class="adname">Add Airtouch 5 Smart Controller &mdash; '+fmt(atPrice)+' inc GST</div></div>'
+    +'<div style="font-size:12px;color:#8080b0;margin-bottom:6px">Zone control, scheduling, temperature sensors &amp; smartphone app.</div>'
+    +'<a href="https://www.airtouch.net.au/wp-content/uploads/2022/08/AirTouch-5-Brochure.pdf" target="_blank" style="font-size:12px;color:#F5C200">Airtouch 5 brochure &rarr;</a></div>'
+    +'<div class="incl"><b>All options include:</b><ul>'
+    +'<li>Supply &amp; installation of all zone cone diffusers</li>'
+    +'<li>Return air grille supply &amp; installation</li>'
+    +'<li>All copper pipework (refrigerant lines)</li>'
+    +'<li>Dedicated electrical circuit with isolator &amp; RCD protection</li>'
+    +'<li>Full rubbish removal &amp; site clean-up on completion</li>'
+    +'<li>System commissioning &amp; performance testing</li>'+'<li>Removal &amp; disposal of existing unit and ductwork</li>'
+    +'</ul></div>'
+    +'<div class="sum" id="sum"><div class="sr"><span id="sl">System</span><span id="sp"></span></div>'
+    +'<div class="sr" id="ar" style="display:none"><span>Airtouch 5 controller</span><span>$'+atPrice.toFixed(2)+'</span></div>'
+    +'<div class="st"><span>Total inc GST</span><span id="st"></span></div></div>'
+    +'<div class="dep"><b>&#9888; 50% Deposit Required Before Works Commence</b>'
+    +'<p>Upon acceptance our team will contact you with payment details. Works will be scheduled once the deposit is received.</p></div>'
+    +'<div class="lbl">Your full name</div>'
+    +'<input type="text" id="nm" placeholder="Full name" oninput="chk()">'
+    +'<div class="lbl" style="margin-top:16px">Sign below to accept</div>'
+    +'<div class="sp"><canvas id="cv" width="680" height="160"></canvas><div class="sh" id="sh">Sign here</div>'
+    +'<button class="sc" onclick="clr()">Clear</button></div>'
+    +'<button class="btn" id="btn" onclick="go()" disabled>Select an option to continue</button>'
+    +'<p class="ft">By signing you confirm acceptance of this quote. Valid 30 days from date of issue. NAC Electrical Air &amp; Refrigeration &middot; ABN: 97 636 392 982</p>';
+
+  initSig();
+}
+
+async function init(){
+  var params=new URLSearchParams(window.location.search);
+  var qid=params.get('q');
+  if(!qid){ document.getElementById('loading').textContent='No quote ID provided.'; return; }
+  try{
+    var r=await fetch(SUPA_URL+'/rest/v1/nac_quotes?id=eq.'+encodeURIComponent(qid)+'&select=*',{headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA}});
+    var data=await r.json();
+    if(data&&data[0]){
+      var row=data[0];
+      Q={
+        clientName:row.client||'',
+        quoteId:row.id,
+        options:JSON.parse(row.line_items||'[]'),
+        airtouchPrice:1815,
+        jobDesc:row.job_desc||''
+      };
+      render();
+    }else{
+      document.getElementById('loading').textContent='Quote not found. Please contact NAC Electrical.';
+    }
+  }catch(e){
+    document.getElementById('loading').innerHTML='<p>Error loading quote.</p><p style="font-size:11px">'+e.message+'</p>';
+  }
+}
+
+function pick(i){s=i;document.querySelectorAll('.opt').forEach(function(e,j){e.classList.toggle('sel',j===i)});upd();chk();}
+function toggleAt5(){a5=!a5;document.getElementById('at5').classList.toggle('on',a5);upd();chk();}
+function upd(){
+  if(s<0)return;
+  var o=Q.options[s],atPrice=Q.airtouchPrice||1815;
+  document.getElementById('sum').style.display='block';
+  document.getElementById('sl').textContent=o.name;
+  document.getElementById('sp').textContent=fmt(o.price);
+  document.getElementById('ar').style.display=a5?'flex':'none';
+  document.getElementById('st').textContent=fmt(o.price+(a5?atPrice:0));
+}
+function chk(){
+  var b=document.getElementById('btn'),nm=document.getElementById('nm').value.trim();
+  if(s<0){b.textContent='Select an option to continue';b.disabled=true;}
+  else if(!nm){b.textContent='Enter your name to continue';b.disabled=true;}
+  else if(!sg){b.textContent='Please sign above to continue';b.disabled=true;}
+  else{b.textContent='Accept Quote';b.disabled=false;}
+}
+function go(){
+  var nm=document.getElementById('nm').value.trim();
+  var o=Q.options[s];
+  var atPrice=Q.airtouchPrice||1815;
+  var tot=(o.price+(a5?atPrice:0)).toFixed(2); var totFmt=fmt(o.price+(a5?atPrice:0));
+  document.getElementById('main').innerHTML='<div style="text-align:center;padding:40px 20px">'
+    +'<div style="font-size:52px;margin-bottom:16px">Ã¢ÂÂ</div>'
+    +'<h2 style="font-size:24px;color:#4aad4a;border:none;margin-bottom:12px;text-transform:none;letter-spacing:0">Quote accepted!</h2>'
+    +'<p style="font-size:14px;color:#8080b0;line-height:1.7">Thank you'+(Q.clientName?' '+Q.clientName:'')+'. We have received your acceptance and will be in touch with payment details for your 50% deposit to confirm your installation date.<br><br>'
+    +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | '+totFmt+' inc GST | Signed: '+nm+'</strong></p></div>';
   fetch(SUPA_URL+'/rest/v1/nac_quotes?id=eq.'+encodeURIComponent(Q.quoteId),{method:'PATCH',headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json'},
     body:JSON.stringify({accepted:true,accepted_time:new Date().toISOString(),chosen_brand:o.name,total:parseFloat(tot)})}).catch(function(){});
 }
