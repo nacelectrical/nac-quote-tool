@@ -105,7 +105,7 @@ function render(){
     +'<li>All copper pipework (refrigerant lines)</li>'
     +'<li>Dedicated electrical circuit with isolator &amp; RCD protection</li>'
     +'<li>Full rubbish removal &amp; site clean-up on completion</li>'
-    +'<li>System commissioning &amp; performance testing</li>'
+    +'<li>System commissioning &amp; performance testing</li>'+'<li>Removal &amp; disposal of existing unit and ductwork</li>'
     +'</ul></div>'
     +'<div class="sum" id="sum"><div class="sr"><span id="sl">System</span><span id="sp"></span></div>'
     +'<div class="sr" id="ar" style="display:none"><span>Airtouch 5 controller</span><span>$'+atPrice.toFixed(2)+'</span></div>'
@@ -172,7 +172,7 @@ function go(){
   var atPrice=Q.airtouchPrice||1815;
   var tot=(o.price+(a5?atPrice:0)).toFixed(2);
   document.getElementById('main').innerHTML='<div style="text-align:center;padding:40px 20px">'
-    +'<div style="font-size:52px;margin-bottom:16px">✅</div>'
+    +'<div style="font-size:52px;margin-bottom:16px">â</div>'
     +'<h2 style="font-size:24px;color:#4aad4a;border:none;margin-bottom:12px;text-transform:none;letter-spacing:0">Quote accepted!</h2>'
     +'<p style="font-size:14px;color:#8080b0;line-height:1.7">Thank you'+(Q.clientName?' '+Q.clientName:'')+'. We have received your acceptance and will be in touch with payment details for your 50% deposit to confirm your installation date.<br><br>'
     +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | $'+tot+' inc GST | Signed: '+nm+'</strong></p></div>';
