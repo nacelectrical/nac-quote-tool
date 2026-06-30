@@ -75,7 +75,7 @@ canvas{display:block;width:100%;height:120px;touch-action:none;cursor:crosshair}
 var s=-1,a5=false,sg=false,Q={};
 var SUPA_URL='https://icnznjhwybryizbdqrgx.supabase.co';
 var SUPA='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
-var WEBHOOK_URL='';
+var WEBHOOK_URL='https://webhooked.email/api/v1/webhooks/xkihnP49/trigger';
 
 function fmt(n){
   return '$'+Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
@@ -180,7 +180,7 @@ function go(){
   var tot=totRaw.toFixed(2);
   var totFmt=fmt(totRaw);
   document.getElementById('main').innerHTML='<div style="text-align:center;padding:40px 20px">'
-    +'<div style="font-size:52px;margin-bottom:16px">✅</div>'
+    +'<div style="font-size:52px;margin-bottom:16px">â</div>'
     +'<h2 style="font-size:24px;color:#4aad4a;border:none;margin-bottom:12px;text-transform:none;letter-spacing:0">Quote accepted!</h2>'
     +'<p style="font-size:14px;color:#8080b0;line-height:1.7">Thank you'+(Q.clientName?' '+Q.clientName:'')+'. We have received your acceptance and will be in touch with payment details for your 50% deposit to confirm your installation date.<br><br>'
     +'<strong style="color:#F5C200">'+o.name+(a5?' + Airtouch 5':'')+' | '+totFmt+' inc GST | Signed: '+nm+'</strong></p></div>';
