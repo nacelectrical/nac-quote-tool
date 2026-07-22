@@ -236,7 +236,7 @@ async async function generateQuote(){
       alert('Failed to save quote. Status: '+r.status);
     }
   }catch(e){
-    alert('Error: '+e.message);
+    alert('Error saving quote: '+e.message+' | Options: '+options.length+' | Client: '+clientName);
   }
 }
 
