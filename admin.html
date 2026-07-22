@@ -191,7 +191,7 @@ async function generateQuote(){
   var clientEmail = document.getElementById('clientEmail').value.trim();
   var jobDesc = document.getElementById('jobDesc').value.trim();
 
-  if(!clientName){ alert('Enter client name'); return; }
+  if(!clientName){ clientName='Client'; }
 
   var options = [];
   for(var i=0;i<3;i++){
@@ -210,7 +210,7 @@ async function generateQuote(){
     }
   }
 
-  if(options.length===0){ alert('Add at least one system option with a price'); return; }
+  if(options.length===0){ alert('Add at least one brand, model and price before generating'); return; }
 
   var qid = 'NAC-' + clientName.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,10) + '-' + Date.now();
   var payload = {
