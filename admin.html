@@ -202,9 +202,9 @@ async function generateQuote(){
 
   try{
     gs.innerHTML='<div class="status">Saving quote...</div>';
-    var res=await fetch(SUPA_URL+'/rest/v1/nac_quotes',{
+    var res=await fetch('/api/savequote',{
       method:'POST',
-      headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)
     });
     if(res.ok||res.status===201||res.status===200){
