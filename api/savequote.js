@@ -1,17 +1,30 @@
-export default async function handler(req, res) {
+const https = require('https');
+
+module.exports = async function handler(req, res) {
   if(req.method !== 'POST') return res.status(405).json({error:'Method not allowed'});
-  const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
   const SUPA = process.env.SUPABASE_KEY;
   if(!SUPA) return res.status(500).json({error:'Supabase key not configured'});
-  try {
-    const r = await fetch(SUPA_URL+'/rest/v1/nac_quotes', {
-      method: 'POST',
-      headers: {'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
-      body: JSON.stringify(req.body)
+  const body = JSON.stringify(req.body);
+  const options = {
+    hostname: 'icnznjhwybryizbdqrgx.supabase.co',
+    path: '/rest/v1/nac_quotes',
+    method: 'POST',
+    headers: {
+      'apikey': SUPA,
+      'Authorization': 'Bearer ' + SUPA,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates',
+      'Content-Length': Buffer.byteLength(body)
+    }
+  };
+  return new Promise((resolve) => {
+    const r = https.request(options, (response) => {
+      let data = '';
+      response.on('data', (chunk) => { data += chunk; });
+      response.on('end', () => { res.status(response.statusCode).send(data||'ok'); resolve(); });
     });
-    const text = await r.text();
-    res.status(r.status).send(text);
-  } catch(e) {
-    res.status(500).json({error:e.message});
-  }
+    r.on('error', (e) => { res.status(500).json({error:e.message}); resolve(); });
+    r.write(body);
+    r.end();
+  });
 }
