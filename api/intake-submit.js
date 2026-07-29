@@ -139,7 +139,7 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
     optionsText +
     '\n----------------------------------------\n' +
     planNote + '\n' +
-    '(Draft ref: ' + qid + ')';
+    'DRAFT REF (paste into admin.html to auto-load): ' + qid;
 
   try {
     await fetch(NOTIFY, {
@@ -163,7 +163,7 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
           id: qid,
           client: b.client,
           job_desc: 'Ducted AC Supply & Install',
-          line_items: JSON.stringify(prefillOptions.length ? prefillOptions.map(function(o){ return { name: o.brand + ' ' + o.model + ' ' + o.kw + 'kW', desc: 'Auto-suggested at ' + (kw||'?') + 'kW. Set price.', price: 0, link: '' }; }) : [{ name: 'Draft — see notes', desc: 'Auto-generated from intake. Confirm size & set price.', price: 0, link: '' }]),
+          line_items: JSON.stringify(prefillOptions.length ? prefillOptions.map(function(o){ return { name: o.brand + ' ' + o.model + ' ' + o.kw + 'kW', desc: o.kw + 'kW ducted reverse cycle system', price: 0, link: '', _brand: o.brand, _model: o.model, _kw: o.kw }; }) : [{ name: 'Draft — see notes', desc: 'Auto-generated from intake. Confirm size & set price.', price: 0, link: '' }]),
           notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack + optionsText,
           accepted: false
         })
