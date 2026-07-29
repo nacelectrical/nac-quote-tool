@@ -49,9 +49,9 @@ export default async function handler(req, res) {
 HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only.
 CONDITIONED (count these): bedrooms, living, dining, family, kitchen, study, media/theatre, and hallways/entry.
 EXCLUDED (never count): garage, laundry, bathrooms, ensuite, WC, walk-in-robes, pantry, alfresco, patio, verandah, porch, outdoor areas.
-NO modifiers. Add conditioned rooms = ONE total. Total x 145 = ONE kW figure. Over 18kW = flag CUSTOM/DUAL.
+NO modifiers. Over 18kW = flag CUSTOM/DUAL.
 
-CALCULATION: Do it ONCE. Add the conditioned rooms, multiply by 145, give ONE number. Do NOT produce low/mid/high estimates. Do NOT reconcile against any total-area label on the plan. Do NOT waffle. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
+CALCULATION: List the CONDITIONED rooms with their m2. Add them to ONE total conditioned area. DO NOT calculate kW yourself — just report the total area. DO NOT reconcile against any "total internal area" or "INT" label on the plan; use ONLY the sum of the rooms you listed. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
 
 Customer / job info:
 - Name: ${b.client}
@@ -61,12 +61,11 @@ Customer / job info:
 - Preferred brand: ${b.brand || 'no preference'}
 - Notes: ${b.comments || '-'}
 
-KEEP IT SHORT. Quick notes anyone on the team can read and quote from. No price. Plain text, no markdown, no asterisks, no tables.
+KEEP IT SHORT. These are quick notes anyone on the team can read and quote from — NOT a long report. No price. Plain text, no markdown, no asterisks, no tables.
 
 Output EXACTLY this and nothing else:
 
-KW: [number only, e.g. 16.2]
-SIZE:            [X] kW  (conditioned area [X] m2 x 145)
+CONDITIONED_M2: [total conditioned area, number only, e.g. 108]
 CONFIDENCE:      [HIGH / MEDIUM / LOW]
 ACTION:          [READY TO QUOTE / NEEDS REVIEW / SITE VISIT FIRST]
 FLAGS:           [one short line, or "None"]
@@ -96,10 +95,15 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
 
   const qid = 'NAC-' + String(b.client).replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) + '-' + Date.now();
 
-  var kwMatch = pack.match(/KW:\s*([0-9]+(?:\.[0-9]+)?)/i);
-  var kw = kwMatch ? parseFloat(kwMatch[1]) : null;
+  var m2Match = pack.match(/CONDITIONED_M2:\s*([0-9]+(?:\.[0-9]+)?)/i);
+  var area = m2Match ? parseFloat(m2Match[1]) : null;
+  var kw = area ? Math.round(area * 145 / 100) / 10 : null;
   var prefillOptions = [];
   var optionsText = '';
+
+  if (area) {
+    pack = 'SIZE:            ' + kw + ' kW  (conditioned area ' + area + ' m2 x 145)\n' + pack;
+  }
 
   if (kw) {
     var d = nearestModel(MODELS.Daikin, kw);
@@ -111,35 +115,41 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
       { brand: 'Midea', model: mi.m, kw: mi.kw }
     ];
     optionsText =
-      '\nSUGGESTED UNITS (nearest to ' + kw + 'kW — set your price for each):\n' +
-      '1. Daikin  ' + d.kw + 'kW — ' + d.m + '  ... $______ inc GST\n' +
-      '2. Fujitsu ' + f.kw + 'kW — ' + f.m + '  ... $______ inc GST\n' +
-      '3. Midea   ' + mi.kw + 'kW — ' + mi.m + '  ... $______ inc GST\n' +
+      '\nSUGGESTED UNITS (nearest to ' + kw + 'kW):\n' +
+      '1. Daikin  ' + d.kw + 'kW — ' + d.m + '\n' +
+      '2. Fujitsu ' + f.kw + 'kW — ' + f.m + '\n' +
+      '3. Midea   ' + mi.kw + 'kW — ' + mi.m + '\n' +
       'Optional add-on: AirTouch 5 zoning — $1,800 + GST\n';
   }
 
-  var planNote = b.planBase64
-    ? ('Floor plan: attached by customer — view on the draft in admin.html:\n' + 'https://nac-quote-tool.vercel.app/admin.html')
-    : 'Floor plan: none provided.';
+  // Minimal email — just the essentials. Full detail lives in admin.html.
+  var unitsShort = '';
+  if (prefillOptions.length) {
+    unitsShort =
+      'Units (set prices in admin):\n' +
+      '  Daikin   ' + prefillOptions[0].model + '\n' +
+      '  Fujitsu  ' + prefillOptions[1].model + '\n' +
+      '  Midea    ' + prefillOptions[2].model + '\n' +
+      '  + AirTouch 5 optional ($1,800+GST)\n';
+  }
+
+  var confMatch = pack.match(/CONFIDENCE:\s*([A-Za-z]+)/);
+  var actMatch = pack.match(/ACTION:\s*([A-Za-z \/]+)/);
+  var flagMatch = pack.match(/FLAGS:\s*(.+)/);
+  var conf = confMatch ? confMatch[1].trim() : '-';
+  var act = actMatch ? actMatch[1].trim() : '-';
+  var flag = flagMatch ? flagMatch[1].trim() : 'None';
 
   var emailBody =
-    'NEW DRAFT — for review\n' +
-    '========================================\n\n' +
-    'CUSTOMER\n' +
-    'Name:     ' + (b.client || '-') + '\n' +
-    'Phone:    ' + (b.phone || '-') + '\n' +
-    'Email:    ' + (b.email || '-') + '\n' +
-    'Address:  ' + (b.address || '-') + '\n' +
-    'Type:     ' + (b.houseType || '-') + '\n' +
-    'Existing: ' + (b.existingAC || '-') + '\n' +
-    'Brand:    ' + (b.brand || 'no preference') + '\n' +
-    (b.comments ? ('Notes:    ' + b.comments + '\n') : '') +
-    '\n----------------------------------------\n\n' +
-    pack +
-    optionsText +
-    '\n----------------------------------------\n' +
-    planNote + '\n' +
-    'DRAFT REF (paste into admin.html to auto-load): ' + qid;
+    (b.client || 'New lead') + (b.address ? (' — ' + b.address) : '') + '\n\n' +
+    'Phone:  ' + (b.phone || '-') + '\n' +
+    'Size:   ' + (kw ? (kw + 'kW (' + area + ' m2)') : 'see admin') + '\n' +
+    'Confidence: ' + conf + '\n' +
+    'Action: ' + act + '\n' +
+    (flag && flag.toLowerCase() !== 'none' ? ('Flag:   ' + flag + '\n') : '') +
+    '\n' + unitsShort +
+    '\nDraft ref: ' + qid + '\n' +
+    '(paste into admin.html to load full detail & price)';
 
   try {
     await fetch(NOTIFY, {
