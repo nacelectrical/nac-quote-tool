@@ -76,17 +76,41 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
 
   const qid = 'NAC-' + String(b.client).replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) + '-' + Date.now();
 
+  // Build a clean, readable email body (works even as plain text — real line breaks, no JSON noise)
+  var planNote = imageBase64
+    ? ('Floor plan: attached by customer — view it on the draft in admin.html:\n' + 'https://nac-quote-tool.vercel.app/admin.html')
+    : 'Floor plan: none provided.';
+
+  var emailBody =
+    'NEW DRAFT — for your review\n' +
+    '========================================\n\n' +
+    'CUSTOMER\n' +
+    'Name:     ' + (b.client || '-') + '\n' +
+    'Phone:    ' + (b.phone || '-') + '\n' +
+    'Email:    ' + (b.email || '-') + '\n' +
+    'Address:  ' + (b.address || '-') + '\n' +
+    'Type:     ' + (b.houseType || '-') + '\n' +
+    'Existing: ' + (b.existingAC || '-') + '\n' +
+    'Brand:    ' + (b.brand || 'no preference') + '\n' +
+    (b.comments ? ('Notes:    ' + b.comments + '\n') : '') +
+    '\n' + planNote + '\n\n' +
+    'Open to price & send: https://nac-quote-tool.vercel.app/admin.html\n' +
+    '(Draft ref: ' + qid + ')\n\n' +
+    '========================================\n' +
+    'DESIGN PACK\n' +
+    '========================================\n\n' +
+    pack;
+
   // Email Nick the pack
   try {
     await fetch(NOTIFY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        subject: 'DRAFT pack ready: ' + b.client + (b.address ? (' — ' + b.address) : ''),
-        quote_id: qid,
-        admin_link: 'https://nac-quote-tool.vercel.app/admin.html',
-        phone: b.phone, email: b.email,
-        pack: pack
+        subject: 'NEW DRAFT: ' + b.client + (b.address ? (' — ' + b.address) : ''),
+        body: emailBody,
+        text: emailBody,
+        message: emailBody
       })
     });
   } catch (e) { /* non-fatal */ }
