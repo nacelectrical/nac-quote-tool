@@ -1,7 +1,4 @@
 // NAC — Intake form submission handler.
-// Receives the form (with floor plan as base64), scans + sizes it, generates a draft
-// design pack, emails Nick, and saves a draft nac_quotes record. One endpoint, whole flow.
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
@@ -21,11 +18,14 @@ export default async function handler(req, res) {
     source: { type: 'base64', media_type: b.mediaType || 'image/jpeg', data: b.planBase64 }
   };
 
-  const prompt = `You are NAC Electrical Air & Refrigeration's INTERNAL design assistant. You never speak to customers. Produce a DRAFT design pack for Nick to review. Everything is a proposal, not a decision.
+  const prompt = `You are NAC Electrical Air & Refrigeration's INTERNAL design assistant. You never speak to customers. Produce SHORT DRAFT NOTES for the NAC team to review and quote from. It is a proposal, not a decision.
 
-HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only (exclude garage/alfresco/outdoor). NO modifiers for glazing, ceilings, insulation or orientation. capacity(W) = conditioned m2 x 145. Over 18kW = flag CUSTOM/DUAL, do not auto-spec.
+HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only.
+CONDITIONED (count these): bedrooms, living, dining, family, kitchen, study, media/theatre, and hallways/entry.
+EXCLUDED (never count): garage, laundry, bathrooms, ensuite, WC, walk-in-robes, pantry, alfresco, patio, verandah, porch, outdoor areas.
+NO modifiers. Add conditioned rooms = ONE total. Total x 145 = ONE kW figure. Over 18kW = flag CUSTOM/DUAL.
 
-NEVER invent measurements. If the plan has no scale or is unreadable, say so and set confidence low. Label all assumptions. Do NOT include any price.
+CALCULATION: Do it ONCE. Add the conditioned rooms, multiply by 145, give ONE number. Do NOT produce low/mid/high estimates. Do NOT reconcile against any total-area label on the plan. Do NOT waffle or repeat yourself. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
 
 Customer / job info:
 - Name: ${b.client}
@@ -35,27 +35,20 @@ Customer / job info:
 - Preferred brand: ${b.brand || 'no preference'}
 - Notes: ${b.comments || '-'}
 
-Analyse the attached floor plan. Output in clean plain text (no markdown, no tables, no asterisks). Start with a SHORT summary Nick can read in 5 seconds, THEN the full detail.
+KEEP IT SHORT. These are quick notes anyone on the team can read and quote from — NOT a long report. No price. Plain text, no markdown, no asterisks, no tables.
 
-Use EXACTLY this structure:
+Output EXACTLY this and nothing else:
 
-SUMMARY
-Conditioned area: [X] m2
-Proposed size: [X] kW
-Confidence: [HIGH / MEDIUM / LOW]
-Recommendation: [APPROVE / REVIEW / SITE VISIT REQUIRED]
-Flags: [one line — any red flags like wrong plan, no scale, over 18kW, unreadable. If none, write "None".]
+SIZE:            [X] kW  (conditioned area [X] m2 x 145)
+CONFIDENCE:      [HIGH / MEDIUM / LOW]
+ACTION:          [READY TO QUOTE / NEEDS REVIEW / SITE VISIT FIRST]
+FLAGS:           [one short line, or "None"]
 
-----------------------------------------
+ROOMS COUNTED:   [list conditioned rooms with m2, comma-separated on one line]
+NOT COUNTED:     [excluded rooms, comma-separated on one line]
 
-FULL DETAIL
-
-Room schedule (each room, m2, conditioned yes/no, conditioned total)
-Load calculation (conditioned m2 x 145 = kW)
-Recommended system + one alternative (Daikin, Fujitsu, Mitsubishi Electric, Mitsubishi Heavy, Midea)
-Zoning (AirTouch 5 default where zoning suits)
-Assumptions
-Open questions for site visit`;
+SUGGESTED SYSTEM: [one line — size + one or two suitable brands + AirTouch 5 if zoning suits]
+NOTES:           [2-4 short bullet lines max — anything the quoter needs to know]`;
 
   let pack = '';
   try {
@@ -64,7 +57,7 @@ Open questions for site visit`;
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 3000,
+        max_tokens: 1200,
         messages: [{ role: 'user', content: [planBlock, { type: 'text', text: prompt }] }]
       })
     });
@@ -78,11 +71,11 @@ Open questions for site visit`;
   const qid = 'NAC-' + String(b.client).replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) + '-' + Date.now();
 
   var planNote = b.planBase64
-    ? ('Floor plan: attached by customer — view it on the draft in admin.html:\n' + 'https://nac-quote-tool.vercel.app/admin.html')
+    ? ('Floor plan: attached by customer — view on the draft in admin.html:\n' + 'https://nac-quote-tool.vercel.app/admin.html')
     : 'Floor plan: none provided.';
 
   var emailBody =
-    'NEW DRAFT — for your review\n' +
+    'NEW DRAFT — for review\n' +
     '========================================\n\n' +
     'CUSTOMER\n' +
     'Name:     ' + (b.client || '-') + '\n' +
@@ -93,10 +86,11 @@ Open questions for site visit`;
     'Existing: ' + (b.existingAC || '-') + '\n' +
     'Brand:    ' + (b.brand || 'no preference') + '\n' +
     (b.comments ? ('Notes:    ' + b.comments + '\n') : '') +
-    '\n' + planNote + '\n\n' +
-    'Open to price & send: https://nac-quote-tool.vercel.app/admin.html\n' +
-    '(Draft ref: ' + qid + ')\n\n' +
-    pack;
+    '\n----------------------------------------\n\n' +
+    pack +
+    '\n\n----------------------------------------\n' +
+    planNote + '\n' +
+    '(Draft ref: ' + qid + ')';
 
   try {
     await fetch(NOTIFY, {
@@ -120,7 +114,7 @@ Open questions for site visit`;
           id: qid,
           client: b.client,
           job_desc: 'Ducted AC Supply & Install',
-          line_items: JSON.stringify([{ name: 'Draft — see design pack', desc: 'Auto-generated from intake. Nick to confirm size & set price.', price: 0, link: '' }]),
+          line_items: JSON.stringify([{ name: 'Draft — see notes', desc: 'Auto-generated from intake. Confirm size & set price.', price: 0, link: '' }]),
           notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack,
           accepted: false
         })
