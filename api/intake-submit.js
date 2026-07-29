@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     source: { type: 'base64', media_type: b.mediaType || 'image/jpeg', data: b.planBase64 }
   };
 
-  const prompt = `You are NAC Electrical Air & Refrigeration's INTERNAL design assistant. You never speak to customers. Produce a DRAFT design + approval pack for Nick to review. Everything is a proposal, not a decision.
+  const prompt = `You are NAC Electrical Air & Refrigeration's INTERNAL design assistant. You never speak to customers. Produce a DRAFT design pack for Nick to review. Everything is a proposal, not a decision.
 
 HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only (exclude garage/alfresco/outdoor). NO modifiers for glazing, ceilings, insulation or orientation. capacity(W) = conditioned m2 x 145. Over 18kW = flag CUSTOM/DUAL, do not auto-spec.
 
@@ -35,26 +35,27 @@ Customer / job info:
 - Preferred brand: ${b.brand || 'no preference'}
 - Notes: ${b.comments || '-'}
 
-Analyse the attached floor plan, then produce in clean plain text (no markdown tables):
+Analyse the attached floor plan. Output in clean plain text (no markdown, no tables, no asterisks). Start with a SHORT summary Nick can read in 5 seconds, THEN the full detail.
 
-=== INTERNAL DESIGN REPORT ===
-Room schedule (each room + m2, mark conditioned vs excluded, total conditioned area)
-Calculated load & proposed system size (kW)
+Use EXACTLY this structure:
+
+SUMMARY
+Conditioned area: [X] m2
+Proposed size: [X] kW
+Confidence: [HIGH / MEDIUM / LOW]
+Recommendation: [APPROVE / REVIEW / SITE VISIT REQUIRED]
+Flags: [one line — any red flags like wrong plan, no scale, over 18kW, unreadable. If none, write "None".]
+
+----------------------------------------
+
+FULL DETAIL
+
+Room schedule (each room, m2, conditioned yes/no, conditioned total)
+Load calculation (conditioned m2 x 145 = kW)
 Recommended system + one alternative (Daikin, Fujitsu, Mitsubishi Electric, Mitsubishi Heavy, Midea)
-Draft air distribution & zoning (AirTouch 5 default where zoning suits)
-Assumptions made
-Open questions needing site verification
-Recommended accessories
-
-=== APPROVAL PACK FOR NICK ===
-Customer & property
-Conditioned area & calculated load
-Proposed system (first choice)
-CONFIDENCE: high / medium / low
-Key assumptions
-Key risks / open questions
-Size band for reference (NO dollar figure)
-RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
+Zoning (AirTouch 5 default where zoning suits)
+Assumptions
+Open questions for site visit`;
 
   let pack = '';
   try {
@@ -63,7 +64,7 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
+        max_tokens: 3000,
         messages: [{ role: 'user', content: [planBlock, { type: 'text', text: prompt }] }]
       })
     });
@@ -95,9 +96,6 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
     '\n' + planNote + '\n\n' +
     'Open to price & send: https://nac-quote-tool.vercel.app/admin.html\n' +
     '(Draft ref: ' + qid + ')\n\n' +
-    '========================================\n' +
-    'DESIGN PACK\n' +
-    '========================================\n\n' +
     pack;
 
   try {
