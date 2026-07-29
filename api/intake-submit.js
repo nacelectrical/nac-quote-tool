@@ -76,8 +76,7 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
 
   const qid = 'NAC-' + String(b.client).replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) + '-' + Date.now();
 
-  // Build a clean, readable email body (works even as plain text — real line breaks, no JSON noise)
-  var planNote = imageBase64
+  var planNote = b.planBase64
     ? ('Floor plan: attached by customer — view it on the draft in admin.html:\n' + 'https://nac-quote-tool.vercel.app/admin.html')
     : 'Floor plan: none provided.';
 
@@ -101,7 +100,6 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
     '========================================\n\n' +
     pack;
 
-  // Email Nick the pack
   try {
     await fetch(NOTIFY, {
       method: 'POST',
@@ -115,7 +113,6 @@ RECOMMENDATION: APPROVE / REVIEW / SITE VISIT REQUIRED`;
     });
   } catch (e) { /* non-fatal */ }
 
-  // Save draft quote
   try {
     if (SUPA) {
       await fetch(SUPA_URL + '/rest/v1/nac_quotes', {
