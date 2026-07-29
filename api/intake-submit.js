@@ -7,7 +7,7 @@ export default async function handler(req, res) {
 
   const ANTHROPIC = process.env.ANTHROPIC_API_KEY;
   const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
-  const SUPA = process.env.SUPABASE_ANON_KEY;
+  const SUPA = process.env.SUPABASE_KEY;
   const NOTIFY = process.env.NAC_NOTIFY_WEBHOOK || 'https://webhooked.email/api/v1/webhooks/xkihnP49/trigger';
 
   if (!ANTHROPIC) return res.status(500).json({ error: 'Anthropic key missing' });
