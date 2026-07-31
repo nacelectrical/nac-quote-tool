@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   const ANTHROPIC = process.env.ANTHROPIC_API_KEY;
   const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
   const SUPA = process.env.SUPABASE_KEY;
-  const NOTIFY = process.env.NAC_NOTIFY_WEBHOOK || 'https://webhooked.email/api/v1/webhooks/xkihnP49/trigger';
+  const NOTIFY = process.env.NAC_NOTIFY_WEBHOOK || 'https://services.leadconnectorhq.com/hooks/F9lqSglbu2mMtfJYp22L/webhook-trigger/6ef18034-fff0-47ae-82f6-032a62ee8947';
 
   if (!ANTHROPIC) return res.status(500).json({ error: 'Anthropic key missing' });
 
@@ -122,44 +122,27 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
       'Optional add-on: AirTouch 5 zoning — $1,800 + GST\n';
   }
 
-  // Minimal email — just the essentials. Full detail lives in admin.html.
-  var unitsShort = '';
-  if (prefillOptions.length) {
-    unitsShort =
-      'Units (set prices in admin):\n' +
-      '  Daikin   ' + prefillOptions[0].model + '\n' +
-      '  Fujitsu  ' + prefillOptions[1].model + '\n' +
-      '  Midea    ' + prefillOptions[2].model + '\n' +
-      '  + AirTouch 5 optional ($1,800+GST)\n';
-  }
-
-  var confMatch = pack.match(/CONFIDENCE:\s*([A-Za-z]+)/);
-  var actMatch = pack.match(/ACTION:\s*([A-Za-z \/]+)/);
-  var flagMatch = pack.match(/FLAGS:\s*(.+)/);
-  var conf = confMatch ? confMatch[1].trim() : '-';
-  var act = actMatch ? actMatch[1].trim() : '-';
-  var flag = flagMatch ? flagMatch[1].trim() : 'None';
-
-  var emailBody =
-    (b.client || 'New lead') + (b.address ? (' — ' + b.address) : '') + '\n\n' +
-    'Phone:  ' + (b.phone || '-') + '\n' +
-    'Size:   ' + (kw ? (kw + 'kW (' + area + ' m2)') : 'see admin') + '\n' +
-    'Confidence: ' + conf + '\n' +
-    'Action: ' + act + '\n' +
-    (flag && flag.toLowerCase() !== 'none' ? ('Flag:   ' + flag + '\n') : '') +
-    '\n' + unitsShort +
-    '\nDraft ref: ' + qid + '\n' +
-    '(paste into admin.html to load full detail & price)';
-
+  // Send GHL clean, separate fields so it can build a tidy email
   try {
     await fetch(NOTIFY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        subject: 'NEW DRAFT: ' + b.client + (b.address ? (' — ' + b.address) : ''),
-        body: emailBody,
-        text: emailBody,
-        message: emailBody
+        customer_name: b.client || '',
+        customer_phone: b.phone || '',
+        customer_email: b.email || '',
+        customer_address: b.address || '',
+        property_type: b.houseType || '',
+        existing_ac: b.existingAC || '',
+        size_kw: kw ? String(kw) : '',
+        conditioned_m2: area ? String(area) : '',
+        confidence: (pack.match(/CONFIDENCE:\s*([A-Za-z]+)/) || [])[1] || '',
+        action: (pack.match(/ACTION:\s*([A-Za-z \/]+)/) || [])[1] || '',
+        flag: (pack.match(/FLAGS:\s*(.+)/) || [])[1] || '',
+        unit_daikin: prefillOptions.length ? prefillOptions[0].model : '',
+        unit_fujitsu: prefillOptions.length ? prefillOptions[1].model : '',
+        unit_midea: prefillOptions.length ? prefillOptions[2].model : '',
+        draft_ref: qid
       })
     });
   } catch (e) { /* non-fatal */ }
