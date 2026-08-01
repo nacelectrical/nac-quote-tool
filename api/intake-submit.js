@@ -48,8 +48,9 @@ export default async function handler(req, res) {
 
 HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only.
 CONDITIONED (count these): bedrooms, living, dining, family, kitchen, study, media/theatre, and hallways/entry.
-EXCLUDED (never count): garage, laundry, bathrooms, ensuite, WC, walk-in-robes, pantry, alfresco, patio, verandah, porch, outdoor areas.
-NO modifiers. Over 18kW = flag CUSTOM/DUAL.
+EXCLUDED — NEVER count these, even if labelled and dimensioned: garage, DOUBLE GARAGE, carport, laundry, L'DRY, bathrooms, BATH, ensuite, WC, toilet, walk-in-robes, WIR, robes, linen, pantry, P'TRY, alfresco, patio, verandah, porch, deck, outdoor areas.
+CRITICAL: The GARAGE is the most common error — it is large and labelled but is NEVER conditioned. Never count it. Ignore any "INT" or total-area number printed on the plan (it includes excluded rooms). Build the total ONLY from the conditioned rooms you list.
+NO modifiers. Add conditioned rooms = ONE total. Total x 145 = ONE kW figure. Over 18kW = flag CUSTOM/DUAL.
 
 CALCULATION: List the CONDITIONED rooms with their m2. Add them to ONE total conditioned area. DO NOT calculate kW yourself — just report the total area. DO NOT reconcile against any "total internal area" or "INT" label on the plan; use ONLY the sum of the rooms you listed. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
 
@@ -99,7 +100,6 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
   var area = m2Match ? parseFloat(m2Match[1]) : null;
   var kw = area ? Math.round(area * 145 / 100) / 10 : null;
   var prefillOptions = [];
-  var optionsText = '';
 
   if (area) {
     pack = 'SIZE:            ' + kw + ' kW  (conditioned area ' + area + ' m2 x 145)\n' + pack;
@@ -114,15 +114,15 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
       { brand: 'Fujitsu', model: f.m, kw: f.kw },
       { brand: 'Midea', model: mi.m, kw: mi.kw }
     ];
-    optionsText =
-      '\nSUGGESTED UNITS (nearest to ' + kw + 'kW):\n' +
-      '1. Daikin  ' + d.kw + 'kW — ' + d.m + '\n' +
-      '2. Fujitsu ' + f.kw + 'kW — ' + f.m + '\n' +
-      '3. Midea   ' + mi.kw + 'kW — ' + mi.m + '\n' +
-      'Optional add-on: AirTouch 5 zoning — $1,800 + GST\n';
   }
 
-  // Send GHL clean, separate fields so it can build a tidy email
+  var confMatch = pack.match(/CONFIDENCE:\s*([A-Za-z]+)/);
+  var actMatch = pack.match(/ACTION:\s*([A-Za-z \/]+)/);
+  var flagMatch = pack.match(/FLAGS:\s*(.+)/);
+  var conf = confMatch ? confMatch[1].trim() : '-';
+  var act = actMatch ? actMatch[1].trim() : '-';
+  var flag = flagMatch ? flagMatch[1].trim() : 'None';
+
   try {
     await fetch(NOTIFY, {
       method: 'POST',
@@ -136,13 +136,14 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
         existing_ac: b.existingAC || '',
         size_kw: kw ? String(kw) : '',
         conditioned_m2: area ? String(area) : '',
-        confidence: (pack.match(/CONFIDENCE:\s*([A-Za-z]+)/) || [])[1] || '',
-        action: (pack.match(/ACTION:\s*([A-Za-z \/]+)/) || [])[1] || '',
-        flag: (pack.match(/FLAGS:\s*(.+)/) || [])[1] || '',
+        confidence: conf,
+        action: act,
+        flag: flag,
         unit_daikin: prefillOptions.length ? prefillOptions[0].model : '',
         unit_fujitsu: prefillOptions.length ? prefillOptions[1].model : '',
         unit_midea: prefillOptions.length ? prefillOptions[2].model : '',
-        draft_ref: qid
+        draft_ref: qid,
+        admin_link: 'https://nac-quote-tool.vercel.app/admin.html?draft=' + qid
       })
     });
   } catch (e) { /* non-fatal */ }
@@ -157,7 +158,7 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
           client: b.client,
           job_desc: 'Ducted AC Supply & Install',
           line_items: JSON.stringify(prefillOptions.length ? prefillOptions.map(function(o){ return { name: o.brand + ' ' + o.model + ' ' + o.kw + 'kW', desc: o.kw + 'kW ducted reverse cycle system', price: 0, link: '', _brand: o.brand, _model: o.model, _kw: o.kw }; }) : [{ name: 'Draft — see notes', desc: 'Auto-generated from intake. Confirm size & set price.', price: 0, link: '' }]),
-          notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack + optionsText,
+          notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack,
           accepted: false
         })
       });
