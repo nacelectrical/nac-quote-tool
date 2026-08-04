@@ -1,6 +1,7 @@
 <!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8">
+<!-- saved from url=(0050)file:///Users/nacelectrical/Downloads/admin_2.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NAC Electrical - Internal Quote Builder</title>
 <style>
@@ -81,18 +82,18 @@ input:focus,select:focus{border-color:#2B6CB8}
 <div class="row">
   <div style="flex:1">
     <label class="lbl">Job description</label>
-    <input type="text" id="jobDesc" placeholder="Ducted AC Supply & Install" value="Ducted AC Supply & Install">
+    <input type="text" id="jobDesc" placeholder="Ducted AC Supply &amp; Install" value="Ducted AC Supply &amp; Install">
   </div>
 </div>
 
 <h2>3. System options (up to 3)</h2>
-<div id="optsContainer"></div>
+<div id="optsContainer"><div class="opt-card"><div style="font-size:12px;color:#8080b0;margin-bottom:8px;font-weight:700">OPTION 1</div><div class="row"><div><label class="lbl">Brand</label><select id="brand0" onchange="updateModels(0)"><option value="">Select brand</option><option value="daikin">Daikin</option><option value="fujitsu">Fujitsu</option><option value="me">Mitsubishi Electric</option><option value="mh">Mitsubishi Heavy</option><option value="samsung">Samsung</option><option value="braemar">Braemar</option><option value="midea">Midea</option></select></div><div><label class="lbl">Model</label><select id="model0"><option value="">Select model</option><option value="FDYAN60AV1 / RZA60C2V1|6.0|1Ph">FDYAN60AV1 / RZA60C2V1 - 6.0kW 1Ph</option><option value="FDYAN71AV1 / RZA71C2V1|7.1|1Ph">FDYAN71AV1 / RZA71C2V1 - 7.1kW 1Ph</option><option value="FDYAN85AV1 / RZA85C2V1|8.5|1Ph">FDYAN85AV1 / RZA85C2V1 - 8.5kW 1Ph</option><option value="FDYAN100AV1 / RZA100C2V1|10.0|1Ph">FDYAN100AV1 / RZA100C2V1 - 10.0kW 1Ph</option><option value="FDYAN125AV1 / RZA125C2V1|12.5|1Ph">FDYAN125AV1 / RZA125C2V1 - 12.5kW 1Ph</option><option value="FDYAN140AV1 / RZA140C2V1|14.0|1Ph">FDYAN140AV1 / RZA140C2V1 - 14.0kW 1Ph</option><option value="FDYAN160AV1 / RZA160C2V1|15.5|1Ph">FDYAN160AV1 / RZA160C2V1 - 15.5kW 1Ph</option><option value="FDYA71AV19 / RZAS71C2V1 (premium)|7.1|1Ph">FDYA71AV19 / RZAS71C2V1 (premium) - 7.1kW 1Ph</option><option value="FDYA85AV19 / RZAS85C2V1 (premium)|8.5|1Ph">FDYA85AV19 / RZAS85C2V1 (premium) - 8.5kW 1Ph</option><option value="FDYA100AV19 / RZAS100C2V1 (premium)|10.0|1Ph">FDYA100AV19 / RZAS100C2V1 (premium) - 10.0kW 1Ph</option><option value="FDYA125AV19 / RZAS125C2V1 (premium)|12.5|1Ph">FDYA125AV19 / RZAS125C2V1 (premium) - 12.5kW 1Ph</option><option value="FDYA140AV19 / RZAS140C2V1 (premium)|14.0|1Ph">FDYA140AV19 / RZAS140C2V1 (premium) - 14.0kW 1Ph</option><option value="FDYA160AV19 / RZAS160C2V1 (premium)|16.0|1Ph">FDYA160AV19 / RZAS160C2V1 (premium) - 16.0kW 1Ph</option><option value="FDYA180AV1 / outdoor TBC (premium)|18.0|1Ph">FDYA180AV1 / outdoor TBC (premium) - 18.0kW 1Ph</option><option value="FDYAN71AV1 / RZA71C2Y1 - 3Ph|7.1|3Ph">FDYAN71AV1 / RZA71C2Y1 - 3Ph - 7.1kW 3Ph</option><option value="FDYAN85AV1 / RZA85C2Y1 - 3Ph|8.5|3Ph">FDYAN85AV1 / RZA85C2Y1 - 3Ph - 8.5kW 3Ph</option><option value="FDYAN100AV1 / RZA100C2Y1 - 3Ph|10.0|3Ph">FDYAN100AV1 / RZA100C2Y1 - 3Ph - 10.0kW 3Ph</option><option value="FDYAN125AV1 / RZA125C2Y1 - 3Ph|12.5|3Ph">FDYAN125AV1 / RZA125C2Y1 - 3Ph - 12.5kW 3Ph</option><option value="FDYAN140AV1 / RZA140C2Y1 - 3Ph|14.0|3Ph">FDYAN140AV1 / RZA140C2Y1 - 3Ph - 14.0kW 3Ph</option><option value="FDYAN160AV1 / RZA160C2Y1 - 3Ph|15.5|3Ph">FDYAN160AV1 / RZA160C2Y1 - 3Ph - 15.5kW 3Ph</option></select></div></div><div class="row"><div><label class="lbl">Price (inc GST)</label><input type="number" id="price0" placeholder="e.g. 9170"></div></div></div><div class="opt-card"><div style="font-size:12px;color:#8080b0;margin-bottom:8px;font-weight:700">OPTION 2</div><div class="row"><div><label class="lbl">Brand</label><select id="brand1" onchange="updateModels(1)"><option value="">Select brand</option><option value="daikin">Daikin</option><option value="fujitsu">Fujitsu</option><option value="me">Mitsubishi Electric</option><option value="mh">Mitsubishi Heavy</option><option value="samsung">Samsung</option><option value="braemar">Braemar</option><option value="midea">Midea</option></select></div><div><label class="lbl">Model</label><select id="model1"><option value="">Select model</option><option value="ARTH24KHTA|7.1|1Ph">ARTH24KHTA - 7.1kW 1Ph</option><option value="ARTH30KHTA|8.5|1Ph">ARTH30KHTA - 8.5kW 1Ph</option><option value="ARTH36KHTA|10.0|1Ph">ARTH36KHTA - 10.0kW 1Ph</option><option value="ARTH45KHTA|12.5|1Ph">ARTH45KHTA - 12.5kW 1Ph</option><option value="ARTH54KHTA|14.0|1Ph">ARTH54KHTA - 14.0kW 1Ph</option><option value="ARTH60KHTA|15.5|1Ph">ARTH60KHTA - 15.5kW 1Ph</option><option value="ARTH36KHTA-3PH - 3Ph|10.0|3Ph">ARTH36KHTA-3PH - 3Ph - 10.0kW 3Ph</option><option value="ARTH45KHTA-3PH - 3Ph|12.5|3Ph">ARTH45KHTA-3PH - 3Ph - 12.5kW 3Ph</option><option value="ARTH54KHTA-3PH - 3Ph|14.0|3Ph">ARTH54KHTA-3PH - 3Ph - 14.0kW 3Ph</option><option value="ARTH60KHTA-3PH - 3Ph|15.5|3Ph">ARTH60KHTA-3PH - 3Ph - 15.5kW 3Ph</option></select></div></div><div class="row"><div><label class="lbl">Price (inc GST)</label><input type="number" id="price1" placeholder="e.g. 9170"></div></div></div><div class="opt-card"><div style="font-size:12px;color:#8080b0;margin-bottom:8px;font-weight:700">OPTION 3</div><div class="row"><div><label class="lbl">Brand</label><select id="brand2" onchange="updateModels(2)"><option value="">Select brand</option><option value="daikin">Daikin</option><option value="fujitsu">Fujitsu</option><option value="me">Mitsubishi Electric</option><option value="mh">Mitsubishi Heavy</option><option value="samsung">Samsung</option><option value="braemar">Braemar</option><option value="midea">Midea</option></select></div><div><label class="lbl">Model</label><select id="model2"><option value="">Select model</option><option value="DUCMI70IB / UCMI70OB|7.1|1Ph">DUCMI70IB / UCMI70OB - 7.1kW 1Ph</option><option value="DUCMI90IB / UCMI90OB|10.5|1Ph">DUCMI90IB / UCMI90OB - 10.5kW 1Ph</option><option value="DUCMI105IHB / UCMI105OB|10.0|1Ph">DUCMI105IHB / UCMI105OB - 10.0kW 1Ph</option><option value="DUCMI125IHB / UCMI125OB|12.0|1Ph">DUCMI125IHB / UCMI125OB - 12.0kW 1Ph</option><option value="DUCMI140IHB / UCMI140OB|14.0|1Ph">DUCMI140IHB / UCMI140OB - 14.0kW 1Ph</option><option value="DUCMI170IHB / UCMI170OB|17.0|1Ph">DUCMI170IHB / UCMI170OB - 17.0kW 1Ph</option></select></div></div><div class="row"><div><label class="lbl">Price (inc GST)</label><input type="number" id="price2" placeholder="e.g. 9170"></div></div></div></div>
 
 <h2>4. Generate</h2>
 <button class="btn btn-green" onclick="generateQuote()" style="width:100%;padding:14px;font-size:14px">Generate quote link</button>
 <div id="resultBox" class="result-box">
   <div style="color:#4aad4a;font-weight:700;font-size:14px;margin-bottom:8px">Quote link ready</div>
-  <input class="link-input" id="resultLink" readonly onclick="this.select()">
+  <input class="link-input" id="resultLink" readonly="" onclick="this.select()">
   <button class="btn" style="margin-top:10px" onclick="copyLink()">Copy link</button>
 </div>
 
@@ -104,23 +105,25 @@ var SUPA='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6I
 
 var brands = [
   {id:'daikin',name:'Daikin',models:[
-    {name:'FDYA50AV1 / RZAS50',kw:'5.0',phase:'1Ph'},{name:'FDYA60AV1 / RZAS60',kw:'6.0',phase:'1Ph'},
-    {name:'FDYA71AV1 / RZAS71',kw:'7.1',phase:'1Ph'},{name:'FDYA85AV1 / RZAS85',kw:'8.5',phase:'1Ph'},
-    {name:'FDYA100AV1 / RZAS100',kw:'10.0',phase:'1Ph'},{name:'FDYA125AV1 / RZAS125',kw:'12.5',phase:'1Ph'},
-    {name:'FDYA140AV1 / RZAS140',kw:'14.0',phase:'1Ph'},{name:'FDYA160AV1 / RZAS160',kw:'16.0',phase:'1Ph'},
-    {name:'FDYAN180AV1 / RZA180',kw:'18.0',phase:'1Ph'},{name:'FDYAN200AV1 / RZA200',kw:'20.0',phase:'3Ph'},
-    {name:'FDYAN250AV1 / RZA250',kw:'24.0',phase:'3Ph'},{name:'FDYAN160AY1 / RZA160 - 3Ph',kw:'16.0',phase:'3Ph'},
-    {name:'FDYQ180L / RZQ180 - 3Ph',kw:'18.0',phase:'3Ph'}
+    {name:'FDYAN60AV1 / RZA60C2V1',kw:'6.0',phase:'1Ph'},{name:'FDYAN71AV1 / RZA71C2V1',kw:'7.1',phase:'1Ph'},
+    {name:'FDYAN85AV1 / RZA85C2V1',kw:'8.5',phase:'1Ph'},{name:'FDYAN100AV1 / RZA100C2V1',kw:'10.0',phase:'1Ph'},
+    {name:'FDYAN125AV1 / RZA125C2V1',kw:'12.5',phase:'1Ph'},{name:'FDYAN140AV1 / RZA140C2V1',kw:'14.0',phase:'1Ph'},
+    {name:'FDYAN160AV1 / RZA160C2V1',kw:'15.5',phase:'1Ph'},
+    {name:'FDYA71AV19 / RZAS71C2V1 (premium)',kw:'7.1',phase:'1Ph'},{name:'FDYA85AV19 / RZAS85C2V1 (premium)',kw:'8.5',phase:'1Ph'},
+    {name:'FDYA100AV19 / RZAS100C2V1 (premium)',kw:'10.0',phase:'1Ph'},{name:'FDYA125AV19 / RZAS125C2V1 (premium)',kw:'12.5',phase:'1Ph'},
+    {name:'FDYA140AV19 / RZAS140C2V1 (premium)',kw:'14.0',phase:'1Ph'},{name:'FDYA160AV19 / RZAS160C2V1 (premium)',kw:'16.0',phase:'1Ph'},
+    {name:'FDYA180AV1 / outdoor TBC (premium)',kw:'18.0',phase:'1Ph'},
+    {name:'FDYAN71AV1 / RZA71C2Y1 - 3Ph',kw:'7.1',phase:'3Ph'},{name:'FDYAN85AV1 / RZA85C2Y1 - 3Ph',kw:'8.5',phase:'3Ph'},
+    {name:'FDYAN100AV1 / RZA100C2Y1 - 3Ph',kw:'10.0',phase:'3Ph'},{name:'FDYAN125AV1 / RZA125C2Y1 - 3Ph',kw:'12.5',phase:'3Ph'},
+    {name:'FDYAN140AV1 / RZA140C2Y1 - 3Ph',kw:'14.0',phase:'3Ph'},{name:'FDYAN160AV1 / RZA160C2Y1 - 3Ph',kw:'15.5',phase:'3Ph'}
   ], url:'https://www.daikin.com.au/products/residential/ducted-system-air-conditioning'},
   {id:'fujitsu',name:'Fujitsu',models:[
-    {name:'ARTG18LHTA / AOTG18LACC',kw:'5.2',phase:'1Ph'},{name:'ARTG24LHTA / AOTG24LAT3',kw:'7.1',phase:'1Ph'},
-    {name:'ARTG30LHTA / AOTG30LAT3',kw:'8.5',phase:'1Ph'},{name:'ARTG36LHTA / AOTG36LAT3',kw:'10.0',phase:'1Ph'},
-    {name:'ARTG45LHTA / AOTG45LATL',kw:'12.5',phase:'1Ph'},{name:'ARTG54LHTA / AOTG54LATT',kw:'14.0',phase:'1Ph'},
-    {name:'ARTH54KHTA - 3Ph',kw:'14.0',phase:'3Ph'},{name:'ARTH60KHTA',kw:'16.0',phase:'1Ph'},
-    {name:'ARTH60KHTA - 3Ph',kw:'16.0',phase:'3Ph'},{name:'ARTH65KHTA',kw:'18.0',phase:'1Ph'},
-    {name:'ARTH72KHTA - 3Ph',kw:'20.0',phase:'3Ph'},{name:'ARTH80KHTA - 3Ph',kw:'22.0',phase:'3Ph'},
-    {name:'ARTH90KHTA - 3Ph',kw:'25.0',phase:'3Ph'}
-  ], url:'https://www.fujitsugeneral.com.au/residential-products/whole-home-solutions'},
+    {name:'ARTH24KHTA',kw:'7.1',phase:'1Ph'},{name:'ARTH30KHTA',kw:'8.5',phase:'1Ph'},
+    {name:'ARTH36KHTA',kw:'10.0',phase:'1Ph'},{name:'ARTH45KHTA',kw:'12.5',phase:'1Ph'},
+    {name:'ARTH54KHTA',kw:'14.0',phase:'1Ph'},{name:'ARTH60KHTA',kw:'15.5',phase:'1Ph'},
+    {name:'ARTH36KHTA-3PH - 3Ph',kw:'10.0',phase:'3Ph'},{name:'ARTH45KHTA-3PH - 3Ph',kw:'12.5',phase:'3Ph'},
+    {name:'ARTH54KHTA-3PH - 3Ph',kw:'14.0',phase:'3Ph'},{name:'ARTH60KHTA-3PH - 3Ph',kw:'15.5',phase:'3Ph'}
+  ], url:'https://www.generalairstage.com.au'},
   {id:'me',name:'Mitsubishi Electric',models:[
     {name:'PEAD-M50JAD / PUZ-M50',kw:'5.0',phase:'1Ph'},{name:'PEAD-M60JAD / PUZ-M60',kw:'6.0',phase:'1Ph'},
     {name:'PEAD-M71JAD / PUZ-M71',kw:'7.1',phase:'1Ph'},{name:'PEA-M100GAA / PUZ-M100',kw:'10.0',phase:'1Ph'},
@@ -148,9 +151,9 @@ var brands = [
     {name:'Ducted RC 180 - 3Ph',kw:'18.0',phase:'3Ph'},{name:'Ducted RC 230 - 3Ph',kw:'23.0',phase:'3Ph'}
   ], url:''},
   {id:'midea',name:'Midea',models:[
-    {name:'DUCMI71IH / UCMI71O',kw:'7.1',phase:'1Ph'},{name:'DUCMI105IH / UCMI105O',kw:'10.5',phase:'1Ph'},
-    {name:'DUCMI140IH / UCMI140O',kw:'14.0',phase:'1Ph'},{name:'DUCMI170IH / UCMI170O',kw:'17.0',phase:'1Ph'},
-    {name:'MDV-V230WN1(AU) - 3Ph',kw:'20.0',phase:'3Ph'},{name:'MDV-V230WN1(AU) - 3Ph',kw:'23.0',phase:'3Ph'}
+    {name:'DUCMI70IB / UCMI70OB',kw:'7.1',phase:'1Ph'},{name:'DUCMI90IB / UCMI90OB',kw:'10.5',phase:'1Ph'},
+    {name:'DUCMI105IHB / UCMI105OB',kw:'10.0',phase:'1Ph'},{name:'DUCMI125IHB / UCMI125OB',kw:'12.0',phase:'1Ph'},
+    {name:'DUCMI140IHB / UCMI140OB',kw:'14.0',phase:'1Ph'},{name:'DUCMI170IHB / UCMI170OB',kw:'17.0',phase:'1Ph'}
   ], url:'https://midea.polyaire.com.au/ducted-air-conditioning/'}
 ];
 
@@ -293,10 +296,33 @@ async function loadDraft(){
       }
       filled++;
     }
-    st.innerHTML='<div class="status ok">Loaded '+filled+' option(s). Set your 3 prices and generate.</div>';
+    var photoHtml = '';
+    if(d.notes && d.notes.indexOf('PHOTOS:') !== -1){
+      var after = d.notes.split('PHOTOS:')[1] || '';
+      var urls = after.split('\n').map(function(s){return s.trim();}).filter(function(s){return s.indexOf('http')===0;});
+      if(urls.length){
+        photoHtml = '<div style="margin-top:10px"><strong>Client photos ('+urls.length+'):</strong><br>';
+        urls.forEach(function(u){
+          photoHtml += '<a href="'+u+'" target="_blank"><img src="'+u+'" style="height:90px;width:90px;object-fit:cover;border-radius:6px;margin:4px;border:1px solid #ccc"></a>';
+        });
+        photoHtml += '</div>';
+      }
+    }
+    st.innerHTML='<div class="status ok">Loaded '+filled+' option(s). Set your 3 prices and generate.</div>' + photoHtml;
   }catch(e){
     st.innerHTML='<div class="status err">Error: '+e.message+'</div>';
   }
 }
+
+// Auto-load a draft if the URL has ?draft=NAC-...
+(function(){
+  var p = new URLSearchParams(location.search);
+  var dref = p.get('draft');
+  if(dref){
+    var box = document.getElementById('draftRef');
+    if(box){ box.value = dref; loadDraft(); }
+  }
+})();
 </script>
+
 </body></html>
