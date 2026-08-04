@@ -14,21 +14,21 @@ export default async function handler(req, res) {
 
   const MODELS = {
     Daikin: [
-      { kw: 5.0, m: 'FDYA50AV1 / RZAS50' }, { kw: 6.0, m: 'FDYA60AV1 / RZAS60' },
-      { kw: 7.1, m: 'FDYA71AV1 / RZAS71' }, { kw: 8.5, m: 'FDYA85AV1 / RZAS85' },
-      { kw: 10.0, m: 'FDYA100AV1 / RZAS100' }, { kw: 12.5, m: 'FDYA125AV1 / RZAS125' },
-      { kw: 14.0, m: 'FDYA140AV1 / RZAS140' }, { kw: 16.0, m: 'FDYA160AV1 / RZAS160' },
-      { kw: 18.0, m: 'FDYAN180AV1 / RZA180' }
+      { kw: 6.0, m: 'FDYAN60AV1 / RZA60C2V1' }, { kw: 7.1, m: 'FDYAN71AV1 / RZA71C2V1' },
+      { kw: 8.5, m: 'FDYAN85AV1 / RZA85C2V1' }, { kw: 10.0, m: 'FDYAN100AV1 / RZA100C2V1' },
+      { kw: 12.5, m: 'FDYAN125AV1 / RZA125C2V1' }, { kw: 14.0, m: 'FDYAN140AV1 / RZA140C2V1' },
+      { kw: 15.5, m: 'FDYAN160AV1 / RZA160C2V1' }, { kw: 16.0, m: 'FDYA160AV19 / RZAS160C2V1' },
+      { kw: 18.0, m: 'FDYA180AV1 / outdoor TBC' }
     ],
     Fujitsu: [
-      { kw: 5.2, m: 'ARTG18LHTA / AOTG18LACC' }, { kw: 7.1, m: 'ARTG24LHTA / AOTG24LAT3' },
-      { kw: 8.5, m: 'ARTG30LHTA / AOTG30LAT3' }, { kw: 10.0, m: 'ARTG36LHTA / AOTG36LAT3' },
-      { kw: 12.5, m: 'ARTG45LHTA / AOTG45LATL' }, { kw: 14.0, m: 'ARTG54LHTA / AOTG54LATT' },
-      { kw: 16.0, m: 'ARTH60KHTA' }, { kw: 18.0, m: 'ARTH65KHTA' }
+      { kw: 7.1, m: 'ARTH24KHTA' }, { kw: 8.5, m: 'ARTH30KHTA' },
+      { kw: 10.0, m: 'ARTH36KHTA' }, { kw: 12.5, m: 'ARTH45KHTA' },
+      { kw: 14.0, m: 'ARTH54KHTA' }, { kw: 15.5, m: 'ARTH60KHTA' }
     ],
     Midea: [
-      { kw: 7.1, m: 'DUCMI71IH / UCMI71O' }, { kw: 10.5, m: 'DUCMI105IH / UCMI105O' },
-      { kw: 14.0, m: 'DUCMI140IH / UCMI140O' }, { kw: 17.0, m: 'DUCMI170IH / UCMI170O' }
+      { kw: 7.1, m: 'DUCMI70IB / UCMI70OB' }, { kw: 10.0, m: 'DUCMI105IHB / UCMI105OB' },
+      { kw: 10.5, m: 'DUCMI90IB / UCMI90OB' }, { kw: 12.0, m: 'DUCMI125IHB / UCMI125OB' },
+      { kw: 14.0, m: 'DUCMI140IHB / UCMI140OB' }, { kw: 17.0, m: 'DUCMI170IHB / UCMI170OB' }
     ]
   };
 
@@ -49,10 +49,10 @@ export default async function handler(req, res) {
 HARD SIZING RULE: 145 W/m2 on CONDITIONED floor area only.
 CONDITIONED (count these): bedrooms, living, dining, family, kitchen, study, media/theatre, and hallways/entry.
 EXCLUDED — NEVER count these, even if labelled and dimensioned: garage, DOUBLE GARAGE, carport, laundry, L'DRY, bathrooms, BATH, ensuite, WC, toilet, walk-in-robes, WIR, robes, linen, pantry, P'TRY, alfresco, patio, verandah, porch, deck, outdoor areas.
-CRITICAL: The GARAGE is the most common error — it is large and labelled but is NEVER conditioned. Never count it. Ignore any "INT" or total-area number printed on the plan (it includes excluded rooms). Build the total ONLY from the conditioned rooms you list.
+CRITICAL: The GARAGE and ALFRESCO are the most common errors — they are large and labelled but are NEVER conditioned. Never count them. Ignore any "INT", "TOTAL", or total-area number printed on the plan (it includes excluded rooms). Build the total ONLY from the conditioned rooms you list.
 NO modifiers. Add conditioned rooms = ONE total. Total x 145 = ONE kW figure. Over 18kW = flag CUSTOM/DUAL.
 
-CALCULATION: List the CONDITIONED rooms with their m2. Add them to ONE total conditioned area. DO NOT calculate kW yourself — just report the total area. DO NOT reconcile against any "total internal area" or "INT" label on the plan; use ONLY the sum of the rooms you listed. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
+CALCULATION: List the CONDITIONED rooms with their m2. Add them to ONE total conditioned area. DO NOT calculate kW yourself — just report the total area. DO NOT reconcile against any total-area label on the plan; use ONLY the sum of the rooms you listed. If a conditioned room isn't dimensioned, make one quick assumption. If the plan is unreadable, say so and set confidence LOW.
 
 Customer / job info:
 - Name: ${b.client}
@@ -143,7 +143,8 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
         unit_fujitsu: prefillOptions.length ? prefillOptions[1].model : '',
         unit_midea: prefillOptions.length ? prefillOptions[2].model : '',
         draft_ref: qid,
-        admin_link: 'https://nac-quote-tool.vercel.app/admin.html?draft=' + qid
+        admin_link: 'https://nac-quote-tool.vercel.app/admin.html?draft=' + qid,
+        photos: (b.photoUrls && b.photoUrls.length) ? b.photoUrls.join(' | ') : 'none'
       })
     });
   } catch (e) { /* non-fatal */ }
@@ -158,7 +159,7 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
           client: b.client,
           job_desc: 'Ducted AC Supply & Install',
           line_items: JSON.stringify(prefillOptions.length ? prefillOptions.map(function(o){ return { name: o.brand + ' ' + o.model + ' ' + o.kw + 'kW', desc: o.kw + 'kW ducted reverse cycle system', price: 0, link: '', _brand: o.brand, _model: o.model, _kw: o.kw }; }) : [{ name: 'Draft — see notes', desc: 'Auto-generated from intake. Confirm size & set price.', price: 0, link: '' }]),
-          notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack,
+          notes: 'INTAKE DRAFT | ' + (b.phone || '') + ' | ' + (b.address || '') + '\n\n' + pack + '\n\nPHOTOS:\n' + ((b.photoUrls && b.photoUrls.length) ? b.photoUrls.join('\n') : 'none'),
           accepted: false
         })
       });
