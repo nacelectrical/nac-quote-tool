@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- saved from url=(0051)file:///Users/nacelectrical/Downloads/intake_8.html -->
+<!-- saved from url=(0052)file:///Users/nacelectrical/Downloads/intake_11.html -->
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -202,34 +202,27 @@
       var planB64 = await toBase64(planFile);
       var mediaType = planFile.type.includes('pdf') ? 'application/pdf' : (planFile.type || 'image/jpeg');
 
-      // Upload all photos (and the floor plan) to Supabase storage, collect URLs
-      var SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
-      var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
-      var stamp = Date.now() + '-' + Math.random().toString(36).slice(2,7);
-
-      async function uploadOne(file, label){
-        var safe = label + '-' + stamp + '-' + file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
-        var res = await fetch(SUPA_URL + '/storage/v1/object/intake-uploads/' + safe, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + SUPA_KEY, 'apikey': SUPA_KEY, 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
-          body: file
-        });
-        if(!res.ok){
-          var errTxt = await res.text();
-          console.error('UPLOAD FAILED', res.status, errTxt);
-          alert('Photo upload failed ('+res.status+'): '+errTxt);
-          return null;
-        }
-        return SUPA_URL + '/storage/v1/object/public/intake-uploads/' + safe;
-      }
-
+      // Send photos to our server, which uploads them (bypasses storage RLS)
       var photoUrls = [];
-      var planUrl = await uploadOne(planFile, 'plan');
-      if(planUrl) photoUrls.push(planUrl);
-      for(var i=0;i<photoFiles.length;i++){
-        var u = await uploadOne(photoFiles[i], 'photo');
-        if(u) photoUrls.push(u);
-      }
+      try {
+        var toSend = [];
+        toSend.push({ name: planFile.name, type: planFile.type, label: 'plan', data: await toBase64(planFile) });
+        for (var i = 0; i < photoFiles.length; i++) {
+          toSend.push({ name: photoFiles[i].name, type: photoFiles[i].type, label: 'photo', data: await toBase64(photoFiles[i]) });
+        }
+        var upRes = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: toSend })
+        });
+        if (upRes.ok) {
+          var upData = await upRes.json();
+          photoUrls = upData.urls || [];
+          if (upData.errors && upData.errors.length) console.warn('upload issues', upData.errors);
+        } else {
+          console.warn('upload endpoint returned', upRes.status);
+        }
+      } catch (e) { console.warn('photo upload skipped:', e.message); }
 
       var payload = {
         contactRef: contactRef,
