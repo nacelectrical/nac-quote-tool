@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<!-- saved from url=(0051)file:///Users/nacelectrical/Downloads/splits_2.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAC — AC Quote Builder</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{background:#0c0c24;min-height:100vh;padding:20px 16px;color:#e0e0f0}
+.wrap{max-width:720px;margin:0 auto}
+.hdr{background:linear-gradient(135deg,#3B2D8F,#2B6CB8);border-radius:12px 12px 0 0;padding:18px 20px}
+.hdr h1{color:#F5C200;font-size:18px;font-weight:800}
+.hdr p{color:rgba(255,255,255,.65);font-size:11px;margin-top:2px}
+.bdy{background:#16162e;border:1px solid #252545;border-top:none;border-radius:0 0 12px 12px;padding:20px}
+h2{font-size:12px;font-weight:700;color:#F5C200;border-bottom:2px solid #F5C200;padding-bottom:5px;margin:22px 0 12px;text-transform:uppercase;letter-spacing:.5px}
+h2:first-of-type{margin-top:0}
+label{display:block;font-size:11px;color:#9090b8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
+input,select{width:100%;padding:11px 12px;background:#0c0c24;border:1px solid #2a2a4a;border-radius:8px;color:#fff;font-size:15px;margin-bottom:12px}
+input:focus,select:focus{outline:none;border-color:#F5C200}
+.row{display:flex;gap:12px}.row>div{flex:1}
+.unit{background:#1a1a35;border:1px solid #2a2a4a;border-radius:10px;padding:14px;margin-bottom:12px}
+.unit-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.unit-h b{color:#F5C200;font-size:13px}
+.kindsel{width:auto;display:inline-block;margin:0 10px 0 0;padding:5px 8px;font-size:12px;background:#2a2a4a;border-color:#3a3a5a}
+.rm{background:none;border:none;color:#c05050;cursor:pointer;font-size:12px}
+.chk{display:flex;align-items:center;gap:9px;padding:8px 0;font-size:14px;color:#e0e0f0;cursor:pointer;text-transform:none;letter-spacing:0}
+.chk input{width:18px;height:18px;margin:0;accent-color:#F5C200;cursor:pointer}
+.btn{border:none;border-radius:8px;padding:12px 18px;font-size:14px;font-weight:800;cursor:pointer}
+.btn-add{background:#2a2a4a;color:#F5C200;width:100%;margin-bottom:16px}
+.btn-go{background:linear-gradient(135deg,#2a8a2a,#4aad4a);color:#fff;width:100%;padding:15px;font-size:15px}
+.tot{background:#0c0c24;border:2px solid #F5C200;border-radius:10px;padding:16px;margin:18px 0}
+.tr{display:flex;justify-content:space-between;font-size:14px;color:#b0b0d0;padding:5px 0;gap:12px}
+.tr span:last-child{white-space:nowrap}
+.tt{display:flex;justify-content:space-between;font-size:19px;font-weight:800;color:#F5C200;border-top:1px solid #2a2a4a;margin-top:8px;padding-top:10px}
+.note{font-size:11px;color:#707090;margin:-6px 0 12px}
+.offer{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:14px;cursor:pointer}
+.offer input{width:18px;height:18px;margin:0;accent-color:#F5C200;cursor:pointer}
+.optcard{background:#1a1a35;border:1px solid #2a2a4a;border-radius:8px;padding:12px;margin-bottom:8px}
+.optcard b{color:#F5C200;font-size:13px;display:block;margin-bottom:5px}
+.optcard .lines{font-size:12px;color:#9090b8;line-height:1.6}
+.optcard .pr{color:#fff;font-size:15px;font-weight:800;margin-top:6px}
+.warnrow{color:#c09000;font-size:12px;margin-top:5px}
+.lnk{width:100%;padding:11px;background:#0c0c24;border:1px solid #F5C200;border-radius:8px;color:#F5C200;font-size:13px;margin-top:10px}
+.out{background:#0c0c24;border:1px solid #2a2a4a;border-radius:8px;padding:14px;margin-top:14px;font-size:13px;color:#b0b0d0;display:none;line-height:1.6}
+</style></head>
+<body><div class="wrap">
+<div class="hdr"><h1>NAC — AC Quote Builder</h1><p>Splits &amp; cassettes · staff use only</p></div>
+<div class="bdy">
+
+<h2>Client</h2>
+<div class="row">
+  <div><label>Client name</label><input id="client" placeholder="Client name"></div>
+  <div><label>Phone</label><input id="phone" placeholder="04XX XXX XXX"></div>
+</div>
+<label>Site address</label><input id="address" placeholder="Site address">
+
+<h2>Units</h2>
+<div id="units"><div class="unit" id="u0"><div class="unit-h"><b>Unit 1</b><div><select class="kindsel" id="kind0" onchange="switchKind(0)"><option value="split">Split</option><option value="cassette">Cassette</option></select><button class="rm" onclick="rmUnit(0)">Remove</button></div></div><div class="row"><div><label>Room / area</label><input id="room0" placeholder="e.g. Master bedroom"></div><div><label>Capacity</label><select id="cap0" onchange="onCap(0)"><option value="2.5">2.5 kW</option><option value="3.5">3.5 kW</option><option value="5" selected="">5.0 kW</option><option value="6">6.0 kW</option><option value="7">7.0 kW</option><option value="8">8.0 kW</option><option value="9">9.0 kW</option></select></div></div><label>Install price (inc GST)</label><input type="number" id="price0" placeholder="auto" onchange="this.dataset.manual=1;calc()" oninput="this.dataset.manual=1;calc()"><div class="note" id="pricenote0">Auto-fills from capacity — type over it to change</div><label class="chk"><input type="checkbox" id="lock0" onchange="toggleLock(0)"> Pin a specific model for this unit</label><div id="lockwrap0" style="display:none"><div class="row"><div><label>Brand</label><select id="brand0" onchange="fillModels(0)"><option value="">Select brand</option></select></div><div><label>Model</label><select id="model0" onchange="calc()"><option value="">Select brand first</option></select></div></div><div class="note">Pinned units stay the same in every brand option.</div></div><div class="row"><div><label>Pipe run (m)</label><input type="number" id="pipe0" value="5" min="0" onchange="calc()" oninput="calc()"></div><div><label>&nbsp;</label><div class="note">First 5m included</div></div></div><label class="chk"><input type="checkbox" id="pump0" onchange="calc()"> Condensate pump — $400</label><label class="chk"><input type="checkbox" id="acc0" onchange="calc()"> Difficult access / height — $330</label></div></div>
+<button class="btn btn-add" onclick="addUnit()">+ Add unit</button>
+
+<h2>Job extras</h2>
+<label class="chk"><input type="checkbox" id="removal" onchange="calc()"> Removal &amp; disposal of existing unit(s) — $100 each</label>
+<label>Number to remove</label>
+<input type="number" id="removalQty" value="1" min="1" onchange="calc()" oninput="calc()">
+
+<h2>Brands to offer</h2>
+<div class="note">Pick up to 3. Each brand version uses the nearest matching model at each unit's capacity.</div>
+<div id="brandOffer"><label class="offer"><input type="checkbox" class="ob" value="Daikin" checked="" onchange="calc()"> Daikin</label><label class="offer"><input type="checkbox" class="ob" value="Fujitsu" checked="" onchange="calc()"> Fujitsu</label><label class="offer"><input type="checkbox" class="ob" value="Mitsubishi Electric" onchange="calc()"> Mitsubishi Electric</label><label class="offer"><input type="checkbox" class="ob" value="Mitsubishi Heavy Industries" onchange="calc()"> Mitsubishi Heavy Industries</label><label class="offer"><input type="checkbox" class="ob" value="Midea" checked="" onchange="calc()"> Midea</label><label class="offer"><input type="checkbox" class="ob" value="Braemar" onchange="calc()"> Braemar</label></div>
+<div id="optPreview"><div class="optcard"><b>Daikin</b><div class="lines">Unit 1 — FTXF50WVMA / RXF50WVMA (5kW)</div><div class="pr">$3,200.00 inc GST</div></div><div class="optcard"><b>Fujitsu</b><div class="lines">Unit 1 — ASTH18KMTD / AOTH18KMTD (5kW)</div><div class="pr">$3,120.00 inc GST</div></div><div class="optcard"><b>Midea</b><div class="lines">Unit 1 — 5.0kW (5kW)</div><div class="pr">$3,000.00 inc GST</div></div></div>
+
+<div class="tot" id="tot"><div class="tr" style="color:#707090;font-size:11px;text-transform:uppercase">Base job (before brand adjustment)</div><div class="tr"><span>Unit 1 — 5kW split</span><span>$3,200.00</span></div><div class="tt"><span>Total inc GST</span><span>$3,200.00</span></div></div>
+<button class="btn btn-go" onclick="genQuote()">Generate customer quote link</button>
+<div class="out" id="out"></div>
+
+</div></div>
+
+<script>
+var SPLITS=[
+{b:"Daikin",f:"Lite",m:"FTXF20WVMA / RXF20WVMA",kw:2,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF25WVMA / RXF25WVMA",kw:2.5,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF35WVMA / RXF35WVMA",kw:3.5,band:3.5,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF46WVMA / RXF46WVMA",kw:4.6,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF50WVMA / RXF50WVMA",kw:5,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF60WVMA / RXF60WVMA",kw:6,band:6.0,g:"daikin"},
+{b:"Daikin",f:"Lite",m:"FTXF71WVMA / RXF71WVMA",kw:7.1,band:7.0,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV20WVMA / RXV20WVMA",kw:2,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV25WVMA / RXV25WVMA",kw:2.5,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV35WVMA / RXV35WVMA",kw:3.5,band:3.5,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV46WVMA / RXV46WVMA",kw:4.6,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV50WVMA / RXV50WVMA",kw:5,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV60WVMA / RXV60WVMA",kw:6,band:6.0,g:"daikin"},
+{b:"Daikin",f:"Cora",m:"FTXV71WVMA / RXV71WVMA",kw:7.1,band:7.0,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM20WVMA / RXM20WVMA",kw:2.2,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM25WVMA / RXM25WVMA",kw:2.5,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM35WVMA / RXM35WVMA",kw:3.5,band:3.5,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM46WVMA / RXM46WVMA",kw:4.6,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM50WVMA / RXM50WVMA",kw:5,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM60WVMA / RXM60WVMA",kw:6,band:6.0,g:"daikin"},
+{b:"Daikin",f:"Alira X",m:"FTXM71WVMA / RXM71WVMA",kw:7.1,band:7.0,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM20WVMA / RKM20WVMA",kw:2.2,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM25WVMA / RKM25WVMA",kw:2.5,band:2.5,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM35WVMA / RKM35WVMA",kw:3.5,band:3.5,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM46WVMA / RKM46WVMA",kw:4.6,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM50WVMA / RKM50WVMA",kw:5,band:5.0,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM60WVMA / RKM60WVMA",kw:6,band:6.0,g:"daikin"},
+{b:"Daikin",f:"Alira X - Cooling Only",m:"FTKM71WVMA / RKM71WVMA",kw:7.1,band:7.0,g:"daikin"},
+{b:"Daikin",f:"XL Premium - Cooling Only",m:"FTKM85PAVMA / RKM85PAVMA",kw:8.5,band:8.0,g:"daikin"},
+{b:"Daikin",f:"XL Premium - Cooling Only",m:"FTKM95PAVMA / RKM95PAVMA",kw:9.4,band:9.0,g:"daikin"},
+{b:"Daikin",f:"XL Premium - Reverse Cycle",m:"FTXM85PAVMA / RXM85PAVMA",kw:8.5,band:8.0,g:"daikin"},
+{b:"Daikin",f:"XL Premium - Reverse Cycle",m:"FTXM95PAVMA / RXM95PAVMA",kw:9.4,band:9.0,g:"daikin"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTG09KMTC / AOTG09KMTC",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTG12KMTC / AOTG12KMTC",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTH18KMTD / AOTH18KMTD",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTH22KMTD / AOTH22KMTD",kw:6,band:6.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTH24KMTE / AOTH24KMTE",kw:7.1,band:7.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Lifestyle",m:"ASTH30KMTD / AOTH30KMTD",kw:8.5,band:8.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH09KNCA / AOTH09KNCA",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH12KNCA / AOTH12KNCA",kw:3.4,band:3.5,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH14KNCA / AOTH14KNCA",kw:4.2,band:5.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH18KNTA / AOTH18KNTA",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH22KNTA / AOTH22KNTA",kw:6,band:6.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH24KNTA / AOTH24KNTA",kw:7.1,band:7.0,g:"mitsfuji"},
+{b:"Fujitsu",f:"Comfort",m:"ASTH30KNTA / AOTH30KNTA",kw:8.5,band:8.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti",m:"SRK20ZSA-W / SRC20ZSA-W",kw:2,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti",m:"SRK25ZSA-W / SRC25ZSA-W",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti",m:"SRK35ZSA-W / SRC35ZSA-W",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti",m:"SRK50ZSA-W / SRC50ZSA-W",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Bronte",m:"SRK63ZRA-W / SRC63ZRA-W",kw:6.3,band:6.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Bronte",m:"SRK71ZRA-W / SRC71ZRA-W",kw:7.1,band:7.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Bronte",m:"SRK80ZRA-W / SRC80ZRA-W",kw:8,band:8.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Bronte",m:"SRK95ZRA-W / SRC95ZRA-W",kw:9.5,band:9.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti PLUS",m:"SRK20ZSXA-W / SRC20ZSXA-W",kw:2,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti PLUS",m:"SRK25ZSXA-W / SRC25ZSXA-W",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti PLUS",m:"SRK35ZSXA-W / SRC35ZSXA-W",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti PLUS",m:"SRK50ZSXA-W / SRC50ZSXA-W",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Heavy Industries",f:"Avanti PLUS",m:"SRK60ZSXA-W / SRC60ZSXA-W",kw:6,band:6.0,g:"mitsfuji"},
+{b:"Braemar",f:"Airvolution",m:"WSHV25D1T / WCHV25D1T",kw:2.4,band:2.5,g:"mideabrae"},
+{b:"Braemar",f:"Airvolution",m:"WSHV35D1T / WCHV35D1T",kw:3.45,band:3.5,g:"mideabrae"},
+{b:"Braemar",f:"Airvolution",m:"WSHV50D1T / WCHV50D1T",kw:5.2,band:5.0,g:"mideabrae"},
+{b:"Braemar",f:"Airvolution",m:"WSHV70D1T / WCHV70D1T",kw:7.1,band:7.0,g:"mideabrae"},
+{b:"Braemar",f:"Airvolution",m:"WSHV85D1T / WCHV85D1T",kw:8.5,band:8.0,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"2.0kW",kw:2,band:2.5,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"2.5kW",kw:2.5,band:2.5,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"3.5kW",kw:3.5,band:3.5,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"5.0kW",kw:5,band:5.0,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"6.0kW",kw:6,band:6.0,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"7.0kW",kw:7,band:7.0,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"8.0kW",kw:8,band:8.0,g:"mideabrae"},
+{b:"Midea",f:"Current Australian range",m:"9.0kW",kw:9,band:9.0,g:"mideabrae"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP20VGD-A1 / MUZ-AP20VG-A1",kw:2,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP25VGKD2-A2 / MUZ-AP25VGD2-A2",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP35VGKD2-A2 / MUZ-AP35VGD2-A2",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP42VGKD2-A2 / MUZ-AP42VGD2-A2",kw:4.2,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP50VGKD2-A2 / MUZ-AP50VGD2-A2",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP60VGKD2-A2 / MUZ-AP60VGD2-A2",kw:6,band:6.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP71VGKD2-A2 / MUZ-AP71VGD2-A2",kw:7.1,band:7.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AP",m:"MSZ-AP80VGKD2-A2 / MUZ-AP80VGD2-A2",kw:7.8,band:7.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-LN",m:"MSZ-LN25VG2(Y/B/R)-A3 / MUZ-LN25VG2-A2",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-LN",m:"MSZ-LN35VG2(Y/B/R)-A3 / MUZ-LN35VG2-A2",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-LN",m:"MSZ-LN50VG3(Y/B/R)-A1 / MUZ-LN50VG3-A1",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-LN",m:"MSZ-LN60VG3(Y/B/R)-A1 / MUZ-LN60VG2-A1",kw:6.1,band:6.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-EF",m:"MSZ-EF25VGKD(W/B/S)-A1 / MUZ-EF25VGD-A1",kw:2.5,band:2.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-EF",m:"MSZ-EF35VGKD(W/B/S)-A1 / MUZ-EF35VGD-A1",kw:3.5,band:3.5,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-EF",m:"MSZ-EF42VGKD(W/B/S)-A1 / MUZ-EF42VGD-A1",kw:4.2,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-EF",m:"MSZ-EF50VGKD(W/B/S)-A1 / MUZ-EF50VGD-A1",kw:5,band:5.0,g:"mitsfuji"},
+{b:"Mitsubishi Electric",f:"MSZ-AS",m:"MSZ-AS90VGD2-A1 / MUZ-AS90VGD2-A1",kw:9,band:9.0,g:"mitsfuji"}
+];
+var CASSETTES=[
+{b:"Fujitsu",f:"AUTH",m:"AUTH09KVLA / AOTH09KBTA",kw:2.5,band:2.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Fujitsu",f:"AUTH",m:"AUTH12KVLA / AOTH12KBTA",kw:3.5,band:3.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Fujitsu",f:"AUTH",m:"AUTH18KVLA / AOTH18KBTA",kw:5,band:5.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Fujitsu",f:"AUTH",m:"AUTH24KVLA / AOTH24KBTA",kw:7.1,band:7.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Electric",f:"SLZ-M",m:"SLZ-M25FA-A",kw:2.5,band:2.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Electric",f:"SLZ-M",m:"SLZ-M35FA-A",kw:3.5,band:3.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Electric",f:"SLZ-M",m:"SLZ-M50FA-A",kw:5,band:5.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Electric",f:"SLZ-M",m:"SLZ-M60FA-A",kw:6,band:6.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Electric",f:"MLZ-KP",m:"MLZ-KP25VF",kw:2.5,band:2.5,g:"mitsfuji",t:"1-Way Cassette"},
+{b:"Mitsubishi Electric",f:"MLZ-KP",m:"MLZ-KP35VF",kw:3.5,band:3.5,g:"mitsfuji",t:"1-Way Cassette"},
+{b:"Mitsubishi Electric",f:"MLZ-KP",m:"MLZ-KP50VF",kw:5,band:5.0,g:"mitsfuji",t:"1-Way Cassette"},
+{b:"Mitsubishi Electric",f:"PLA-M",m:"PLA-M71EA-A",kw:7.1,band:7.0,g:"mitsfuji",t:"4-Way Cassette"},
+{b:"Mitsubishi Heavy Industries",f:"FDTC",m:"FDTC25",kw:2.5,band:2.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Heavy Industries",f:"FDTC",m:"FDTC35",kw:3.5,band:3.5,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Heavy Industries",f:"FDTC",m:"FDTC50",kw:5,band:5.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Heavy Industries",f:"FDTC",m:"FDTC60",kw:6,band:6.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Heavy Industries",f:"FDTC",m:"FDTC71",kw:7.1,band:7.0,g:"mitsfuji",t:"4-Way Compact"},
+{b:"Mitsubishi Heavy Industries",f:"FDT",m:"FDT56",kw:5.6,band:6.0,g:"mitsfuji",t:"4-Way Cassette"},
+{b:"Mitsubishi Heavy Industries",f:"FDT",m:"FDT71",kw:7.1,band:7.0,g:"mitsfuji",t:"4-Way Cassette"},
+{b:"Daikin",f:"FCA / FFA SkyAir",m:"FCA/FFA-25 class",kw:2.5,band:2.5,g:"daikin",t:"4-Way / Compact Cassette"},
+{b:"Daikin",f:"FCA / FFA SkyAir",m:"FCA/FFA-35 class",kw:3.5,band:3.5,g:"daikin",t:"4-Way / Compact Cassette"},
+{b:"Daikin",f:"FCA / FFA SkyAir",m:"FCA/FFA-50 class",kw:5,band:5.0,g:"daikin",t:"4-Way / Compact Cassette"},
+{b:"Daikin",f:"FCA / FFA SkyAir",m:"FCA/FFA-60 class",kw:6,band:6.0,g:"daikin",t:"4-Way / Compact Cassette"},
+{b:"Daikin",f:"FCA / FFA SkyAir",m:"FCA/FFA-71 class",kw:7.1,band:7.0,g:"daikin",t:"4-Way / Compact Cassette"},
+{b:"Braemar",f:"KBHV",m:"",kw:7.1,band:7.0,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:2.5,band:2.5,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:3.5,band:3.5,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:5,band:5.0,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:7.1,band:7.0,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:8,band:8.0,g:"mideabrae",t:"Cassette"},
+{b:"Midea",f:"Current Australian range",m:"",kw:9,band:9.0,g:"mideabrae",t:"Cassette"}
+];
+
+var BANDS=[2.5,3.5,5.0,6.0,7.0,8.0,9.0];
+var SPLIT_BASE={2.5:2350,3.5:2500,5.0:3200,6.0:3400,7.0:3800,8.0:4500,9.0:4700};
+var GRP_ADJ={daikin:0,mitsfuji:-80,mideabrae:-200};
+var PIPE_RATE=60, PIPE_INCLUDED=5, PUMP=400, ACCESS=330, REMOVAL=100;
+var OFFER_BRANDS=['Daikin','Fujitsu','Mitsubishi Electric','Mitsubishi Heavy Industries','Midea','Braemar'];
+
+var n=0, kinds={};
+function fmt(v){return '$'+Number(v).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function pool(kind){return kind==='cassette'?CASSETTES:SPLITS;}
+
+// ---------- units ----------
+function addUnit(){
+  var i=n++; kinds[i]='split';
+  var el=document.createElement('div');
+  el.className='unit'; el.id='u'+i;
+  el.innerHTML='<div class="unit-h"><b>Unit '+(i+1)+'</b>'
+    +'<div><select class="kindsel" id="kind'+i+'" onchange="switchKind('+i+')">'
+    +'<option value="split">Split</option><option value="cassette">Cassette</option></select>'
+    +'<button class="rm" onclick="rmUnit('+i+')">Remove</button></div></div>'
+    +'<div class="row"><div><label>Room / area</label><input id="room'+i+'" placeholder="e.g. Master bedroom"></div>'
+    +'<div><label>Capacity</label><select id="cap'+i+'" onchange="onCap('+i+')">'
+    + BANDS.map(function(b){return '<option value="'+b+'"'+(b===5.0?' selected':'')+'>'+b.toFixed(1)+' kW</option>';}).join('')
+    +'</select></div></div>'
+    +'<label>Install price (inc GST)</label>'
+    +'<input type="number" id="price'+i+'" placeholder="auto" onchange="this.dataset.manual=1;calc()" oninput="this.dataset.manual=1;calc()">'
+    +'<div class="note" id="pricenote'+i+'">Auto-fills from capacity &mdash; type over it to change</div>'
+    +'<label class="chk"><input type="checkbox" id="lock'+i+'" onchange="toggleLock('+i+')"> Pin a specific model for this unit</label>'
+    +'<div id="lockwrap'+i+'" style="display:none">'
+    +'<div class="row"><div><label>Brand</label><select id="brand'+i+'" onchange="fillModels('+i+')"><option value="">Select brand</option></select></div>'
+    +'<div><label>Model</label><select id="model'+i+'" onchange="calc()"><option value="">Select brand first</option></select></div></div>'
+    +'<div class="note">Pinned units stay the same in every brand option.</div></div>'
+    +'<div class="row"><div><label>Pipe run (m)</label><input type="number" id="pipe'+i+'" value="5" min="0" onchange="calc()" oninput="calc()"></div>'
+    +'<div><label>&nbsp;</label><div class="note">First '+PIPE_INCLUDED+'m included</div></div></div>'
+    +'<label class="chk"><input type="checkbox" id="pump'+i+'" onchange="calc()"> Condensate pump &mdash; $'+PUMP+'</label>'
+    +'<label class="chk"><input type="checkbox" id="acc'+i+'" onchange="calc()"> Difficult access / height &mdash; $'+ACCESS+'</label>';
+  document.getElementById('units').appendChild(el);
+  onCap(i);
+}
+
+function rmUnit(i){ var e=document.getElementById('u'+i); if(e) e.remove(); delete kinds[i]; calc(); }
+
+function switchKind(i){
+  kinds[i]=document.getElementById('kind'+i).value;
+  var pe=document.getElementById('price'+i);
+  delete pe.dataset.manual;
+  document.getElementById('pricenote'+i).textContent =
+    kinds[i]==='cassette' ? 'Set your price for this cassette' : 'Auto-fills from capacity \u2014 type over it to change';
+  // reset any pinned model
+  document.getElementById('lock'+i).checked=false;
+  document.getElementById('lockwrap'+i).style.display='none';
+  onCap(i);
+}
+
+function toggleLock(i){
+  var on=document.getElementById('lock'+i).checked;
+  document.getElementById('lockwrap'+i).style.display = on ? 'block' : 'none';
+  if(on){
+    var bs=document.getElementById('brand'+i);
+    var seen={},list=[];
+    pool(kinds[i]).forEach(function(m){ if(!seen[m.b]){seen[m.b]=1;list.push(m.b);} });
+    bs.innerHTML='<option value="">Select brand</option>'+list.sort().map(function(b){return '<option>'+b+'</option>';}).join('');
+  }
+  calc();
+}
+
+function fillModels(i){
+  var b=document.getElementById('brand'+i).value, sel=document.getElementById('model'+i), arr=pool(kinds[i]);
+  if(!b){ sel.innerHTML='<option value="">Select brand first</option>'; calc(); return; }
+  var cap=parseFloat(document.getElementById('cap'+i).value);
+  sel.innerHTML='<option value="">Select model</option>'+arr.map(function(m,idx){
+    if(m.b!==b) return '';
+    var extra=m.t?' ['+m.t+']':'';
+    var near=Math.abs(m.kw-cap)<0.7?' \u2713':'';
+    return '<option value="'+idx+'">'+m.m+' \u2014 '+m.kw+'kW ('+m.f+')'+extra+near+'</option>';
+  }).join('');
+  calc();
+}
+
+function onCap(i){
+  var pe=document.getElementById('price'+i);
+  if(kinds[i]==='split' && pe.dataset.manual!=='1'){
+    var band=parseFloat(document.getElementById('cap'+i).value);
+    pe.value=SPLIT_BASE[band]||'';
+  }
+  if(document.getElementById('lock'+i).checked) fillModels(i);
+  calc();
+}
+
+function unitData(i){
+  var cap=parseFloat(document.getElementById('cap'+i).value);
+  var base=parseFloat(document.getElementById('price'+i).value||0);
+  var pipe=parseFloat(document.getElementById('pipe'+i).value||0);
+  var epm=Math.max(0,pipe-PIPE_INCLUDED);
+  var pinned=null;
+  if(document.getElementById('lock'+i).checked){
+    var mv=document.getElementById('model'+i).value;
+    if(mv) pinned=pool(kinds[i])[parseInt(mv,10)];
+  }
+  return {kind:kinds[i],cap:cap,base:base,extraPipeM:epm,extraPipe:epm*PIPE_RATE,
+          pump:document.getElementById('pump'+i).checked?PUMP:0,
+          acc:document.getElementById('acc'+i).checked?ACCESS:0,
+          pinned:pinned, room:(document.getElementById('room'+i).value||'').trim(), idx:i};
+}
+
+function eachUnit(fn){
+  document.querySelectorAll('.unit').forEach(function(el){ fn(parseInt(el.id.slice(1),10)); });
+}
+
+// ---------- brand offers ----------
+function renderBrandOffer(){
+  document.getElementById('brandOffer').innerHTML=OFFER_BRANDS.map(function(b){
+    var pre=(b==='Daikin'||b==='Fujitsu'||b==='Midea')?' checked':'';
+    return '<label class="offer"><input type="checkbox" class="ob" value="'+b+'"'+pre+' onchange="calc()"> '+b+'</label>';
+  }).join('');
+}
+function chosenBrands(){
+  var out=[]; document.querySelectorAll('.ob').forEach(function(c){ if(c.checked) out.push(c.value); });
+  return out.slice(0,3);
+}
+function nearestIn(brand,kind,kw){
+  var list=pool(kind).filter(function(m){return m.b===brand;});
+  if(!list.length) return null;
+  return list.reduce(function(a,b){ return Math.abs(b.kw-kw)<Math.abs(a.kw-kw)?b:a; });
+}
+
+function jobInBrand(brand){
+  var units=[],total=0,warns=[];
+  eachUnit(function(i){
+    var u=unitData(i);
+    if(!u.base && u.kind==='cassette'){ warns.push((u.room||'Unit '+(i+1))+': needs a price'); }
+    var mdl,kw,grp;
+    if(u.pinned){ mdl=u.pinned.m; kw=u.pinned.kw; grp=u.pinned.g; }
+    else{
+      var sub=nearestIn(brand,u.kind,u.cap);
+      if(!sub){ warns.push('No '+brand+' '+u.kind+' available at '+u.cap+'kW'); return; }
+      mdl=sub.m; kw=sub.kw; grp=sub.g;
+      if(Math.abs(sub.kw-u.cap)>0.7) warns.push((u.room||'Unit '+(i+1))+': nearest '+brand+' is '+sub.kw+'kW (wanted '+u.cap+'kW)');
+    }
+    var base = u.kind==='split'
+      ? (SPLIT_BASE[u.cap]||u.base) + (GRP_ADJ[grp]||0)
+      : u.base + (GRP_ADJ[grp]||0);
+    var t=base+u.extraPipe+u.pump+u.acc;
+    total+=t;
+    units.push({room:u.room||('Unit '+(units.length+1)),kind:u.kind,model:mdl,kw:kw,price:t,pinned:!!u.pinned});
+  });
+  var rq=parseInt(document.getElementById('removalQty').value||1,10);
+  if(document.getElementById('removal').checked && rq>0) total+=REMOVAL*rq;
+  return {brand:brand,units:units,total:total,warns:warns};
+}
+
+function calc(){
+  var bs=chosenBrands(), host=document.getElementById('optPreview');
+  host.innerHTML = bs.map(function(b){
+    var j=jobInBrand(b);
+    if(!j.units.length) return '';
+    return '<div class="optcard"><b>'+b+'</b><div class="lines">'
+      + j.units.map(function(u){return u.room+' &mdash; '+u.model+' ('+u.kw+'kW'+(u.kind==='cassette'?' cassette':'')+')'+(u.pinned?' [pinned]':'');}).join('<br>')
+      + '</div><div class="pr">'+fmt(j.total)+' inc GST</div>'
+      + (j.warns.length?'<div class="warnrow">'+j.warns.join('<br>')+'</div>':'')
+      + '</div>';
+  }).join('');
+
+  // running total based on what's entered (first chosen brand, or raw prices)
+  var rows='',grand=0,any=false;
+  eachUnit(function(i){
+    var u=unitData(i); any=true;
+    var t=u.base+u.extraPipe+u.pump+u.acc; grand+=t;
+    rows+='<div class="tr"><span>'+(u.room||('Unit '+(i+1)))+' &mdash; '+u.cap+'kW '+(u.kind==='cassette'?'cassette':'split')+'</span><span>'+fmt(u.base)+'</span></div>';
+    if(u.extraPipe) rows+='<div class="tr"><span>&nbsp;&nbsp;+ '+u.extraPipeM+'m extra pipe</span><span>'+fmt(u.extraPipe)+'</span></div>';
+    if(u.pump) rows+='<div class="tr"><span>&nbsp;&nbsp;+ Condensate pump</span><span>'+fmt(u.pump)+'</span></div>';
+    if(u.acc) rows+='<div class="tr"><span>&nbsp;&nbsp;+ Difficult access</span><span>'+fmt(u.acc)+'</span></div>';
+  });
+  var rq=parseInt(document.getElementById('removalQty').value||1,10);
+  if(document.getElementById('removal').checked && rq>0){
+    grand+=REMOVAL*rq; any=true;
+    rows+='<div class="tr"><span>Removal &amp; disposal x'+rq+'</span><span>'+fmt(REMOVAL*rq)+'</span></div>';
+  }
+  document.getElementById('tot').innerHTML = any
+    ? '<div class="tr" style="color:#707090;font-size:11px;text-transform:uppercase">Base job (before brand adjustment)</div>'+rows
+      +'<div class="tt"><span>Total inc GST</span><span>'+fmt(grand)+'</span></div>'
+    : '<div class="tr"><span>Add a unit to see pricing</span><span></span></div>';
+}
+
+// ---------- generate ----------
+function scopeText(j){
+  var lines=j.units.map(function(u){
+    return u.room+': '+u.model+' '+u.kw+'kW '+(u.kind==='cassette'?'cassette':'wall split');
+  });
+  lines.push('Supply, install and commission. Electrical connection included');
+  lines.push('Up to '+PIPE_INCLUDED+'m pipework per unit included');
+  var rq=parseInt(document.getElementById('removalQty').value||1,10);
+  if(document.getElementById('removal').checked && rq>0) lines.push('Removal and disposal of '+rq+' existing unit(s)');
+  return lines.join('. ')+'.';
+}
+
+async function genQuote(){
+  var client=(document.getElementById('client').value||'').trim();
+  if(!client){ alert('Enter a client name'); return; }
+  var bs=chosenBrands();
+  if(!bs.length){ alert('Pick at least one brand to offer'); return; }
+
+  var options=[];
+  bs.forEach(function(b){
+    var j=jobInBrand(b);
+    if(!j.units.length) return;
+    options.push({ name:b+' \u2014 '+j.units.length+' unit'+(j.units.length>1?'s':''),
+                   desc:scopeText(j), price:Math.round(j.total*100)/100, link:'', _brand:b });
+  });
+  if(!options.length){ alert('Add at least one unit'); return; }
+
+  var qid='NAC-'+client.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,10)+'-'+Date.now();
+  var payload={ id:qid, client:client, job_desc:'Air Conditioning Supply & Install',
+    line_items:JSON.stringify(options),
+    notes:'SPLIT/CASSETTE QUOTE | '+(document.getElementById('phone').value||'')+' | '+(document.getElementById('address').value||''),
+    accepted:false };
+
+  var o=document.getElementById('out');
+  o.style.display='block'; o.textContent='Saving quote...';
+  try{
+    var r=await fetch('/api/savequote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok){ var t=await r.text(); o.textContent='Could not save: '+r.status+' '+t.slice(0,200); return; }
+    var url='https://nac-quote-tool.vercel.app/sign.html?q='+encodeURIComponent(qid);
+    o.innerHTML='Quote saved. Send this to the customer:'
+      +'<input class="lnk" id="qlink" readonly value="'+url+'">'
+      +'<button class="btn" style="background:#2a2a4a;color:#F5C200;margin-top:8px" onclick="copyLink()">Copy link</button>';
+  }catch(e){ o.textContent='Error saving quote: '+e.message; }
+}
+
+function copyLink(){
+  var el=document.getElementById('qlink');
+  el.select(); navigator.clipboard.writeText(el.value).then(function(){ alert('Link copied'); });
+}
+
+renderBrandOffer();
+addUnit();
+</script>
+</body></html>
