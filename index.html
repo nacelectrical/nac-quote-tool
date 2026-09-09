@@ -1,4 +1,4 @@
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body><div id="root"></div><script src="https://unpkg.com/react@18/umd/react.production.min.js"></script><script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script><script>const {useState,useEffect,useRef}=React;
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body><div id="root"></div><script src="https://unpkg.com/react@18/umd/react.production.min.js"></script><script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script><script>var exports = {};
 window.storage={get:async k=>{try{return{value:localStorage.getItem("nac_"+k)}}catch(e){return null}},set:async(k,v)=>{localStorage.setItem("nac_"+k,v)},delete:async k=>{localStorage.removeItem("nac_"+k)},list:async p=>{return{keys:Object.keys(localStorage).filter(k=>k.startsWith("nac_"+(p||"")))}}};function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 Object.defineProperty(exports, "__esModule", {
   value: true
@@ -2435,7 +2435,22 @@ function App() {
       color: "#444",
       fontSize: 10
     }
-  }, qDate)), /*#__PURE__*/React.createElement("button", {
+  }, qDate)), /*#__PURE__*/React.createElement("a", {
+    href: "/designer.html",
+    target: "_blank",
+    rel: "noopener",
+    title: "NAC AI HVAC Designer \u2014 plan interpretation, load calculation and duct design",
+    style: {
+      background: "none",
+      border: "1px solid " + Y + "55",
+      borderRadius: 8,
+      color: Y,
+      fontSize: 11,
+      padding: "6px 12px",
+      cursor: "pointer",
+      textDecoration: "none"
+    }
+  }, "\uD83E\uDDCA AI Designer"), /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return setScreen("history");
     },

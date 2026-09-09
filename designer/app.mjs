@@ -1,0 +1,1241 @@
+// NAC AI HVAC DESIGNER — application shell.
+//
+// Workflow:  UPLOAD PLAN → CALIBRATE → VERIFY ROOMS → SIZE SYSTEM
+//            → DESIGN AIRFLOW → DESIGN DUCTS → REVIEW → QUOTE
+//
+// This module owns state and wiring only. Every number on screen comes out of
+// the deterministic engines in ./engines; nothing is computed here.
+
+import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
+import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
+import * as Tabs from './ui/tabs.mjs';
+import { renderSettingsScreen } from './ui/settings-screen.mjs';
+import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
+
+import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
+import { calibrate, parseScaleLabel } from './engines/calibration.mjs';
+import { interpretPlan, measureRooms } from './engines/interpret.mjs';
+import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom } from './engines/rooms.mjs';
+import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
+import { runPipeline, designSummary } from './engines/pipeline.mjs';
+import { routeLength } from './engines/ducts.mjs';
+import { acknowledge } from './engines/warnings.mjs';
+import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
+import * as Store from './engines/store.mjs';
+import * as Sample from './engines/sample-plan.mjs';
+import { samplePlanDataUrl } from './engines/sample-plan-image.mjs';
+
+const TABS = [
+  ['overview', 'Overview'], ['plan', 'Plan'], ['rooms', 'Rooms'], ['sizing', 'Sizing'],
+  ['equipment', 'Equipment'], ['airflow', 'Airflow'], ['outlets', 'Outlets'],
+  ['ductwork', 'Ductwork'], ['return', 'Return'], ['zones', 'Zones'],
+  ['materials', 'Materials'], ['financials', 'Financials'], ['warnings', 'Warnings']
+];
+
+const STEPS = [
+  { key: 'upload',    label: 'Upload plan',   done: (d) => !!d.plan },
+  { key: 'calibrate', label: 'Calibrate',     done: (d) => !!d.calibration },
+  { key: 'rooms',     label: 'Verify rooms',  done: (d) => (d.rooms || []).some(r => r.conditioned && (r.status === 'Verified' || r.status === 'Manual')) },
+  { key: 'size',      label: 'Size system',   done: (d) => !!d.selectedUnit },
+  { key: 'airflow',   label: 'Design airflow',done: (d) => !!d.airflow },
+  { key: 'ducts',     label: 'Design ducts',  done: (d) => !!d.network && d.network.sections.some(s => s.lengthMm) },
+  { key: 'review',    label: 'Review',        done: (d) => d.warningSummary?.canApprove },
+  { key: 'quote',     label: 'Quote',         done: (d) => !!d.quoteId }
+];
+
+export class DesignerApp {
+  constructor(root) {
+    this.root = root;
+    this.settings = structuredClone(DEFAULT_SETTINGS);
+    this.settingsOverride = {};
+    this.materialRates = {};
+    this.equipmentSpecs = {};
+    this.nacBrands = null;
+    this.nacControllers = null;
+    this.catalogue = buildCatalogue({});
+    this.controllers = ZONE_CONTROLLERS;
+    this.design = createDesign({});
+    this.summary = {};
+    this.tab = 'plan';
+    this.selectedRoomId = null;
+    this.settingsSection = null;
+    this.specModelKey = '';
+    this.assistantOpen = false;
+    this.assistantLog = [];
+    this.routeTargetRoomId = null;
+    this.dirty = false;
+    this.busy = false;
+  }
+
+  // ── Bootstrap ─────────────────────────────────────────────────────────────
+
+  async init() {
+    this.renderShell();
+    await this.loadConfig();
+    const params = new URLSearchParams(location.search);
+    const designId = params.get('design');
+    if (designId) {
+      const d = await Store.loadDesign(designId);
+      if (d) { this.design = d; toast('Loaded design ' + designId); }
+      else toast('Could not find design ' + designId, 'bad');
+    }
+    if (params.get('quote')) this.design.quoteId = params.get('quote');
+    if (params.get('job')) this.design.jobId = params.get('job');
+    if (params.get('sample') === '1') this.loadSample();
+    this.recompute();
+    this.render();
+    window.addEventListener('beforeunload', (e) => {
+      if (this.dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+  }
+
+  async loadConfig() {
+    const [override, rates, specs, brands, controllers] = await Promise.all([
+      Store.getJson(Store.SETTINGS_KEYS.hvacSettings, {}),
+      Store.getJson(Store.SETTINGS_KEYS.materialRates, {}),
+      Store.getJson(Store.SETTINGS_KEYS.equipmentSpecs, {}),
+      Store.loadNacBrands(),
+      Store.loadNacControllers()
+    ]);
+    this.settingsOverride = override || {};
+    this.settings = settingsWith(this.settingsOverride);
+    this.materialRates = rates || {};
+    this.equipmentSpecs = specs || {};
+    this.nacBrands = brands;
+    this.nacControllers = controllers;
+    this.rebuildCatalogue();
+  }
+
+  rebuildCatalogue() {
+    this.catalogue = buildCatalogue({ savedBrands: this.nacBrands, specStore: this.equipmentSpecs });
+    // Pull controller prices out of the existing nac_ctrl record.
+    this.controllerPricing = {};
+    for (const c of (this.nacControllers || [])) {
+      if (c.price !== undefined && c.price !== '') this.controllerPricing[c.id] = { price: Number(c.price) };
+    }
+    this.controllers = ZONE_CONTROLLERS.map(c => ({ ...c, ...(this.controllerPricing[c.id] || {}) }));
+  }
+
+  // ── Core recompute ────────────────────────────────────────────────────────
+
+  recompute() {
+    this.design = runPipeline(this.design, {
+      settings: this.settings,
+      catalogue: this.catalogue,
+      controllers: this.controllers,
+      controllerPricing: this.controllerPricing,
+      nacRates: this.materialRates,
+      allowLowConfidence: !!this.design.allowLowConfidence
+    });
+    this.summary = designSummary(this.design);
+    this.dirty = true;
+  }
+
+  update() { this.recompute(); this.render(); }
+
+  // ── Shell ─────────────────────────────────────────────────────────────────
+
+  renderShell() {
+    this.headerEl = h('header', { class: 'app-head' });
+    this.stepsEl = h('nav', { class: 'steps' });
+    this.tabsEl = h('nav', { class: 'tabs' });
+    this.mainEl = h('main', { class: 'main' });
+    this.assistantEl = h('aside', { class: 'assistant' });
+    mount(this.root, this.headerEl, this.stepsEl, this.tabsEl,
+      h('div', { class: 'body' }, this.mainEl, this.assistantEl));
+  }
+
+  render() {
+    this.renderHeader();
+    this.renderSteps();
+    this.renderTabs();
+    if (this.settingsSection) {
+      mount(this.mainEl, renderSettingsScreen(this, this.settingsSection));
+    } else if (this.tab === 'plan') {
+      this.renderPlanTab();
+    } else {
+      const fn = {
+        overview: Tabs.renderOverview, rooms: Tabs.renderRooms, sizing: Tabs.renderSizing,
+        equipment: Tabs.renderEquipment, airflow: Tabs.renderAirflow, outlets: Tabs.renderOutlets,
+        ductwork: Tabs.renderDuctwork, return: Tabs.renderReturn, zones: Tabs.renderZones,
+        materials: Tabs.renderMaterials, financials: Tabs.renderFinancials, warnings: Tabs.renderWarnings
+      }[this.tab];
+      mount(this.mainEl, h('div', { class: 'tab-body' }, ...(fn ? fn(this).filter(Boolean) : [empty('—')])));
+    }
+    this.renderAssistant();
+  }
+
+  renderHeader() {
+    const w = this.design.warningSummary;
+    mount(this.headerEl,
+      h('div', { class: 'brand' },
+        h('img', { src: '/nac-logo.jpg', alt: 'NAC', onerror: (e) => e.target.style.display = 'none' }),
+        h('div', {},
+          h('h1', {}, 'NAC AI HVAC DESIGNER'),
+          h('div', { class: 'sub' }, this.design.customer?.name || 'New design', ' · ', this.design.id))),
+      h('div', { class: 'head-actions' },
+        w ? badge((w.counts.CRITICAL || 0) + ' critical · ' + (w.counts.WARNING || 0) + ' warnings',
+          w.counts.CRITICAL ? 'bad' : w.counts.WARNING ? 'warn' : 'ok') : null,
+        button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
+          () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
+        button('Save', () => this.save(), 'small'),
+        button('Designs', () => this.showDesignList(), 'ghost small'),
+        button('Revisions', () => this.showRevisions(), 'ghost small'),
+        button('Settings', () => this.openSettings(), 'ghost small'),
+        button('Reports', () => this.showReportMenu(), 'ghost small')));
+  }
+
+  renderSteps() {
+    mount(this.stepsEl, STEPS.map((s, i) => {
+      const done = s.done(this.design);
+      return h('button', {
+        class: 'step' + (done ? ' done' : ''),
+        onclick: () => this.setTab({ upload: 'plan', calibrate: 'plan', rooms: 'rooms', size: 'equipment',
+                                     airflow: 'airflow', ducts: 'ductwork', review: 'warnings', quote: 'financials' }[s.key])
+      }, h('span', { class: 'step-n' }, done ? '✓' : String(i + 1)), h('span', {}, s.label));
+    }));
+  }
+
+  renderTabs() {
+    mount(this.tabsEl, TABS.map(([key, label]) => {
+      const count = key === 'warnings' && this.design.warnings?.length ? this.design.warnings.length : null;
+      return h('button', {
+        class: 'tab' + (this.tab === key && !this.settingsSection ? ' on' : ''),
+        onclick: () => this.setTab(key)
+      }, label, count ? h('span', { class: 'tab-count' }, count) : null);
+    }));
+  }
+
+  setTab(tab) { this.tab = tab; this.settingsSection = null; this.render(); }
+
+  // ── Plan tab (PART 2, 6, 7, 17, 18) ───────────────────────────────────────
+
+  renderPlanTab() {
+    const d = this.design;
+    const viewerHost = h('div', { class: 'plan-host' });
+    const tools = h('div', { class: 'plan-tools' });
+
+    mount(this.mainEl, h('div', { class: 'plan-layout' }, tools, viewerHost));
+
+    if (!this.viewer) {
+      this.viewer = createPlanViewer(viewerHost, {
+        onCalibrationPoints: (pts) => { this.calibPoints = pts; this.render(); },
+        onRoomSelect: (id) => { this.selectedRoomId = id; this.render(); },
+        onRoomBoundary: (id, box) => this.setRoomBoundary(id, box),
+        onRoomDrawn: (box) => this.createRoomFromBox(box),
+        onRouteComplete: (pts) => this.completeRoute(pts),
+        onRouteDraft: () => this.render(),
+        onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
+      });
+    } else {
+      viewerHost.appendChild(this.viewer.element);
+    }
+
+    // The viewer only exists once the Plan tab has been opened, so this is the
+    // single place the plan image is loaded onto it.
+    if (d.plan?.dataUrl && this.loadedPlanUrl !== d.plan.dataUrl) {
+      const url = d.plan.dataUrl;
+      this.loadedPlanUrl = url;
+      this.viewer.setImage(url)
+        .then(() => { this.viewer.fit(); this.viewer.redraw(); })
+        .catch(() => { this.loadedPlanUrl = null; toast('Could not display the plan image.', 'bad'); });
+    } else if (!d.plan) {
+      this.loadedPlanUrl = null;
+    }
+
+    this.viewer.setRooms(d.rooms || []);
+    this.viewer.selectRoom(this.selectedRoomId);
+    this.viewer.setCalibration(d.calibration);
+    this.viewer.setRoutes(this.routeOverlay());
+    this.viewer.setLayout(d.layout || {});
+    this.viewer.redraw();
+
+    mount(tools,
+      this.renderUploadPanel(),
+      this.renderCalibratePanel(),
+      this.renderPlanModePanel(),
+      this.renderRoutePanel(),
+      this.renderLayoutPanel());
+  }
+
+  renderUploadPanel() {
+    const d = this.design;
+    return card('1. Floor plan', 'PDF, JPG, JPEG or PNG',
+      h('input', { type: 'file', class: 'inp', accept: 'image/*,application/pdf',
+        onchange: (e) => this.handleUpload(e.target.files[0]) }),
+      d.plan ? h('div', { class: 'note' },
+        d.plan.fileName + ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' +
+        (d.plan.isPdf ? ' (PDF page 1 rendered)' : '')) : null,
+      d.plan ? h('div', { class: 'btn-row' },
+        button(this.busy ? 'Reading…' : 'Read plan with AI', () => this.readPlan(), 'primary small'),
+        button('Fit', () => this.viewer.fit(), 'ghost small'),
+        button('+', () => this.viewer.zoomIn(), 'ghost small'),
+        button('−', () => this.viewer.zoomOut(), 'ghost small')) : null,
+      d.interpretation ? h('div', { class: 'note' },
+        d.interpretation.summary.lengthCount + ' dimensions read, ' +
+        d.interpretation.summary.chainCount + ' chains, ' +
+        d.interpretation.summary.closingChains + ' closing. Image quality: ' +
+        (d.interpretation.quality || '—') + '.') : null,
+      (d.interpretation?.notes || []).length
+        ? h('ul', { class: 'evidence' }, d.interpretation.notes.map(n => h('li', {}, n))) : null,
+      button('Load the sample builder plan', () => { this.loadSample(); this.update(); }, 'ghost small'));
+  }
+
+  renderCalibratePanel() {
+    const d = this.design;
+    const pts = this.calibPoints || [];
+    const active = this.viewer?.getMode() === MODES.CALIBRATE;
+
+    return card('2. Calibrate plan', 'Click two points, then enter the distance printed between them',
+      banner('info', 'A screenshot or a re-exported PDF does NOT keep its original A3/A4 scale. ' +
+        'Any printed scale label is treated as supporting information only.'),
+      d.scaleLabel ? h('div', { class: 'note' }, 'Scale label read from the drawing: ' + d.scaleLabel.label +
+        ' — ' + d.scaleLabel.note) : null,
+      h('div', { class: 'btn-row' },
+        button(active ? 'Picking points…' : 'CALIBRATE PLAN',
+          () => { this.calibPoints = []; this.viewer.setMode(active ? MODES.VIEW : MODES.CALIBRATE); this.render(); },
+          active ? 'primary small' : 'small'),
+        active ? button('Reset points', () => { this.calibPoints = []; this.viewer.resetCalibrationPoints(); this.render(); }, 'ghost small') : null),
+      active ? h('div', { class: 'note' }, pts.length === 0 ? 'Click point A on the plan.'
+        : pts.length === 1 ? 'Now click point B.' : 'Two points set — enter the distance below.') : null,
+      active && pts.length === 2 ? h('div', { class: 'grid-2' },
+        field('Known distance', input(this.calibDistance ?? '', v => { this.calibDistance = v; },
+          { type: 'number', step: 'any', inputmode: 'decimal', placeholder: 'e.g. 6000' })),
+        field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; }))) : null,
+      active && pts.length === 2
+        ? button('Apply calibration', () => this.applyCalibration(), 'primary small') : null,
+      d.calibration ? h('div', { class: 'calib-readout' },
+        h('div', {}, h('span', {}, 'CALIBRATION DISTANCE'), h('strong', {}, d.calibration.display.calibrationDistance)),
+        h('div', {}, h('span', {}, 'PIXEL DISTANCE'), h('strong', {}, d.calibration.display.pixelDistance)),
+        h('div', {}, h('span', {}, 'CALCULATED SCALE'), h('strong', {}, d.calibration.display.calculatedScale)))
+        : banner('warn', 'Not calibrated. Room boundaries drawn on the plan cannot be measured until you calibrate.'));
+  }
+
+  renderPlanModePanel() {
+    const mode = this.viewer?.getMode() || MODES.VIEW;
+    const set = (m) => { this.viewer.setMode(mode === m ? MODES.VIEW : m); this.render(); };
+    return card('3. Rooms on the plan', 'Drag to draw a room, drag a corner to resize, drag the middle to move',
+      h('div', { class: 'btn-row' },
+        button(mode === MODES.ROOM ? 'Editing rooms…' : 'Edit rooms', () => set(MODES.ROOM),
+          mode === MODES.ROOM ? 'primary small' : 'small'),
+        button('Add room manually', () => this.addManualRoom(), 'ghost small'),
+        button('Go to room verification', () => this.setTab('rooms'), 'ghost small')),
+      this.selectedRoomId ? (() => {
+        const r = (this.design.rooms || []).find(x => x.id === this.selectedRoomId);
+        return r ? h('div', { class: 'note' }, r.label + ' — ' +
+          (r.areaSqM ? r.areaSqM.toFixed(2) + ' m²' : 'no dimension') + ' · ' +
+          Math.round(r.confidence) + '% ' + r.confidenceBand + ' · ' +
+          (r.measurement?.sourceLabel || '')) : null;
+      })() : null);
+  }
+
+  renderRoutePanel() {
+    const d = this.design;
+    const mode = this.viewer?.getMode() || MODES.VIEW;
+    const rooms = (d.airflow?.rows || []).map(r => ({ value: r.roomId, label: r.label }));
+
+    return card('4. Duct routes', 'Click along the route, double-click to finish. Length is measured through the calibration.',
+      !d.calibration ? banner('warn', 'Calibrate the plan first — routes cannot be measured without it.') : null,
+      h('div', { class: 'grid-2' },
+        field('Route for', select(this.routeTargetRoomId || '',
+          [{ value: '', label: 'Choose…' }, { value: '__main', label: 'Main duct (unit → plenum)' }, ...rooms],
+          v => { this.routeTargetRoomId = v; this.viewer.setActiveRoute(v === '__main' ? 'main' : v); this.render(); })),
+        field('', h('div', { class: 'btn-row' },
+          button(mode === MODES.ROUTE ? 'Drawing…' : 'Draw route',
+            () => { this.viewer.setMode(mode === MODES.ROUTE ? MODES.VIEW : MODES.ROUTE); this.render(); },
+            mode === MODES.ROUTE ? 'primary small' : 'small'),
+          button('Undo point', () => { this.viewer.undoDraftPoint(); this.render(); }, 'ghost small'),
+          button('Clear', () => { this.viewer.clearDraftRoute(); this.render(); }, 'ghost small')))),
+      this.routeSummaryTable());
+  }
+
+  routeSummaryTable() {
+    const d = this.design;
+    const rows = [];
+    if (d.mainRoute) rows.push({ id: 'main', label: 'Main duct', lengthM: d.mainRoute.lengthM,
+                                 source: d.mainRoute.source, note: d.mainRoute.note });
+    for (const [roomId, r] of Object.entries(d.ductRoutes || {})) {
+      const room = (d.rooms || []).find(x => x.id === roomId);
+      rows.push({ id: roomId, label: room?.label || roomId, lengthM: r.lengthM, source: r.source, note: r.note });
+    }
+    if (!rows.length) return h('div', { class: 'note' }, 'No routes drawn yet. Lengths can also be typed on the Ductwork tab.');
+    return table([
+      { key: 'label', label: 'Route' },
+      { key: 'lengthM', label: 'Length (m)', align: 'right', width: '110px',
+        render: (r) => input(r.lengthM ?? '', v => this.setRouteLength(r.id, v), { type: 'number', step: '0.1' }) },
+      { key: 'source', label: 'Source' },
+      { key: 'clear', label: '', align: 'right', width: '40px',
+        render: (r) => button('✕', () => this.clearRoute(r.id), 'tiny ghost') }
+    ], rows, { compact: true });
+  }
+
+  renderLayoutPanel() {
+    const mode = this.viewer?.getMode() || MODES.VIEW;
+    const layout = this.design.layout || {};
+    return card('5. Equipment layout', 'Drag anything into place on the plan',
+      h('div', { class: 'btn-row' },
+        button(mode === MODES.LAYOUT ? 'Moving items…' : 'Move items', () => {
+          this.viewer.setMode(mode === MODES.LAYOUT ? MODES.VIEW : MODES.LAYOUT); this.render();
+        }, mode === MODES.LAYOUT ? 'primary small' : 'small'),
+        button('+ Indoor unit', () => this.placeLayout('indoorUnit', 'Indoor unit'), 'ghost small'),
+        button('+ Supply plenum', () => this.placeLayout('plenum', 'Supply plenum'), 'ghost small'),
+        button('+ Return grille', () => this.placeLayout('returnGrille', 'Return'), 'ghost small'),
+        button('Place all outlets', () => this.placeAllOutlets(), 'ghost small'),
+        button('Clear layout', () => { this.design.layout = {}; this.update(); }, 'ghost small')),
+      Object.keys(layout).length
+        ? h('div', { class: 'note' }, Object.keys(layout).length + ' item(s) placed.')
+        : h('div', { class: 'note' }, 'Nothing placed yet.'));
+  }
+
+  // ── Plan actions ──────────────────────────────────────────────────────────
+
+  async handleUpload(file) {
+    if (!file) return;
+    const isPdf = file.type.includes('pdf');
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result); r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      let imageUrl = dataUrl;
+      if (isPdf) {
+        imageUrl = await renderPdfFirstPage(dataUrl);
+        if (!imageUrl) {
+          toast('This PDF could not be rendered in the browser. Export it as a PNG or JPG and upload that.', 'bad');
+          return;
+        }
+      }
+      const dims = await this.viewer.setImage(imageUrl);
+      this.loadedPlanUrl = imageUrl;
+      this.design.plan = {
+        fileName: file.name, mediaType: file.type, isPdf,
+        dataUrl: imageUrl, originalDataUrl: dataUrl,
+        widthPx: dims.width, heightPx: dims.height, uploadedAt: new Date().toISOString()
+      };
+      // A new plan invalidates the old calibration — it is never carried over.
+      this.design.calibration = null;
+      this.dirty = true;
+      toast('Plan loaded. Calibrate it next.');
+      this.update();
+    } catch (e) {
+      toast('Could not read that file: ' + e.message, 'bad');
+    }
+  }
+
+  applyCalibration() {
+    const pts = this.calibPoints || [];
+    if (pts.length !== 2) return toast('Pick two points on the plan first.', 'bad');
+    const c = calibrate({
+      pointA: pts[0], pointB: pts[1],
+      knownDistance: this.calibDistance, unit: this.calibUnit || 'mm',
+      imageWidthPx: this.design.plan?.widthPx, imageHeightPx: this.design.plan?.heightPx,
+      scaleLabel: this.design.interpretation?.observations?.scaleLabelText
+    });
+    if (c.error) return toast(c.error, 'bad');
+    this.design.calibration = c;
+    this.design.scaleLabel = c.scaleLabel;
+    this.calibPoints = [];
+    this.viewer.setMode(MODES.VIEW);
+    this.viewer.setCalibration(c);
+    toast('Calibrated: ' + c.display.calculatedScale);
+    this.remeasureCalibratedRooms();
+    this.update();
+  }
+
+  /** Any room measured from pixels is re-measured when the calibration changes. */
+  remeasureCalibratedRooms() {
+    const cal = this.design.calibration;
+    if (!cal) return;
+    this.design.rooms = (this.design.rooms || []).map(r => {
+      if (!r.boundaryPx || r.measurement?.source === 'manual' ||
+          r.measurement?.source === 'verified_architectural' ||
+          r.measurement?.source === 'dimension_chain' ||
+          r.measurement?.source === 'chain_plus_wall_geometry') return r;
+      const [remeasured] = measureRooms([{ ...r, boundaryPx: r.boundaryPx }],
+        { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
+      return { ...remeasured, id: r.id, status: r.status === 'Verified' ? 'Review' : remeasured.status,
+               conditioned: r.conditioned, ceilingHeightMm: r.ceilingHeightMm };
+    });
+  }
+
+  async readPlan() {
+    const d = this.design;
+    if (!d.plan) return toast('Upload a plan first.', 'bad');
+    this.busy = true; this.render();
+    try {
+      const base64 = (d.plan.originalDataUrl || d.plan.dataUrl).split(',')[1];
+      const res = await fetch('/api/plan-read', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64,
+          mediaType: d.plan.isPdf ? d.plan.mediaType : (d.plan.mediaType || 'image/png'),
+          imageWidthPx: d.plan.widthPx, imageHeightPx: d.plan.heightPx
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      const obs = data.observations || {};
+      this.imageQuality = data.quality === 'poor' ? 'low' : data.quality;
+
+      const interp = interpretPlan({
+        rawDetections: obs.detections,
+        walls: obs.walls,
+        openings: obs.openings,
+        overallWidthMm: null, overallDepthMm: null
+      }, { settings: this.settings });
+
+      d.interpretation = { ...data, summary: interp.summary };
+      d.detectedDimensions = interp.detectedDimensions;
+      d.chains = interp.chains;
+      d.walls = obs.walls || [];
+      d.openings = obs.openings || [];
+      if (obs.scaleLabelText) d.scaleLabel = parseScaleLabel(obs.scaleLabelText);
+
+      // Build candidate rooms from the labels the reader found, matched against
+      // the reconstructed chains where the label sits inside a chain bay.
+      const rooms = this.roomsFromObservations(obs, interp);
+      if (rooms.length) {
+        const existing = new Map((d.rooms || []).map(r => [r.label.toLowerCase(), r]));
+        d.rooms = rooms.map(r => existing.get(r.label.toLowerCase())
+          ? { ...r, id: existing.get(r.label.toLowerCase()).id,
+              status: existing.get(r.label.toLowerCase()).status,
+              ceilingHeightMm: existing.get(r.label.toLowerCase()).ceilingHeightMm }
+          : r);
+      }
+
+      toast(interp.summary.lengthCount + ' dimensions read, ' + interp.summary.closingChains + ' chain(s) closed.' +
+        (rooms.length ? ' ' + rooms.length + ' rooms proposed — verify them.' : ''));
+      if (data.quality === 'poor') {
+        toast('The image is low quality. Check every room before sizing.', 'warn');
+      }
+    } catch (e) {
+      toast('Plan read failed: ' + e.message + '. Calibrate and enter the rooms manually.', 'bad');
+    } finally {
+      this.busy = false;
+      this.update();
+    }
+  }
+
+  /** Turn detected room labels into measurable room definitions. */
+  roomsFromObservations(obs, interp) {
+    const cal = this.design.calibration;
+    const hChain = interp.primaryHorizontalChain;
+    const vChain = interp.primaryVerticalChain;
+    const labels = (obs.roomLabels || []).filter(l => l.text && l.box);
+    if (!labels.length) return [];
+
+    // Without a calibration we cannot place a label against a chain station, so
+    // the room is proposed with no measurement — visible, and blocked.
+    const defs = labels.map(l => {
+      const def = { label: l.text, labelPx: l.box };
+      if (cal && hChain && vChain) {
+        const xMm = l.box.x / cal.pixelsPerMm;
+        const yMm = l.box.y / cal.pixelsPerMm;
+        const hBay = bayContaining(hChain, xMm);
+        const vBay = bayContaining(vChain, yMm);
+        if (hBay && vBay) {
+          def.hStations = [hBay.i, hBay.i + 1];
+          def.vStations = [vBay.i, vBay.i + 1];
+          def.boundaryPx = {
+            x: hChain.stations[hBay.i] * cal.pixelsPerMm,
+            y: vChain.stations[vBay.i] * cal.pixelsPerMm,
+            w: (hChain.stations[hBay.i + 1] - hChain.stations[hBay.i]) * cal.pixelsPerMm,
+            h: (vChain.stations[vBay.i + 1] - vChain.stations[vBay.i]) * cal.pixelsPerMm
+          };
+        }
+      }
+      return def;
+    });
+
+    return measureRooms(defs, { hChain, vChain, calibration: cal, walls: obs.walls || [] },
+      { settings: this.settings, imageQuality: this.imageQuality });
+  }
+
+  createRoomFromBox(box) {
+    const cal = this.design.calibration;
+    const [room] = measureRooms([{ label: 'New room ' + ((this.design.rooms || []).length + 1), boundaryPx: box }],
+      { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
+    this.design.rooms = [...(this.design.rooms || []), room];
+    this.selectedRoomId = room.id;
+    if (!cal) toast('Room added. Calibrate the plan to measure it, or type the dimensions on the Rooms tab.', 'warn');
+    this.update();
+  }
+
+  setRoomBoundary(id, box) {
+    const cal = this.design.calibration;
+    this.design.rooms = (this.design.rooms || []).map(r => {
+      if (r.id !== id) return r;
+      if (!cal) return { ...r, boundaryPx: box };
+      const [m] = measureRooms([{ ...r, boundaryPx: box, widthMm: undefined, lengthMm: undefined,
+                                  hStations: undefined, vStations: undefined }],
+        { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
+      return { ...m, id: r.id, label: r.label, conditioned: r.conditioned,
+               ceilingHeightMm: r.ceilingHeightMm, boundaryPx: box,
+               status: r.conditioned ? 'Review' : 'Excluded' };
+    });
+    this.update();
+  }
+
+  routeOverlay() {
+    const out = {};
+    if (this.design.mainRoute?.points) out.main = { points: this.design.mainRoute.points, label: 'Main duct' };
+    for (const [roomId, r] of Object.entries(this.design.ductRoutes || {})) {
+      if (!r.points) continue;
+      const room = (this.design.rooms || []).find(x => x.id === roomId);
+      out[roomId] = { points: r.points, label: room?.label || roomId };
+    }
+    return out;
+  }
+
+  completeRoute(points) {
+    const target = this.routeTargetRoomId;
+    if (!target) return toast('Choose which route you are drawing first.', 'bad');
+    const r = routeLength(this.design.calibration, points, { settings: this.settings });
+    if (r.lengthMm === null) return toast(r.note, 'bad');
+    const record = { ...r, points };
+    if (target === '__main') this.design.mainRoute = record;
+    else this.design.ductRoutes = { ...(this.design.ductRoutes || {}), [target]: record };
+    toast('Route measured: ' + r.lengthM + ' m');
+    this.update();
+  }
+
+  setRouteLength(id, value) {
+    const mm = value === '' ? null : Number(value) * 1000;
+    const patch = { lengthMm: mm, lengthM: mm === null ? null : Number(value),
+                    source: 'manual', note: 'Length entered by the estimator.' };
+    if (id === 'main') this.design.mainRoute = { ...(this.design.mainRoute || {}), ...patch };
+    else this.design.ductRoutes = { ...this.design.ductRoutes, [id]: { ...(this.design.ductRoutes[id] || {}), ...patch } };
+    this.update();
+  }
+
+  clearRoute(id) {
+    if (id === 'main') this.design.mainRoute = null;
+    else { const r = { ...this.design.ductRoutes }; delete r[id]; this.design.ductRoutes = r; }
+    this.update();
+  }
+
+  placeLayout(type, label) {
+    const img = this.design.plan;
+    const base = img ? { x: img.widthPx * 0.5, y: img.heightPx * 0.5 } : { x: 100, y: 100 };
+    this.design.layout = { ...(this.design.layout || {}),
+      [type]: { ...base, type, label } };
+    this.viewer.setMode(MODES.LAYOUT);
+    toast('Placed ' + label + ' — drag it into position.');
+    this.update();
+  }
+
+  placeAllOutlets() {
+    const layout = { ...(this.design.layout || {}) };
+    for (const row of (this.design.outlets?.rows || [])) {
+      const room = (this.design.rooms || []).find(r => r.id === row.roomId);
+      if (!room?.boundaryPx) continue;
+      for (let i = 0; i < row.quantity; i++) {
+        const frac = (i + 1) / (row.quantity + 1);
+        layout['outlet_' + row.roomId + '_' + i] = {
+          x: room.boundaryPx.x + room.boundaryPx.w * frac,
+          y: room.boundaryPx.y + room.boundaryPx.h / 2,
+          type: 'outlet', label: row.label + ' ' + (i + 1)
+        };
+      }
+    }
+    this.design.layout = layout;
+    this.viewer.setMode(MODES.LAYOUT);
+    this.update();
+  }
+
+  // ── Room actions ──────────────────────────────────────────────────────────
+
+  selectRoom(id) { this.selectedRoomId = id; this.viewer?.selectRoom(id); this.render(); }
+
+  editRoom(id, patch) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === id ? applyRoomOverride(r, patch, 'estimator') : r);
+    this.update();
+  }
+
+  verifyRoom(id) {
+    this.design.rooms = (this.design.rooms || []).map(r => r.id === id ? verifyRoom(r, 'estimator') : r);
+    this.update();
+  }
+
+  verifyAllHigh() {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.conditioned && r.confidenceBand === 'HIGH' ? verifyRoom(r, 'estimator') : r);
+    this.update();
+  }
+
+  verifyAll() {
+    const low = (this.design.rooms || []).filter(r => r.conditioned && r.confidenceBand === 'LOW');
+    if (low.length && !confirm(low.length + ' room(s) are LOW confidence:\n\n' +
+        low.map(r => '  • ' + r.label + ' (' + Math.round(r.confidence) + '%)').join('\n') +
+        '\n\nVerify them anyway? Check the dimensions on the plan first.')) return;
+    this.design.rooms = (this.design.rooms || []).map(r => r.conditioned ? verifyRoom(r, 'estimator') : r);
+    this.update();
+  }
+
+  addManualRoom() {
+    const label = prompt('Room name?', 'New room');
+    if (label === null) return;
+    const w = Number(prompt('Width in metres? (leave blank to enter an area instead)', '') || 0);
+    const l = Number(prompt('Length in metres?', '') || 0);
+    let room;
+    if (w > 0 && l > 0) {
+      room = buildRoom({ label, measurement: manualMeasurement(w * 1000, l * 1000) }, { settings: this.settings });
+    } else {
+      const a = Number(prompt('Floor area in m²?', '') || 0);
+      if (!a) return;
+      room = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: a, source: 'manual',
+        sourceLabel: 'Manual entry', evidence: ['Area entered by the estimator.'], areaOnly: true } },
+        { settings: this.settings });
+    }
+    this.design.rooms = [...(this.design.rooms || []), room];
+    this.selectedRoomId = room.id;
+    this.update();
+  }
+
+  deleteRoom(id) {
+    const r = (this.design.rooms || []).find(x => x.id === id);
+    if (!confirm('Remove ' + (r?.label || 'this room') + ' from the design?')) return;
+    this.design.rooms = (this.design.rooms || []).filter(x => x.id !== id);
+    if (this.selectedRoomId === id) this.selectedRoomId = null;
+    this.update();
+  }
+
+  mergeRoomPrompt() {
+    const rooms = this.design.rooms || [];
+    const sel = rooms.find(r => r.id === this.selectedRoomId);
+    if (!sel) return toast('Select a room first.', 'bad');
+    const others = rooms.filter(r => r.id !== sel.id);
+    const name = prompt('Merge "' + sel.label + '" into which room?\n\n' +
+      others.map((r, i) => (i + 1) + '. ' + r.label).join('\n'), '1');
+    const target = others[Number(name) - 1];
+    if (!target) return;
+    const area = (sel.areaSqM || 0) + (target.areaSqM || 0);
+    this.design.rooms = rooms
+      .filter(r => r.id !== sel.id)
+      .map(r => r.id === target.id
+        ? applyRoomOverride(r, { areaSqM: area, label: target.label + ' + ' + sel.label }, 'estimator')
+        : r);
+    this.selectedRoomId = target.id;
+    this.update();
+  }
+
+  splitRoomPrompt() {
+    const sel = (this.design.rooms || []).find(r => r.id === this.selectedRoomId);
+    if (!sel) return toast('Select a room first.', 'bad');
+    if (!sel.areaSqM) return toast('That room has no area to split.', 'bad');
+    const share = Number(prompt('What share of ' + sel.label + ' goes to the new room? (0–1)', '0.5'));
+    if (!(share > 0 && share < 1)) return;
+    const newArea = sel.areaSqM * share;
+    const label = prompt('Name for the new room?', sel.label + ' B') || (sel.label + ' B');
+    const kept = applyRoomOverride(sel, { areaSqM: sel.areaSqM - newArea }, 'estimator');
+    const added = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: newArea,
+      source: 'manual', sourceLabel: 'Manual entry',
+      evidence: ['Split from ' + sel.label + ' by the estimator.'], areaOnly: true },
+      ceilingHeightMm: sel.ceilingHeightMm, conditioned: sel.conditioned }, { settings: this.settings });
+    this.design.rooms = (this.design.rooms || []).map(r => r.id === sel.id ? kept : r).concat([added]);
+    this.update();
+  }
+
+  // ── Design field actions ──────────────────────────────────────────────────
+
+  setDesignField(key, value) { this.design[key] = value; this.update(); }
+
+  selectUnit(brandId, modelId) {
+    this.design.selectedUnitKey = brandId + ':' + modelId;
+    this.update();
+  }
+
+  setLoadOverride(roomId, coolingW) {
+    const list = (this.design.roomLoadOverrides || []).filter(o => o.roomId !== roomId);
+    if (coolingW !== null) list.push({ roomId, coolingW, note: 'Load manually adjusted by the estimator.' });
+    this.design.roomLoadOverrides = list;
+    this.update();
+  }
+
+  setAirflowOverride(roomId, value) {
+    const o = { ...(this.design.airflowOverrides || {}) };
+    if (value === '' || value === null) delete o[roomId]; else o[roomId] = Number(value);
+    this.design.airflowOverrides = o;
+    this.update();
+  }
+
+  setOutletOverride(roomId, patch) {
+    const o = { ...(this.design.outletOverrides || {}) };
+    o[roomId] = { ...(o[roomId] || {}), ...patch };
+    if (o[roomId].quantity === null) delete o[roomId].quantity;
+    this.design.outletOverrides = o;
+    this.update();
+  }
+
+  setDuctDiameter(sectionId, diameterMm) {
+    this.design.ductDiameterOverrides = { ...(this.design.ductDiameterOverrides || {}), [sectionId]: diameterMm };
+    this.update();
+  }
+
+  setDuctLength(sectionId, value) {
+    if (sectionId === 'main') return this.setRouteLength('main', value);
+
+    // A final connection has its own length, held alongside the branch route so
+    // editing one does not silently rewrite the other.
+    const finalMatch = sectionId.match(/^final_(.+)_(\d+)$/);
+    if (finalMatch) {
+      const [, roomId, n] = finalMatch;
+      const routes = { ...(this.design.ductRoutes || {}) };
+      const route = { ...(routes[roomId] || {}) };
+      const lengths = [...(route.finalLengthsMm || [])];
+      lengths[Number(n) - 1] = value === '' ? null : Number(value) * 1000;
+      route.finalLengthsMm = lengths;
+      routes[roomId] = route;
+      this.design.ductRoutes = routes;
+      return this.update();
+    }
+    this.setRouteLength(sectionId.replace(/^branch_/, ''), value);
+  }
+
+  setReturnGrille(index, size) {
+    const list = [...(this.design.returnGrilleOverrides || [])];
+    list[index] = size;
+    this.design.returnGrilleOverrides = list;
+    this.update();
+  }
+
+  renameZone(zoneId, name) {
+    this.design.zoneDefinitions = (this.design.zones?.zones || []).map(z =>
+      z.id === zoneId ? { ...z, name } : z);
+    this.update();
+  }
+
+  setZoneKind(zoneId, kind) {
+    this.design.zoneDefinitions = (this.design.zones?.zones || []).map(z =>
+      z.id === zoneId ? { ...z, kind } : z);
+    this.update();
+  }
+
+  resetZones() { this.design.zoneDefinitions = null; this.update(); }
+
+  groupZonePrompt() {
+    const zones = this.design.zones?.zones || [];
+    const pick = prompt('Group which zones into one? Enter numbers separated by commas.\n\n' +
+      zones.map((z, i) => (i + 1) + '. ' + z.name + ' (' + z.airflowLs + ' L/s)').join('\n'), '1,2');
+    if (!pick) return;
+    const idx = pick.split(',').map(x => Number(x.trim()) - 1).filter(i => zones[i]);
+    if (idx.length < 2) return;
+    const merged = idx.map(i => zones[i]);
+    const rest = zones.filter((_, i) => !idx.includes(i));
+    this.design.zoneDefinitions = [...rest, {
+      id: merged[0].id, name: merged.map(z => z.name).join(' + '), kind: 'grouped',
+      roomIds: merged.flatMap(z => z.roomIds), rooms: merged.flatMap(z => z.rooms),
+      airflowLs: merged.reduce((s, z) => s + z.airflowLs, 0)
+    }];
+    this.update();
+  }
+
+  editBom(index, patch) {
+    const item = this.design.bom.items[index];
+    if (!item) return;
+    // Record the edit against the line's identity, not its position, so a full
+    // recompute re-applies it instead of losing it.
+    const match = item.key + '|' + item.label;
+    const edits = (this.design.bomEdits || []).filter(e => e.match !== match);
+    edits.push({
+      match,
+      quantity: patch.quantity !== undefined ? patch.quantity : item.quantity,
+      unitCost: patch.unitCost !== undefined ? patch.unitCost : item.unitCost
+    });
+    this.design.bomEdits = edits;
+    this.update();
+  }
+
+  addMaterialPrompt() {
+    const label = prompt('Material description?');
+    if (!label) return;
+    const quantity = Number(prompt('Quantity?', '1') || 1);
+    const unitCost = Number(prompt('Unit cost ($)?', '0') || 0);
+    this.design.extraMaterials = [...(this.design.extraMaterials || []),
+      { label, quantity, unitCost, unit: 'each', category: 'other' }];
+    this.update();
+  }
+
+  addLabourPrompt() {
+    const task = prompt('Labour description?');
+    if (!task) return;
+    const hours = Number(prompt('Hours?', '1') || 0);
+    this.design.extraLabour = [...(this.design.extraLabour || []), { task, hours }];
+    this.update();
+  }
+
+  addExtra() {
+    this.design.quoteExtras = [...(this.design.quoteExtras || []), { label: '', qty: 1, price: 0 }];
+    this.update();
+  }
+  editExtra(i, patch) {
+    this.design.quoteExtras = (this.design.quoteExtras || []).map((e, idx) => idx === i ? { ...e, ...patch } : e);
+    this.update();
+  }
+  removeExtra(i) {
+    this.design.quoteExtras = (this.design.quoteExtras || []).filter((_, idx) => idx !== i);
+    this.update();
+  }
+
+  exportBomCsv() {
+    const rows = [['Category', 'Item', 'Qty', 'Unit', 'Unit cost', 'Total', 'Price source']];
+    for (const i of this.design.bom.items) {
+      rows.push([i.category, i.label, i.quantity, i.unit, i.unitCost ?? '', i.totalCost ?? '', i.priceSource ?? '']);
+    }
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = this.design.id + '-bom.csv';
+    a.click();
+  }
+
+  acknowledgeWarning(w) {
+    const who = prompt('Acknowledging "' + w.code + '".\n\n' + w.message + '\n\nYour name?');
+    if (!who) return;
+    const note = prompt('What have you done about it? (optional)') || '';
+    this.design.warningAcknowledgements = acknowledge(this.design, w, who, note);
+    this.update();
+  }
+
+  // ── Settings ──────────────────────────────────────────────────────────────
+
+  openSettings(section = 'load') { this.settingsSection = section; this.render(); }
+  closeSettings() { this.settingsSection = null; this.render(); }
+
+  updateSetting(path, value) {
+    const keys = path.split('.');
+    let cur = this.settingsOverride;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (typeof cur[keys[i]] !== 'object' || cur[keys[i]] === null) cur[keys[i]] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+    this.settings = settingsWith(this.settingsOverride);
+    this.update();
+  }
+
+  resetSettingsSection(section) {
+    if (!confirm('Reset the ' + section + ' settings to the shipped defaults?')) return;
+    if (section === 'materials') this.materialRates = {};
+    else if (section === 'specs') { /* specs are data, never reset in bulk */ toast('Equipment specs are manufacturer data — clear them one model at a time.', 'warn'); return; }
+    else delete this.settingsOverride[section === 'return' ? 'returnAir' : section];
+    this.settings = settingsWith(this.settingsOverride);
+    this.rebuildCatalogue();
+    this.update();
+  }
+
+  updateMaterialRate(path, value) {
+    const keys = path.split('.');
+    let cur = this.materialRates;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (typeof cur[keys[i]] !== 'object' || cur[keys[i]] === null) cur[keys[i]] = {};
+      cur = cur[keys[i]];
+    }
+    if (value === null) delete cur[keys[keys.length - 1]];
+    else cur[keys[keys.length - 1]] = value;
+    this.update();
+  }
+
+  setSpecModel(key) { this.specModelKey = key; this.render(); }
+
+  updateSpec(specKey, fieldName, value) {
+    this.equipmentSpecs = { ...this.equipmentSpecs,
+      [specKey]: { ...(this.equipmentSpecs[specKey] || {}),
+        [fieldName]: value === '' ? undefined : (isNaN(Number(value)) ? value : Number(value)) } };
+    this.rebuildCatalogue();
+    this.update();
+  }
+
+  async saveSettings() {
+    await Promise.all([
+      Store.setJson(Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride),
+      Store.setJson(Store.SETTINGS_KEYS.materialRates, this.materialRates),
+      Store.setJson(Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs)
+    ]);
+    toast('HVAC Design Settings saved.');
+  }
+
+  // ── Persistence & quote (PART 23) ─────────────────────────────────────────
+
+  async save(reason = 'Saved by estimator') {
+    this.design = addRevision(this.design, { by: 'estimator', reason });
+    const r = await Store.saveDesign(this.design);
+    this.dirty = false;
+    toast(r.ok ? 'Design saved (revision ' + this.design.revisions.length + ').'
+               : 'Saved locally only — no connection.', r.ok ? '' : 'warn');
+    this.render();
+  }
+
+  async showDesignList() {
+    const list = await Store.listDesigns();
+    const pick = prompt('Recent designs:\n\n' +
+      list.map((d, i) => (i + 1) + '. ' + (d.customer || '—') + '  ' + d.id +
+        '  (' + new Date(d.updatedAt).toLocaleDateString('en-AU') + ')').join('\n') +
+      '\n\nEnter a number to open, or Cancel.');
+    const chosen = list[Number(pick) - 1];
+    if (!chosen) return;
+    const d = await Store.loadDesign(chosen.id);
+    if (!d) return toast('Could not load that design.', 'bad');
+    this.design = d;
+    this.selectedRoomId = null;
+    this.update();
+  }
+
+  async addDesignToQuote() {
+    const d = this.design;
+    if (!d.warningSummary?.canApprove) {
+      if (!confirm(d.warningSummary.blockReason + '\n\nSend it to a quote anyway?')) return;
+    }
+    if (!d.commercials?.sellPriceIncGst) {
+      return toast('No sell price. Set the installed price for this model in the existing Price Setup screen.', 'bad');
+    }
+    try {
+      const r = await Store.pushDesignToQuote(d);
+      this.design.quoteId = r.quoteId;
+      this.design.status = 'quoted';
+      await this.save('Pushed to quote ' + r.quoteId);
+      this.design.quotedRevision = this.design.revisions.length;
+      prompt('Quote created. Send this link to the customer:', r.signUrl);
+      this.update();
+    } catch (e) {
+      toast(e.message, 'bad');
+    }
+  }
+
+  /** PART 23 — show exactly what changed before the quote is refreshed. */
+  async updateQuoteFromDesign() {
+    const d = this.design;
+    if (!d.quoteId) return toast('This design is not linked to a quote yet.', 'bad');
+
+    // Compare against the revision the quote was actually built from, so the
+    // change list is the real design diff rather than a guess.
+    const quotedRev = (d.revisions || []).find(r => r.number === d.quotedRevision)
+      || [...(d.revisions || [])].reverse().find(r => /quote/i.test(r.reason || ''));
+    const changes = quotedRev ? diffDesigns(quotedRev.snapshot, d) : [];
+
+    // The customer-facing total is the thing that actually matters, so it is
+    // read back off the live quote rather than inferred.
+    const existing = await Store.fetchQuote(d.quoteId);
+    let before = [];
+    try { before = JSON.parse(existing?.line_items || '[]'); } catch (e) { /* ignore */ }
+    const oldTotal = before.reduce((s, i) => s + (Number(i.price) || 0), 0);
+    const newTotal = (d.quoteLineItems || []).reduce((s, i) => s + (Number(i.price) || 0), 0);
+    if (oldTotal !== newTotal) {
+      changes.unshift({ field: 'Quoted total (inc GST)', from: '$' + oldTotal.toFixed(2), to: '$' + newTotal.toFixed(2) });
+    }
+
+    const body = changes.length
+      ? changes.map(c => '  • ' + c.field + ':  ' + (c.from ?? '—') + '  →  ' + (c.to ?? '—')).join('\n')
+      : (quotedRev ? 'Nothing has changed since the quote was created.'
+                   : 'No earlier revision to compare against — the quote will be rewritten from the current design.');
+
+    if (!confirm('Update quote ' + d.quoteId + ' from this design?\n\n' + body)) return;
+
+    try {
+      await Store.pushDesignToQuote(d, { quoteId: d.quoteId });
+      await this.save('Updated quote ' + d.quoteId);
+      this.design.quotedRevision = this.design.revisions.length;
+      toast('Quote ' + d.quoteId + ' updated.');
+      this.render();
+    } catch (e) { toast(e.message, 'bad'); }
+  }
+
+  /** Historical designs are never overwritten — an earlier one can be restored. */
+  showRevisions() {
+    const revs = this.design.revisions || [];
+    if (!revs.length) return toast('No saved revisions yet.', 'warn');
+    const pick = prompt('Revisions of ' + this.design.id + ':\n\n' +
+      revs.map(r => '  ' + r.number + '. ' + new Date(r.at).toLocaleString('en-AU') +
+        '  —  ' + (r.reason || 'saved') +
+        (r.snapshot.systemLoad ? '  (' + r.snapshot.systemLoad.designKw + ' kW)' : '')).join('\n') +
+      '\n\nEnter a number to restore it as a NEW revision, or Cancel.');
+    const n = Number(pick);
+    if (!revs.some(r => r.number === n)) return;
+    this.design = restoreRevision(this.design, n, 'estimator');
+    this.selectedRoomId = null;
+    this.loadedPlanUrl = null;
+    toast('Restored revision ' + n + ' as revision ' + this.design.revisions.length + '.');
+    this.update();
+  }
+
+  openInQuoteBuilder() {
+    if (!this.design.quoteId) return toast('Add the design to a quote first.', 'bad');
+    window.open('/admin.html?draft=' + encodeURIComponent(this.design.quoteId), '_blank');
+  }
+
+  // ── Reports (PART 26) ─────────────────────────────────────────────────────
+
+  showReportMenu() {
+    const snapshot = this.viewer?.snapshot() || null;
+    const logo = document.querySelector('.brand img')?.src || null;
+    const which = prompt('Which report?\n\n1. Internal HVAC Design Sheet\n2. Customer HVAC Design Summary', '1');
+    if (which === '1') openReport(internalReportHtml(this.design, { logo, planSnapshot: snapshot }), 'internal sheet');
+    else if (which === '2') openReport(customerReportHtml(this.design, { logo, planSnapshot: snapshot }), 'customer summary');
+  }
+
+  // ── NAC Design Assistant (PART 28) ────────────────────────────────────────
+
+  renderAssistant() {
+    this.assistantEl.style.display = this.assistantOpen ? 'flex' : 'none';
+    if (!this.assistantOpen) return;
+
+    const inputEl = h('textarea', { class: 'inp ta', rows: 3,
+      placeholder: 'Ask about this design — sizing, a room measurement, a duct size, a warning…' });
+
+    const ask = async (q) => {
+      const question = q || inputEl.value.trim();
+      if (!question) return;
+      inputEl.value = '';
+      this.assistantLog.push({ role: 'you', text: question });
+      this.assistantLog.push({ role: 'assistant', text: 'Thinking…', pending: true });
+      this.renderAssistant();
+      try {
+        // The assistant only needs the engineering picture. The plan image,
+        // the revision history and the customer's contact details never leave
+        // the browser.
+        const { plan, revisions, customer, ...engineering } = this.design;
+        const res = await fetch('/api/design-assistant', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            design: { ...engineering, settingsUsed: this.settings }
+          })
+        });
+        const data = await res.json();
+        this.assistantLog.pop();
+        this.assistantLog.push({ role: 'assistant', text: data.error ? ('Sorry — ' + data.error) : data.answer });
+      } catch (e) {
+        this.assistantLog.pop();
+        this.assistantLog.push({ role: 'assistant', text: 'Could not reach the assistant: ' + e.message });
+      }
+      this.renderAssistant();
+    };
+
+    const suggestions = [
+      'Why is this system size recommended?',
+      'Which rooms are least reliable and why?',
+      'Are any duct velocities too high?',
+      'Explain the static pressure estimate.',
+      'What would you change about the zoning?'
+    ];
+
+    mount(this.assistantEl,
+      h('div', { class: 'assist-head' },
+        h('strong', {}, 'NAC DESIGN ASSISTANT'),
+        button('✕', () => { this.assistantOpen = false; this.render(); }, 'tiny ghost')),
+      h('div', { class: 'assist-note' },
+        'Answers come from this design\'s calculated figures only. The assistant can suggest changes ' +
+        'but cannot make them.'),
+      h('div', { class: 'assist-log' },
+        this.assistantLog.length ? this.assistantLog.map(m =>
+          h('div', { class: 'msg ' + m.role + (m.pending ? ' pending' : '') }, m.text))
+          : h('div', { class: 'assist-suggest' },
+              suggestions.map(s => button(s, () => ask(s), 'chip')))),
+      h('div', { class: 'assist-input' }, inputEl,
+        button('Ask', () => ask(), 'primary small')));
+    const log = this.assistantEl.querySelector('.assist-log');
+    if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  // ── Sample project (PART 36) ──────────────────────────────────────────────
+
+  loadSample() {
+    const cal = calibrate({
+      pointA: Sample.SAMPLE_PLAN_META.calibrationPointA,
+      pointB: Sample.SAMPLE_PLAN_META.calibrationPointB,
+      knownDistance: Sample.SAMPLE_PLAN_META.calibrationKnownDistance,
+      unit: Sample.SAMPLE_PLAN_META.calibrationUnit,
+      imageWidthPx: Sample.SAMPLE_PLAN_META.imageWidthPx,
+      imageHeightPx: Sample.SAMPLE_PLAN_META.imageHeightPx,
+      scaleLabel: Sample.SAMPLE_PLAN_META.scaleLabelText
+    });
+    const interp = interpretPlan({
+      rawDetections: Sample.sampleDetections(),
+      openings: Sample.sampleOpenings(),
+      walls: Sample.sampleWalls(),
+      overallWidthMm: Sample.H_OVERALL_MM,
+      overallDepthMm: Sample.V_OVERALL_MM
+    }, { settings: this.settings });
+
+    const px = Sample.PX_PER_MM, o = Sample.SAMPLE_PLAN_META.originPx;
+    const rooms = measureRooms(Sample.SAMPLE_ROOMS.map(r => ({
+      ...r, hStations: r.h, vStations: r.v,
+      boundaryPx: {
+        x: o.x + Sample.H_STATIONS[r.h[0]] * px,
+        y: o.y + Sample.V_STATIONS[r.v[0]] * px,
+        w: (Sample.H_STATIONS[r.h[1]] - Sample.H_STATIONS[r.h[0]]) * px,
+        h: (Sample.V_STATIONS[r.v[1]] - Sample.V_STATIONS[r.v[0]]) * px
+      }
+    })), {
+      hChain: interp.primaryHorizontalChain,
+      vChain: interp.primaryVerticalChain,
+      walls: Sample.sampleWalls(),
+      calibration: cal
+    }, { settings: this.settings });
+
+    const d = createDesign({ customer: Sample.SAMPLE_CUSTOMER, job: Sample.SAMPLE_JOB });
+    d.calibration = cal;
+    d.scaleLabel = cal.scaleLabel;
+    d.detectedDimensions = interp.detectedDimensions;
+    d.chains = interp.chains;
+    d.rooms = rooms;
+    d.mainRoute = { lengthMm: 4200, lengthM: 4.2, source: 'manual', note: 'Sample project.' };
+    d.ductRoutes = Object.fromEntries(rooms.filter(r => r.conditioned)
+      .map((r, i) => [r.id, { lengthMm: 5000 + i * 900, lengthM: (5000 + i * 900) / 1000,
+                              source: 'manual', note: 'Sample project.' }]));
+    d.returnDuctLengthMm = 2500;
+    d.notes = 'Sample Australian builder plan — every room dimension is reconstructed from the ' +
+      'perimeter dimension chains, not read from a room label.';
+    d.plan = {
+      fileName: 'sample-builder-plan.svg', mediaType: 'image/svg+xml', isPdf: false,
+      dataUrl: samplePlanDataUrl(),
+      widthPx: Sample.SAMPLE_PLAN_META.imageWidthPx,
+      heightPx: Sample.SAMPLE_PLAN_META.imageHeightPx,
+      uploadedAt: new Date().toISOString()
+    };
+    this.design = d;
+    this.selectedRoomId = null;
+    toast('Sample plan loaded. Rooms still need verifying — that is the point.');
+  }
+}
+
+/** Find which bay of a chain a millimetre coordinate falls in. */
+function bayContaining(chain, mm) {
+  if (!chain?.stations) return null;
+  for (let i = 0; i < chain.stations.length - 1; i++) {
+    if (mm >= chain.stations[i] && mm <= chain.stations[i + 1]) {
+      const width = chain.stations[i + 1] - chain.stations[i];
+      if (width < 400) continue;      // that is a wall, not a room
+      return { i, width };
+    }
+  }
+  return null;
+}
+
+/**
+ * Render page 1 of a PDF to a PNG data URL using pdf.js when it is available.
+ * If it is not, the caller falls back to asking for an image — the estimator is
+ * never left without a way forward.
+ */
+async function renderPdfFirstPage(dataUrl) {
+  const pdfjs = window.pdfjsLib;
+  if (!pdfjs) return null;
+  try {
+    const raw = atob(dataUrl.split(',')[1]);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    const doc = await pdfjs.getDocument({ data: bytes }).promise;
+    const page = await doc.getPage(1);
+    // Render at a generous scale — plan text has to stay legible when zoomed.
+    const viewport = page.getViewport({ scale: 2.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    return canvas.toDataURL('image/png');
+  } catch (e) {
+    return null;
+  }
+}

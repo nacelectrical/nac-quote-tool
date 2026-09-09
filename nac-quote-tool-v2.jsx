@@ -778,6 +778,7 @@ Call create_draft now.`
         <img src={NAC_LOGO} alt="NAC" style={{ height:40, objectFit:"contain" }} />
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           {step>=3 && <div style={{ textAlign:"right" }}><div style={{ color:Y, fontWeight:700, fontSize:11 }}>{qNum}</div><div style={{ color:"#444", fontSize:10 }}>{qDate}</div></div>}
+          <a href="/designer.html" target="_blank" rel="noopener" style={{ background:"none", border:`1px solid ${Y}55`, borderRadius:8, color:Y, fontSize:11, padding:"6px 12px", cursor:"pointer", textDecoration:"none" }} title="NAC AI HVAC Designer — plan interpretation, load calculation and duct design">🧊 AI Designer</a>
           <button onClick={()=>setScreen("history")} style={{ background:"none", border:"1px solid #252545", borderRadius:8, color:"#555", fontSize:11, padding:"6px 12px", cursor:"pointer" }}>📋 Quotes</button>
           <button onClick={()=>setScreen("setup")} style={{ background:"none", border:"1px solid #252545", borderRadius:8, color:"#555", fontSize:11, padding:"6px 12px", cursor:"pointer" }}>⚙ Prices</button>
         </div>
