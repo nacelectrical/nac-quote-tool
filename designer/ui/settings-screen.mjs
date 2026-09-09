@@ -2,7 +2,7 @@
 // Every engineering assumption the deterministic engines use is edited here,
 // not buried in source. Saved to the existing nac_settings store.
 
-import { h, card, table, field, input, select, button, banner, mount } from './dom.mjs';
+import { h, card, table, field, input, select, button, banner, mount, money } from './dom.mjs';
 import { MATERIAL_CATALOGUE } from '../engines/materials.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
 
@@ -184,20 +184,55 @@ export function renderSettingsScreen(app, section = 'load') {
       mapTable('Component losses (Pa)', 'pressure.componentPa')
     ],
 
-    commercial: () => [
-      card('Commercial', 'Margin and GST follow NAC\'s existing quote convention — the sell price is always ' +
-        'the installed price from Price Setup.',
-        h('div', { class: 'grid-3' },
-          numField('GST rate', 'commercial.gstRate'),
-          numField('Labour rate ($/h)', 'commercial.labourRatePerHour'),
-          numField('Hours per outlet', 'commercial.labourHoursPerOutlet'),
-          numField('Hours per zone', 'commercial.labourHoursPerZone'),
-          numField('Hours — indoor unit', 'commercial.labourHoursIndoorUnit'),
-          numField('Hours — outdoor unit', 'commercial.labourHoursOutdoorUnit'),
-          numField('Hours per duct metre', 'commercial.labourHoursPerDuctMetre'),
-          numField('Hours — return air', 'commercial.labourHoursReturn'),
-          numField('Hours — commissioning', 'commercial.labourHoursCommissioning')))
-    ],
+    commercial: () => {
+      const flat = S.commercial.labourMode !== 'hourly';
+      return [
+        card('How the job is charged', null,
+          h('div', { class: 'grid-3' },
+            field('Charging basis', select(S.commercial.labourMode,
+              [{ value: 'flat', label: 'Flat fee per job' },
+               { value: 'hourly', label: 'Hourly labour from the design' }],
+              v => app.updateSetting('commercial.labourMode', v)),
+              'NAC charges a flat fee — everything bought for the job, plus a set amount on top.'),
+            flat ? numField('Job fee ($)', 'commercial.jobFee',
+              'What NAC makes on the job. Covers labour, overhead and profit together.') : null,
+            flat ? field('The fee is', select(S.commercial.jobFeeExGst === false ? 'inc' : 'ex',
+              [{ value: 'ex', label: 'Ex GST — GST added on top for the customer' },
+               { value: 'inc', label: 'Already includes GST' }],
+              v => app.updateSetting('commercial.jobFeeExGst', v === 'ex')),
+              'Ex GST means the full fee lands with NAC.') : null,
+            numField('GST rate', 'commercial.gstRate')),
+          flat ? banner('info',
+            'Sell price = equipment + materials + subcontractor + other, plus the ' +
+            money(S.commercial.jobFee) + ' fee. Gross profit on every job comes out at exactly the fee, ' +
+            'so anything you enter as a cost is automatically recovered.') : null),
+
+        card('How the sell price is worked out', null,
+          field('Pricing basis', select(S.commercial.pricingBasis,
+            [{ value: 'materials_plus_fee', label: 'Job cost + flat fee' },
+             { value: 'catalogue_price', label: 'Installed price from Price Setup' }],
+            v => app.updateSetting('commercial.pricingBasis', v)),
+            S.commercial.pricingBasis === 'materials_plus_fee'
+              ? 'The per-model installed prices in Price Setup are ignored for pricing. They are still shown ' +
+                'on the Financials tab for comparison, and a price typed on that tab still overrides everything.'
+              : 'Uses the installed price NAC has stored against the selected model.'),
+          S.commercial.pricingBasis === 'materials_plus_fee'
+            ? banner('warn', 'On this basis your material rates go straight through to the customer. ' +
+                'Any line still on a shipped placeholder rate raises a warning on the design.')
+            : null),
+
+        !flat ? card('Hourly rates', 'Used only while the charging basis is hourly',
+          h('div', { class: 'grid-3' },
+            numField('Labour rate ($/h)', 'commercial.labourRatePerHour'),
+            numField('Hours per outlet', 'commercial.labourHoursPerOutlet'),
+            numField('Hours per zone', 'commercial.labourHoursPerZone'),
+            numField('Hours — indoor unit', 'commercial.labourHoursIndoorUnit'),
+            numField('Hours — outdoor unit', 'commercial.labourHoursOutdoorUnit'),
+            numField('Hours per duct metre', 'commercial.labourHoursPerDuctMetre'),
+            numField('Hours — return air', 'commercial.labourHoursReturn'),
+            numField('Hours — commissioning', 'commercial.labourHoursCommissioning'))) : null
+      ];
+    },
 
     plan: () => [
       card('Plan interpretation', null, h('div', { class: 'grid-3' },
@@ -251,11 +286,20 @@ export function renderSettingsScreen(app, section = 'load') {
                label: m.brandName + ' — ' + m.name + ' (' + m.kw + ' kW ' + m.phase + ')' +
                  (m.specStatus === 'complete' ? ' ✓' : '') }))],
             v => app.setSpecModel(v))),
-          app.specModelKey ? h('div', { class: 'grid-3' },
-            ...REQUIRED_SPEC_FIELDS.map(f => field(f,
-              input(app.equipmentSpecs?.[app.specModelKey]?.[f] ?? '',
-                v => app.updateSpec(app.specModelKey, f, v),
-                { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' })))) : null))
+          app.specModelKey ? h('div', {},
+            banner('info', 'Supplier cost is what the unit costs NAC. On the job-cost-plus-fee basis it ' +
+              'goes straight into the customer price, so a missing one under-prices the job.'),
+            h('div', { class: 'grid-3' },
+              field('supplierCost ($)',
+                input(app.equipmentSpecs?.[app.specModelKey]?.supplierCost ?? '',
+                  v => app.updateSpec(app.specModelKey, 'supplierCost', v),
+                  { type: 'number', step: '0.01' }),
+                'What NAC pays for the indoor + outdoor set'),
+              ...REQUIRED_SPEC_FIELDS.map(f => field(f,
+                input(app.equipmentSpecs?.[app.specModelKey]?.[f] ?? '',
+                  v => app.updateSpec(app.specModelKey, f, v),
+                  { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' })))))
+            : null))
     ]
   };
 

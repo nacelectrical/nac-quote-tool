@@ -131,14 +131,41 @@ engine splits the all-in 145 W/m² into a fabric base plus glazing, occupancy an
 appliances; the defaults are calibrated so a typical project lands within a few
 percent of the rule, and the sample project comes out at +7.6%.
 
-## Prices
+## Pricing
 
-- **Sell price** is always NAC's existing installed price for the selected
-  model. The designer never invents one — with no price configured it says so
-  and refuses to quote.
-- **Material rates** ship as clearly-labelled placeholders. Any design using one
-  raises a CHECK warning naming the lines. Enter NAC's real rates in
-  HVAC Design Settings → Material rates.
+NAC charges a flat fee per job — everything bought for the job, plus a set
+amount on top. The fee is **not a cost**: it is the margin, covering labour,
+overhead and profit together.
+
+```
+equipment + materials + subcontractor + other  =  total job cost
+                                     + job fee  =  sell price (ex GST)
+                                        + GST   =  sell price (inc GST)
+                                gross profit    =  the job fee, exactly
+```
+
+Sample project: $16,473.20 cost + $6,000 fee = $22,473.20 ex GST →
+**$24,720.52 inc GST**, gross profit $6,000 (26.7%).
+
+Because every cost is recovered before the fee is added, anything entered as a
+cost — a subcontractor, an access allowance — never eats into the margin. Set
+the fee in HVAC Design Settings → Commercial, along with whether it is ex or
+inc GST.
+
+The older basis (the installed price stored per model in Price Setup) is still
+there and selectable, and a price typed on the Financials tab overrides both.
+
+### Because the price is built from costs, a missing cost is a pricing error
+
+- A line with **no cost at all** raises a **CRITICAL** warning naming it, and
+  blocks design approval. Otherwise the quote goes out short by whatever that
+  line is worth.
+- **Material rates** ship as clearly-labelled placeholders. On this basis they
+  go straight through to the customer, so any design using one raises a
+  **WARNING**. Enter NAC's real rates in HVAC Design Settings → Material rates.
+- **Equipment supplier cost** is what the unit costs NAC. Price Setup has no
+  cost field, so it lives in HVAC Design Settings → Equipment specs (it will
+  still read a `cost` from Price Setup if one is ever added there).
 - **Manufacturer specs** (rated airflow, available static, dimensions,
   electrical, refrigerant) are never guessed. Missing ones report
   `SPECIFICATION DATA REQUIRED` and are excluded from the checks that need them.

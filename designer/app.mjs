@@ -860,10 +860,17 @@ export class DesignerApp {
   }
 
   addLabourPrompt() {
-    const task = prompt('Labour description?');
+    const flat = this.settings.commercial.labourMode !== 'hourly';
+    const task = prompt(flat ? 'What is the extra charge for?' : 'Labour description?');
     if (!task) return;
-    const hours = Number(prompt('Hours?', '1') || 0);
-    this.design.extraLabour = [...(this.design.extraLabour || []), { task, hours }];
+    if (flat) {
+      const cost = Number(prompt('Amount ($)?', '0') || 0);
+      if (!cost) return;
+      this.design.extraLabour = [...(this.design.extraLabour || []), { task, cost }];
+    } else {
+      const hours = Number(prompt('Hours?', '1') || 0);
+      this.design.extraLabour = [...(this.design.extraLabour || []), { task, hours }];
+    }
     this.update();
   }
 

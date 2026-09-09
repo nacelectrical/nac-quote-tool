@@ -119,6 +119,9 @@ export const ZONE_CONTROLLERS = [
  * Fields that must come from the manufacturer. Anything not present in NAC's
  * spec store is reported as SPECIFICATION DATA REQUIRED — never guessed.
  */
+/** Commercial fields held alongside the specs — not manufacturer data. */
+export const COMMERCIAL_SPEC_FIELDS = ['supplierCost'];
+
 export const REQUIRED_SPEC_FIELDS = [
   'ratedAirflowLs',
   'availableStaticPa',
@@ -156,8 +159,12 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
           specKey,
           // Commercial — straight from the existing NAC price record.
           sellPrice,                                    // installed price inc GST, as NAC already stores it
+          // What the unit costs NAC. Price Setup does not carry a cost field,
+          // so this normally comes from the designer's own equipment store.
           supplierCost: savedModel?.cost !== undefined && savedModel?.cost !== '' && savedModel?.cost !== null
-            ? Number(savedModel.cost) : null,
+            ? Number(savedModel.cost)
+            : (specs.supplierCost !== undefined && specs.supplierCost !== null && specs.supplierCost !== ''
+                ? Number(specs.supplierCost) : null),
           hasPrice: sellPrice !== null && isFinite(sellPrice) && sellPrice > 0,
           // Engineering — only what NAC has actually entered.
           specs,

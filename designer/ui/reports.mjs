@@ -266,24 +266,53 @@ export function internalReportHtml(design, { logo = null, planSnapshot = null } 
   }
 
   if (d.labour) {
-    b += '<h2>Labour</h2>' + tbl([
-      { label: 'Task', key: 'task' }, { label: 'Hours', r: true, key: 'hours' }
-    ], d.labour.rows) +
-    '<p class="note">' + esc(d.labour.totalHours) + ' h at ' + money(d.labour.ratePerHour) + '/h = ' +
-      money(d.labour.totalCost) + '</p>';
+    if (d.labour.mode === 'flat') {
+      b += '<h2>Installation charge</h2>' + tbl([
+        { label: 'Item', key: 'task' },
+        { label: 'Amount', r: true, get: r => money(r.cost) }
+      ], d.labour.rows) +
+      '<p class="note">Flat job fee: ' + money(d.labour.totalFee) + ' ' +
+        (d.labour.jobFeeExGst ? 'ex GST' : 'inc GST') +
+        '. This is margin, not cost, so it is not included in the job cost below.</p>';
+    } else {
+      b += '<h2>Labour</h2>' + tbl([
+        { label: 'Task', key: 'task' },
+        { label: 'Hours', r: true, key: 'hours' },
+        { label: 'Cost', r: true, get: r => money(r.cost) }
+      ], d.labour.rows) +
+      '<p class="note">' + esc(d.labour.totalHours) + ' h at ' + money(d.labour.ratePerHour) + '/h = ' +
+        money(d.labour.totalCost) + '</p>';
+    }
   }
 
   if (d.commercials) {
     const c = d.commercials;
+    const onFee = c.pricingBasis?.key === 'materials_plus_fee';
     b += '<h2>Costing</h2>' + kv([
       ['Equipment', money(c.equipmentCost)], ['Materials', money(c.materialsCost)],
       ['Labour', money(c.labourCost)], ['Subcontractor', money(c.subcontractorCost)],
       ['Other', money(c.otherCost)], ['Total job cost', money(c.totalJobCost)],
-      ['Sell (inc GST)', money(c.sellPriceIncGst)], ['Sell (ex GST)', money(c.sellPriceExGst)],
-      ['GST', money(c.gstAmount)], ['Gross profit', money(c.grossProfit)],
+      ['Job fee', onFee ? money(c.jobFee) : '—'],
+      ['Sell (ex GST)', money(c.sellPriceExGst)], ['GST', money(c.gstAmount)],
+      ['Sell (inc GST)', money(c.sellPriceIncGst)],
+      ['Gross profit', money(c.grossProfit)],
       ['Gross margin', c.grossMarginPct === null ? '—' : c.grossMarginPct + '%'],
+      ['Pricing basis', c.pricingBasis?.label || 'none'],
       ['Quote', d.quoteId || 'not yet quoted']
     ]);
+    if (onFee) {
+      b += tbl([
+        { label: 'Price build-up' , key: 'line' },
+        { label: 'Amount', r: true, get: r => money(r.amount) }
+      ], [
+        { line: 'Total job cost', amount: c.totalJobCost },
+        { line: 'Job fee (' + (c.pricingBasis.jobFeeExGst ? 'ex GST' : 'inc GST, applied ex GST') + ')',
+          amount: c.pricingBasis.feeAppliedExGst },
+        { line: 'Sell price ex GST', amount: c.sellPriceExGst },
+        { line: 'GST', amount: c.gstAmount },
+        { line: 'Sell price inc GST', amount: c.sellPriceIncGst }
+      ]);
+    }
   }
 
   b += '<div class="disclaimer"><strong>Engineering note.</strong> ' + esc(ENGINEERING_DISCLAIMER) +

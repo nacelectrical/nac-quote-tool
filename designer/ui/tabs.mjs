@@ -69,8 +69,10 @@ export function renderOverview(app) {
       s.unitAvailableStaticPa ? 'Unit available: ' + s.unitAvailableStaticPa + ' Pa'
         : SPEC_REQUIRED + ' — unit ESP not on file',
       s.unitAvailableStaticPa ? '' : 'warn'),
-    stat('Estimated cost', money(s.estimatedCost), 'Equipment + materials + labour'),
-    stat('Sell price (inc GST)', money(s.sellPrice), 'NAC installed price'),
+    stat('Estimated cost', money(s.estimatedCost),
+      d.labour?.mode === 'flat' ? 'Equipment + materials (the fee is margin)' : 'Equipment + materials + labour'),
+    stat('Sell price (inc GST)', money(s.sellPrice),
+      d.commercials?.pricingBasis?.label || 'No pricing basis'),
     stat('Gross profit', money(s.grossProfit),
       s.grossMarginPct !== null && s.grossMarginPct !== undefined ? s.grossMarginPct + '% margin' : null,
       s.grossMarginPct !== null && s.grossMarginPct < 20 ? 'warn' : '')));
@@ -708,14 +710,28 @@ export function renderMaterials(app) {
         button('+ Add material line', () => app.addMaterialPrompt(), 'ghost'),
         button('Export BOM (CSV)', () => app.exportBomCsv(), 'ghost'))),
 
-    card('Labour', 'Hours are built from the design at the configured rate',
-      table([
-        { key: 'task', label: 'Task' },
-        { key: 'hours', label: 'Hours', align: 'right' }
-      ], d.labour.rows),
-      h('p', { class: 'note strong' }, d.labour.totalHours + ' h × ' + money(d.labour.ratePerHour) +
-        '/h = ' + money(d.labour.totalCost)),
-      button('+ Add labour line', () => app.addLabourPrompt(), 'ghost'))
+    d.labour.mode === 'flat'
+      ? card('Installation charge', 'NAC charges a flat fee per job, not by the hour',
+          table([
+            { key: 'task', label: 'Item' },
+            { key: 'cost', label: 'Amount', align: 'right', format: v => money(v) }
+          ], d.labour.rows),
+          h('p', { class: 'note strong' }, 'Job fee: ' + money(d.labour.totalFee) +
+            ' (' + (d.labour.jobFeeExGst ? 'ex GST' : 'inc GST') + ')'),
+          h('p', { class: 'note' }, 'The fee is not a cost — it sits on top of the job cost as NAC\'s margin, ' +
+            'so it is not counted in the material totals above.'),
+          h('div', { class: 'btn-row' },
+            button('+ Add a charge', () => app.addLabourPrompt(), 'ghost'),
+            button('Change the fee', () => app.openSettings('commercial'), 'ghost')))
+      : card('Labour', 'Hours are built from the design at the configured rate',
+          table([
+            { key: 'task', label: 'Task' },
+            { key: 'hours', label: 'Hours', align: 'right' },
+            { key: 'cost', label: 'Cost', align: 'right', format: v => money(v) }
+          ], d.labour.rows),
+          h('p', { class: 'note strong' }, d.labour.totalHours + ' h × ' + money(d.labour.ratePerHour) +
+            '/h = ' + money(d.labour.totalCost)),
+          button('+ Add labour line', () => app.addLabourPrompt(), 'ghost'))
   ];
 }
 
@@ -726,33 +742,48 @@ export function renderFinancials(app) {
   if (needsDesign(d)) return [awaitingBanner(app)];
   const c = d.commercials;
 
+  const onFee = c.pricingBasis?.key === 'materials_plus_fee';
+
   return [
     h('div', { class: 'stat-grid' },
       stat('Equipment cost', money(c.equipmentCost)),
       stat('Materials cost', money(c.materialsCost)),
-      stat('Labour cost', money(c.labourCost)),
+      stat('Labour cost', money(c.labourCost),
+        d.labour?.mode === 'flat' ? 'Flat fee basis — labour sits in the fee, not the cost' : null),
       stat('Subcontractor', money(c.subcontractorCost)),
       stat('Other', money(c.otherCost)),
       stat('Total job cost', money(c.totalJobCost), null, 'strong'),
-      stat('Sell price (inc GST)', money(c.sellPriceIncGst), 'NAC installed price'),
+      onFee ? stat('Job fee', money(c.jobFee),
+        (c.pricingBasis.jobFeeExGst ? 'ex GST' : 'inc GST') + ' — HVAC Design Settings') : null,
       stat('Sell price (ex GST)', money(c.sellPriceExGst), 'GST ' + money(c.gstAmount)),
-      stat('Gross profit', money(c.grossProfit), null, c.grossProfit !== null && c.grossProfit < 0 ? 'bad' : ''),
+      stat('Sell price (inc GST)', money(c.sellPriceIncGst), c.pricingBasis?.label || 'No pricing basis'),
+      stat('Gross profit', money(c.grossProfit), null, c.grossProfit !== null && c.grossProfit < 0 ? 'bad' : 'ok'),
       stat('Gross margin', c.grossMarginPct === null ? '—' : c.grossMarginPct + '%', null,
-        c.grossMarginPct !== null && c.grossMarginPct < 20 ? 'warn' : '')),
+        c.grossMarginPct !== null && c.grossMarginPct < 20 && !onFee ? 'warn' : '')),
 
-    ...c.warnings.map(w => banner(w.severity === 'WARNING' ? 'warn' : 'info', w.message)),
+    ...c.warnings.map(w => banner(
+      w.severity === 'CRITICAL' ? 'bad' : w.severity === 'WARNING' ? 'warn' : 'info', w.message,
+      /PLACEHOLDER/.test(w.code) ? button('Set material rates', () => app.openSettings('materials'), 'small') : null)),
 
-    card('Commercial inputs', 'The sell price is NAC\'s existing installed price for the selected model — the designer never invents one.',
+    onFee ? card('How this price was worked out', null, priceBuildUp(c)) : null,
+
+    card('Commercial inputs',
+      onFee
+        ? 'Costs feed the price directly on this basis, so anything entered here is recovered in full.'
+        : 'The sell price is NAC\'s existing installed price for the selected model — the designer never invents one.',
       h('div', { class: 'grid-4' },
         field('Sell price override (inc GST)', input(d.sellPriceOverride ?? '',
           v => app.setDesignField('sellPriceOverride', v === '' ? null : Number(v)),
-          { type: 'number', step: '0.01', placeholder: d.selectedUnit?.sellPrice ?? 'not set' }),
-          d.selectedUnit?.sellPrice ? 'Catalogue price: ' + money(d.selectedUnit.sellPrice) : 'No catalogue price set'),
+          { type: 'number', step: '0.01', placeholder: c.sellPriceIncGst ?? 'not set' }),
+          'Overrides the pricing basis for this job only'),
         field('Subcontractor cost', input(d.subcontractorCost ?? '',
-          v => app.setDesignField('subcontractorCost', Number(v) || 0), { type: 'number', step: '0.01' })),
+          v => app.setDesignField('subcontractorCost', Number(v) || 0), { type: 'number', step: '0.01' }),
+          onFee ? 'Recovered, then the fee sits on top' : null),
         field('Other cost', input(d.otherCost ?? '',
           v => app.setDesignField('otherCost', Number(v) || 0), { type: 'number', step: '0.01' })),
-        field('GST rate', h('div', { class: 'readout' }, (c.gstRate * 100) + '%'), 'HVAC Design Settings'))),
+        field('Price Setup comparison',
+          h('div', { class: 'readout' }, c.cataloguePrice === null ? 'not set' : money(c.cataloguePrice)),
+          onFee ? 'Stored installed price — not used on this basis' : 'The price in use'))),
 
     card('Extra quote lines', 'These are added to the customer quote alongside the system',
       (d.quoteExtras || []).length ? table([
@@ -781,6 +812,31 @@ export function renderFinancials(app) {
         button('ADD DESIGN TO QUOTE', () => app.addDesignToQuote(), 'primary'),
         button('Open in Internal Quote Builder', () => app.openInQuoteBuilder(), 'ghost')))
   ];
+}
+
+/** The job-cost-plus-fee build-up, line by line. */
+function priceBuildUp(c) {
+  const rows = [
+    { line: 'Equipment', amount: c.equipmentCost },
+    { line: 'Materials', amount: c.materialsCost },
+    { line: 'Subcontractor', amount: c.subcontractorCost },
+    { line: 'Other', amount: c.otherCost },
+    { line: 'Total job cost', amount: c.totalJobCost, strong: true },
+    { line: 'Job fee (' + (c.pricingBasis.jobFeeExGst ? 'ex GST' : 'inc GST, applied ex GST') + ')',
+      amount: c.pricingBasis.feeAppliedExGst },
+    { line: 'Sell price ex GST', amount: c.sellPriceExGst, strong: true },
+    { line: 'GST (' + (c.gstRate * 100) + '%)', amount: c.gstAmount },
+    { line: 'Sell price inc GST', amount: c.sellPriceIncGst, strong: true }
+  ].filter(r => r.amount !== 0 || r.strong);
+
+  return h('div', {},
+    table([
+      { key: 'line', label: '' },
+      { key: 'amount', label: 'Amount', align: 'right', format: v => money(v) }
+    ], rows, { compact: true, rowClass: (r) => r.strong ? 'warn-row' : '' }),
+    h('p', { class: 'note' },
+      'Gross profit is the fee itself: ' + money(c.grossProfit) + '. Every cost entered above is recovered ' +
+      'before the fee is added, so the fee is what NAC makes whatever the job costs.'));
 }
 
 // ── Warnings (PART 27) ──────────────────────────────────────────────────────

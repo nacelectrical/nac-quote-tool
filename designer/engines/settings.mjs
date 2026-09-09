@@ -239,7 +239,28 @@ export const DEFAULT_SETTINGS = {
   // ── Commercial (PART 24) — reuses NAC's existing quote maths ────────────────
   commercial: {
     gstRate: 0.10,
-    // Labour rates. These are NAC-configurable, not engine constants.
+
+    // How NAC charges for the install.
+    //   'flat'   — one fee per job regardless of size. This is how NAC prices:
+    //              everything bought for the job, plus a fixed fee on top.
+    //   'hourly' — hours built from the design at labourRatePerHour, for jobs
+    //              that need to be costed that way.
+    labourMode: 'flat',
+
+    // The flat fee. It is NOT a cost — it is what NAC makes on the job, and it
+    // covers labour, overhead and profit together.
+    jobFee: 6000,
+    // Whether that fee is the ex-GST margin (GST is then added on top for the
+    // customer) or already includes GST.
+    jobFeeExGst: true,
+
+    // How the customer's sell price is arrived at.
+    //   'materials_plus_fee' — total job cost + jobFee
+    //   'catalogue_price'    — the installed price stored per model in the
+    //                          existing Price Setup screen
+    pricingBasis: 'materials_plus_fee',
+
+    // Hourly rates, used only when labourMode is 'hourly'.
     labourRatePerHour: 95,
     labourHoursPerOutlet: 1.25,
     labourHoursPerZone: 0.75,
@@ -247,12 +268,7 @@ export const DEFAULT_SETTINGS = {
     labourHoursOutdoorUnit: 4,
     labourHoursPerDuctMetre: 0.12,
     labourHoursReturn: 2,
-    labourHoursCommissioning: 2,
-    // Default markup on materials cost when no sell price is configured.
-    // Only used for the internal cost view — the customer quote continues to
-    // use NAC's existing per-model installed price.
-    defaultMaterialMarkup: 1.55,
-    defaultEquipmentMarkup: 1.45
+    labourHoursCommissioning: 2
   },
 
   // ── Plan interpretation ─────────────────────────────────────────────────────

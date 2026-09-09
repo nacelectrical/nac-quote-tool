@@ -188,7 +188,8 @@ export function runPipeline(design, ctx = {}) {
   d.commercials = calculateCommercials({
     bom: d.bom,
     labour: d.labour,
-    sellPrice: d.sellPriceOverride ?? d.selectedUnit?.sellPrice ?? null,
+    cataloguePrice: d.selectedUnit?.sellPrice ?? null,
+    sellOverride: d.sellPriceOverride ?? null,
     extras: d.quoteExtras || [],
     subcontractorCost: d.subcontractorCost || 0,
     otherCost: d.otherCost || 0

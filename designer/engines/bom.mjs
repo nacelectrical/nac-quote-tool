@@ -177,6 +177,8 @@ export function buildBillOfMaterials(design, opts = {}) {
       .reduce((s, i) => s + (i.totalCost || 0), 0), 2),
     lineCount: items.length,
     placeholderCount: placeholderLines.length,
+    unpricedCount: unpricedLines.length,
+    unpricedLabels: unpricedLines.map(l => l.label),
     warnings
   };
 }

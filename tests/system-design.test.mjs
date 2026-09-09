@@ -440,21 +440,118 @@ test('a BOM line can be edited and the totals follow', () => {
     Math.round(edited.items.reduce((s, x) => s + (x.totalCost || 0), 0) * 100) / 100);
 });
 
-test('labour is built from the design, at the configured rate', () => {
+// NAC charges a flat fee per job, so this is the default basis.
+const CATALOGUE_BASIS = settingsWith({ commercial: { pricingBasis: 'catalogue_price' } });
+const HOURLY = settingsWith({ commercial: { labourMode: 'hourly' } });
+const FLAT_LABOUR = { mode: 'flat', totalCost: 0, totalFee: 6000, jobFee: 6000, jobFeeExGst: true };
+
+test('the install charge is one flat fee per job, not an hourly build-up', () => {
   const { o, net, z } = sampleDesignParts();
   const l = calculateLabour({ outlets: o, zones: z, network: net });
+  assert.equal(l.mode, 'flat');
+  assert.equal(l.rows.length, 1);
+  assert.equal(l.totalFee, DEFAULT_SETTINGS.commercial.jobFee);
+  assert.equal(l.totalHours, null);
+  // The fee is margin, not cost — it must never inflate the job cost.
+  assert.equal(l.totalCost, 0);
+});
+
+test('the flat fee does not change with the size of the job', () => {
+  const { o, net, z } = sampleDesignParts();
+  const small = calculateLabour({ outlets: { totals: { total: 4 } }, zones: { zones: [] }, network: { totalDuctLengthM: 20 } });
+  const big = calculateLabour({ outlets: o, zones: z, network: net });
+  assert.equal(small.totalFee, big.totalFee);
+});
+
+test('an extra charge can still be added to a flat-fee job', () => {
+  const l = calculateLabour({ extraLabour: [{ task: 'Crane hire', cost: 850 }] });
+  assert.equal(l.totalFee, DEFAULT_SETTINGS.commercial.jobFee + 850);
+  assert.equal(l.totalCost, 0);
+});
+
+test('hourly labour is still available and is a real cost', () => {
+  const { o, net, z } = sampleDesignParts();
+  const l = calculateLabour({ outlets: o, zones: z, network: net }, { settings: HOURLY });
+  assert.equal(l.mode, 'hourly');
   assert.equal(l.ratePerHour, DEFAULT_SETTINGS.commercial.labourRatePerHour);
   assert.equal(l.totalCost, Math.round(l.totalHours * l.ratePerHour * 100) / 100);
   assert.ok(l.rows.some(r => /Outlets/.test(r.task)));
   assert.ok(l.rows.some(r => /Commissioning/.test(r.task)));
 });
 
-test("margin maths matches NAC's existing GST-inclusive quote convention", () => {
+test('sell price is the job cost plus the flat fee, and GP is exactly the fee', () => {
   const c = calculateCommercials({
     bom: { equipmentCost: 6800, materialsCost: 5200 },
-    labour: { totalCost: 3800 },
-    sellPrice: 20400, subcontractorCost: 500, otherCost: 250
+    labour: FLAT_LABOUR,
+    subcontractorCost: 500, otherCost: 250
   });
+  assert.equal(c.totalJobCost, 12750);              // labour contributes nothing
+  assert.equal(c.jobFee, 6000);
+  assert.equal(c.sellPriceExGst, 18750);            // 12750 + 6000
+  assert.equal(c.gstAmount, 1875);
+  assert.equal(c.sellPriceIncGst, 20625);
+  assert.equal(c.grossProfit, 6000);                // the fee, exactly
+  assert.equal(c.grossMarginPct, 32);
+  assert.equal(c.pricingBasis.key, 'materials_plus_fee');
+});
+
+test('every cost entered is recovered before the fee is added', () => {
+  const base = calculateCommercials({ bom: { equipmentCost: 6800, materialsCost: 5200 }, labour: FLAT_LABOUR });
+  const withCosts = calculateCommercials({ bom: { equipmentCost: 6800, materialsCost: 5200 },
+    labour: FLAT_LABOUR, subcontractorCost: 1200, otherCost: 300 });
+  assert.equal(withCosts.sellPriceExGst - base.sellPriceExGst, 1500);
+  assert.equal(withCosts.grossProfit, base.grossProfit);   // margin is untouched
+  assert.equal(withCosts.grossProfit, 6000);
+});
+
+test('a fee marked inc GST yields less margin than the same fee ex GST', () => {
+  const args = { bom: { equipmentCost: 10000, materialsCost: 0 }, labour: FLAT_LABOUR };
+  const exGst = calculateCommercials(args);
+  const incGst = calculateCommercials(args,
+    { settings: settingsWith({ commercial: { jobFeeExGst: false } }) });
+  assert.equal(exGst.grossProfit, 6000);
+  assert.equal(incGst.grossProfit, Math.round((6000 / 1.1) * 100) / 100);
+  assert.ok(incGst.sellPriceIncGst < exGst.sellPriceIncGst);
+});
+
+test('a bigger material bill raises the price without touching the margin', () => {
+  const cheap = calculateCommercials({ bom: { equipmentCost: 6000, materialsCost: 4000 }, labour: FLAT_LABOUR });
+  const dear = calculateCommercials({ bom: { equipmentCost: 9000, materialsCost: 7000 }, labour: FLAT_LABOUR });
+  assert.equal(dear.sellPriceExGst - cheap.sellPriceExGst, 6000);
+  assert.equal(cheap.grossProfit, dear.grossProfit);
+});
+
+test('placeholder rates become a pricing WARNING once they drive the sell price', () => {
+  const onFee = calculateCommercials({
+    bom: { equipmentCost: 6800, materialsCost: 5200, placeholderCount: 4 }, labour: FLAT_LABOUR });
+  const w = onFee.warnings.find(x => x.code === 'PRICE_BASED_ON_PLACEHOLDER_RATES');
+  assert.ok(w);
+  assert.equal(w.severity, 'WARNING');
+
+  // On the catalogue basis they only affect the internal cost view.
+  const onCatalogue = calculateCommercials({
+    bom: { equipmentCost: 6800, materialsCost: 5200, placeholderCount: 4 },
+    labour: { totalCost: 3800 }, cataloguePrice: 20400 }, { settings: CATALOGUE_BASIS });
+  assert.ok(onCatalogue.warnings.some(x => x.code === 'COST_BASED_ON_PLACEHOLDERS'));
+  assert.ok(!onCatalogue.warnings.some(x => x.code === 'PRICE_BASED_ON_PLACEHOLDER_RATES'));
+});
+
+test('a job that would sell below cost is a CRITICAL warning', () => {
+  const c = calculateCommercials({
+    bom: { equipmentCost: 20000, materialsCost: 8000 },
+    labour: { mode: 'hourly', totalCost: 4000 },
+    cataloguePrice: 20000 }, { settings: CATALOGUE_BASIS });
+  assert.ok(c.grossProfit < 0);
+  const w = c.warnings.find(x => x.code === 'NEGATIVE_GROSS_PROFIT');
+  assert.ok(w && w.severity === 'CRITICAL');
+});
+
+test("the catalogue basis still matches NAC's GST-inclusive quote convention", () => {
+  const c = calculateCommercials({
+    bom: { equipmentCost: 6800, materialsCost: 5200 },
+    labour: { mode: 'hourly', totalCost: 3800 },
+    cataloguePrice: 20400, subcontractorCost: 500, otherCost: 250
+  }, { settings: CATALOGUE_BASIS });
   assert.equal(c.totalJobCost, 16550);
   assert.equal(c.sellPriceExGst, 18545.45);
   assert.equal(c.gstAmount, 1854.55);
@@ -464,21 +561,30 @@ test("margin maths matches NAC's existing GST-inclusive quote convention", () =>
 });
 
 test('extras add to the sell price the same way the existing quote does', () => {
-  const base = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 }, labour: { totalCost: 0 }, sellPrice: 10000 });
-  const withExtras = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 }, labour: { totalCost: 0 },
-    sellPrice: 10000, extras: [{ label: 'Extra outlet', price: 450, qty: 2 }] });
+  const args = { bom: { equipmentCost: 1000, materialsCost: 0 }, labour: FLAT_LABOUR };
+  const base = calculateCommercials(args);
+  const withExtras = calculateCommercials({ ...args, extras: [{ label: 'Extra outlet', price: 450, qty: 2 }] });
   assert.equal(withExtras.sellPriceIncGst - base.sellPriceIncGst, 900);
 });
 
-test('no sell price means no invented sell price', () => {
-  const c = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 }, labour: { totalCost: 0 }, sellPrice: null });
+test('a typed price overrides the basis entirely', () => {
+  const c = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 },
+    labour: FLAT_LABOUR, sellOverride: 18500 });
+  assert.equal(c.sellPriceIncGst, 18500);
+  assert.equal(c.pricingBasis.key, 'override');
+});
+
+test('no catalogue price on the catalogue basis means no invented sell price', () => {
+  const c = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 },
+    labour: { totalCost: 0 }, cataloguePrice: null }, { settings: CATALOGUE_BASIS });
   assert.equal(c.sellPriceIncGst, null);
   assert.equal(c.grossProfit, null);
   assert.ok(c.warnings.some(w => w.code === 'NO_SELL_PRICE'));
 });
 
 test('quote line items are produced in the existing nac_quotes shape', () => {
-  const c = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 }, labour: { totalCost: 0 }, sellPrice: 20400 });
+  const c = calculateCommercials({ bom: { equipmentCost: 1000, materialsCost: 0 },
+    labour: { totalCost: 0 }, cataloguePrice: 20400 }, { settings: CATALOGUE_BASIS });
   const items = toQuoteLineItems({
     selectedUnit: { brandName: 'Daikin', model: 'FDYQN140LCV1', capacityKw: 14, phase: '1Ph' },
     outlets: { totals: { total: 11 } }, zones: { zones: [1, 2, 3, 4, 5, 6] }, brandUrl: 'https://x'
@@ -530,4 +636,49 @@ test('duplicate warnings are collapsed, keeping the highest severity', () => {
   const xs = w.filter(x => x.code === 'X');
   assert.equal(xs.length, 1);
   assert.equal(xs[0].severity, 'CRITICAL');
+});
+
+test('a missing cost line is CRITICAL once the price is built from costs', () => {
+  const onFee = calculateCommercials({
+    bom: { equipmentCost: 0, materialsCost: 5200, unpricedCount: 1,
+           unpricedLabels: ['Daikin FDYQN140LCV1 — 14 kW ducted system'] },
+    labour: FLAT_LABOUR
+  });
+  const w = onFee.warnings.find(x => x.code === 'PRICE_MISSING_COST_LINES');
+  assert.ok(w, 'expected a missing-cost warning');
+  assert.equal(w.severity, 'CRITICAL');
+  assert.match(w.message, /Daikin/);
+
+  // On the catalogue basis the same gap only affects the internal cost view.
+  const onCatalogue = calculateCommercials({
+    bom: { equipmentCost: 0, materialsCost: 5200, unpricedCount: 1, unpricedLabels: ['x'] },
+    labour: { totalCost: 0 }, cataloguePrice: 20400 }, { settings: CATALOGUE_BASIS });
+  assert.ok(!onCatalogue.warnings.some(x => x.code === 'PRICE_MISSING_COST_LINES'));
+});
+
+test('supplier cost can come from the designer store when Price Setup has none', () => {
+  const cat = buildCatalogue({
+    savedBrands: [{ id: 'daikin', models: [{ id: 'd6', price: '20400' }] }],   // price only, no cost
+    specStore: { 'daikin:d6': { supplierCost: 6800 } }
+  });
+  const d6 = cat.find(b => b.id === 'daikin').models.find(m => m.id === 'd6');
+  assert.equal(d6.supplierCost, 6800);
+  assert.equal(d6.sellPrice, 20400);
+
+  // A cost in Price Setup still wins if one is ever added there.
+  const both = buildCatalogue({
+    savedBrands: [{ id: 'daikin', models: [{ id: 'd6', price: '20400', cost: '7000' }] }],
+    specStore: { 'daikin:d6': { supplierCost: 6800 } }
+  });
+  assert.equal(both.find(b => b.id === 'daikin').models.find(m => m.id === 'd6').supplierCost, 7000);
+});
+
+test('the BOM reports which lines have no cost at all', () => {
+  const { o, net, z, ret } = sampleDesignParts();
+  const bom = buildBillOfMaterials({
+    selectedUnit: { brandName: 'Daikin', model: 'X', capacityKw: 14, phase: '1Ph', supplierCost: null },
+    network: net, outlets: o, zones: z, returnDesign: ret
+  });
+  assert.ok(bom.unpricedCount >= 1);
+  assert.ok(bom.unpricedLabels.some(l => /Daikin X/.test(l)));
 });

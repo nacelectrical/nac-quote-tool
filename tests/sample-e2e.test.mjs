@@ -182,19 +182,32 @@ test('sample plan: revisions are appended, never overwritten', () => {
 });
 
 
-test('sample plan: the commercial view reuses NAC\'s existing installed price', () => {
+test('sample plan: the job is priced at cost plus the flat fee', () => {
   const { design } = buildSampleDesign();
   const c = design.commercials;
 
-  // Sell price is NAC's stored installed price for the selected model — the
-  // designer must never invent one.
-  assert.equal(c.sellPriceIncGst, design.selectedUnit.sellPrice);
+  assert.equal(design.labour.mode, 'flat');
+  assert.equal(c.pricingBasis.key, 'materials_plus_fee');
+  assert.equal(c.jobFee, DEFAULT_SETTINGS.commercial.jobFee);
+
+  // Cost is what NAC actually buys. The fee is not a cost.
+  assert.equal(c.labourCost, 0);
+  assert.equal(c.totalJobCost,
+    Math.round((c.equipmentCost + c.materialsCost + c.subcontractorCost + c.otherCost) * 100) / 100);
+
+  // Price is that cost plus the fee, then GST, exactly the way the existing
+  // quote tool derives GST.
+  assert.equal(c.sellPriceExGst, Math.round((c.totalJobCost + c.jobFee) * 100) / 100);
   assert.equal(c.gstRate, 0.10);
-  // GST is derived exactly the way the existing quote tool derives it.
-  assert.equal(c.sellPriceExGst, Math.round((c.sellPriceIncGst / 1.1) * 100) / 100);
-  assert.equal(c.gstAmount, Math.round((c.sellPriceIncGst - c.sellPriceExGst) * 100) / 100);
-  assert.equal(c.grossProfit, Math.round((c.sellPriceExGst - c.totalJobCost) * 100) / 100);
+  assert.equal(c.gstAmount, Math.round((c.sellPriceExGst * 0.1) * 100) / 100);
+  assert.equal(c.sellPriceIncGst, Math.round((c.sellPriceExGst * 1.1) * 100) / 100);
+
+  // Gross profit is the fee, whatever the job cost.
+  assert.equal(c.grossProfit, c.jobFee);
   assert.ok(c.grossMarginPct > 0 && c.grossMarginPct < 100);
+
+  // The stored installed price is still carried for comparison, unused.
+  assert.equal(c.cataloguePrice, design.selectedUnit.sellPrice);
 });
 
 test('sample plan: static pressure is compared against the unit ESP on file', () => {
