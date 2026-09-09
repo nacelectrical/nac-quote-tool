@@ -119,11 +119,34 @@ tests/                  125 tests, run with `node --test tests/`
 | `sign.html` | Unchanged. Customers sign the same page. |
 | `admin.html` | Gained a "1c. Load HVAC design" block next to the existing intake-draft loader. |
 | `index.html` | Gained an "AI Designer" link in the header. |
-| ServiceM8 / GHL | Untouched. |
+| `intake.html` + `api/intake-submit.js` | The GHL notification now carries a `designer_link` beside the existing `admin_link`. |
+| ServiceM8 / GHL | Otherwise untouched. |
 
 New `nac_settings` keys the designer owns:
 `nac_hvac_settings_v1`, `nac_hvac_materials_v1`, `nac_hvac_equipment_specs_v1`,
 and `nac_design_<id>` when the optional `nac_designs` table is absent.
+
+## Where it sits in the GHL flow
+
+The intake form already writes a draft into `nac_quotes` and notifies GHL with
+an `admin_link`. That notification now also carries a **`designer_link`**:
+
+```
+lead → GHL sends intake form → customer uploads plan + photos
+     → api/intake-submit  (quick 145 W/m² read, draft saved, GHL notified)
+     → EITHER  admin.html?draft=…      three prices, quick quote
+       OR      designer.html?draft=…   full design
+     → sign.html?q=…                   the customer signs, unchanged
+     → api/create-job                  ServiceM8, unchanged
+```
+
+`designer.html?draft=NAC-…` opens on that customer: their name, address and
+phone, the floor plan they uploaded loaded straight into the viewer, their site
+photos linked, and the intake's own quick read shown beside the measured one.
+The design stays attached to the same quote record, so ADD DESIGN TO QUOTE
+updates that draft rather than creating a second one — and the customer's own
+material (their photos, the intake pack) is preserved in the notes rather than
+overwritten.
 
 ## Sizing: the 145 W/m² rule is preserved
 

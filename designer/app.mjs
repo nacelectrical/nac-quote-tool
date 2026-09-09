@@ -79,6 +79,10 @@ export class DesignerApp {
       if (d) { this.design = d; toast('Loaded design ' + designId); }
       else toast('Could not find design ' + designId, 'bad');
     }
+    // ?draft=NAC-… comes from the intake form's notification: start the design
+    // on that customer, with the plan they uploaded already on screen.
+    const draftRef = params.get('draft');
+    if (draftRef && !designId) await this.loadIntakeDraft(draftRef);
     if (params.get('quote')) this.design.quoteId = params.get('quote');
     if (params.get('job')) this.design.jobId = params.get('job');
     if (params.get('sample') === '1') this.loadSample();
@@ -252,6 +256,7 @@ export class DesignerApp {
 
     mount(tools,
       this.renderUploadPanel(),
+      this.renderIntakePanel(),
       this.renderCalibratePanel(),
       this.renderPlanModePanel(),
       this.renderRoutePanel(),
@@ -264,8 +269,15 @@ export class DesignerApp {
       h('input', { type: 'file', class: 'inp', accept: 'image/*,application/pdf',
         onchange: (e) => this.handleUpload(e.target.files[0]) }),
       d.plan ? h('div', { class: 'note' },
-        d.plan.fileName + ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' +
-        (d.plan.isPdf ? ' (PDF page 1 rendered)' : '')) : null,
+        d.plan.fileName +
+        (d.plan.widthPx ? ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' : '') +
+        (d.plan.isPdf ? ' (PDF page 1 rendered)' : '') +
+        (d.plan.fromIntake ? ' · from the customer\'s intake form' : '')) : null,
+      d.intake?.photoUrls?.length
+        ? h('div', { class: 'note' }, d.intake.photoUrls.length + ' site photo(s) from the intake: ',
+            d.intake.photoUrls.map((u, i) =>
+              h('a', { href: u, target: '_blank', rel: 'noopener', class: 'photo-link' }, (i + 1) + ' ')))
+        : null,
       d.plan ? h('div', { class: 'btn-row' },
         button(this.busy ? 'Reading…' : 'Read plan with AI', () => this.readPlan(), 'primary small'),
         button('Fit', () => this.viewer.fit(), 'ghost small'),
@@ -279,6 +291,15 @@ export class DesignerApp {
       (d.interpretation?.notes || []).length
         ? h('ul', { class: 'evidence' }, d.interpretation.notes.map(n => h('li', {}, n))) : null,
       button('Load the sample builder plan', () => { this.loadSample(); this.update(); }, 'ghost small'));
+  }
+
+  renderIntakePanel() {
+    const intake = this.design.intake;
+    if (!intake?.pack) return null;
+    return card('From the intake form', 'What the customer submitted, and the quick read taken from it',
+      h('pre', { class: 'intake-pack' }, intake.pack),
+      h('p', { class: 'note' },
+        'That was a quick read for triage. Everything below is measured properly and replaces it.'));
   }
 
   renderCalibratePanel() {
@@ -1145,6 +1166,57 @@ export class DesignerApp {
         button('Ask', () => ask(), 'primary small')));
     const log = this.assistantEl.querySelector('.assist-log');
     if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  /**
+   * Start a design from the intake form's draft: the customer's details, the
+   * floor plan they uploaded, and a link back to the same quote record so the
+   * finished design updates that draft rather than creating a second one.
+   */
+  async loadIntakeDraft(quoteRef) {
+    let draft;
+    try { draft = await Store.loadIntakeDraft(quoteRef); }
+    catch (e) { draft = null; }
+    if (!draft) {
+      toast('Could not load intake draft ' + quoteRef + '. Start the design manually.', 'bad');
+      return;
+    }
+
+    const d = createDesign({
+      customer: draft.customer,
+      job: { description: draft.jobDescription, climate: this.settings.load.defaultClimate },
+      quoteId: draft.quoteId
+    });
+    d.notes = draft.intakePack || '';
+    d.intake = {
+      quoteId: draft.quoteId,
+      planUrl: draft.planUrl,
+      photoUrls: draft.photoUrls,
+      pack: draft.intakePack,
+      options: draft.intakeOptions
+    };
+
+    if (draft.planUrl) {
+      d.plan = {
+        fileName: 'Customer floor plan',
+        mediaType: /\.pdf($|\?)/i.test(draft.planUrl) ? 'application/pdf' : 'image/jpeg',
+        isPdf: /\.pdf($|\?)/i.test(draft.planUrl),
+        dataUrl: draft.planUrl,
+        storageUrl: draft.planUrl,
+        widthPx: null, heightPx: null,
+        uploadedAt: null,
+        fromIntake: true
+      };
+    }
+
+    this.design = d;
+    this.selectedRoomId = null;
+    this.loadedPlanUrl = null;
+    this.tab = 'plan';
+    toast(draft.planUrl
+      ? 'Loaded ' + (draft.customer.name || quoteRef) + ' from the intake form. Calibrate the plan to begin.'
+      : 'Loaded ' + (draft.customer.name || quoteRef) + ' — no floor plan was attached, so upload one.',
+      draft.planUrl ? '' : 'warn');
   }
 
   // ── Sample project (PART 36) ──────────────────────────────────────────────

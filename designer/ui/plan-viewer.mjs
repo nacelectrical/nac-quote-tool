@@ -490,12 +490,19 @@ export function createPlanViewer(container, opts = {}) {
     element: wrap,
     state,
     async setImage(src) {
-      const img = new Image();
-      img.decoding = 'async';
-      await new Promise((resolve, reject) => {
-        img.onload = resolve; img.onerror = () => reject(new Error('Could not load the plan image'));
+      // A plan served from storage needs CORS for the report snapshot to work.
+      // If the server will not allow it, fall back to a plain load — the plan
+      // still displays, only the snapshot in the internal sheet is lost.
+      const load = (crossOrigin) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.decoding = 'async';
+        if (crossOrigin) img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not load the plan image'));
         img.src = src;
       });
+      const remote = /^https?:/i.test(src);
+      const img = remote ? await load(true).catch(() => load(false)) : await load(false);
       state.image = img;
       pendingFit = true;
       resize();
