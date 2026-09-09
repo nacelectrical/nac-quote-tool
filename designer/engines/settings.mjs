@@ -131,7 +131,10 @@ export const DEFAULT_SETTINGS = {
     oversizeWarnRatio: 1.30,
     undersizeWarnRatio: 0.95,
     // Above this kW a single residential ducted unit is unlikely — flag dual.
-    maxSingleUnitKw: 20
+    maxSingleUnitKw: 20,
+    // NAC's house-standard zone controller. Left blank, the designer picks the
+    // cheapest costed controller that fits the zone count and the system brand.
+    defaultControllerId: ''
   },
 
   // ── Airflow (PART 14) ───────────────────────────────────────────────────────

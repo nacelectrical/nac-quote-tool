@@ -80,7 +80,8 @@ export function runPipeline(design, ctx = {}) {
     settings,
     brandPreference: ctx.brandPreference || d.brandPreference,
     phase: ctx.phase || d.phase,
-    requirePrice: ctx.requirePrice,
+    requirePrice: ctx.requirePrice ?? d.requirePrice,
+    requireCost: ctx.requireCost ?? d.requireCost,
     designAirflowLs: provisionalAirflowLs
   });
 
@@ -126,10 +127,13 @@ export function runPipeline(design, ctx = {}) {
   d.controllerSelection = selectZoneController(controllers, {
     brandId: d.selectedUnit?.brandId,
     zoneCount: d.zones.zoneCount,
-    preferId: d.controllerId
+    preferId: d.controllerId || settings.equipment.defaultControllerId || null
   });
+  // A price NAC has set in the existing Price Setup screen wins over the
+  // supplier list, but the supplier cost always comes through.
   d.controller = d.controllerSelection.recommended
-    ? { ...d.controllerSelection.recommended, ...(ctx.controllerPricing?.[d.controllerSelection.recommended.id] || {}) }
+    ? { ...d.controllerSelection.recommended,
+        ...(ctx.controllerPricing?.[d.controllerSelection.recommended.id] || {}) }
     : null;
 
   // ── 8. Return air (PART 19) ───────────────────────────────────────────────
@@ -154,7 +158,8 @@ export function runPipeline(design, ctx = {}) {
       settings,
       brandPreference: ctx.brandPreference || d.brandPreference,
       phase: ctx.phase || d.phase,
-      requirePrice: ctx.requirePrice,
+      requirePrice: ctx.requirePrice ?? d.requirePrice,
+      requireCost: ctx.requireCost ?? d.requireCost,
       designAirflowLs: d.airflow.allocatedAirflowLs,
       requiredStaticPa: d.pressure.estimatedRequirementPa
     });

@@ -332,8 +332,11 @@ export function renderEquipment(app) {
       field('Phase', select(d.phase || '',
         [{ value: '', label: 'Any' }, { value: '1Ph', label: 'Single phase' }, { value: '3Ph', label: 'Three phase' }],
         v => app.setDesignField('phase', v || null))),
-      field('Only priced models', h('div', {}, checkbox(!!d.requirePrice, 'Hide models without a NAC price',
-        v => app.setDesignField('requirePrice', v)))),
+      field('Availability', h('div', {},
+        checkbox(!!d.requireCost, 'Only models with a supplier cost',
+          v => app.setDesignField('requireCost', v)),
+        checkbox(!!d.requirePrice, 'Only models with a Price Setup price',
+          v => app.setDesignField('requirePrice', v)))),
       field('Capacity window', h('div', { class: 'readout' },
         sel.window.minKw + ' – ' + sel.window.maxKw + ' kW'),
         'Around the ' + sel.designKw + ' kW design load'))));
@@ -350,7 +353,8 @@ export function renderEquipment(app) {
     { key: 'capacityRatio', label: 'vs load', align: 'right', format: v => '×' + v },
     { key: 'ratedAirflowLs', label: 'Rated L/s', align: 'right', format: v => v ?? '—' },
     { key: 'availableStaticPa', label: 'ESP (Pa)', align: 'right', format: v => v ?? '—' },
-    { key: 'sellPrice', label: 'NAC price', align: 'right', format: v => v === null ? '—' : money(v) },
+    { key: 'supplierCost', label: 'Cost', align: 'right', format: v => v === null ? '—' : money(v) },
+    { key: 'sellPrice', label: 'Price Setup', align: 'right', format: v => v === null ? '—' : money(v) },
     { key: 'specStatus', label: 'Data', align: 'center',
       render: (r) => r.specStatus === 'complete' ? badge('complete', 'ok')
         : badge(r.specStatus === 'partial' ? 'partial' : 'none', 'warn') },
@@ -364,6 +368,21 @@ export function renderEquipment(app) {
 
   blocks.push(card('All models', 'Everything in the NAC catalogue, ranked',
     table(cols, sel.allCandidates.slice(0, 40))));
+
+  const noCost = sel.allCandidates.filter(c => c.supplierCost === null);
+  if (noCost.length) {
+    blocks.push(expandable(noCost.length + ' model(s) have no supplier cost on file', () => h('div', {},
+      h('p', { class: 'note' },
+        'These are models the quote tool lists that are not on the current supplier price list. ' +
+        'On the job-cost-plus-fee basis they cannot be priced until a cost is entered in ' +
+        'HVAC Design Settings → Equipment specs.'),
+      table([
+        { key: 'brandName', label: 'Brand' },
+        { key: 'model', label: 'Model' },
+        { key: 'capacityKw', label: 'kW', align: 'right' },
+        { key: 'phase', label: 'Phase' }
+      ], noCost.map(c => ({ ...c, id: c.brandId + c.modelId }))))));
+  }
 
   if (d.selectedUnit) blocks.push(renderSelectedUnit(app, d.selectedUnit));
 
@@ -406,9 +425,13 @@ function renderSelectedUnit(app, u) {
         null, u.dimensionsMm ? '' : 'warn'),
       stat('Electrical', u.electricalSupply || SPEC_REQUIRED, null, u.electricalSupply ? '' : 'warn'),
       stat('Refrigerant', u.refrigerant || SPEC_REQUIRED, null, u.refrigerant ? '' : 'warn'),
-      stat('NAC installed price', u.sellPrice === null ? 'Not set' : money(u.sellPrice),
-        u.sellPrice === null ? 'Set it in the existing Price Setup screen' : 'From nac_brands_v4',
-        u.sellPrice === null ? 'warn' : '')),
+      stat('Supplier cost', u.supplierCost === null ? 'Not on file' : money(u.supplierCost),
+        u.supplierSource || 'Enter it in HVAC Design Settings → Equipment specs',
+        u.supplierCost === null ? 'warn' : ''),
+      stat('Price Setup price', u.sellPrice === null ? 'Not set' : money(u.sellPrice),
+        app.settings.commercial.pricingBasis === 'materials_plus_fee'
+          ? 'Not used — this job is priced at cost + fee' : 'From nac_brands_v4',
+        u.sellPrice === null && app.settings.commercial.pricingBasis !== 'materials_plus_fee' ? 'warn' : '')),
     missing.length
       ? banner('warn', SPEC_REQUIRED + ' for ' + u.model + ': ' + missing.join(', ') +
           '. These are never guessed — enter them in HVAC Design Settings → Equipment specifications.',
@@ -704,6 +727,7 @@ export function renderMaterials(app) {
         { key: 'totalCost', label: 'Total', align: 'right', format: v => v === null ? '—' : money(v) },
         { key: 'priceSource', label: 'Price', align: 'center',
           render: (r) => r.priceSource === 'nac' ? badge('NAC', 'ok')
+            : r.priceSource === 'supplier_list' ? badge('supplier', 'ok')
             : r.priceSource === 'default_placeholder' ? badge('placeholder', 'warn') : badge('none', 'bad') }
       ], bom.items, { rowClass: (r) => r.priced ? '' : 'bad-row' }),
       h('div', { class: 'btn-row' },

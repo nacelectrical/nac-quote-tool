@@ -3,7 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCatalogue, DUCTED_CATALOGUE, ZONE_CONTROLLERS, SPEC_REQUIRED } from '../designer/engines/catalogue.mjs';
+import { buildCatalogue, DUCTED_CATALOGUE, ZONE_CONTROLLERS, SPEC_REQUIRED,
+         allModels, modelsWithoutSupplierCost } from '../designer/engines/catalogue.mjs';
+import { MMEM_DUCTED, paircoilRatePerM } from '../designer/engines/supplier-pricing.mjs';
+import { resolveCost } from '../designer/engines/materials.mjs';
 import { selectEquipment, selectZoneController } from '../designer/engines/equipment.mjs';
 import { calculateAirflow } from '../designer/engines/airflow.mjs';
 import { designRoomOutlets, designOutlets } from '../designer/engines/outlets.mjs';
@@ -681,4 +684,137 @@ test('the BOM reports which lines have no cost at all', () => {
   });
   assert.ok(bom.unpricedCount >= 1);
   assert.ok(bom.unpricedLabels.some(l => /Daikin X/.test(l)));
+});
+
+// ── NAC's supplier price list (MMEM) ────────────────────────────────────────
+
+test('supplier costs come off the price list, attributed and dated', () => {
+  const cat = buildCatalogue({});
+  const costed = allModels(cat).filter(m => m.supplierCost !== null);
+  assert.equal(costed.length, MMEM_DUCTED.length);
+  for (const m of costed) {
+    assert.ok(m.supplierCost > 0);
+    assert.ok(m.supplierCode, m.name + ' should carry the supplier code it was priced from');
+    assert.match(m.supplierSource, /MMEM/);
+  }
+});
+
+test('an existing catalogue model is matched to its supplier line, not duplicated', () => {
+  const cat = buildCatalogue({});
+  const fujitsu = cat.find(b => b.id === 'fujitsu');
+  const arth36 = fujitsu.models.filter(m => /^ARTH36KHTA/.test(m.name));
+  assert.equal(arth36.length, 1, 'ARTH36KHTA must not appear twice');
+  assert.equal(arth36[0].supplierCost, 3050);
+
+  const samsung = cat.find(b => b.id === 'samsung');
+  const ac052 = samsung.models.filter(m => /AC052TNHDKG/.test(m.name));
+  assert.equal(ac052.length, 1);
+  assert.equal(ac052[0].supplierCost, 1620);
+});
+
+test('models the supplier no longer lists are kept, with no invented cost', () => {
+  const cat = buildCatalogue({});
+  const missing = modelsWithoutSupplierCost(cat);
+  assert.ok(missing.length > 0);
+  // Mitsubishi Heavy and Midea are not on the MMEM account at all.
+  assert.ok(missing.some(m => m.brand === 'Mitsubishi Heavy'));
+  assert.ok(missing.some(m => m.brand === 'Midea'));
+  for (const m of allModels(cat)) {
+    if (m.supplierCost === null) assert.equal(m.supplierCode, null);
+  }
+});
+
+test('brands only on the supplier list are added to the catalogue', () => {
+  const cat = buildCatalogue({});
+  const gree = cat.find(b => b.id === 'gree');
+  const panasonic = cat.find(b => b.id === 'panasonic');
+  assert.ok(gree && gree.models.length === 6);
+  assert.ok(panasonic && panasonic.models.length === 7);
+  assert.ok(gree.models.every(m => m.supplierCost > 0 && m.fromSupplierList));
+});
+
+test('a cost NAC enters overrides the supplier list', () => {
+  const viaDesigner = buildCatalogue({
+    specStore: { 'fujitsu:f8': { supplierCost: 2900 } }
+  });
+  const f8 = viaDesigner.find(b => b.id === 'fujitsu').models.find(m => m.id === 'f8');
+  assert.equal(f8.supplierCost, 2900);
+  assert.equal(f8.supplierSource, 'nac_entered');
+
+  const viaPriceSetup = buildCatalogue({
+    savedBrands: [{ id: 'fujitsu', models: [{ id: 'f8', cost: '2750' }] }],
+    specStore: { 'fujitsu:f8': { supplierCost: 2900 } }
+  });
+  const f8b = viaPriceSetup.find(b => b.id === 'fujitsu').models.find(m => m.id === 'f8');
+  assert.equal(f8b.supplierCost, 2750);
+  assert.equal(f8b.supplierSource, 'price_setup');
+});
+
+test('selection prefers a model that can actually be costed', () => {
+  const cat = buildCatalogue({});
+  const sel = selectEquipment(cat, { designKw: 18.63 });
+  assert.notEqual(sel.recommended[0].supplierCost, null,
+    'the top recommendation must have a cost, or the job cannot be priced');
+
+  const onlyCosted = selectEquipment(cat, { designKw: 18.63 }, { });
+  assert.ok(onlyCosted.allCandidates.some(c => c.supplierCost === null),
+    'uncosted models are still listed, just ranked lower');
+
+  const filtered = selectEquipment(cat, { designKw: 18.63 }, {});
+  assert.ok(filtered);
+  const strict = selectEquipment(cat, { designKw: 18.63 }, {});
+  assert.ok(strict);
+});
+
+test('requireCost hides models with no cost on file', () => {
+  const cat = buildCatalogue({});
+  const sel = selectEquipment(cat, { designKw: 14 }, { requireCost: true });
+  assert.ok(sel.allCandidates.length > 0);
+  assert.ok(sel.allCandidates.every(c => c.supplierCost !== null));
+});
+
+test('zone controllers carry their supplier cost and brand lock', () => {
+  const daikinLocked = ZONE_CONTROLLERS.filter(c => c.brandLock === 'daikin');
+  assert.ok(daikinLocked.length >= 5);
+  assert.ok(daikinLocked.every(c => c.cost > 0));
+  const at5 = ZONE_CONTROLLERS.find(c => c.id === 'at5_daikin');
+  assert.equal(at5.cost, 1120);
+  assert.equal(at5.maxZones, 16);
+});
+
+test('the recommended controller is one that can be costed and fits', () => {
+  const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 8 });
+  assert.notEqual(r.recommended.cost, null);
+  assert.ok(r.recommended.maxZones >= 8);
+  // Cheapest that fits, among the costed ones.
+  const fitting = ZONE_CONTROLLERS.filter(c =>
+    (!c.brandLock || c.brandLock === 'daikin') && (c.maxZones ?? 99) >= 8 && c.cost != null);
+  assert.equal(r.recommended.cost, Math.min(...fitting.map(c => c.cost)));
+});
+
+test("NAC's house-standard controller is used when one is set", () => {
+  const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 8, preferId: 'at5_daikin' });
+  assert.equal(r.recommended.id, 'at5_daikin');
+  // But never one that does not fit.
+  const tooSmall = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 8, preferId: 'dk_z4_24' });
+  assert.notEqual(tooSmall.recommended.id, 'dk_z4_24');
+});
+
+test('paircoil is priced per metre off the roll rate, not as a placeholder', () => {
+  assert.equal(paircoilRatePerM('AIRBTT3858'), 16.15);   // $323 / 20 m
+  assert.equal(paircoilRatePerM('AIRBTT1438'), 8.3);     // $166 / 20 m
+  const r = resolveCost('refrigerant_pipe', {});
+  assert.equal(r.cost, 16.15);
+  assert.equal(r.source, 'supplier_list');
+  assert.match(r.note, /MMEM/);
+});
+
+test('a supplier-list rate does not count as a placeholder in the BOM', () => {
+  const { o, net, z, ret } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret,
+    refrigerantPipeM: 8 });
+  const pipe = bom.items.find(i => i.key === 'refrigerant_pipe');
+  assert.equal(pipe.priceSource, 'supplier_list');
+  assert.equal(pipe.totalCost, Math.round(16.15 * 8 * 100) / 100);
+  assert.ok(!bom.items.filter(i => i.priceSource === 'default_placeholder').includes(pipe));
 });

@@ -5,6 +5,7 @@
 import { h, card, table, field, input, select, button, banner, mount, money } from './dom.mjs';
 import { MATERIAL_CATALOGUE } from '../engines/materials.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
+import { MMEM_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
 
 /** Read a nested settings value by dotted path. Writes go through app.updateSetting. */
 function pathGet(obj, path) {
@@ -97,7 +98,22 @@ export function renderSettingsScreen(app, section = 'load') {
         numField('Maximum capacity ratio', 'equipment.maxCapacityRatio'),
         numField('Oversize warning ratio', 'equipment.oversizeWarnRatio'),
         numField('Undersize warning ratio', 'equipment.undersizeWarnRatio'),
-        numField('Max single unit (kW)', 'equipment.maxSingleUnitKw')))
+        numField('Max single unit (kW)', 'equipment.maxSingleUnitKw'),
+        field('House-standard zone controller', select(S.equipment.defaultControllerId || '',
+          [{ value: '', label: 'Cheapest that fits' },
+           ...(app.controllers || []).map(c => ({
+             value: c.id,
+             label: c.name + (c.cost != null ? ' — $' + Number(c.cost).toFixed(2) : ' — no cost on file')
+           }))],
+          v => app.updateSetting('equipment.defaultControllerId', v)),
+          'Used whenever the design does not name one. It is still skipped if it is not compatible.'))),
+      card('Supplier price list', 'Where equipment costs come from when NAC has not entered one',
+        h('p', { class: 'note' },
+          MMEM_META.source + ' — ' + MMEM_META.edition + ', ' + MMEM_META.basis +
+          ' (account ' + MMEM_META.account + '). ' + MMEM_META.note),
+        h('p', { class: 'note' },
+          MMEM_DUCTED.length + ' ducted sets and ' + MMEM_ZONE_CONTROLS.length +
+          ' zone controls are priced. Costs entered per model below always take precedence.'))
     ],
 
     airflow: () => [
@@ -288,7 +304,8 @@ export function renderSettingsScreen(app, section = 'load') {
             v => app.setSpecModel(v))),
           app.specModelKey ? h('div', {},
             banner('info', 'Supplier cost is what the unit costs NAC. On the job-cost-plus-fee basis it ' +
-              'goes straight into the customer price, so a missing one under-prices the job.'),
+              'goes straight into the customer price, so a missing one under-prices the job. ' +
+              'Leave it blank to use the ' + MMEM_META.source + ' rate where there is one.'),
             h('div', { class: 'grid-3' },
               field('supplierCost ($)',
                 input(app.equipmentSpecs?.[app.specModelKey]?.supplierCost ?? '',

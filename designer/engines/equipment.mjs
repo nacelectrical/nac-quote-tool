@@ -25,6 +25,7 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
   const candidates = allModels(catalogue)
     .filter(m => !opts.phase || m.phase.includes(opts.phase))
     .filter(m => !opts.requirePrice || m.hasPrice)
+    .filter(m => !opts.requireCost || m.supplierCost !== null)
     .map(m => {
       const ratio = m.kw / designKw;
       const notes = [];
@@ -72,6 +73,12 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
       }
 
       if (m.specStatus !== 'complete') notes.push(m.specNotice);
+      if (m.supplierCost === null) {
+        notes.push('No supplier cost on file — this model cannot be costed until one is entered in ' +
+          'HVAC Design Settings → Equipment specs.');
+        warnings.push({ code: 'MISSING_SUPPLIER_COST', severity: 'WARNING',
+          message: m.brandName + ' ' + m.name + ' has no supplier cost on file.' });
+      }
       if (!m.hasPrice) notes.push('No NAC price configured for this model — set it in the existing Price Setup screen.');
 
       // Score: closeness to the ideal window, then commercial readiness.
@@ -80,6 +87,9 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
       if (ratio < E.minCapacityRatio) score -= 45;
       if (ratio > E.maxCapacityRatio) score -= 30;
       if (opts.brandPreference && m.brandId === opts.brandPreference) score += 25;
+      // A model with no cost cannot be costed or quoted, so it ranks below one
+      // that can — whichever pricing basis is in use.
+      if (m.supplierCost !== null) score += 22;
       if (m.hasPrice) score += 12;
       if (m.specStatus === 'complete') score += 8;
       warnings.forEach(w => { score -= w.severity === 'CRITICAL' ? 60 : w.severity === 'WARNING' ? 18 : 5; });
@@ -95,6 +105,8 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
         electricalSupply: m.specs?.electricalSupply ?? null,
         refrigerant: m.specs?.refrigerant ?? null,
         sellPrice: m.sellPrice, supplierCost: m.supplierCost, hasPrice: m.hasPrice,
+        supplierCode: m.supplierCode ?? null, supplierSource: m.supplierSource ?? null,
+        series: m.series ?? null,
         specStatus: m.specStatus, specNotice: m.specNotice,
         capacityRatio: round(ratio, 3),
         inWindow: ratio >= E.minCapacityRatio && ratio <= E.maxCapacityRatio,
@@ -127,14 +139,29 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
   };
 }
 
-/** Pick a zone controller that is compatible with the chosen system. */
+/**
+ * Pick a zone controller that is compatible with the chosen system.
+ *
+ * Ranked so the estimator gets something that can actually be costed: a
+ * controller with a supplier cost beats one without, then the cheapest that
+ * fits, then the one with the least surplus zone capacity.
+ */
 export function selectZoneController(controllers, { brandId, zoneCount, preferId } = {}) {
   const compatible = (controllers || []).filter(c =>
     (!c.brandLock || c.brandLock === brandId) && (!zoneCount || (c.maxZones ?? 99) >= zoneCount));
-  const preferred = compatible.find(c => c.id === preferId);
+
+  const ranked = [...compatible].sort((a, b) => {
+    const aCost = a.cost !== null && a.cost !== undefined;
+    const bCost = b.cost !== null && b.cost !== undefined;
+    if (aCost !== bCost) return aCost ? -1 : 1;              // costed first
+    if (aCost && a.cost !== b.cost) return a.cost - b.cost;  // then cheapest
+    return (a.maxZones ?? 99) - (b.maxZones ?? 99);          // then tightest fit
+  });
+
+  const preferred = ranked.find(c => c.id === preferId);
   return {
-    compatible,
-    recommended: preferred || compatible[0] || null,
+    compatible: ranked,
+    recommended: preferred || ranked[0] || null,
     incompatible: (controllers || []).filter(c => !compatible.includes(c)).map(c => ({
       ...c,
       reason: c.brandLock && c.brandLock !== brandId

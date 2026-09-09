@@ -10,6 +10,8 @@
 // Where NAC has not entered it, the model reports SPECIFICATION DATA REQUIRED
 // and the engines refuse to rely on it.
 
+import { MMEM_DUCTED, MMEM_ZONE_CONTROLS, MMEM_META, findSupplierLine, indoorCode } from './supplier-pricing.mjs';
+
 export const SPEC_REQUIRED = 'SPECIFICATION DATA REQUIRED';
 
 /** The ducted range, mirroring the existing tool's BRANDS constant. */
@@ -102,18 +104,34 @@ export const DUCTED_CATALOGUE = [
     { id: 'br6', name: 'SDHV200 — Ducted RC 3Ph', kw: 20.0, phase: '3Ph' },
     { id: 'br7', name: 'Dominator S2 KGHV120',    kw: 12.2, phase: '1Ph' },
     { id: 'br8', name: 'Dominator S2 KGHV160',    kw: 16.0, phase: '1Ph' }
-  ]}
+  ]},
+  // Gree and Panasonic are on NAC's MMEM account but were never in the quote
+  // tool's list. Their models come in from the supplier price list below.
+  { id: 'gree', name: 'Gree', url: 'https://www.gree.com.au/ducted', models: [] },
+  { id: 'panasonic', name: 'Panasonic', url: 'https://www.panasonic.com/au/consumer/air-conditioners.html', models: [] }
 ];
 
-/** Zone controllers NAC supplies — mirrors the existing CONTROLLERS constant. */
+/**
+ * Zone controllers NAC can actually buy, with what they cost, from the MMEM
+ * price list. The two generic entries the existing quote tool used are kept at
+ * the top so a quote raised the old way still resolves.
+ */
 export const ZONE_CONTROLLERS = [
-  { id: 'std', name: 'Brand Standard Controller', maxZones: 8,  brandLock: null,
-    note: 'Manufacturer’s own zone controller supplied with the system.' },
-  { id: 'at5', name: 'Airtouch 5',                maxZones: 16, brandLock: null,
-    note: 'Polyaire Airtouch 5 — supports individual temperature sensors per zone.' },
-  { id: 'daikin_zone', name: 'Daikin Zone Controller', maxZones: 8, brandLock: 'daikin',
-    note: 'Daikin-branded zoning, Daikin systems only.' }
+  { id: 'std', name: 'Brand Standard Controller', maxZones: 8, brandLock: null, cost: null,
+    note: 'Manufacturer’s own zone controller supplied with the system. No separate cost on file.' },
+  { id: 'at5', name: 'Airtouch 5', maxZones: 16, brandLock: null, cost: null,
+    note: 'Generic Airtouch 5 entry from the existing quote tool. Prefer the costed MMEM kit below.' },
+  ...MMEM_ZONE_CONTROLS
+    .filter(c => !c.perZoneAccessory)
+    .map(c => ({
+      id: c.id, name: c.name, maxZones: c.maxZones, brandLock: c.brandLock || null,
+      cost: c.cost, supplierCode: c.code,
+      note: 'MMEM ' + c.code + ' — $' + c.cost.toFixed(2) + ' ex GST (' + MMEM_META.edition + ').'
+    }))
 ];
+
+/** Per-zone accessories, e.g. an Airtouch sensor in each zone. */
+export const ZONE_ACCESSORIES = MMEM_ZONE_CONTROLS.filter(c => c.perZoneAccessory);
 
 /**
  * Fields that must come from the manufacturer. Anything not present in NAC's
@@ -140,8 +158,11 @@ export const REQUIRED_SPEC_FIELDS = [
  * @param {Object} specStore   parsed `nac_hvac_equipment_specs` value, or null
  *                             shape: { "<brandId>:<modelId>": { ...specs } }
  */
-export function buildCatalogue({ savedBrands = null, specStore = null, base = DUCTED_CATALOGUE } = {}) {
-  return base.map(brand => {
+export function buildCatalogue({ savedBrands = null, specStore = null, base = DUCTED_CATALOGUE,
+                                 supplierLines = MMEM_DUCTED } = {}) {
+  const usedSupplierCodes = new Set();
+
+  const merged = base.map(brand => {
     const saved = (savedBrands || []).find(b => b.id === brand.id || b.name === brand.name);
     return {
       ...brand,
@@ -151,6 +172,10 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
           ? Number(savedModel.price) : null;
         const specKey = brand.id + ':' + model.id;
         const specs = (specStore && (specStore[specKey] || specStore[model.name])) || {};
+        // What NAC pays, from the supplier price list, when the model is one
+        // MMEM still sell.
+        const supplier = findSupplierLine(brand.id, model.name, model.kw, model.phase);
+        if (supplier) usedSupplierCodes.add(supplier.code);
         const missing = REQUIRED_SPEC_FIELDS.filter(f => specs[f] === undefined || specs[f] === null || specs[f] === '');
         return {
           ...model,
@@ -159,12 +184,18 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
           specKey,
           // Commercial — straight from the existing NAC price record.
           sellPrice,                                    // installed price inc GST, as NAC already stores it
-          // What the unit costs NAC. Price Setup does not carry a cost field,
-          // so this normally comes from the designer's own equipment store.
+          // What the unit costs NAC, in order of authority: a cost typed into
+          // Price Setup, then one entered in the designer, then the supplier
+          // price list.
           supplierCost: savedModel?.cost !== undefined && savedModel?.cost !== '' && savedModel?.cost !== null
             ? Number(savedModel.cost)
             : (specs.supplierCost !== undefined && specs.supplierCost !== null && specs.supplierCost !== ''
-                ? Number(specs.supplierCost) : null),
+                ? Number(specs.supplierCost)
+                : (supplier ? supplier.cost : null)),
+          supplierCode: supplier ? supplier.code : null,
+          supplierSource: savedModel?.cost ? 'price_setup'
+            : specs.supplierCost ? 'nac_entered'
+            : supplier ? MMEM_META.source + ' ' + MMEM_META.edition : null,
           hasPrice: sellPrice !== null && isFinite(sellPrice) && sellPrice > 0,
           // Engineering — only what NAC has actually entered.
           specs,
@@ -176,6 +207,54 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
       })
     };
   });
+
+  // Anything MMEM sell that the quote tool's list never had — the current
+  // Daikin range, Gree and Panasonic — is appended so it can be selected and
+  // costed. These carry the supplier's own code as their name.
+  for (const line of supplierLines) {
+    if (usedSupplierCodes.has(line.code)) continue;
+    const brand = merged.find(b => b.id === line.brandId);
+    if (!brand) continue;
+    const id = 'mmem_' + line.code.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '');
+    const specKey = brand.id + ':' + id;
+    const specs = (specStore && specStore[specKey]) || {};
+    const missing = REQUIRED_SPEC_FIELDS.filter(f => specs[f] === undefined || specs[f] === null || specs[f] === '');
+    const savedModel = (savedBrands || []).find(b => b.id === brand.id)?.models
+      ?.find(m => m.id === id || m.name === line.code);
+    const sellPrice = savedModel && savedModel.price !== '' && savedModel.price !== undefined && savedModel.price !== null
+      ? Number(savedModel.price) : null;
+
+    brand.models.push({
+      id,
+      name: line.code,
+      kw: line.kw,
+      phase: line.phase,
+      brandId: brand.id,
+      brandName: brand.name,
+      series: line.series,
+      specKey,
+      sellPrice,
+      supplierCost: specs.supplierCost !== undefined && specs.supplierCost !== null && specs.supplierCost !== ''
+        ? Number(specs.supplierCost) : line.cost,
+      supplierCode: line.code,
+      supplierSource: MMEM_META.source + ' ' + MMEM_META.edition,
+      hasPrice: sellPrice !== null && isFinite(sellPrice) && sellPrice > 0,
+      specs,
+      missingSpecs: missing,
+      specStatus: missing.length === 0 ? 'complete' : missing.length === REQUIRED_SPEC_FIELDS.length ? 'none' : 'partial',
+      specNotice: missing.length ? SPEC_REQUIRED + ': ' + missing.join(', ') : null,
+      fromSupplierList: true
+    });
+  }
+
+  // Drop brands that ended up with nothing in them.
+  return merged.filter(b => b.models.length > 0);
+}
+
+/** Models the quote tool lists that MMEM no longer price — worth reviewing. */
+export function modelsWithoutSupplierCost(catalogue) {
+  return allModels(catalogue).filter(m => m.supplierCost === null)
+    .map(m => ({ brand: m.brandName, model: m.name, kw: m.kw, phase: m.phase }));
 }
 
 export function allModels(catalogue) {

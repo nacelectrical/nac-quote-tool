@@ -17,6 +17,7 @@ function line(key, quantity, ctx, extra = {}) {
     unitCost: r.cost,
     totalCost: r.cost !== null ? round(r.cost * qty, 2) : null,
     priceSource: r.source,
+    priceNote: r.note || null,
     priced: r.cost !== null,
     diameterMm: ctx.diameterMm ?? null,
     ...extra

@@ -98,6 +98,8 @@ designer/engines/                 deterministic engineering — no DOM, no AI
   model.mjs          data models + revisions
   pipeline.mjs       runs every stage
   store.mjs          Supabase + localStorage persistence
+  supplier-pricing.mjs  NAC's MMEM trade price list — ducted sets, zone
+                     controls and paircoil, dated and attributed
   sample-plan.mjs    the PART 36 realistic builder plan
   sample-plan-image.mjs  draws that plan so it can be worked on screen
 
@@ -144,8 +146,10 @@ equipment + materials + subcontractor + other  =  total job cost
                                 gross profit    =  the job fee, exactly
 ```
 
-Sample project: $16,473.20 cost + $6,000 fee = $22,473.20 ex GST →
-**$24,720.52 inc GST**, gross profit $6,000 (26.7%).
+Sample project, at real supplier costs: $11,996.40 cost + $6,000 fee =
+$17,996.40 ex GST → **$19,796.04 inc GST**, gross profit $6,000 (33.3%).
+Ductwork materials in that figure are still on placeholder rates, which the
+design says so on the Materials tab.
 
 Because every cost is recovered before the fee is added, anything entered as a
 cost — a subcontractor, an access allowance — never eats into the margin. Set
@@ -163,9 +167,13 @@ there and selectable, and a price typed on the Financials tab overrides both.
 - **Material rates** ship as clearly-labelled placeholders. On this basis they
   go straight through to the customer, so any design using one raises a
   **WARNING**. Enter NAC's real rates in HVAC Design Settings → Material rates.
-- **Equipment supplier cost** is what the unit costs NAC. Price Setup has no
-  cost field, so it lives in HVAC Design Settings → Equipment specs (it will
-  still read a `cost` from Price Setup if one is ever added there).
+- **Equipment supplier cost** comes from NAC's supplier price list
+  (`designer/engines/supplier-pricing.mjs` — MMEM Trade Price List, January
+  2026, ex GST, account 201169). Order of authority: a `cost` in Price Setup,
+  then one entered in HVAC Design Settings → Equipment specs, then the
+  supplier list. Every costed model shows which of the three it came from.
+  Equipment selection ranks costed models above uncosted ones, because a model
+  with no cost cannot be quoted at all on this basis.
 - **Manufacturer specs** (rated airflow, available static, dimensions,
   electrical, refrigerant) are never guessed. Missing ones report
   `SPECIFICATION DATA REQUIRED` and are excluded from the checks that need them.
@@ -186,3 +194,25 @@ single-storey 4-bed + media project home with chained perimeter dimension rows,
 wall thicknesses inside the chains, opening widths on their own row, and
 annotations that look numeric but are not lengths. Every room dimension in it is
 reconstructed, not read off a label.
+
+
+## Supplier price list
+
+`designer/engines/supplier-pricing.mjs` holds NAC's MMEM trade pricing:
+
+| | |
+|---|---|
+| 62 ducted indoor + outdoor sets | Daikin, Mitsubishi Electric, Fujitsu, Gree, Panasonic, Samsung, Braemar |
+| 20 zone controls | AirTouch 5, Daikin, Mitsubishi, Fujitsu, Siemens |
+| 4 paircoil sizes | priced per 20 m roll, converted to a per-metre rate |
+
+It is dated and attributed (`MMEM_META`) so it is obvious when it needs
+reissuing. Costs merge onto the existing catalogue by model code — regional
+suffixes like `.TH` and `/SA` are handled — and models MMEM sell that the quote
+tool never listed (the current Daikin range, Gree, Panasonic) are appended so
+they can be selected and costed.
+
+Models the quote tool lists that MMEM no longer price stay in the catalogue with
+no cost, are listed under "models with no supplier cost on file" on the
+Equipment tab, and rank below costed ones. Mitsubishi Heavy and Midea are not on
+the MMEM account at all.

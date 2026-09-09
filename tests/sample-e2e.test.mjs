@@ -44,23 +44,17 @@ export function buildSampleDesign({ verifyAll = true, savedBrands = null } = {})
   if (verifyAll) rooms = rooms.map(r => (r.conditioned ? verifyRoom(r, 'test') : r));
 
   const catalogue = buildCatalogue({
-    // TEST FIXTURE PRICES ONLY — not NAC's real prices. In the running app
-    // these come from the existing `nac_brands_v4` record that Price Setup writes.
-    savedBrands: savedBrands ?? [{ id: 'daikin', models: [
-      { id: 'd5', price: '18900', cost: '6100' }, { id: 'd6', price: '20400', cost: '6800' },
-      { id: 'd7', price: '22600', cost: '7400' }, { id: 'd8', price: '26400', cost: '9100' },
-      { id: 'd9', price: '29900', cost: '9900' }, { id: 'd15', price: '25900', cost: '8300' }
-    ]}],
+    // No Price Setup prices — the sample is priced at cost plus the flat fee,
+    // and the costs come from NAC's real supplier price list.
+    savedBrands: savedBrands ?? null,
     specStore: {
-      'daikin:d6': { ratedAirflowLs: 800, availableStaticPa: 150, indoorWidthMm: 1400,
-                     indoorHeightMm: 390, indoorDepthMm: 800, electricalSupply: '240V 1Ph',
-                     runningCurrentA: 18, refrigerant: 'R32', heatingKw: 16.0 },
-      'daikin:d7': { ratedAirflowLs: 900, availableStaticPa: 170, indoorWidthMm: 1550,
-                     indoorHeightMm: 390, indoorDepthMm: 800, electricalSupply: '240V 1Ph',
-                     runningCurrentA: 20, refrigerant: 'R32', heatingKw: 18.0 },
-      'daikin:d9': { ratedAirflowLs: 1100, availableStaticPa: 200, indoorWidthMm: 1550,
-                     indoorHeightMm: 470, indoorDepthMm: 900, electricalSupply: '415V 3Ph',
-                     runningCurrentA: 12, refrigerant: 'R32', heatingKw: 22.4 }
+      // Manufacturer data for the unit the sample selects. Illustrative only —
+      // in the running app NAC enter these off the data sheet.
+      'daikin:mmem_fdyqn200lcv1_rzq200my1': {
+        ratedAirflowLs: 1100, availableStaticPa: 200, indoorWidthMm: 1550,
+        indoorHeightMm: 470, indoorDepthMm: 900, electricalSupply: '415V 3Ph',
+        runningCurrentA: 12, refrigerant: 'R32', heatingKw: 22.4
+      }
     }
   });
 
@@ -206,8 +200,9 @@ test('sample plan: the job is priced at cost plus the flat fee', () => {
   assert.equal(c.grossProfit, c.jobFee);
   assert.ok(c.grossMarginPct > 0 && c.grossMarginPct < 100);
 
-  // The stored installed price is still carried for comparison, unused.
-  assert.equal(c.cataloguePrice, design.selectedUnit.sellPrice);
+  // The unit cost comes from the supplier price list, not a guess.
+  assert.ok(design.selectedUnit.supplierCost > 0);
+  assert.match(design.selectedUnit.supplierSource, /MMEM/);
 });
 
 test('sample plan: static pressure is compared against the unit ESP on file', () => {

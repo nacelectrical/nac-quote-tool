@@ -7,7 +7,13 @@
 // The BOM raises a CHECK warning listing every line still on a placeholder, so
 // a quote is never sent out on numbers nobody at NAC has confirmed.
 
-export const PRICE_SOURCE = { NAC: 'nac', PLACEHOLDER: 'default_placeholder' };
+import { paircoilRatePerM, DEFAULT_PAIRCOIL_CODE, MMEM_META } from './supplier-pricing.mjs';
+
+export const PRICE_SOURCE = {
+  NAC: 'nac',                          // a rate NAC has entered
+  SUPPLIER: 'supplier_list',           // straight off the MMEM price list
+  PLACEHOLDER: 'default_placeholder'   // the shipped starting value
+};
 
 export const MATERIAL_CATALOGUE = {
   // Flexible duct, priced per metre by diameter.
@@ -36,7 +42,10 @@ export const MATERIAL_CATALOGUE = {
   return_filter:   { label: 'Return air filter',                unit: 'each', cost: 85.00 },
   drain_kit:       { label: 'Condensate drain kit + safety tray', unit: 'each', cost: 120.00 },
   drain_pipe:      { label: 'Condensate drain pipe',            unit: 'm',    cost: 6.50 },
-  refrigerant_pipe:{ label: 'Insulated refrigerant pipe pair',  unit: 'm',    cost: 38.00 },
+  // From MMEM's paircoil roll price — a real NAC cost, not a placeholder.
+  refrigerant_pipe:{ label: 'Paircoil ' + DEFAULT_PAIRCOIL_CODE + ' (3/8 – 5/8)', unit: 'm',
+                     cost: paircoilRatePerM(), source: PRICE_SOURCE.SUPPLIER,
+                     note: MMEM_META.source + ' ' + MMEM_META.edition + ', ' + MMEM_META.basis },
   interconnect_cable:{ label: 'Interconnecting cable',          unit: 'm',    cost: 7.20 },
   power_cable:     { label: 'Power supply cable',               unit: 'm',    cost: 9.40 },
   isolator:        { label: 'Weatherproof isolator',            unit: 'each', cost: 68.00 },
@@ -67,8 +76,12 @@ export function resolveCost(key, { diameterMm = null, nacRates = null } = {}) {
   if (nac !== undefined && nac !== null && nac !== '' && typeof nac !== 'object') {
     return { cost: Number(nac), source: PRICE_SOURCE.NAC, label: def.label, unit: def.unit };
   }
-  return { cost: def.cost ?? null, source: def.cost ? PRICE_SOURCE.PLACEHOLDER : null,
-           label: def.label, unit: def.unit, missing: def.cost === undefined };
+  // A line whose shipped rate came off the supplier list is a real cost, not a
+  // placeholder, so it does not raise the placeholder warning.
+  return { cost: def.cost ?? null,
+           source: def.cost ? (def.source || PRICE_SOURCE.PLACEHOLDER) : null,
+           label: def.label, unit: def.unit, note: def.note || null,
+           missing: def.cost === undefined };
 }
 
 export const OUTLET_MATERIAL_KEY = {
