@@ -68,6 +68,19 @@ input:focus,select:focus{border-color:#2B6CB8}
 </div>
 <div id="draftStatus"></div>
 
+<h2>1c. Load HVAC design</h2>
+<div class="row">
+  <div style="flex:1">
+    <label class="lbl">Design ref (from NAC AI HVAC Designer)</label>
+    <input type="text" id="designRef" placeholder="e.g. NACD-SMITH-1738...">
+  </div>
+  <div style="display:flex;align-items:flex-end;gap:8px">
+    <button class="btn" onclick="loadDesign()">Load design</button>
+    <button class="btn" onclick="window.open('/designer.html','_blank')">Open designer</button>
+  </div>
+</div>
+<div id="designStatus"></div>
+
 <h2>2. Client details</h2>
 <div class="row">
   <div style="flex:1">
@@ -357,6 +370,95 @@ async function loadDraft(){
   }
 }
 
+// ── NAC AI HVAC DESIGNER ──────────────────────────────────────────────────
+// Pulls a finished design in and pre-fills the option rows. The designer
+// stores its designs in nac_designs when that table exists, and falls back to
+// the nac_settings key/value store otherwise, so both are tried here.
+async function loadDesign(){
+  var ref = document.getElementById('designRef').value.trim();
+  var st = document.getElementById('designStatus');
+  if(!ref){ st.innerHTML='<div class="status err">Enter a design ref</div>'; return; }
+  st.innerHTML='<div class="status">Loading design...</div>';
+
+  var design = null;
+  try{
+    var r = await fetch(SUPA_URL+'/rest/v1/nac_designs?id=eq.'+encodeURIComponent(ref)+'&select=design',{
+      headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA}});
+    if(r.ok){ var rows = await r.json(); if(rows && rows[0] && rows[0].design) design = JSON.parse(rows[0].design); }
+  }catch(e){}
+  if(!design){
+    try{
+      var r2 = await fetch(SUPA_URL+'/rest/v1/nac_settings?key=eq.'+encodeURIComponent('nac_design_'+ref)+'&select=value',{
+        headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA}});
+      if(r2.ok){ var rows2 = await r2.json(); if(rows2 && rows2[0] && rows2[0].value) design = JSON.parse(rows2[0].value); }
+    }catch(e){}
+  }
+  if(!design){ st.innerHTML='<div class="status err">Design not found</div>'; return; }
+
+  document.getElementById('clientName').value = (design.customer && design.customer.name) || '';
+  if(design.customer && design.customer.email) document.getElementById('clientEmail').value = design.customer.email;
+  if(design.job && design.job.description) document.getElementById('jobDesc').value = design.job.description;
+
+  // Pre-select the designed system in option 1.
+  var filled = 0;
+  var u = design.selectedUnit;
+  if(u){
+    var brand = brands.find(function(b){ return b.name === u.brandName; });
+    if(brand){
+      document.getElementById('brand0').value = brand.id;
+      updateModels(0);
+      var sel = document.getElementById('model0');
+      var wantKw = String(u.capacityKw);
+      var best = -1, bestDelta = 1e9;
+      for(var o=0;o<sel.options.length;o++){
+        var parts = sel.options[o].value.split('|');
+        if(!parts[1]) continue;
+        if(sel.options[o].value.indexOf(u.model) === 0){ best = o; break; }
+        var delta = Math.abs(parseFloat(parts[1]) - parseFloat(wantKw));
+        if(delta < bestDelta){ bestDelta = delta; best = o; }
+      }
+      if(best >= 0){ sel.selectedIndex = best; autoPrice(0); }
+      filled = 1;
+    }
+    if(design.commercials && design.commercials.sellPriceIncGst){
+      var pe = document.getElementById('price0');
+      pe.value = design.commercials.sellPriceIncGst;
+      pe.dataset.auto = '0';
+    }
+  }
+
+  window.loadedDraftNotes = designNotes(design);
+
+  var s = design.systemLoad || {};
+  var warn = (design.warnings || []).filter(function(w){ return w.severity === 'CRITICAL' && !w.acknowledged; });
+  st.innerHTML = '<div class="status ok">Loaded ' + ref + ' &mdash; '
+    + (s.totalConditionedAreaSqM || '?') + ' m&sup2;, ' + (s.designKw || '?') + ' kW, '
+    + ((design.outlets && design.outlets.totals && design.outlets.totals.total) || '?') + ' outlets, '
+    + ((design.zones && design.zones.zoneCount) || '?') + ' zones. '
+    + (filled ? 'Option 1 pre-filled.' : 'Select the system manually.') + '</div>'
+    + (warn.length ? '<div class="status err">' + warn.length
+        + ' unacknowledged CRITICAL design warning(s): '
+        + warn.map(function(w){ return w.code; }).join(', ') + '</div>' : '');
+}
+
+function designNotes(d){
+  var lines = ['NAC AI HVAC DESIGNER — ' + d.id];
+  var s = d.systemLoad, u = d.selectedUnit;
+  if(s) lines.push('Conditioned area: ' + s.totalConditionedAreaSqM + ' m2 · Design load: ' + s.designKw
+    + ' kW (NAC 145 W/m2 rule: ' + (s.legacy ? s.legacy.kw : '?') + ' kW)');
+  if(u) lines.push('System: ' + u.brandName + ' ' + u.model + ' — ' + u.capacityKw + ' kW ' + u.phase);
+  if(d.airflow) lines.push('Total airflow: ' + d.airflow.allocatedAirflowLs + ' L/s');
+  if(d.outlets) lines.push('Outlets: ' + d.outlets.totals.total);
+  if(d.zones) lines.push('Zones: ' + d.zones.zoneCount + (d.controller ? ' · ' + d.controller.name : ''));
+  if(d.network) lines.push('Ductwork: ' + d.network.totalDuctLengthM + ' m');
+  if(d.returnDesign) lines.push('Return: ' + d.returnDesign.returnCount + ' x '
+    + (d.returnDesign.returns[0] ? d.returnDesign.returns[0].grilleSize : '')
+    + ' @ ' + d.returnDesign.perReturnLs + ' L/s');
+  if(d.pressure) lines.push('Estimated static: ' + d.pressure.estimatedRequirementPa + ' Pa — '
+    + d.pressure.disclaimer);
+  return lines.join('\n');
+}
+
 // Auto-load a draft if the URL has ?draft=NAC-...
 (function(){
   var p = new URLSearchParams(location.search);
@@ -364,6 +466,11 @@ async function loadDraft(){
   if(dref){
     var box = document.getElementById('draftRef');
     if(box){ box.value = dref; loadDraft(); }
+  }
+  var design = p.get('design');
+  if(design){
+    var dbox = document.getElementById('designRef');
+    if(dbox){ dbox.value = design; loadDesign(); }
   }
 })();
 </script>
