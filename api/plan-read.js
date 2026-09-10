@@ -42,6 +42,9 @@ ABSOLUTE RULES
    up to something plausible and quietly sizes the wrong system.
 9. Never read the same number twice into two entries, and never invent a number
    to fill a gap in a row. Rows of dimensions on a plan are often incomplete.
+10. A room size printed as a pair — "4.3 x 7.1m" — belongs on that room in
+   roomLabels.dimensionText as one string. Do NOT also split it into two
+   separate entries in "detections"; it is not part of a dimension chain.
 
 WHAT TO REPORT
 - detections: every number-like piece of text on or around the plan, with its
@@ -51,7 +54,13 @@ WHAT TO REPORT
   the application decides which is which.
 - openings: window, door and sliding-door symbols you can identify, with boxes.
 - walls: wall lines you can identify, with orientation and position.
-- roomLabels: room name text with its box (e.g. "BED 2", "ALFRESCO").
+- roomLabels: room name text with its box (e.g. "BED 2", "ALFRESCO"). If the
+  plan prints the room's SIZE against the name — "4.3 x 7.1m", "3.0 x 3.4m",
+  "3700 x 4200", usually on the line directly beneath it — put that text
+  verbatim in "dimensionText" on the same room. Copy it exactly, including the
+  unit; do not convert it, do not multiply it out, and do not supply one for a
+  room that has none. This is how builders' brochure and display-home plans
+  state their rooms, and it is the single most useful thing on such a sheet.
 - scaleLabelText: any printed scale note, verbatim (e.g. "SCALE 1:100 @ A3").
 - overallDimensions: the outermost overall width/depth numbers IF they are
   clearly printed as overalls. Otherwise null.
@@ -65,7 +74,7 @@ Respond with JSON only, no prose, matching this shape exactly:
 {"detections":[{"id":"d1","text":"3400","orientation":"horizontal","row":1,"box":{"x":0,"y":0,"w":0,"h":0}}],
  "openings":[{"id":"o1","type":"window|door|sliding door","box":{"x":0,"y":0,"w":0,"h":0}}],
  "walls":[{"id":"w1","orientation":"horizontal|vertical","box":{"x":0,"y":0,"w":0,"h":0}}],
- "roomLabels":[{"id":"r1","text":"BED 2","box":{"x":0,"y":0,"w":0,"h":0}}],
+ "roomLabels":[{"id":"r1","text":"BED 2","dimensionText":"3.0 x 3.4m","box":{"x":0,"y":0,"w":0,"h":0}}],
  "scaleLabelText":"SCALE 1:100 @ A3","overallDimensions":{"widthText":"18020","depthText":"14250"},
  "floorAreas":[{"label":"RESIDENCE","text":"139.0 m2"}],
  "quality":"good","notes":["..."]}`;
@@ -120,6 +129,10 @@ function sanitise(raw, { imageWidthPx, imageHeightPx }) {
     .map((r, i) => ({
       id: typeof r.id === 'string' ? r.id : 'r' + (i + 1),
       text: typeof r.text === 'string' ? r.text.trim().slice(0, 48) : '',
+      // The size printed against the room, verbatim. Parsed by the application,
+      // never here — this endpoint does no arithmetic.
+      dimensionText: typeof r.dimensionText === 'string' && r.dimensionText.trim()
+        ? r.dimensionText.trim().slice(0, 32) : null,
       box: box(r.box)
     }))
     .filter(r => r.text && r.box && inImage(r.box))

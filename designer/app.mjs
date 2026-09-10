@@ -18,6 +18,7 @@ import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
 import { calibrate, parseScaleLabel } from './engines/calibration.mjs';
 import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
+import { parseRoomDimensionPair } from './engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
          parseFloorAreaText, crossCheckFloorArea } from './engines/rooms.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
@@ -809,6 +810,11 @@ export class DesignerApp {
     const labels = (obs.roomLabels || []).filter(l => l.text && l.box);
     if (!labels.length) return [];
 
+    // A reader may hand back the size as its own text item rather than on the
+    // room. Anything that parses as a pair and sits within a line or two below
+    // a room name belongs to that room.
+    adoptLooseDimensionPairs(labels, obs.detections);
+
     // A chain's stations are millimetres from its OWN zero, which is wherever
     // the first dimension sits in the image — not the image's left edge. So a
     // label's pixel position is converted through the chain's own pixel anchor,
@@ -818,6 +824,18 @@ export class DesignerApp {
     const anchored = hChain?.pixelAnchor && vChain?.pixelAnchor;
     const defs = labels.map(l => {
       const def = { label: l.text, labelPx: l.box };
+
+      // A size printed against the room beats everything else. It is the
+      // architect's own figure for that room, so it needs no chain, no
+      // calibration and no geometry — which is the whole of how a builder's
+      // brochure plan states its rooms.
+      const printed = parseRoomDimensionPair(l.dimensionText);
+      if (printed) {
+        def.printedWidthMm = printed.widthMm;
+        def.printedLengthMm = printed.lengthMm;
+        def.printedText = printed.printed;
+      }
+
       if (anchored) {
         // The label's centre, not its corner — a long room name would otherwise
         // read as sitting further left and up than it does.
@@ -1550,6 +1568,32 @@ export class DesignerApp {
     this.design = d;
     this.selectedRoomId = null;
     toast('Sample plan loaded. Rooms still need verifying — that is the point.');
+  }
+}
+
+/**
+ * Attach a printed room size that came back as a loose text item to the room it
+ * sits under. Builders print the size on the line directly beneath the name, so
+ * the owner is the nearest label horizontally overlapping it and above it by no
+ * more than a couple of lines.
+ */
+function adoptLooseDimensionPairs(labels, detections) {
+  const loose = (detections || []).filter(d => d.box && parseRoomDimensionPair(d.text));
+  if (!loose.length) return;
+
+  for (const d of loose) {
+    const dc = d.box.x + d.box.w / 2;
+    let best = null, bestGap = Infinity;
+    for (const l of labels) {
+      if (l.dimensionText) continue;                 // already has its own
+      const lc = l.box.x + l.box.w / 2;
+      const gapY = d.box.y - (l.box.y + l.box.h);    // how far below the name
+      if (gapY < -l.box.h || gapY > l.box.h * 3) continue;
+      if (Math.abs(dc - lc) > Math.max(l.box.w, d.box.w)) continue;
+      const gap = Math.abs(gapY) + Math.abs(dc - lc) * 0.25;
+      if (gap < bestGap) { best = l; bestGap = gap; }
+    }
+    if (best) best.dimensionText = d.text;
   }
 }
 

@@ -238,3 +238,54 @@ export function classifyAll(detections, ctx = {}) {
     return { ...det, chainId: chain ? chain.id : null, ...res, classificationConfidence: res.confidence };
   });
 }
+
+/**
+ * Parse a room dimension pair printed inside the room — "4.3 x 7.1m",
+ * "3.0 x 3.4m", "3700 x 4200".
+ *
+ * This is how every builder's brochure and display-home plan states its rooms,
+ * as against a working drawing's chained strings around the perimeter. It is
+ * also the BEST source there is: the number is the architect's own figure for
+ * that room, printed against that room, so it needs no chain, no calibration
+ * and no geometry — which is why it scores highest of all the sources.
+ *
+ * A unit on either half applies to both, since "4.3 x 7.1m" means metres for
+ * both figures. Returns null on anything that is not a pair.
+ */
+export function parseRoomDimensionPair(text) {
+  if (text === null || text === undefined) return null;
+  const raw = String(text).trim();
+  if (!raw) return null;
+
+  // <number><unit?> <x|×> <number><unit?>, with nothing else of substance.
+  const m = raw.match(
+    /^\(?\s*([0-9]+(?:[.,][0-9]+)?)\s*(mm|cm|m)?\s*[x×X*]\s*([0-9]+(?:[.,][0-9]+)?)\s*(mm|cm|m)?\s*\)?$/);
+  if (!m) return null;
+
+  const a = parseFloat(m[1].replace(',', '.'));
+  const b = parseFloat(m[3].replace(',', '.'));
+  if (!isFinite(a) || !isFinite(b) || a <= 0 || b <= 0) return null;
+
+  // A unit stated on either half governs the pair.
+  const unit = (m[4] || m[2] || '').toLowerCase();
+  const toMm = (n) => {
+    if (unit === 'mm') return n;
+    if (unit === 'cm') return n * 10;
+    if (unit === 'm') return n * 1000;
+    // No unit printed: a decimal is metres, a whole number is millimetres.
+    return String(n).includes('.') || n < 100 ? n * 1000 : n;
+  };
+  const widthMm = Math.round(toMm(a));
+  const lengthMm = Math.round(toMm(b));
+
+  // A room, not a tile size or a paper size.
+  if (widthMm < 600 || lengthMm < 600) return null;
+  if (widthMm > 30000 || lengthMm > 30000) return null;
+
+  return { widthMm, lengthMm, printed: raw, unit: unit || (String(a).includes('.') ? 'm' : 'mm') };
+}
+
+/** Is this text a room dimension pair? */
+export function looksLikeDimensionPair(text) {
+  return parseRoomDimensionPair(text) !== null;
+}
