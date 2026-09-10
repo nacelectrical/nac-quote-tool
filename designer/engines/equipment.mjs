@@ -81,9 +81,12 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
       }
       if (!m.hasPrice) notes.push('No NAC price configured for this model — set it in the existing Price Setup screen.');
 
-      // Score: closeness to the ideal window, then commercial readiness.
-      const ideal = (E.minCapacityRatio + E.maxCapacityRatio) / 2;
-      let score = 100 - Math.abs(ratio - ideal) * 140;
+      // Score: closeness to the target capacity, then commercial readiness.
+      // A shortfall counts harder than a surplus — running short on a design
+      // day is a callback, running over is an efficiency and humidity cost.
+      const target = E.targetCapacityRatio ?? 1.0;
+      const delta = ratio - target;
+      let score = 100 - (delta < 0 ? -delta * 200 : delta * 140);
       if (ratio < E.minCapacityRatio) score -= 45;
       if (ratio > E.maxCapacityRatio) score -= 30;
       if (opts.brandPreference && m.brandId === opts.brandPreference) score += 25;

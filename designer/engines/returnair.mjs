@@ -3,6 +3,7 @@
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { selectDiameter, velocity } from './ducts.mjs';
+import { findUnitSpec } from './unit-specs.mjs';
 
 /**
  * Size the return air path from the total design supply airflow.
@@ -10,7 +11,8 @@ import { selectDiameter, velocity } from './ducts.mjs';
  * an undersized return is obvious before it becomes a noise complaint.
  */
 export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm = null,
-                                  filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null }, opts = {}) {
+                                  filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null,
+                                  unit = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const R = settings.returnAir;
 
@@ -77,15 +79,49 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
         R.maxFilterFaceVelocityMs + ' m/s limit — filter will load quickly and add static pressure.' });
   }
 
-  // Return duct back to the unit.
+  // Return duct(s) back to the unit.
+  //
+  // NAC's standard is one 400 mm duct or two at 350/400 — 450 and 500 flex is
+  // not installed, so anything a 400 cannot carry is run as a second duct
+  // rather than sized up. That is how it goes in on site, and it keeps the
+  // BOM honest about what is actually bought.
+  // The fan coil's own return connection wins where the manufacturer states
+  // one. A ducted unit has a fixed return spigot arrangement — one 400 or two
+  // at 350/400 — and the duct runs to it. Calculating a diameter that the unit
+  // has no connection for is not a design, it is a number.
+  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
+  const spigots = spec?.returnSpigots || null;
+
   const duct = diameterOverrideMm
-    ? { diameterMm: diameterOverrideMm, velocityMs: round(velocity(diameterOverrideMm, perReturnLs), 2),
+    ? { diameterMm: diameterOverrideMm, ductCount: 1,
+        velocityMs: round(velocity(diameterOverrideMm, perReturnLs), 2),
         reason: 'Diameter set manually by the estimator.', manual: true }
-    : selectDiameter(perReturnLs, 'return', opts);
+    : spigots
+      ? { diameterMm: spigots.diameterMm, ductCount: spigots.count,
+          velocityMs: round(velocity(spigots.diameterMm, perReturnLs / spigots.count), 2),
+          fromUnitSpec: true,
+          reason: spec.model + ' has a ' + spigots.count + ' × ' + spigots.diameterMm +
+            ' mm return connection (' + spec.returnFlangeText + '), so that is the return duct.' }
+      : selectReturnDuct(perReturnLs, settings);
+
   if (duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'RESTRICTED_RETURN_PATH', severity: 'WARNING',
       message: 'Return duct velocity ' + duct.velocityMs + ' m/s exceeds the ' +
         settings.duct.velocity.return.max + ' m/s maximum — the return path is restricted.' });
+  }
+  // The unit's own connection is what it is; if the airflow through it is
+  // above the band that is a note about the unit, not a sizing choice.
+  if (duct.fromUnitSpec && duct.velocityMs > settings.duct.velocity.return.max) {
+    warnings.push({ code: 'UNIT_RETURN_CONNECTION_TIGHT', severity: 'CHECK',
+      message: 'At ' + round(perReturnLs, 0) + ' L/s the unit\'s own ' + duct.ductCount + ' × ' +
+        duct.diameterMm + ' mm return connection runs at ' + duct.velocityMs + ' m/s. ' +
+        'Split the return across more grilles, or accept the noise.' });
+  }
+  if (duct.exceedsStandard) {
+    warnings.push({ code: 'RETURN_EXCEEDS_NAC_STANDARD', severity: 'WARNING',
+      message: round(perReturnLs, 0) + ' L/s needs more return than ' + R.maxReturnDucts + ' × ' +
+        Math.max(...R.returnDuctSizesMm) + ' mm can carry at ' + settings.duct.velocity.return.max +
+        ' m/s. Add another return air point, or set the duct manually.' });
   }
 
   return {
@@ -103,11 +139,70 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
     },
     duct: {
       diameterMm: duct.diameterMm,
+      // How many ducts of that diameter run back to the unit, side by side.
+      ductCount: duct.ductCount ?? 1,
+      description: (duct.ductCount ?? 1) > 1
+        ? duct.ductCount + ' × ' + duct.diameterMm + ' mm' : duct.diameterMm + ' mm',
       velocityMs: duct.velocityMs,
+      fromUnitSpec: !!duct.fromUnitSpec,
+      unitModel: spec?.model || null,
+      unitReturnFlangeText: spec?.returnFlangeText || null,
       lengthMm: ductLengthMm ?? null,
-      lengthM: ductLengthMm ? round(ductLengthMm / 1000, 2) : null,
+      // Length is per duct, so two ducts is twice the flex.
+      lengthM: ductLengthMm ? round((ductLengthMm / 1000) * (duct.ductCount ?? 1), 2) : null,
+      lengthPerDuctM: ductLengthMm ? round(ductLengthMm / 1000, 2) : null,
       reason: duct.reason
     },
     warnings
+  };
+}
+
+/**
+ * Pick the return duct arrangement for one return air point.
+ *
+ * NAC install one 400 mm duct or two at 350/400 — never a 450 or a 500. So the
+ * search is over (count × diameter) combinations rather than a single diameter,
+ * and it takes the first that sits inside the return velocity band, preferring
+ * fewer ducts and then the smaller diameter.
+ */
+export function selectReturnDuct(airflowLs, settings = DEFAULT_SETTINGS) {
+  const R = settings.returnAir;
+  const band = settings.duct.velocity.return;
+  const sizes = [...(R.returnDuctSizesMm || [400])].sort((a, b) => a - b);
+  const maxCount = R.maxReturnDucts || 1;
+
+  const options = [];
+  for (let count = 1; count <= maxCount; count++) {
+    for (const diameterMm of sizes) {
+      options.push({ count, diameterMm, velocityMs: round(velocity(diameterMm, airflowLs / count), 2) });
+    }
+  }
+
+  const within = options.filter(o => o.velocityMs <= band.preferred);
+  const acceptable = options.filter(o => o.velocityMs <= band.max);
+  const pick = within[0] || acceptable[0];
+
+  if (pick) {
+    return {
+      diameterMm: pick.diameterMm,
+      ductCount: pick.count,
+      velocityMs: pick.velocityMs,
+      exceedsStandard: false,
+      reason: (pick.count > 1 ? pick.count + ' × ' : '') + pick.diameterMm + ' mm at ' +
+        pick.velocityMs + ' m/s' + (within.length ? '' : ' (above the preferred ' + band.preferred +
+        ' m/s but within the ' + band.max + ' m/s maximum)') + '. NAC standard return sizing.'
+    };
+  }
+
+  // Nothing NAC carry can do it. Report the largest arrangement and say so
+  // rather than quietly sizing to a duct that will never be installed.
+  const largest = options[options.length - 1];
+  return {
+    diameterMm: largest.diameterMm,
+    ductCount: largest.count,
+    velocityMs: largest.velocityMs,
+    exceedsStandard: true,
+    reason: largest.count + ' × ' + largest.diameterMm + ' mm is the largest return NAC install, and it is ' +
+      'still ' + largest.velocityMs + ' m/s. Another return air point is needed.'
   };
 }
