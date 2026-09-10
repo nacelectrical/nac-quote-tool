@@ -141,6 +141,51 @@
   footer{margin-top:52px; padding-top:18px; border-top:1px solid var(--rule);
     font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-3); line-height:1.9}
 
+
+  /* ── print / PDF ────────────────────────────────────────────────────────
+     The status colours ARE the information here, so they must survive the
+     print. Filters go — a printed page cannot be filtered — and every row is
+     forced visible in case one was filtered out on screen. */
+  @media print{
+    :root{
+      --ground:#FFFFFF; --surface:#FFFFFF; --surface-2:#F4F5F9;
+      --ink:#12142A; --ink-2:#3A3F55; --ink-3:#666C82;
+      --rule:#BFC5D2; --rule-2:#DCE0E9;
+    }
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+    @page{size:A4 portrait; margin:14mm 12mm}
+    body{background:#fff; font-size:9.6pt; line-height:1.45}
+    .wrap{max-width:none; padding:0}
+    .filters{display:none}
+    #rows tr[hidden]{display:table-row!important}
+    .scroll{overflow:visible; border:1px solid var(--rule)}
+    table{min-width:0; width:100%; table-layout:fixed}
+    thead{display:table-header-group}
+    thead th{font-size:7pt; padding:6px 8px}
+    tbody td{padding:7px 8px; font-size:8.6pt}
+    tbody td:nth-child(2){width:118px}
+    tbody td:nth-child(1){width:150px}
+    tbody td:nth-child(3),tbody td:nth-child(4){width:52px}
+    .tnote{max-width:none; font-size:8pt}
+    .floc{font-size:7.2pt}
+    .lk{font-size:6.6pt; padding:1px 3px}
+    .pill{font-size:7pt; padding:2px 5px}
+    tr, li, .risk{break-inside:avoid; page-break-inside:avoid}
+    section{break-before:auto; margin-top:22px}
+    h2{font-size:14pt}
+    .lede{font-size:9pt; max-width:none}
+    h1{font-size:26pt}
+    .board{grid-template-columns:repeat(6,1fr)}
+    .cell{padding:9px 10px}
+    .cell .v{font-size:21pt}
+    .cell .k{font-size:6.6pt}
+    .cell .s{font-size:7.4pt}
+    .note{font-size:8.8pt; padding:10px 12px}
+    footer{font-size:7.6pt; margin-top:22px; padding-bottom:0}
+    .wrap{padding-block:0}
+    a{color:inherit; text-decoration:none}
+  }
+
   @media (max-width:560px){
     .meta{text-align:left}
     ol.fixes li{grid-template-columns:1fr}
