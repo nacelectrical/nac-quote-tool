@@ -11,6 +11,7 @@
 // and the engines refuse to rely on it.
 
 import { MMEM_DUCTED, MMEM_ZONE_CONTROLS, MMEM_META, findSupplierLine, indoorCode } from './supplier-pricing.mjs';
+import { findUnitSpec, UNIT_SPEC_META } from './unit-specs.mjs';
 
 export const SPEC_REQUIRED = 'SPECIFICATION DATA REQUIRED';
 
@@ -140,6 +141,38 @@ export const ZONE_ACCESSORIES = MMEM_ZONE_CONTROLS.filter(c => c.perZoneAccessor
 /** Commercial fields held alongside the specs — not manufacturer data. */
 export const COMMERCIAL_SPEC_FIELDS = ['supplierCost'];
 
+/**
+ * Fill in the specs the manufacturer publishes, where NAC has not typed them.
+ *
+ * Order of authority: a value NAC entered by hand always wins — they may be
+ * looking at the data sheet in front of them. Below that come the transcribed
+ * manufacturer tech sheets. Anything neither source carries stays missing and
+ * is reported as SPECIFICATION DATA REQUIRED; nothing is estimated.
+ */
+function withManufacturerSpecs(brandId, modelName, entered) {
+  const sheet = findUnitSpec(brandId, modelName);
+  if (!sheet) return { specs: entered, specSource: entered && Object.keys(entered).length ? 'nac_entered' : null, sheet: null };
+
+  const fromSheet = {};
+  if (sheet.ratedAirflowLs !== null) fromSheet.ratedAirflowLs = sheet.ratedAirflowLs;
+  if (sheet.availableStaticPa !== null) fromSheet.availableStaticPa = sheet.availableStaticPa;
+  if (sheet.phase) fromSheet.electricalSupply = sheet.phase;
+  if (sheet.refrigerant) fromSheet.refrigerant = sheet.refrigerant;
+
+  const merged = { ...fromSheet };
+  // Anything NAC actually entered overrides the sheet.
+  for (const [k, v] of Object.entries(entered || {})) {
+    if (v !== undefined && v !== null && v !== '') merged[k] = v;
+  }
+  const usedSheet = Object.keys(fromSheet).some(k => merged[k] === fromSheet[k] &&
+    (entered?.[k] === undefined || entered?.[k] === null || entered?.[k] === ''));
+  return {
+    specs: merged,
+    specSource: usedSheet ? UNIT_SPEC_META.source : (Object.keys(entered || {}).length ? 'nac_entered' : null),
+    sheet
+  };
+}
+
 export const REQUIRED_SPEC_FIELDS = [
   'ratedAirflowLs',
   'availableStaticPa',
@@ -171,7 +204,10 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
         const sellPrice = savedModel && savedModel.price !== '' && savedModel.price !== undefined && savedModel.price !== null
           ? Number(savedModel.price) : null;
         const specKey = brand.id + ':' + model.id;
-        const specs = (specStore && (specStore[specKey] || specStore[model.name])) || {};
+        const entered = (specStore && (specStore[specKey] || specStore[model.name])) || {};
+        // The manufacturer's own published figures stand behind whatever NAC
+        // has typed, so a data sheet NAC already owns is not reported missing.
+        const { specs, specSource, sheet } = withManufacturerSpecs(brand.id, model.name, entered);
         // What NAC pays, from the supplier price list, when the model is one
         // MMEM still sell.
         const supplier = findSupplierLine(brand.id, model.name, model.kw, model.phase);
@@ -197,8 +233,11 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
             : specs.supplierCost ? 'nac_entered'
             : supplier ? MMEM_META.source + ' ' + MMEM_META.edition : null,
           hasPrice: sellPrice !== null && isFinite(sellPrice) && sellPrice > 0,
-          // Engineering — only what NAC has actually entered.
+          // Engineering — what NAC entered, backed by the manufacturer sheets.
           specs,
+          specSource,
+          returnSpigots: sheet?.returnSpigots || null,
+          returnFlangeText: sheet?.returnFlangeText || null,
           missingSpecs: missing,
           specStatus: missing.length === 0 ? 'complete'
             : missing.length === REQUIRED_SPEC_FIELDS.length ? 'none' : 'partial',
@@ -217,7 +256,8 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
     if (!brand) continue;
     const id = 'mmem_' + line.code.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+$/, '');
     const specKey = brand.id + ':' + id;
-    const specs = (specStore && specStore[specKey]) || {};
+    const entered = (specStore && specStore[specKey]) || {};
+    const { specs, specSource, sheet } = withManufacturerSpecs(line.brandId, line.code, entered);
     const missing = REQUIRED_SPEC_FIELDS.filter(f => specs[f] === undefined || specs[f] === null || specs[f] === '');
     const savedModel = (savedBrands || []).find(b => b.id === brand.id)?.models
       ?.find(m => m.id === id || m.name === line.code);
@@ -240,6 +280,9 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
       supplierSource: MMEM_META.source + ' ' + MMEM_META.edition,
       hasPrice: sellPrice !== null && isFinite(sellPrice) && sellPrice > 0,
       specs,
+      specSource,
+      returnSpigots: sheet?.returnSpigots || null,
+      returnFlangeText: sheet?.returnFlangeText || null,
       missingSpecs: missing,
       specStatus: missing.length === 0 ? 'complete' : missing.length === REQUIRED_SPEC_FIELDS.length ? 'none' : 'partial',
       specNotice: missing.length ? SPEC_REQUIRED + ': ' + missing.join(', ') : null,

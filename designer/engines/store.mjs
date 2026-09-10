@@ -283,14 +283,18 @@ export async function pushDesignToQuote(design, { quoteId = null, notes = '' } =
 export function designNotesBlock(d) {
   const s = d.systemLoad, u = d.selectedUnit;
   const lines = ['NAC AI HVAC DESIGNER — ' + d.id];
+  // Every line is optional. This block is built on the way to creating the
+  // customer's quote, so a design missing a stage — an older saved one, or one
+  // pushed before every tab was filled in — must produce a SHORTER summary,
+  // never an exception that loses the quote.
   if (s) lines.push('Conditioned area: ' + s.totalConditionedAreaSqM + ' m²  ·  Design load: ' + s.designKw + ' kW' +
-    '  (NAC 145 W/m² rule: ' + s.legacy.kw + ' kW)');
+    (s.legacy?.kw !== undefined ? '  (NAC 145 W/m² rule: ' + s.legacy.kw + ' kW)' : ''));
   if (u) lines.push('System: ' + u.brandName + ' ' + u.model + ' — ' + u.capacityKw + ' kW ' + u.phase);
   if (d.airflow) lines.push('Total airflow: ' + d.airflow.allocatedAirflowLs + ' L/s');
-  if (d.outlets) lines.push('Outlets: ' + d.outlets.totals.total);
+  if (d.outlets?.totals) lines.push('Outlets: ' + d.outlets.totals.total);
   if (d.zones) lines.push('Zones: ' + d.zones.zoneCount + (d.controller ? '  ·  ' + d.controller.name : ''));
   if (d.network) lines.push('Ductwork: ' + d.network.totalDuctLengthM + ' m');
-  if (d.returnDesign) lines.push('Return: ' + d.returnDesign.returnCount + ' × ' +
+  if (d.returnDesign?.returns) lines.push('Return: ' + d.returnDesign.returnCount + ' × ' +
     (d.returnDesign.returns[0]?.grilleSize || '') + ' @ ' + d.returnDesign.perReturnLs + ' L/s');
   if (d.pressure) lines.push('Estimated static: ' + d.pressure.estimatedRequirementPa + ' Pa' +
     (d.pressure.unitAvailableStaticPa ? ' of ' + d.pressure.unitAvailableStaticPa + ' Pa available' : '') +
