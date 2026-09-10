@@ -716,7 +716,16 @@ export function renderMaterials(app) {
     card('Bill of materials', 'Quantities are derived from the design. Edit anything.',
       table([
         { key: 'category', label: 'Category', render: (r) => badge(r.category, 'muted') },
-        { key: 'label', label: 'Item' },
+        { key: 'label', label: 'Item',
+          // Anything bought by the length says what the design needs and what
+          // the off-cut will be, so a quantity of "2" is never a mystery.
+          render: (r) => h('div', {},
+            h('div', {}, r.label),
+            r.metresRequired !== undefined && r.metresRequired !== r.quantity
+              ? h('div', { class: 'hint' }, r.metresRequired + ' m needed · ' +
+                  r.metresBought + ' m bought · ' + r.offcutM + ' m off-cut')
+              : null,
+            r.supplierCode ? h('div', { class: 'hint' }, r.supplierCode) : null) },
         { key: 'quantity', label: 'Qty', align: 'right', width: '90px',
           render: (r, i) => input(r.quantity, v => app.editBom(i, { quantity: Number(v) }),
             { type: 'number', step: '0.01' }) },

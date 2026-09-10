@@ -975,9 +975,13 @@ export class DesignerApp {
   }
 
   exportBomCsv() {
-    const rows = [['Category', 'Item', 'Qty', 'Unit', 'Unit cost', 'Total', 'Price source']];
+    // Carries the supplier part code so the sheet can be handed to MMEM as an
+    // order, and the metres so a whole-length quantity can be checked.
+    const rows = [['Category', 'Item', 'Part code', 'Qty', 'Unit',
+                   'Metres needed', 'Unit cost', 'Total', 'Price source']];
     for (const i of this.design.bom.items) {
-      rows.push([i.category, i.label, i.quantity, i.unit, i.unitCost ?? '', i.totalCost ?? '', i.priceSource ?? '']);
+      rows.push([i.category, i.label, i.supplierCode ?? '', i.quantity, i.unit,
+                 i.metresRequired ?? '', i.unitCost ?? '', i.totalCost ?? '', i.priceSource ?? '']);
     }
     const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
     const a = document.createElement('a');

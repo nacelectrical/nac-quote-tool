@@ -4,7 +4,7 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
-import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE } from './materials.mjs';
+import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE } from './materials.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -18,8 +18,50 @@ function line(key, quantity, ctx, extra = {}) {
     totalCost: r.cost !== null ? round(r.cost * qty, 2) : null,
     priceSource: r.source,
     priceNote: r.note || null,
+    supplierCode: r.supplierCode || null,
     priced: r.cost !== null,
     diameterMm: ctx.diameterMm ?? null,
+    ...extra
+  };
+}
+
+/**
+ * A line for something sold by the length or roll — flex duct, drain pipe,
+ * paircoil. MMEM sell flex in 6 m lengths, so a 7 m run costs two lengths, not
+ * 7 metres. Off-cuts of the same diameter are reused across the job, which is
+ * why the rounding happens on the job total rather than per run.
+ *
+ * The line reports what is bought (whole lengths) and what the design needs
+ * (metres), so the estimator can see the off-cut rather than wonder about it.
+ */
+function packLine(key, metres, ctx, extra = {}) {
+  const r = resolveCost(key, ctx);
+  const m = round(Number(metres), 2);
+  // No pack price — a NAC per-metre rate, or a size MMEM have not quoted. The
+  // line still reports the metres so callers never have to branch on it.
+  if (!r.pack || !r.pack.lengthM) {
+    return line(key, m, ctx, { metresRequired: m, metresBought: m, offcutM: 0,
+      ratePerM: r.cost, ...extra });
+  }
+
+  const packs = Math.ceil(m / r.pack.lengthM);
+  const boughtM = round(packs * r.pack.lengthM, 2);
+  return {
+    key,
+    label: r.label,
+    unit: r.pack.lengthM + ' m length',
+    quantity: packs,
+    unitCost: r.pack.cost,
+    totalCost: round(r.pack.cost * packs, 2),
+    priceSource: r.source,
+    priceNote: r.note || null,
+    supplierCode: r.pack.code || r.supplierCode || null,
+    priced: true,
+    diameterMm: ctx.diameterMm ?? null,
+    metresRequired: m,
+    metresBought: boughtM,
+    offcutM: round(boughtM - m, 2),
+    ratePerM: r.cost,
     ...extra
   };
 }
@@ -64,10 +106,35 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
-  // ── Zone motors ────────────────────────────────────────────────────────────
+  // ── Zone motors and zone wiring ────────────────────────────────────────────
+  // A zone damper is the size of the branch duct feeding it, so the diameter
+  // comes from the duct network rather than being assumed.
+  const branchDiameterByRoom = {};
+  for (const sec of (design.network?.sections || [])) {
+    const m = /^branch_(.+)$/.exec(sec.id || '');
+    if (m && sec.diameterMm) branchDiameterByRoom[m[1]] = sec.diameterMm;
+  }
   const closableZones = (design.zones?.zones || []).filter(z => !z.alwaysOpen);
   if (closableZones.length) {
-    items.push({ ...line('zone_motor', closableZones.length, ctx), category: 'zoning' });
+    const motorsByDiameter = {};
+    let unsized = 0;
+    for (const z of closableZones) {
+      // A zone can gather several rooms; the damper sits on the largest branch.
+      const diameters = (z.roomIds || []).map(id => branchDiameterByRoom[id]).filter(Boolean);
+      if (!diameters.length) { unsized += 1; continue; }
+      const d = Math.max(...diameters);
+      motorsByDiameter[d] = (motorsByDiameter[d] || 0) + 1;
+    }
+    Object.keys(motorsByDiameter).sort((a, b) => Number(a) - Number(b)).forEach(d => {
+      items.push({ ...line('zone_motor', motorsByDiameter[d], { ...ctx, diameterMm: Number(d) }),
+        category: 'zoning' });
+    });
+    if (unsized) {
+      items.push({ ...line('zone_motor', unsized, ctx), category: 'zoning',
+        sizeUnknown: true });
+    }
+    // One 15 m zone lead per motorised damper.
+    items.push({ ...line('zone_cable', closableZones.length, ctx), category: 'zoning' });
   }
 
   // ── Ductwork ───────────────────────────────────────────────────────────────
@@ -79,8 +146,15 @@ export function buildBillOfMaterials(design, opts = {}) {
       fittingCounts[f.type] = (fittingCounts[f.type] || 0) + f.quantity;
     }
   }
+  // Return duct shares the flex tally so off-cuts are not double-counted.
+  const returnDuct = design.returnDesign?.duct;
+  if (returnDuct?.lengthM) {
+    byDiameter[returnDuct.diameterMm] =
+      round((byDiameter[returnDuct.diameterMm] || 0) + returnDuct.lengthM, 2);
+  }
   Object.keys(byDiameter).sort((a, b) => Number(a) - Number(b)).forEach(d => {
-    items.push({ ...line('flex_duct', byDiameter[d], { ...ctx, diameterMm: Number(d) }), category: 'ductwork' });
+    items.push({ ...packLine('flex_duct', byDiameter[d], { ...ctx, diameterMm: Number(d) }),
+      category: 'ductwork' });
   });
 
   const fittingMap = { supply_plenum: 'supply_plenum', y_piece: 'y_piece', reducer: 'reducer',
@@ -98,35 +172,56 @@ export function buildBillOfMaterials(design, opts = {}) {
   }
 
   // ── Outlets ────────────────────────────────────────────────────────────────
+  // A round diffuser is priced by its neck, which is the duct that reaches it.
+  // Other outlet types are not sized by diameter, so they stay flat-rated.
   const outletCounts = {};
   for (const o of (design.outlets?.rows || [])) {
-    outletCounts[o.type] = (outletCounts[o.type] || 0) + o.quantity;
+    const key = OUTLET_MATERIAL_KEY[o.type];
+    if (!key) continue;
+    const d = MATERIAL_CATALOGUE[key]?.byDiameter ? branchDiameterByRoom[o.roomId] || null : null;
+    const bucket = key + '|' + (d || '');
+    outletCounts[bucket] = (outletCounts[bucket] || 0) + o.quantity;
   }
-  Object.entries(outletCounts).forEach(([type, qty]) => {
-    const key = OUTLET_MATERIAL_KEY[type];
-    if (key) items.push({ ...line(key, qty, ctx), category: 'outlets' });
+  Object.entries(outletCounts).forEach(([bucket, qty]) => {
+    const [key, d] = bucket.split('|');
+    items.push({ ...line(key, qty, d ? { ...ctx, diameterMm: Number(d) } : ctx),
+      category: 'outlets' });
   });
 
   // ── Return air ─────────────────────────────────────────────────────────────
   if (design.returnDesign) {
-    items.push({ ...line('return_grille', design.returnDesign.returnCount, ctx), category: 'return' });
-    items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx), category: 'return' });
-    items.push({ ...line('return_plenum', design.returnDesign.returnCount, ctx), category: 'return' });
-    if (design.returnDesign.duct?.lengthM) {
-      items.push({ ...line('flex_duct', design.returnDesign.duct.lengthM,
-        { ...ctx, diameterMm: design.returnDesign.duct.diameterMm }), category: 'return' });
+    const grille = line('return_grille', design.returnDesign.returnCount, ctx);
+    items.push({ ...grille, category: 'return' });
+    // MMEM supply the grille and filter as one item. Only add a separate filter
+    // line if the grille rate in use does not already cover it.
+    if (!resolveCost('return_grille', ctx).includesFilter) {
+      items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx), category: 'return' });
     }
+    items.push({ ...line('return_plenum', design.returnDesign.returnCount, ctx), category: 'return' });
+    // The return duct is counted with the supply flex above, so it is not
+    // added again here.
   }
 
   // ── Services ───────────────────────────────────────────────────────────────
   items.push({ ...line('drain_kit', 1, ctx), category: 'services' });
-  if (design.drainPipeM) items.push({ ...line('drain_pipe', design.drainPipeM, ctx), category: 'services' });
-  if (design.refrigerantPipeM) items.push({ ...line('refrigerant_pipe', design.refrigerantPipeM, ctx), category: 'services' });
+  if (design.drainPipeM) {
+    items.push({ ...packLine('drain_pipe', design.drainPipeM, ctx), category: 'services' });
+    items.push({ ...line('drain_insulation', Math.ceil(design.drainPipeM), ctx), category: 'services' });
+    // Two elbows to leave the unit and two to discharge, plus one per 3 m run.
+    items.push({ ...line('drain_elbow', 4 + Math.ceil(design.drainPipeM / 3), ctx), category: 'services' });
+  }
+  if (design.refrigerantPipeM) {
+    items.push({ ...packLine('refrigerant_pipe', design.refrigerantPipeM, ctx), category: 'services' });
+  }
   if (design.cableM) {
     items.push({ ...line('interconnect_cable', design.cableM, ctx), category: 'services' });
     items.push({ ...line('power_cable', design.cableM, ctx), category: 'services' });
   }
   items.push({ ...line('isolator', 1, ctx), category: 'services' });
+  // One roll of tape per 8 m of duct, rounded up, plus the sundries allowance.
+  if (totalDuctM > 0) {
+    items.push({ ...line('duct_tape', Math.max(1, Math.ceil(totalDuctM / 8)), ctx), category: 'services' });
+  }
   items.push({ ...line('consumables', 1, ctx), category: 'services' });
 
   // ── Estimator additions / edits ────────────────────────────────────────────
@@ -160,7 +255,22 @@ export function buildBillOfMaterials(design, opts = {}) {
   if (unpricedLines.length) {
     warnings.push({ code: 'MATERIAL_PRICE_MISSING', severity: 'WARNING',
       message: unpricedLines.length + ' line(s) have no cost at all: ' +
-        unpricedLines.map(l => l.label).join(', ') + '.' });
+        unpricedLines.map(l => l.label).join(', ') +
+        '. Ask the supplier to quote them, or enter a rate in HVAC Design ' +
+        'Settings → Material rates.' });
+  }
+
+  // A size the supplier has not quoted is worth saying out loud even when a
+  // placeholder covers it, because it is a buying problem, not just a pricing one.
+  const offQuote = [...new Set(items
+    .filter(i => i.diameterMm && MATERIAL_CATALOGUE[i.key]?.quotedDiameters
+                 && !MATERIAL_CATALOGUE[i.key].quotedDiameters.includes(i.diameterMm)
+                 && i.priceSource !== PRICE_SOURCE.NAC)
+    .map(i => i.label))];
+  if (offQuote.length) {
+    warnings.push({ code: 'SIZE_NOT_ON_SUPPLIER_QUOTE', severity: 'CHECK',
+      message: offQuote.length + ' size(s) are not on the supplier quote: ' +
+        offQuote.join(', ') + '. Confirm availability and price before ordering.' });
   }
 
   const byCategory = {};

@@ -5,7 +5,7 @@
 import { h, card, table, field, input, select, button, banner, mount, money } from './dom.mjs';
 import { MATERIAL_CATALOGUE } from '../engines/materials.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
-import { MMEM_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
+import { MMEM_META, MMEM_ACCESSORIES_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
 
 /** Read a nested settings value by dotted path. Writes go through app.updateSetting. */
 function pathGet(obj, path) {
@@ -265,30 +265,44 @@ export function renderSettingsScreen(app, section = 'load') {
     ],
 
     materials: () => [
-      banner('info', 'Anything left blank falls back to the shipped placeholder rate, and every design ' +
-        'that uses one says so on the Materials tab.'),
-      card('Flexible duct rate by diameter ($/m)', null,
+      banner('info', 'Rates marked ' + MMEM_ACCESSORIES_META.quoteNo + ' come straight off the MMEM ' +
+        'quotation of ' + MMEM_ACCESSORIES_META.date + ' (' + MMEM_ACCESSORIES_META.basis + ') and are real ' +
+        'costs. Rates marked PLACEHOLDER are shipped starting values that nobody at NAC has confirmed — ' +
+        'every design that uses one says so on the Materials tab. Anything you enter here overrides both.'),
+      card('Flexible duct rate by diameter ($/m)',
+        'MMEM quote 200–400 mm in 6 m lengths. The other sizes are placeholders.',
         table([
           { key: 'dia', label: 'Diameter (mm)', align: 'right' },
-          { key: 'placeholder', label: 'Placeholder', align: 'right', format: v => '$' + v.toFixed(2) },
+          { key: 'shipped', label: 'Shipped rate', align: 'right', format: v => '$' + v.toFixed(2) },
+          { key: 'origin', label: 'Source' },
           { key: 'nac', label: 'NAC rate', align: 'right', width: '140px',
             render: (r) => input(app.materialRates?.flex_duct?.[r.dia] ?? '',
               v => app.updateMaterialRate('flex_duct.' + r.dia, v === '' ? null : Number(v)),
-              { type: 'number', step: '0.01', placeholder: r.placeholder.toFixed(2) }) }
+              { type: 'number', step: '0.01', placeholder: r.shipped.toFixed(2) }) }
         ], Object.entries(MATERIAL_CATALOGUE.flex_duct.byDiameter)
-          .map(([dia, cost]) => ({ id: dia, dia: Number(dia), placeholder: cost })))),
+          .map(([dia, cost]) => {
+            const code = MATERIAL_CATALOGUE.flex_duct.codeByDiameter?.[dia];
+            const pack = MATERIAL_CATALOGUE.flex_duct.packByDiameter?.[dia];
+            return { id: dia, dia: Number(dia), shipped: cost,
+              origin: code ? code + ' — $' + pack.cost.toFixed(2) + ' / ' + pack.lengthM + ' m length'
+                           : 'PLACEHOLDER' };
+          }))),
       card('Item rates', null,
         table([
           { key: 'label', label: 'Item' },
           { key: 'unit', label: 'Unit', width: '70px' },
-          { key: 'placeholder', label: 'Placeholder', align: 'right',
-            format: v => v === undefined ? '—' : '$' + Number(v).toFixed(2) },
+          { key: 'shipped', label: 'Shipped rate', align: 'right',
+            format: v => v === undefined || v === null ? '—' : '$' + Number(v).toFixed(2) },
+          { key: 'origin', label: 'Source' },
           { key: 'nac', label: 'NAC rate', align: 'right', width: '140px',
             render: (r) => input(app.materialRates?.[r.id] ?? '',
               v => app.updateMaterialRate(r.id, v === '' ? null : Number(v)),
-              { type: 'number', step: '0.01', placeholder: r.placeholder !== undefined ? Number(r.placeholder).toFixed(2) : '' }) }
+              { type: 'number', step: '0.01',
+                placeholder: r.shipped !== undefined && r.shipped !== null ? Number(r.shipped).toFixed(2) : '' }) }
         ], Object.entries(MATERIAL_CATALOGUE).filter(([k]) => k !== 'flex_duct')
-          .map(([id, v]) => ({ id, label: v.label, unit: v.unit, placeholder: v.cost }))))
+          .map(([id, v]) => ({ id, label: v.label, unit: v.unit, shipped: v.cost,
+            origin: v.source === 'supplier_list'
+              ? (v.supplierCode || MMEM_ACCESSORIES_META.quoteNo) : 'PLACEHOLDER' }))))
     ],
 
     specs: () => [

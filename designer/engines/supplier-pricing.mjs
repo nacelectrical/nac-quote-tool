@@ -102,10 +102,13 @@ export const MMEM_DUCTED = [
   { brandId: 'braemar', code: 'MMABRAKCHV160D1B', kw: 16.0, phase: '1Ph', cost: 3480, series: 'Ducted' }
 ];
 
-/** Zone controllers and controls, with what they cost NAC. */
+/**
+ * Zone controllers and controls, with what they cost NAC. The Siemens kits and
+ * the AirTouch 5 lines are repriced from MMEM quotation 447-321514-000.
+ */
 export const MMEM_ZONE_CONTROLS = [
-  { id: 'at5_daikin',   code: 'MMAAT5DK',     name: 'AirTouch 5 — Daikin kit',              cost: 1120.00, maxZones: 16, brandLock: 'daikin' },
-  { id: 'at5_sensor',   code: 'MMAAT5S',      name: 'AirTouch 5 temperature sensor',        cost: 88.00,   perZoneAccessory: true },
+  { id: 'at5_daikin',   code: 'MMAAT5DK',     name: 'AirTouch 5 — Daikin kit',              cost: 1100.00, maxZones: 16, brandLock: 'daikin' },
+  { id: 'at5_sensor',   code: 'MMAAT5S',      name: 'AirTouch 5 temperature sensor',        cost: 92.00,   perZoneAccessory: true },
   { id: 'dk_z4_230',    code: 'BRC230Z4B9',   name: 'Daikin 4-zone controller (230–240V)',  cost: 475.00,  maxZones: 4,  brandLock: 'daikin' },
   { id: 'dk_z8_230',    code: 'BRC230Z8B9',   name: 'Daikin 8-zone controller (230–240V)',  cost: 629.00,  maxZones: 8,  brandLock: 'daikin' },
   { id: 'dk_z4_24',     code: 'BRC24Z4B9',    name: 'Daikin 4-zone controller (24V)',       cost: 365.00,  maxZones: 4,  brandLock: 'daikin' },
@@ -121,17 +124,22 @@ export const MMEM_ZONE_CONTROLS = [
   { id: 'me_z8_240',    code: 'PAC-ZC80H-E',  name: 'Mitsubishi 8-zone controller (240V)',  cost: 585.00,  maxZones: 8,  brandLock: 'me' },
   { id: 'fj_zone',      code: 'UTY-CDRXZC',   name: 'Fujitsu 24V zone control interface',   cost: 480.00,  maxZones: 8,  brandLock: 'fujitsu' },
   { id: 'fj_anywair',   code: 'UTY-ANY2',     name: 'Fujitsu ducted anywAiR controller',    cost: 1327.50, maxZones: 8,  brandLock: 'fujitsu' },
-  { id: 'siemens_z4',   code: 'MMASEM4ZTPKIT', name: 'Siemens Home zone control — 4 zone',  cost: 235.00,  maxZones: 4 },
-  { id: 'siemens_z6',   code: 'MMASEM6ZTPKIT', name: 'Siemens Home zone control — 6 zone',  cost: 275.00,  maxZones: 6 },
-  { id: 'siemens_z8',   code: 'MMASEM8ZTPKIT', name: 'Siemens Home zone control — 8 zone',  cost: 313.00,  maxZones: 8 }
+  { id: 'siemens_z4',   code: 'MMASEM4ZTPKIT', name: 'Siemens Home zone control — 4 zone',  cost: 250.00,  maxZones: 4 },
+  { id: 'siemens_z6',   code: 'MMASEM6ZTPKIT', name: 'Siemens Home zone control — 6 zone',  cost: 295.00,  maxZones: 6 },
+  { id: 'siemens_z8',   code: 'MMASEM8ZTPKIT', name: 'Siemens Home zone control — 8 zone',  cost: 320.00,  maxZones: 8 }
 ];
 
-/** Paircoil, sold in 20 m rolls. The per-metre rate is what the BOM uses. */
+/**
+ * Paircoil, sold in 20 m rolls. The per-metre rate is what the BOM uses.
+ * Repriced from MMEM quotation 447-321514-000 (10/09/2026), which supersedes
+ * the January 2026 trade list for these lines.
+ */
 export const MMEM_COPPER = [
-  { code: 'AIRBTT1412', size: '1/4 – 1/2', rollM: 20, rollCost: 204.00 },
-  { code: 'AIRBTT1438', size: '1/4 – 3/8', rollM: 20, rollCost: 166.00 },
-  { code: 'AIRBTT1458', size: '1/4 – 5/8', rollM: 20, rollCost: 260.00 },
-  { code: 'AIRBTT3858', size: '3/8 – 5/8', rollM: 20, rollCost: 323.00 }
+  { code: 'AIRBTT1438', size: '1/4 – 3/8', rollM: 20, rollCost: 199.00 },
+  { code: 'AIRBTT1412', size: '1/4 – 1/2', rollM: 20, rollCost: 232.00 },
+  { code: 'AIRBTT1458', size: '1/4 – 5/8', rollM: 20, rollCost: 291.00 },
+  { code: 'AIRBTT3858', size: '3/8 – 5/8', rollM: 20, rollCost: 342.00 },
+  { code: 'MMABTT3834', size: '3/8 – 3/4', rollM: 20, rollCost: 400.00 }
 ];
 
 /** Residential ducted normally runs 3/8 – 5/8, so that is the default rate. */
@@ -140,6 +148,112 @@ export const DEFAULT_PAIRCOIL_CODE = 'AIRBTT3858';
 export function paircoilRatePerM(code = DEFAULT_PAIRCOIL_CODE) {
   const c = MMEM_COPPER.find(x => x.code === code) || MMEM_COPPER[MMEM_COPPER.length - 1];
   return Math.round((c.rollCost / c.rollM) * 100) / 100;
+}
+
+
+// ── Accessories ─────────────────────────────────────────────────────────────
+//
+// Source: MMEM Electrical Maroochydore quotation 447-321514-000, 10/09/2026,
+// valid to 09/11/2026, NAC account 201169 (salesperson peterl). Ex GST.
+// These supersede the accessory rates carried in the January 2026 trade list.
+//
+// `cost` is the quoted unit price. Where an item is sold as a length or roll,
+// `packM` records what one unit contains so the BOM can buy whole units instead
+// of pretending duct is cut to the metre.
+
+export const MMEM_ACCESSORIES_META = {
+  source: 'MMEM Electrical Maroochydore',
+  quoteNo: '447-321514-000',
+  date: '2026-09-10',
+  validTo: '2026-11-09',
+  account: '201169',
+  salesperson: 'peterl',
+  basis: 'ex GST',
+  note: 'Quoted accessory pricing. Re-quote after 09/11/2026.'
+};
+
+export const MMEM_ACCESSORIES = [
+  // Plenums and return air
+  { code: 'MMAP3SSP3',         group: 'plenum',     desc: 'Supply air plenum 3X',                     cost: 139.00, outlets: 3 },
+  { code: 'MMAP3SSP2',         group: 'plenum',     desc: 'Supply air plenum 2X',                     cost: 110.00, outlets: 2 },
+  { code: 'MMAP3SRP',          group: 'plenum',     desc: 'P3 special return plenum',                 cost: 105.00 },
+  { code: 'MMARAG800600',      group: 'return',     desc: 'Return air grille and filter 800 x 600',   cost: 81.30, includesFilter: true },
+  { code: 'MMARAB8006002X400', group: 'return',     desc: 'Return air box 800 x 600 — 2 x 400',       cost: 85.00 },
+
+  // Flexible duct — R1.0, sold in 6 m lengths
+  { code: 'MMA4006',           group: 'flex',       desc: 'Flex duct 400 mm x 6 m R1.0',              cost: 50.00, diameterMm: 400, packM: 6 },
+  { code: 'MMA3506',           group: 'flex',       desc: 'Flex duct 350 mm x 6 m R1.0',              cost: 45.00, diameterMm: 350, packM: 6 },
+  { code: 'MMA3006',           group: 'flex',       desc: 'Flex duct 300 mm x 6 m R1.0',              cost: 38.00, diameterMm: 300, packM: 6 },
+  { code: 'MMA2506',           group: 'flex',       desc: 'Flex duct 250 mm x 6 m R1.0',              cost: 32.00, diameterMm: 250, packM: 6 },
+  { code: 'MMA2006',           group: 'flex',       desc: 'Flex duct 200 mm x 6 m R1.0',              cost: 30.00, diameterMm: 200, packM: 6 },
+
+  // Outlets
+  { code: 'MMARD300',          group: 'diffuser',   desc: 'Round insulated diffuser 300 mm',          cost: 25.00, diameterMm: 300 },
+  { code: 'MMARD250',          group: 'diffuser',   desc: 'Round insulated diffuser 250 mm',          cost: 23.50, diameterMm: 250 },
+
+  // Butterfly take-offs. The letter/number is MMEM's own size code; it is NOT
+  // resolved to a duct diameter here because the quote does not state one.
+  { code: 'MMADB8',            group: 'takeoff',    desc: 'DB8 double butterfly take-off',            cost: 75.00, sizeCode: 'DB8', double: true },
+  { code: 'MMADB6',            group: 'takeoff',    desc: 'DB6 double butterfly take-off',            cost: 55.00, sizeCode: 'DB6', double: true },
+  { code: 'MMAB11',            group: 'takeoff',    desc: 'B11 butterfly take-off',                   cost: 65.00, sizeCode: 'B11' },
+  { code: 'MMAB9',             group: 'takeoff',    desc: 'B9 butterfly take-off',                    cost: 50.00, sizeCode: 'B9' },
+  { code: 'MMAB8',             group: 'takeoff',    desc: 'B8 butterfly take-off',                    cost: 40.00, sizeCode: 'B8' },
+
+  // Y-pieces. Same caveat — MMEM's size code is carried verbatim.
+  { code: 'MMADY18',           group: 'y_piece',    desc: 'DY18 Y-piece (Y6)',                        cost: 55.00, sizeCode: 'Y6' },
+  { code: 'MMADY16',           group: 'y_piece',    desc: 'DY16 Y-piece (Y5)',                        cost: 50.00, sizeCode: 'Y5' },
+  { code: 'MMADY14',           group: 'y_piece',    desc: 'DY14 Y-piece (Y4)',                        cost: 40.00, sizeCode: 'Y4' },
+  { code: 'MMADY12',           group: 'y_piece',    desc: 'DY12 Y-piece (Y3)',                        cost: 35.00, sizeCode: 'Y3' },
+
+  // Zone motors — 24 V, by damper diameter
+  { code: 'MMADZ400',          group: 'zone_motor', desc: 'Zone motor 400 mm 24 V',                   cost: 65.00, diameterMm: 400 },
+  { code: 'MMADZ350',          group: 'zone_motor', desc: 'Zone motor 350 mm 24 V',                   cost: 60.00, diameterMm: 350 },
+  { code: 'MMADZ300',          group: 'zone_motor', desc: 'Zone motor 300 mm 24 V',                   cost: 55.00, diameterMm: 300 },
+  { code: 'MMADZ250',          group: 'zone_motor', desc: 'Zone motor 250 mm 24 V',                   cost: 51.00, diameterMm: 250 },
+  { code: 'MMADZ200',          group: 'zone_motor', desc: 'Zone motor 200 mm 24 V',                   cost: 45.00, diameterMm: 200 },
+
+  // Zone wiring — 15 m per lead
+  { code: 'MMADZ15',           group: 'zone_cable', desc: 'Zone Innocab 15 m cable (black)',          cost: 15.80, packM: 15 },
+  { code: 'MMADZST15',         group: 'zone_cable', desc: 'Zone Innocab 15 m straight-through (blue)', cost: 15.80, packM: 15 },
+
+  // Condensate drain
+  { code: 'MMAPP20',           group: 'drain',      desc: '20 mm rigid drain pressure pipe 3.9 m',    cost: 7.50, packM: 3.9 },
+  { code: 'MMAPPELB9020',      group: 'drain',      desc: '20 mm 90° elbow',                          cost: 0.78 },
+  { code: 'MMAPI1',            group: 'drain',      desc: 'Pipe insulation 1" (25 x 10)',             cost: 5.50 },
+
+  // Consumables
+  { code: 'MMABTN',            group: 'consumable', desc: 'Nitto black tape 48 mm x 30 m',            cost: 3.95 }
+];
+
+const ACCESSORY_BY_CODE = new Map(MMEM_ACCESSORIES.map(a => [a.code, a]));
+
+/** One accessory line, or null. Codes are matched exactly as MMEM print them. */
+export function findAccessory(code) {
+  return ACCESSORY_BY_CODE.get(code) || null;
+}
+
+/** Every accessory in a group, e.g. 'flex' or 'zone_motor'. */
+export function accessoriesInGroup(group) {
+  return MMEM_ACCESSORIES.filter(a => a.group === group);
+}
+
+/**
+ * Accessories in a group keyed by nominal diameter — the shape the material
+ * catalogue wants for anything sized by duct diameter.
+ */
+export function accessoriesByDiameter(group) {
+  const out = {};
+  for (const a of accessoriesInGroup(group)) {
+    if (a.diameterMm) out[a.diameterMm] = a;
+  }
+  return out;
+}
+
+/** Cost per metre of an item sold by the length or roll. */
+export function ratePerM(code) {
+  const a = findAccessory(code);
+  if (!a || !a.packM) return null;
+  return Math.round((a.cost / a.packM) * 100) / 100;
 }
 
 // ── Matching ────────────────────────────────────────────────────────────────
