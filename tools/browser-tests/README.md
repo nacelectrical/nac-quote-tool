@@ -12,6 +12,9 @@ node tools/browser-tests/persistence-settings.mjs   # settings CRUD + reloads
 node tools/browser-tests/persistence-designs.mjs    # design save/load from the DB only
 node tools/browser-tests/persistence-failure.mjs    # save when the DB rejects / is down
 node tools/browser-tests/storage-sync-warning.mjs   # storage.set reports sync truthfully
+node tools/browser-tests/financials-chain.mjs       # typed costs recompute the quote
+node tools/browser-tests/ai-failure-handling.mjs    # AI down / rubbish -> no invented rooms
+node tools/browser-tests/end-to-end.mjs             # the whole workflow, plan to signed quote
 node tools/page-health.mjs                          # every page: console + network errors
 ```
 
