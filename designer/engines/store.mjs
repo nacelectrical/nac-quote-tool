@@ -166,6 +166,57 @@ export async function listDesigns(limit = 50) {
   return [...out.values()].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, limit);
 }
 
+// ── Intake handoff ─────────────────────────────────────────────────────────
+
+const DESIGN_NOTES_MARK = '--- NAC AI HVAC DESIGNER ---';
+
+/**
+ * Load the draft the intake form created, so a design can start from the
+ * customer's own submission instead of re-keying it and re-uploading the plan.
+ *
+ * The intake writes a `nac_quotes` row whose notes look like:
+ *     INTAKE DRAFT | 0400 000 000 | 12 Smith St
+ *     <the AI sizing pack>
+ *     PHOTOS:
+ *     https://…/plan-…      <- the floor plan, labelled `plan` on upload
+ *     https://…/photo-…
+ */
+export async function loadIntakeDraft(quoteId) {
+  const row = await fetchQuote(quoteId);
+  return row ? parseIntakeDraft(row) : null;
+}
+
+/** The parsing half of loadIntakeDraft, separated so it can be tested. */
+export function parseIntakeDraft(row) {
+  if (!row) return null;
+  const notes = String(row.notes || '');
+  const header = (notes.match(/^INTAKE DRAFT\s*\|([^\n]*)/) || [])[1] || '';
+  const [phone = '', address = ''] = header.split('|').map(x => x.trim());
+
+  const urls = (notes.split('PHOTOS:')[1] || '')
+    .split('\n').map(x => x.trim()).filter(x => x.startsWith('http'));
+  // /api/upload labels the floor plan `plan` and the site pictures `photo`.
+  const planUrl = urls.find(u => /\/plan-/.test(decodeURIComponent(u))) || null;
+  const photoUrls = urls.filter(u => u !== planUrl);
+
+  // The intake's own sizing pack, minus the photo list.
+  const pack = notes.split('PHOTOS:')[0].replace(/^INTAKE DRAFT[^\n]*\n?/, '').trim();
+
+  let intakeOptions = [];
+  try { intakeOptions = JSON.parse(row.line_items || '[]'); } catch (e) { /* ignore */ }
+
+  return {
+    quoteId: row.id,
+    customer: { name: row.client || '', address, phone, email: '' },
+    jobDescription: row.job_desc || 'Ducted AC Supply & Install',
+    planUrl,
+    photoUrls,
+    intakePack: pack,
+    intakeOptions,
+    accepted: !!row.accepted
+  };
+}
+
 // ── Quote handoff (PART 23) ────────────────────────────────────────────────
 
 /**
@@ -177,12 +228,21 @@ export async function pushDesignToQuote(design, { quoteId = null, notes = '' } =
   const id = quoteId || design.quoteId ||
     ('NAC-' + String(design.customer?.name || 'DESIGN').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) + '-' + Date.now());
 
+  // When the design came from an intake draft, keep what the customer sent —
+  // their photos and the intake sizing pack — and replace only the design block.
+  let existingNotes = '';
+  if (quoteId || design.quoteId) {
+    const row = await fetchQuote(id);
+    existingNotes = String(row?.notes || '').split(DESIGN_NOTES_MARK)[0].trim();
+  }
+
   const payload = {
     id,
     client: design.customer?.name || '',
     job_desc: design.job?.description || 'Ducted AC Supply & Install',
     line_items: JSON.stringify(design.quoteLineItems || []),
-    notes: [notes, designNotesBlock(design)].filter(Boolean).join('\n\n'),
+    notes: [existingNotes, notes, DESIGN_NOTES_MARK, designNotesBlock(design)]
+      .filter(Boolean).join('\n\n'),
     accepted: false
   };
 

@@ -144,6 +144,9 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
         unit_midea: prefillOptions.length ? prefillOptions[2].model : '',
         draft_ref: qid,
         admin_link: 'https://nac-quote-tool.vercel.app/admin.html?draft=' + qid,
+        // Opens NAC AI HVAC Designer on this job with the customer's details
+        // and their uploaded floor plan already loaded.
+        designer_link: 'https://nac-quote-tool.vercel.app/designer.html?draft=' + qid,
         photos: (b.photoUrls && b.photoUrls.length) ? b.photoUrls.join(' | ') : 'none'
       })
     });
