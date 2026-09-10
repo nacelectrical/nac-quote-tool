@@ -65,6 +65,72 @@ export function checkClosure(sumMm, overallMm, settings = DEFAULT_SETTINGS) {
  *
  * @param {Array} detections  DetectedDimension[] with .box, .orientation, .mm
  */
+/**
+ * Fit the mapping between a chain's millimetre stations and the image pixels
+ * its dimension text sits in.
+ *
+ * A dimension label is printed centred over the span it measures, so segment i
+ * gives one pair: its midpoint in millimetres against the centre of its text
+ * box in pixels. Least squares over those pairs yields both the scale and,
+ * crucially, the ORIGIN — where station 0 actually falls in the image.
+ *
+ * Without this a caller has no way to turn a pixel position on the plan into a
+ * position along the chain: chain stations start at zero at the first dimension,
+ * which is wherever the building happens to sit in the image, not its left edge.
+ *
+ * Returns null when there are too few segments to fit a line, or when the text
+ * boxes do not advance monotonically (a misread row, which must not become a
+ * confident mapping).
+ */
+function fitPixelAnchor(run, stations, along) {
+  if (!Array.isArray(run) || run.length < 2) return null;
+  const pts = [];
+  for (let i = 0; i < run.length; i++) {
+    const d = run[i];
+    if (!d.box) return null;
+    const mm = (stations[i] + stations[i + 1]) / 2;
+    const px = along(d);
+    if (!isFinite(mm) || !isFinite(px)) return null;
+    pts.push({ mm, px });
+  }
+  // The text must run the same way as the dimensions it labels.
+  for (let i = 1; i < pts.length; i++) if (pts[i].px <= pts[i - 1].px) return null;
+
+  const n = pts.length;
+  const sMm = pts.reduce((a, p) => a + p.mm, 0);
+  const sPx = pts.reduce((a, p) => a + p.px, 0);
+  const sMmMm = pts.reduce((a, p) => a + p.mm * p.mm, 0);
+  const sMmPx = pts.reduce((a, p) => a + p.mm * p.px, 0);
+  const denom = n * sMmMm - sMm * sMm;
+  if (!denom) return null;
+  const pxPerMm = (n * sMmPx - sMm * sPx) / denom;
+  if (!isFinite(pxPerMm) || pxPerMm <= 0) return null;
+  const originPx = (sPx - pxPerMm * sMm) / n;
+
+  // How well the line fits. A poor fit means the row was misgrouped, so the
+  // caller can decline to place rooms from it.
+  const meanPx = sPx / n;
+  const ssTot = pts.reduce((a, p) => a + (p.px - meanPx) ** 2, 0);
+  const ssRes = pts.reduce((a, p) => a + (p.px - (pxPerMm * p.mm + originPx)) ** 2, 0);
+  const r2 = ssTot === 0 ? 1 : round(1 - ssRes / ssTot, 4);
+
+  return { pxPerMm: round(pxPerMm, 6), originPx: round(originPx, 2), r2, points: n };
+}
+
+/** Position along a chain, in millimetres, of a pixel coordinate. */
+export function chainMmAtPx(chain, px) {
+  const a = chain?.pixelAnchor;
+  if (!a || !a.pxPerMm) return null;
+  return round((px - a.originPx) / a.pxPerMm, 2);
+}
+
+/** Where a chain station falls in the image, in pixels. */
+export function chainPxAtMm(chain, mm) {
+  const a = chain?.pixelAnchor;
+  if (!a || !a.pxPerMm) return null;
+  return round(a.originPx + a.pxPerMm * mm, 2);
+}
+
 export function groupChains(detections, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const rowTolerancePx = opts.rowTolerancePx ?? 18;
@@ -118,6 +184,8 @@ export function groupChains(detections, opts = {}) {
           segments: rec.segments,
           stations: rec.stations,
           totalMm: rec.totalMm,
+          // Ties the chain's millimetres back to the image it was read from.
+          pixelAnchor: fitPixelAnchor(run, rec.stations, along),
           overallId: null,
           closure: null,
           confidence: 0,

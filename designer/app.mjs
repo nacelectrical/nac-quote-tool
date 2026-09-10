@@ -9,6 +9,7 @@
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
 import { renderPdfPage } from './ui/pdf.mjs';
+import { downscaleDataUrl, scaleObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
@@ -16,6 +17,7 @@ import { internalReportHtml, customerReportHtml, openReport } from './ui/reports
 import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
 import { calibrate, parseScaleLabel } from './engines/calibration.mjs';
 import { interpretPlan, measureRooms } from './engines/interpret.mjs';
+import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom } from './engines/rooms.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
@@ -343,7 +345,9 @@ export class DesignerApp {
         h('div', {}, h('span', {}, 'CALIBRATION DISTANCE'), h('strong', {}, d.calibration.display.calibrationDistance)),
         h('div', {}, h('span', {}, 'PIXEL DISTANCE'), h('strong', {}, d.calibration.display.pixelDistance)),
         h('div', {}, h('span', {}, 'CALCULATED SCALE'), h('strong', {}, d.calibration.display.calculatedScale)))
-        : banner('warn', 'Not calibrated. Room boundaries drawn on the plan cannot be measured until you calibrate.'));
+        : banner('warn', 'Not calibrated. Rooms read from the plan\'s dimension strings are measured ' +
+            'from those dimensions and do not need this, but any room you draw by hand cannot be ' +
+            'measured until you calibrate.'));
   }
 
   renderPlanModePanel() {
@@ -551,19 +555,26 @@ export class DesignerApp {
     if (!d.plan) return toast('Upload a plan first.', 'bad');
     this.busy = true; this.render();
     try {
-      const base64 = (d.plan.originalDataUrl || d.plan.dataUrl).split(',')[1];
+      // Always send the RENDERED page, never the source PDF. The reader returns
+      // boxes in the pixels of whatever it was given, and every coordinate here
+      // is in the rendered page's pixels — so sending the PDF would both read
+      // page 1 regardless of the page on screen and hand back boxes in a
+      // different coordinate space than the canvas.
+      const sent = await downscaleDataUrl(d.plan.dataUrl);
       const res = await fetch('/api/plan-read', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: base64,
-          mediaType: d.plan.isPdf ? d.plan.mediaType : (d.plan.mediaType || 'image/png'),
-          imageWidthPx: d.plan.widthPx, imageHeightPx: d.plan.heightPx
+          imageBase64: sent.dataUrl.split(',')[1],
+          mediaType: sent.scale === 1 ? 'image/png' : 'image/jpeg',
+          imageWidthPx: sent.width, imageHeightPx: sent.height
         })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const obs = data.observations || {};
+      // Boxes come back in the pixels of the downscaled copy, so they are
+      // scaled to the page before anything else touches them.
+      const obs = scaleObservations(data.observations || {}, sent.scale);
       this.imageQuality = data.quality === 'poor' ? 'low' : data.quality;
 
       const interp = interpretPlan({
@@ -613,24 +624,30 @@ export class DesignerApp {
     const labels = (obs.roomLabels || []).filter(l => l.text && l.box);
     if (!labels.length) return [];
 
-    // Without a calibration we cannot place a label against a chain station, so
-    // the room is proposed with no measurement — visible, and blocked.
+    // A chain's stations are millimetres from its OWN zero, which is wherever
+    // the first dimension sits in the image — not the image's left edge. So a
+    // label's pixel position is converted through the chain's own pixel anchor,
+    // fitted from the dimension text it was built from. Dividing by the
+    // calibration instead would measure from the wrong origin and drop every
+    // room into the wrong bay.
+    const anchored = hChain?.pixelAnchor && vChain?.pixelAnchor;
     const defs = labels.map(l => {
       const def = { label: l.text, labelPx: l.box };
-      if (cal && hChain && vChain) {
-        const xMm = l.box.x / cal.pixelsPerMm;
-        const yMm = l.box.y / cal.pixelsPerMm;
-        const hBay = bayContaining(hChain, xMm);
-        const vBay = bayContaining(vChain, yMm);
+      if (anchored) {
+        // The label's centre, not its corner — a long room name would otherwise
+        // read as sitting further left and up than it does.
+        const xMm = chainMmAtPx(hChain, l.box.x + l.box.w / 2);
+        const yMm = chainMmAtPx(vChain, l.box.y + l.box.h / 2);
+        const hBay = xMm === null ? null : bayContaining(hChain, xMm);
+        const vBay = yMm === null ? null : bayContaining(vChain, yMm);
         if (hBay && vBay) {
           def.hStations = [hBay.i, hBay.i + 1];
           def.vStations = [vBay.i, vBay.i + 1];
-          def.boundaryPx = {
-            x: hChain.stations[hBay.i] * cal.pixelsPerMm,
-            y: vChain.stations[vBay.i] * cal.pixelsPerMm,
-            w: (hChain.stations[hBay.i + 1] - hChain.stations[hBay.i]) * cal.pixelsPerMm,
-            h: (vChain.stations[vBay.i + 1] - vChain.stations[vBay.i]) * cal.pixelsPerMm
-          };
+          const x0 = chainPxAtMm(hChain, hChain.stations[hBay.i]);
+          const x1 = chainPxAtMm(hChain, hChain.stations[hBay.i + 1]);
+          const y0 = chainPxAtMm(vChain, vChain.stations[vBay.i]);
+          const y1 = chainPxAtMm(vChain, vChain.stations[vBay.i + 1]);
+          def.boundaryPx = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
         }
       }
       return def;
