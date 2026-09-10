@@ -128,6 +128,13 @@ export const DEFAULT_SETTINGS = {
     // Acceptable capacity window around the design load.
     minCapacityRatio: 0.95,
     maxCapacityRatio: 1.25,
+    // What the selection actually AIMS for, as a multiple of the design load.
+    // The window above is only the hard bounds. This used to be taken as the
+    // midpoint of that window (1.10), which quietly aimed 10% high on top of
+    // the safety margin already in the load — enough to push nearly every job
+    // up a model size. Margin belongs in load.safetyMargin, where it is
+    // visible and set once, not hidden in the ranking.
+    targetCapacityRatio: 1.0,
     oversizeWarnRatio: 1.30,
     undersizeWarnRatio: 0.95,
     // Above this kW a single residential ducted unit is unlikely — flag dual.
@@ -167,8 +174,14 @@ export const DEFAULT_SETTINGS = {
   duct: {
     // Standard Australian flex sizes. 175 and 225 are not stocked lines — MMEM
     // quote 200–400 — so the engine no longer sizes to a duct NAC cannot buy.
-    // Add them back here if a supplier can actually supply them.
-    availableDiametersMm: [100, 125, 150, 200, 250, 300, 350, 400, 450, 500],
+    //
+    // NAC do not install 450 or 500. Anything that would need more than a 400
+    // is run as two ducts instead, which is how it goes in on site: 450 and 500
+    // flex is a fight to get through a truss roof and NAC do not carry it.
+    availableDiametersMm: [100, 125, 150, 200, 250, 300, 350, 400],
+    // Hard ceiling on any single duct. Raise this only if NAC start carrying
+    // larger flex — the engine splits the run rather than exceed it.
+    maxDiameterMm: 400,
     // Preferred / maximum velocities in m/s by duct role.
     velocity: {
       main:   { preferredMin: 4.0, preferred: 6.0, max: 8.0 },
@@ -198,7 +211,11 @@ export const DEFAULT_SETTINGS = {
       [400, 400], [500, 400], [600, 400], [600, 500],
       [700, 500], [800, 500], [900, 600], [1000, 600], [1200, 600]
     ],
-    maxSingleReturnLs: 700
+    maxSingleReturnLs: 700,
+    // NAC's return standard: one 400 mm duct, or two ducts at 350 or 400.
+    // Nothing larger — 450 and 500 flex is not installed.
+    returnDuctSizesMm: [350, 400],
+    maxReturnDucts: 2
   },
 
   // ── Zoning (PART 20) ────────────────────────────────────────────────────────
