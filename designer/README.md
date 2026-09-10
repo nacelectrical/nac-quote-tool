@@ -123,7 +123,7 @@ designer/engines/                 deterministic engineering — no DOM, no AI
 api/plan-read.js        AI plan reader (observations only)
 api/design-assistant.js NAC Design Assistant (grounded in the design)
 
-tests/                  125 tests, run with `node --test tests/`
+tests/                  162 tests, run with `node --test tests/*.test.mjs`
 ```
 
 ## Integration points
@@ -221,7 +221,7 @@ there and selectable, and a price typed on the Financials tab overrides both.
 ## Running the tests
 
 ```bash
-node --test tests/
+node --test tests/*.test.mjs
 ```
 
 No build step, no bundler, no package.json — the same deployment model as the

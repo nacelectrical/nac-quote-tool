@@ -335,7 +335,7 @@ export class DesignerApp {
         : pts.length === 1 ? 'Now click point B.' : 'Two points set — enter the distance below.') : null,
       active && pts.length === 2 ? h('div', { class: 'grid-2' },
         field('Known distance', input(this.calibDistance ?? '', v => { this.calibDistance = v; },
-          { type: 'number', step: 'any', inputmode: 'decimal', placeholder: 'e.g. 6000' })),
+          { type: 'number', step: 'any', inputmode: 'decimal', placeholder: 'e.g. 6000', live: true })),
         field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; }))) : null,
       active && pts.length === 2
         ? button('Apply calibration', () => this.applyCalibration(), 'primary small') : null,
