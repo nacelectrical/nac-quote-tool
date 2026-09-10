@@ -259,3 +259,27 @@ test('the total conditioned area matches the sum of the cleared rooms', () => {
   const rooms = [verifyRoom(mk('Bed 2', 3200, 3400)), verifyRoom(mk('Bed 3', 3200, 3400)), mk('Garage', 6000, 6000)];
   assert.equal(totalConditionedArea(rooms), 21.76);
 });
+
+// ── Dotted room abbreviations (PART 8) ─────────────────────────────────────
+//
+// Australian plans write these rooms as dotted initials as often as not. A
+// walk-in robe that is excluded on one plan and conditioned on the next is a
+// sizing error nobody would spot in the room table.
+
+test('dotted room abbreviations are excluded the same as the spelled-out room', () => {
+  for (const label of ['W.I.R.', 'WIR', 'W.C.', 'WC', 'B.I.R.', 'Walk-in robe', 'Ens.', 'Ensuite']) {
+    assert.equal(isConditionedLabel(label), false, label + ' should be excluded');
+  }
+});
+
+test('dots do not accidentally exclude a living space', () => {
+  for (const label of ['Bed 2', 'Bedroom 1', 'Living', 'Family', 'Dining', 'Kitchen', 'Study', 'Media']) {
+    assert.equal(isConditionedLabel(label), true, label + ' should be conditioned');
+  }
+});
+
+test('room type is read through the dots too', () => {
+  assert.equal(roomTypeFromLabel('W.I.R.'), 'other');
+  assert.equal(roomTypeFromLabel('Bed 3'), 'bedroom');
+  assert.equal(roomTypeFromLabel('Entry'), 'hallway');
+});
