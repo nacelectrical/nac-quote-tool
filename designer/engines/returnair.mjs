@@ -3,6 +3,7 @@
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { selectDiameter, velocity } from './ducts.mjs';
+import { findUnitSpec } from './unit-specs.mjs';
 
 /**
  * Size the return air path from the total design supply airflow.
@@ -10,7 +11,8 @@ import { selectDiameter, velocity } from './ducts.mjs';
  * an undersized return is obvious before it becomes a noise complaint.
  */
 export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm = null,
-                                  filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null }, opts = {}) {
+                                  filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null,
+                                  unit = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const R = settings.returnAir;
 
@@ -83,16 +85,37 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
   // not installed, so anything a 400 cannot carry is run as a second duct
   // rather than sized up. That is how it goes in on site, and it keeps the
   // BOM honest about what is actually bought.
+  // The fan coil's own return connection wins where the manufacturer states
+  // one. A ducted unit has a fixed return spigot arrangement — one 400 or two
+  // at 350/400 — and the duct runs to it. Calculating a diameter that the unit
+  // has no connection for is not a design, it is a number.
+  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
+  const spigots = spec?.returnSpigots || null;
+
   const duct = diameterOverrideMm
     ? { diameterMm: diameterOverrideMm, ductCount: 1,
         velocityMs: round(velocity(diameterOverrideMm, perReturnLs), 2),
         reason: 'Diameter set manually by the estimator.', manual: true }
-    : selectReturnDuct(perReturnLs, settings);
+    : spigots
+      ? { diameterMm: spigots.diameterMm, ductCount: spigots.count,
+          velocityMs: round(velocity(spigots.diameterMm, perReturnLs / spigots.count), 2),
+          fromUnitSpec: true,
+          reason: spec.model + ' has a ' + spigots.count + ' × ' + spigots.diameterMm +
+            ' mm return connection (' + spec.returnFlangeText + '), so that is the return duct.' }
+      : selectReturnDuct(perReturnLs, settings);
 
   if (duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'RESTRICTED_RETURN_PATH', severity: 'WARNING',
       message: 'Return duct velocity ' + duct.velocityMs + ' m/s exceeds the ' +
         settings.duct.velocity.return.max + ' m/s maximum — the return path is restricted.' });
+  }
+  // The unit's own connection is what it is; if the airflow through it is
+  // above the band that is a note about the unit, not a sizing choice.
+  if (duct.fromUnitSpec && duct.velocityMs > settings.duct.velocity.return.max) {
+    warnings.push({ code: 'UNIT_RETURN_CONNECTION_TIGHT', severity: 'CHECK',
+      message: 'At ' + round(perReturnLs, 0) + ' L/s the unit\'s own ' + duct.ductCount + ' × ' +
+        duct.diameterMm + ' mm return connection runs at ' + duct.velocityMs + ' m/s. ' +
+        'Split the return across more grilles, or accept the noise.' });
   }
   if (duct.exceedsStandard) {
     warnings.push({ code: 'RETURN_EXCEEDS_NAC_STANDARD', severity: 'WARNING',
@@ -121,6 +144,9 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
       description: (duct.ductCount ?? 1) > 1
         ? duct.ductCount + ' × ' + duct.diameterMm + ' mm' : duct.diameterMm + ' mm',
       velocityMs: duct.velocityMs,
+      fromUnitSpec: !!duct.fromUnitSpec,
+      unitModel: spec?.model || null,
+      unitReturnFlangeText: spec?.returnFlangeText || null,
       lengthMm: ductLengthMm ?? null,
       // Length is per duct, so two ducts is twice the flex.
       lengthM: ductLengthMm ? round((ductLengthMm / 1000) * (duct.ductCount ?? 1), 2) : null,
