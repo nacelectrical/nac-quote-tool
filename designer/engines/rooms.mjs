@@ -50,7 +50,7 @@ const UNCONDITIONED_PATTERNS = [
   /\bgarage\b/i, /\bcarport\b/i, /\bcar\s*port\b/i,
   /\blaundry\b/i, /\bl'?dry\b/i,
   /\bbath(room)?\b/i, /\bensuite\b/i, /\bens\b/i, /\bwc\b/i, /\btoilet\b/i, /\bpowder\b/i,
-  /\bwir\b/i, /\bwalk[- ]?in[- ]?robe\b/i, /\brobe\b/i, /\bwardrobe\b/i,
+  /\bwir\b/i, /\bbir\b/i, /\bwalk[- ]?in[- ]?robe\b/i, /\brobe\b/i, /\bwardrobe\b/i,
   /\blinen\b/i, /\bpantry\b/i, /\bp'?try\b/i, /\bstore\b/i, /\bstorage\b/i,
   /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
   /\boutdoor\b/i, /\bbalcony\b/i, /\bcourtyard\b/i, /\bvoid\b/i, /\bportico\b/i
@@ -66,16 +66,29 @@ const ROOM_TYPE_PATTERNS = [
   [/\bhall\b|\bentry\b|\bfoyer\b|\bpassage\b|\bcorridor\b/i, 'hallway']
 ];
 
+/**
+ * Australian plans write these rooms as dotted initials as often as not —
+ * "W.I.R.", "W.C.", "B.I.R.", "L'DRY". Collapsing the dots between single
+ * letters lets one set of patterns match both spellings, instead of a walk-in
+ * robe being conditioned on one plan and excluded on the next.
+ */
+export function normaliseRoomLabel(label) {
+  return String(label || '')
+    .replace(/\b(?:[A-Za-z]\.){2,}/g, (m) => m.replace(/\./g, ''))   // W.I.R. -> WIR
+    .replace(/\u2019/g, "'")
+    .trim();
+}
+
 /** Is this room label a conditioned space under NAC's rules? */
 export function isConditionedLabel(label) {
-  const l = String(label || '').trim();
+  const l = normaliseRoomLabel(label);
   if (!l) return false;
   for (const p of UNCONDITIONED_PATTERNS) if (p.test(l)) return false;
   return true;
 }
 
 export function roomTypeFromLabel(label) {
-  const l = String(label || '');
+  const l = normaliseRoomLabel(label);
   for (const [p, t] of ROOM_TYPE_PATTERNS) if (p.test(l)) return t;
   return 'other';
 }

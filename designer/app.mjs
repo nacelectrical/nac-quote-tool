@@ -9,7 +9,7 @@
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
 import { renderPdfPage } from './ui/pdf.mjs';
-import { downscaleDataUrl, scaleObservations } from './ui/image.mjs';
+import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
@@ -259,6 +259,7 @@ export class DesignerApp {
 
     mount(tools,
       this.renderUploadPanel(),
+      this.renderNumbersPanel(),
       this.renderIntakePanel(),
       this.renderCalibratePanel(),
       this.renderPlanModePanel(),
@@ -307,6 +308,129 @@ export class DesignerApp {
       (d.interpretation?.notes || []).length
         ? h('ul', { class: 'evidence' }, d.interpretation.notes.map(n => h('li', {}, n))) : null,
       button('Load the sample builder plan', () => { this.loadSample(); this.update(); }, 'ghost small'));
+  }
+
+  /**
+   * Every number the reader took off the drawing, listed so it can be checked
+   * against the plan and corrected. A misread digit is the one failure that the
+   * confidence scoring downstream cannot catch — the number looks perfectly
+   * ordinary, it is just wrong — so this is the only place it can be caught.
+   */
+  renderNumbersPanel() {
+    const d = this.design;
+    const dims = d.detectedDimensions || [];
+    if (!dims.length) return null;
+
+    const lengths = dims.filter(x => x.mm !== null);
+    const showAll = !!this.showAllNumbers;
+    const rows = showAll ? dims : lengths;
+
+    return card('Numbers read from the plan',
+      'Check each one against the drawing. Edit a wrong value, or clear it to drop it.',
+      banner('warn', 'These are read by AI and can be misread. Nothing here is trusted until you have ' +
+        'checked it — a wrong digit adds up to a plausible-looking room.'),
+      h('div', { class: 'note' },
+        lengths.length + ' length(s) read' +
+        (dims.length > lengths.length ? ', ' + (dims.length - lengths.length) + ' non-length annotation(s)' : '') +
+        (d.interpretation?.tileCount > 1 ? ' across ' + d.interpretation.tileCount + ' sections of the sheet' : '') +
+        '. ' + (d.chains || []).length + ' chain(s) built.'),
+      ...(d.interpretation?.notes || []).map(n => banner('info', n)),
+      table([
+        { key: 'text', label: 'As printed', width: '90px' },
+        { key: 'orientation', label: 'Axis', width: '60px',
+          render: (r) => badge(r.orientation === 'vertical' ? '↕' : '↔', 'muted') },
+        { key: 'classification', label: 'Read as',
+          render: (r) => h('span', {}, String(r.classification || 'unknown').replace(/_/g, ' ')) },
+        { key: 'mm', label: 'mm', align: 'right', width: '110px',
+          render: (r) => input(r.mm ?? '', v => this.editDetectedDimension(r.id, v),
+            // Deliberately NOT live: each edit rebuilds every chain and re-measures
+            // the rooms, so it commits when the field is left, not per keystroke.
+            { type: 'number', step: '1', inputmode: 'numeric', placeholder: 'not a length' }) },
+        { key: 'act', label: '', width: '40px',
+          render: (r) => button('✕', () => this.removeDetectedDimension(r.id), 'ghost small') }
+      ], rows, { rowClass: (r) => r.mm === null ? 'muted-row' : '' }),
+      h('div', { class: 'btn-row' },
+        button(showAll ? 'Hide annotations' : 'Show everything read',
+          () => { this.showAllNumbers = !showAll; this.render(); }, 'ghost small'),
+        button('Re-read the plan', () => this.readPlan(), 'ghost small'),
+        button('Clear all', () => this.clearDetectedDimensions(), 'ghost small')));
+  }
+
+  /** Correct a number the reader got wrong, and rebuild the chains from it. */
+  editDetectedDimension(id, value) {
+    const mm = value === '' || value === null ? null : Number(value);
+    if (mm !== null && (!isFinite(mm) || mm <= 0)) return;
+    this.design.detectedDimensions = (this.design.detectedDimensions || [])
+      .map(x => x.id === id ? { ...x, mm, source: 'estimator_corrected',
+                                evidence: ['Corrected by the estimator.'] } : x);
+    this.rebuildFromDimensions();
+  }
+
+  removeDetectedDimension(id) {
+    this.design.detectedDimensions = (this.design.detectedDimensions || []).filter(x => x.id !== id);
+    this.rebuildFromDimensions();
+  }
+
+  clearDetectedDimensions() {
+    this.design.detectedDimensions = [];
+    this.design.chains = [];
+    this.design.interpretation = null;
+    this.dirty = true;
+    toast('Cleared. Draw the rooms on the plan, or type them on the Rooms tab.');
+    this.update();
+  }
+
+  /**
+   * Rebuild the chains — and any room measured from them — after the estimator
+   * has changed a number. A correction is worthless if it does not flow through.
+   */
+  rebuildFromDimensions() {
+    const d = this.design;
+    const interp = interpretPlan({
+      rawDetections: (d.detectedDimensions || []).map(x => ({
+        id: x.id, text: x.mm === null ? x.text : String(x.mm), box: x.box,
+        orientation: x.orientation, row: x.row
+      })),
+      walls: d.walls, openings: d.openings,
+      overallWidthMm: null, overallDepthMm: null
+    }, { settings: this.settings });
+
+    d.detectedDimensions = interp.detectedDimensions.map(x => {
+      const prior = (this.design.detectedDimensions || []).find(p => p.id === x.id);
+      return prior?.source === 'estimator_corrected' ? { ...x, source: 'estimator_corrected' } : x;
+    });
+    d.chains = interp.chains;
+    d.interpretation = { ...(d.interpretation || {}), summary: interp.summary };
+
+    // Re-measure any room that was placed against a chain.
+    const rooms = this.roomsFromObservations(
+      { roomLabels: (d.rooms || []).filter(r => r.labelPx).map(r => ({ text: r.label, box: r.labelPx })) },
+      interp);
+    if (rooms.length) {
+      const byLabel = new Map(rooms.map(r => [r.label.toLowerCase(), r]));
+      d.rooms = (d.rooms || []).map(r => {
+        const next = byLabel.get(r.label.toLowerCase());
+        // A room the estimator has typed or verified is never overwritten.
+        if (!next || r.measurement?.source === 'manual' || r.status === 'verified') return r;
+        return { ...next, id: r.id, conditioned: r.conditioned, roomType: r.roomType,
+                 ceilingHeightMm: r.ceilingHeightMm };
+      });
+    }
+    this.dirty = true;
+    this.deferUpdate();
+  }
+
+  /**
+   * Re-render after the current event has finished.
+   *
+   * A `change` handler fires during the click that blurred the field, so
+   * re-rendering inside it replaces the element being clicked and the click is
+   * lost — edit a number, tap a tab, nothing happens. Deferring by a frame lets
+   * the click land first.
+   */
+  deferUpdate() {
+    if (this._deferred) return;
+    this._deferred = requestAnimationFrame(() => { this._deferred = null; this.update(); });
   }
 
   renderIntakePanel() {
@@ -555,27 +679,54 @@ export class DesignerApp {
     if (!d.plan) return toast('Upload a plan first.', 'bad');
     this.busy = true; this.render();
     try {
-      // Always send the RENDERED page, never the source PDF. The reader returns
-      // boxes in the pixels of whatever it was given, and every coordinate here
-      // is in the rendered page's pixels — so sending the PDF would both read
-      // page 1 regardless of the page on screen and hand back boxes in a
-      // different coordinate space than the canvas.
-      const sent = await downscaleDataUrl(d.plan.dataUrl);
-      const res = await fetch('/api/plan-read', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: sent.dataUrl.split(',')[1],
-          mediaType: sent.scale === 1 ? 'image/png' : 'image/jpeg',
-          imageWidthPx: sent.width, imageHeightPx: sent.height
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      // Always read the RENDERED page, never the source PDF: the reader returns
+      // boxes in the pixels of whatever it is given, and everything here is in
+      // the rendered page's pixels. Sending the PDF would read page 1 whatever
+      // page is on screen, in a coordinate space the canvas does not share.
+      //
+      // The page is read in overlapping tiles at close to full resolution.
+      // Dimension text is 2-3 mm high on the original sheet — shrunk to fit one
+      // request it becomes a few pixels tall and the digits get guessed.
+      const { tiles } = await tilePlan(d.plan.dataUrl);
+      const results = [];
+      let done = 0;
+      const report = () => {
+        this.planStatus = 'Reading the plan — ' + done + ' of ' + tiles.length +
+                          (tiles.length > 1 ? ' sections' : ' page') + '…';
+        this.render();
+      };
+      report();
 
-      // Boxes come back in the pixels of the downscaled copy, so they are
-      // scaled to the page before anything else touches them.
-      const obs = scaleObservations(data.observations || {}, sent.scale);
-      this.imageQuality = data.quality === 'poor' ? 'low' : data.quality;
+      // A few at a time: enough to keep it quick, not so many that a big sheet
+      // fires a dozen requests at once.
+      // Numbered up front: the workers run concurrently, so a counter read at
+      // send time would hand several tiles the same number.
+      const queue = tiles.map((tile, i) => ({ tile, index: i + 1 }));
+      const worker = async () => {
+        while (queue.length) {
+          const { tile, index } = queue.shift();
+          const res = await fetch('/api/plan-read', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64: tile.dataUrl.split(',')[1],
+              mediaType: 'image/jpeg',
+              imageWidthPx: tile.width, imageHeightPx: tile.height,
+              region: tiles.length > 1
+                ? { index, total: tiles.length, col: tile.col, row: tile.row }
+                : null
+            })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          results.push({ tile, data });
+          done += 1; report();
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(3, tiles.length) }, worker));
+
+      const merged = mergeTileObservations(results);
+      const obs = merged.observations;
+      this.imageQuality = merged.quality === 'poor' ? 'low' : merged.quality;
 
       const interp = interpretPlan({
         rawDetections: obs.detections,
@@ -584,7 +735,7 @@ export class DesignerApp {
         overallWidthMm: null, overallDepthMm: null
       }, { settings: this.settings });
 
-      d.interpretation = { ...data, summary: interp.summary };
+      d.interpretation = { ...merged, summary: interp.summary, tileCount: tiles.length };
       d.detectedDimensions = interp.detectedDimensions;
       d.chains = interp.chains;
       d.walls = obs.walls || [];
@@ -604,14 +755,19 @@ export class DesignerApp {
       }
 
       toast(interp.summary.lengthCount + ' dimensions read, ' + interp.summary.closingChains + ' chain(s) closed.' +
-        (rooms.length ? ' ' + rooms.length + ' rooms proposed — verify them.' : ''));
-      if (data.quality === 'poor') {
+        (rooms.length ? ' ' + rooms.length + ' rooms proposed — verify them.' : '') +
+        ' Check every number against the drawing.');
+      if (merged.conflictCount) {
+        toast(merged.conflictCount + ' number(s) were read two different ways. Both are listed — check them.', 'warn');
+      }
+      if (merged.quality === 'poor') {
         toast('The image is low quality. Check every room before sizing.', 'warn');
       }
     } catch (e) {
       toast('Plan read failed: ' + e.message + '. Calibrate and enter the rooms manually.', 'bad');
     } finally {
       this.busy = false;
+      this.planStatus = null;
       this.update();
     }
   }
