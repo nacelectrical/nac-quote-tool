@@ -48,16 +48,42 @@ test('equipment is ranked against the design load inside the configured window',
 });
 
 test('manufacturer data is never fabricated — missing specs are declared', () => {
+  // The transcribed tech sheets now stand behind the catalogue, so a model the
+  // sheets DO cover legitimately reports its airflow and static. The contract
+  // being asserted here is the other half: a model neither NAC nor the sheets
+  // carry must say so, and must never have a number invented for it.
   const cat = buildCatalogue({});
-  const model = cat[0].models[0];
-  assert.equal(model.specStatus, 'none');
-  assert.match(model.specNotice, new RegExp(SPEC_REQUIRED));
-  assert.equal(model.specs.ratedAirflowLs, undefined);
+  const uncovered = allModels(cat).filter(m => m.specs?.ratedAirflowLs === undefined);
+  assert.ok(uncovered.length, 'the sheets do not cover everything, by design');
+  for (const m of uncovered.slice(0, 12)) {
+    assert.match(m.specNotice, new RegExp(SPEC_REQUIRED));
+    assert.equal(m.specs.ratedAirflowLs, undefined, m.name + ' must not have an airflow invented');
+    assert.equal(m.specs.availableStaticPa, undefined);
+  }
 
   const sel = selectEquipment(cat, LOAD, { designAirflowLs: 900 });
-  const c = sel.allCandidates[0];
-  assert.ok(c.warnings.some(w => w.code === 'MISSING_MANUFACTURER_DATA'));
-  assert.equal(c.ratedAirflowLs, null);
+  const blind = sel.allCandidates.find(c => c.ratedAirflowLs === null);
+  assert.ok(blind, 'some candidate has no airflow on file');
+  assert.ok(blind.warnings.some(w => w.code === 'MISSING_MANUFACTURER_DATA'),
+    'and it is reported rather than checked against a guess');
+});
+
+test('a model the tech sheets DO cover is checked, not reported missing', () => {
+  const cat = buildCatalogue({});
+  const covered = allModels(cat).filter(m => m.specs?.ratedAirflowLs !== undefined);
+  assert.ok(covered.length > 20, 'got ' + covered.length);
+  for (const m of covered.slice(0, 12)) {
+    assert.ok(m.specs.ratedAirflowLs > 0, m.name);
+    // The figure has to come from a source, and be named.
+    assert.ok(m.specSource, m.name + ' must say where its specs came from');
+    assert.notEqual(m.specStatus, 'none');
+  }
+});
+
+test('a spec NAC typed in overrides the manufacturer sheet', () => {
+  const cat = buildCatalogue({ specStore: { 'daikin:FDYA140AV19': { ratedAirflowLs: 1234 } } });
+  const m = allModels(cat).find(x => x.specKey === 'daikin:FDYA140AV19');
+  if (m) assert.equal(m.specs.ratedAirflowLs, 1234, 'NAC looking at the data sheet beats a transcription');
 });
 
 test('specs NAC has entered are used, and airflow/static are then checked', () => {

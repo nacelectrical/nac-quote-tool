@@ -123,8 +123,10 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
   var act = actMatch ? actMatch[1].trim() : '-';
   var flag = flagMatch ? flagMatch[1].trim() : 'None';
 
+  let saved = false, notified = false, saveError = null, notifyError = null;
+
   try {
-    await fetch(NOTIFY, {
+    const notifyRes = await fetch(NOTIFY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -150,11 +152,15 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
         photos: (b.photoUrls && b.photoUrls.length) ? b.photoUrls.join(' | ') : 'none'
       })
     });
-  } catch (e) { /* non-fatal */ }
+    notified = notifyRes.ok;
+    if (!notified) notifyError = 'notification webhook returned ' + notifyRes.status;
+  } catch (e) { notifyError = 'notification webhook failed: ' + e.message; }
 
   try {
-    if (SUPA) {
-      await fetch(SUPA_URL + '/rest/v1/nac_quotes', {
+    if (!SUPA) {
+      saveError = 'SUPABASE_KEY is not configured on the server';
+    } else {
+      const saveRes = await fetch(SUPA_URL + '/rest/v1/nac_quotes', {
         method: 'POST',
         headers: { 'apikey': SUPA, 'Authorization': 'Bearer ' + SUPA, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
         body: JSON.stringify({
@@ -166,8 +172,35 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
           accepted: false
         })
       });
+      saved = saveRes.ok;
+      if (!saved) {
+        // fetch resolves on a 4xx/5xx, so the status has to be read explicitly
+        // or a rejected write looks exactly like a successful one.
+        saveError = 'database returned ' + saveRes.status + ' ' +
+                    (await saveRes.text().catch(() => '')).slice(0, 200);
+      }
     }
-  } catch (e) { /* non-fatal */ }
+  } catch (e) { saveError = 'database write failed: ' + e.message; }
 
-  return res.status(200).json({ ok: true, quoteId: qid });
+  // The customer has just filled in a form and uploaded their floor plan. If
+  // NEITHER durable path took it, telling them "thanks, we'll be in touch" is a
+  // lie — nobody at NAC will ever see this lead. Say so, so they can ring.
+  if (!saved && !notified) {
+    console.error('[intake-submit] nothing recorded for', qid, '|', saveError, '|', notifyError);
+    return res.status(502).json({
+      error: 'We could not record your details. Please call NAC on 0427 101 685 — ' +
+             'nothing has been lost on your end, but we have not received it.',
+      quoteId: qid, saved: false, notified: false,
+      detail: [saveError, notifyError].filter(Boolean).join(' / ')
+    });
+  }
+
+  // One path succeeded. Report exactly which, so a half-failure is visible in
+  // the logs and to the caller rather than reading as a clean success.
+  if (!saved || !notified) {
+    console.warn('[intake-submit]', qid, 'saved=' + saved, 'notified=' + notified,
+                 '|', saveError || '', notifyError || '');
+  }
+  return res.status(200).json({ ok: true, quoteId: qid, saved: saved, notified: notified,
+                                warning: saved && notified ? null : (saveError || notifyError) });
 }

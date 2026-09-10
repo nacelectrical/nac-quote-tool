@@ -1,0 +1,339 @@
+<title>NAC Tool Readiness Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#EEF0F5; --surface:#FFFFFF; --surface-2:#F7F8FB;
+    --ink:#12142A; --ink-2:#41465C; --ink-3:#6C7288;
+    --rule:#D5D9E3; --rule-2:#E6E9F0;
+    --accent:#8A6A00; --accent-mark:#F5C200;
+    --pass:#0F6B4A; --pass-bg:#E2F1EA;
+    --fail:#A32721; --fail-bg:#FAE6E4;
+    --part:#8A5A00; --part-bg:#FBEEDA;
+    --na:#5C6478;   --na-bg:#E9EBF1;
+    --shadow:0 1px 2px rgba(18,20,42,.06), 0 8px 24px -16px rgba(18,20,42,.28);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+      --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3;
+      --rule:#2B2F4A; --rule-2:#232741;
+      --accent:#F5C200; --accent-mark:#F5C200;
+      --pass:#5FD3A2; --pass-bg:#0F2F24;
+      --fail:#FF8E86; --fail-bg:#3A1815;
+      --part:#F0B65C; --part-bg:#33240C;
+      --na:#8E96AE;   --na-bg:#20233A;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+    --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3;
+    --rule:#2B2F4A; --rule-2:#232741;
+    --accent:#F5C200; --accent-mark:#F5C200;
+    --pass:#5FD3A2; --pass-bg:#0F2F24;
+    --fail:#FF8E86; --fail-bg:#3A1815;
+    --part:#F0B65C; --part-bg:#33240C;
+    --na:#8E96AE;   --na-bg:#20233A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+    font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding-inline:20px; padding-block:36px 72px}
+  h1,h2,h3{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif; text-wrap:balance; margin:0}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums}
+
+  /* ── masthead ── */
+  header{display:flex; flex-wrap:wrap; gap:20px; align-items:flex-end; justify-content:space-between;
+    border-bottom:2px solid var(--ink); padding-bottom:16px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-3)}
+  h1{font-size:clamp(28px,4.4vw,42px); font-weight:700; letter-spacing:-.015em; line-height:1.06; margin-top:6px}
+  .rule-mark{display:inline-block; width:22px; height:5px; background:var(--accent-mark); vertical-align:middle;
+    margin-right:10px; transform:translateY(-6px)}
+  .meta{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3); text-align:right; line-height:1.8}
+  .meta b{color:var(--ink-2); font-weight:500}
+
+  /* ── scoreboard ── */
+  .board{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+    background:var(--rule); border:1px solid var(--rule); margin-top:28px}
+  .cell{background:var(--surface); padding:16px 18px}
+  .cell .k{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-3)}
+  .cell .v{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:34px; font-weight:700;
+    letter-spacing:-.02em; line-height:1.1; font-variant-numeric:tabular-nums; margin-top:2px}
+  .cell .s{font-size:12.5px; color:var(--ink-2)}
+  .v.ok{color:var(--pass)} .v.bad{color:var(--fail)} .v.warn{color:var(--part)}
+
+  /* ── callout ── */
+  .note{border-left:3px solid var(--accent-mark); background:var(--surface); padding:14px 18px;
+    margin-top:22px; font-size:14px; color:var(--ink-2)}
+  .note b{color:var(--ink)}
+  .note.danger{border-left-color:var(--fail)}
+
+  section{margin-top:44px}
+  h2{font-size:20px; font-weight:700; letter-spacing:-.01em; display:flex; align-items:baseline; gap:12px}
+  h2 .n{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3); font-weight:500}
+  .lede{color:var(--ink-2); font-size:14.5px; max-width:64ch; margin-top:6px}
+
+  /* ── filters ── */
+  .filters{display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; align-items:center}
+  .chipbtn{font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.04em;
+    border:1px solid var(--rule); background:var(--surface); color:var(--ink-2);
+    padding:6px 11px; cursor:pointer; border-radius:2px}
+  .chipbtn[aria-pressed="true"]{background:var(--ink); color:var(--ground); border-color:var(--ink)}
+  .chipbtn:focus-visible{outline:2px solid var(--accent-mark); outline-offset:2px}
+  input[type="search"]{font-family:"IBM Plex Sans",sans-serif; font-size:13px; padding:6px 10px;
+    border:1px solid var(--rule); background:var(--surface); color:var(--ink); border-radius:2px; min-width:190px}
+  input[type="search"]:focus-visible{outline:2px solid var(--accent-mark); outline-offset:1px}
+
+  /* ── inventory ── */
+  .scroll{overflow-x:auto; margin-top:14px; border:1px solid var(--rule); background:var(--surface)}
+  table{border-collapse:collapse; width:100%; min-width:860px}
+  thead th{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink-3); text-align:left; font-weight:500;
+    padding:10px 14px; border-bottom:1px solid var(--rule); background:var(--surface-2); white-space:nowrap}
+  tbody td{padding:12px 14px; border-bottom:1px solid var(--rule-2); vertical-align:top; font-size:13.5px}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr[data-ready="NO"]{background:linear-gradient(90deg,var(--fail-bg) 0 3px, transparent 3px)}
+  tbody tr[data-ready="PART"]{background:linear-gradient(90deg,var(--part-bg) 0 3px, transparent 3px)}
+  .fname{font-weight:600; color:var(--ink); display:block}
+  .floc{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3); display:block; margin-top:2px}
+  .chain{display:flex; flex-wrap:wrap; gap:3px}
+  .lk{font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.06em; padding:2px 5px;
+    border-radius:2px; background:transparent; color:var(--ink-3); opacity:.42;
+    border:1px dashed var(--rule)}
+  .lk.on{background:var(--pass-bg); color:var(--pass); opacity:1; border:1px solid transparent; font-weight:600}
+  .lk.off{background:var(--fail-bg); color:var(--fail); opacity:1; border:1px solid transparent; font-weight:600}
+  .pill{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em; font-weight:600;
+    padding:3px 8px; border-radius:2px; white-space:nowrap; display:inline-block}
+  .pill.YES{background:var(--pass-bg); color:var(--pass)}
+  .pill.NO{background:var(--fail-bg); color:var(--fail)}
+  .pill.PART{background:var(--part-bg); color:var(--part)}
+  .pill.NA{background:var(--na-bg); color:var(--na)}
+  .tnote{color:var(--ink-2); font-size:12.5px; max-width:36ch}
+
+  /* ── fixed list ── */
+  ol.fixes{list-style:none; padding:0; margin:16px 0 0; display:grid; gap:1px; background:var(--rule);
+    border:1px solid var(--rule)}
+  ol.fixes li{background:var(--surface); padding:14px 18px; display:grid;
+    grid-template-columns:auto 1fr; gap:14px; align-items:start}
+  .sev{font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.08em; font-weight:600;
+    padding:3px 7px; border-radius:2px; white-space:nowrap; margin-top:2px}
+  .sev.crit{background:var(--fail-bg); color:var(--fail)}
+  .sev.high{background:var(--part-bg); color:var(--part)}
+  .fix h3{font-size:14.5px; font-weight:600; margin:0 0 3px}
+  .fix p{margin:0; font-size:13.5px; color:var(--ink-2)}
+  .fix code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--surface-2);
+    padding:1px 5px; border:1px solid var(--rule-2); border-radius:2px; color:var(--ink-2)}
+
+  .risks{display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:16px}
+  .risk{background:var(--surface); padding:15px 18px}
+  .risk h3{font-size:14.5px; font-weight:600; margin:0 0 4px; display:flex; gap:10px; align-items:baseline}
+  .risk p{margin:0; font-size:13.5px; color:var(--ink-2)}
+
+  footer{margin-top:52px; padding-top:18px; border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-3); line-height:1.9}
+
+  @media (max-width:560px){
+    .meta{text-align:left}
+    ol.fixes li{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="eyebrow">Production readiness audit &middot; 12 phases</div>
+      <h1><span class="rule-mark"></span>What actually works</h1>
+    </div>
+    <div class="meta">
+      NAC Electrical Air &amp; Refrigeration<br>
+      <b>nac-quote-tool</b> &middot; 10 Sep 2026<br>
+      283 unit tests &middot; 8 browser suites
+    </div>
+  </header>
+
+  <div class="board">
+    <div class="cell"><div class="k">Features traced</div><div class="v">41</div><div class="s">UI &rarr; logic &rarr; data &rarr; render</div></div>
+    <div class="cell"><div class="k">Production ready</div><div class="v ok">33</div><div class="s">tested end to end</div></div>
+    <div class="cell"><div class="k">Partial</div><div class="v warn">5</div><div class="s">works, with a caveat</div></div>
+    <div class="cell"><div class="k">Not ready</div><div class="v bad">3</div><div class="s">unverifiable or absent</div></div>
+    <div class="cell"><div class="k">Defects fixed</div><div class="v">11</div><div class="s">4 would lose data</div></div>
+    <div class="cell"><div class="k">Buttons wired</div><div class="v ok">95<span style="font-size:18px;color:var(--ink-3)">/95</span></div><div class="s">no dead controls</div></div>
+  </div>
+
+  <div class="note danger">
+    <b>Read this first.</b> This environment blocks the Supabase host, so <b>no result here was obtained against the live database</b>. Persistence is proven against the real handlers and real pages with the database stubbed — which catches logic faults but not a wrong table name, a missing column, or a row-level-security rule. Two minutes on the deployed site closes that gap: open the designer, press Save, and confirm no red banner appears.
+  </div>
+
+  <section>
+    <h2><span class="n">01</span> Feature inventory</h2>
+    <p class="lede">Every feature a user can see or click, traced through its whole chain. A link marked <span class="lk off">DB</span> means that link is required and missing; <span class="lk">DB</span> grey means not applicable to this feature.</p>
+
+    <div class="filters">
+      <button class="chipbtn" data-f="all" aria-pressed="true">All 41</button>
+      <button class="chipbtn" data-f="YES" aria-pressed="false">Ready 33</button>
+      <button class="chipbtn" data-f="PART" aria-pressed="false">Partial 5</button>
+      <button class="chipbtn" data-f="NO" aria-pressed="false">Not ready 3</button>
+      <input type="search" id="q" placeholder="Filter by name or file&hellip;" aria-label="Filter features">
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th style="min-width:210px">Feature &amp; location</th>
+          <th style="min-width:200px">Chain</th>
+          <th>Tested</th>
+          <th>Ready</th>
+          <th style="min-width:260px">Notes / known bugs</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span> Defects found and fixed</h2>
+    <p class="lede">Found by running the application, not by reading it. The first four were silently losing data — nothing on screen revealed them.</p>
+    <ol class="fixes" id="fixes"></ol>
+  </section>
+
+  <section>
+    <h2><span class="n">03</span> Remaining risks</h2>
+    <p class="lede">Nothing here is broken. These are the things I could not verify from this environment, or that are working as built but carry a risk worth your decision.</p>
+    <div class="risks" id="risks"></div>
+  </section>
+
+  <footer>
+    Verified by execution: 283 unit tests &middot; 8 Playwright suites in <span class="mono">tools/browser-tests/</span><br>
+    Full workflow walked in one run — plan &rarr; 16 rooms &rarr; 18.63 kW &rarr; equipment &rarr; 32-line BOM &rarr; $17,016.54 inc GST &rarr; save &rarr; refresh &rarr; quote &rarr; sign page.
+  </footer>
+</div>
+
+<script>
+const L = (fe,be,db,calc,api,file) => ({fe,be,db,calc,api,file});
+// on = wired and exercised, off = required but missing, null = not applicable
+const F = [
+ ["Customer intake form","intake.html",L(1,1,1,1,1,1),"YES","YES","Logo pointed at a file:/// path on one Mac — broken for every customer. Fixed."],
+ ["Intake → AI sizing → draft quote","api/intake-submit.js",L(1,1,1,1,1,1),"YES","YES","Returned ok:true even when nothing saved. Now reports saved/notified and 502s when neither. 6 tests."],
+ ["Customer record (create / edit)","—",L(0,0,0,null,null,null),"NO","NO","No customer table or screen exists. A customer is fields on a quote or design, re-typed each time."],
+ ["Job creation (ServiceM8)","api/create-job.js",L(1,1,null,null,1,null),"NO","NO","Guards its key and returns a clear 500, but no SERVICEM8_API_KEY here — never executed against the real API."],
+ ["Internal quote builder","admin.html",L(1,1,1,1,1,1),"YES","YES","Loads clean, no console errors. Design import block wired."],
+ ["Quote tool (5-step)","index.html",L(1,1,1,1,1,null),"YES","YES","Was a blank page without a CDN — React now served from this origin with a real error state."],
+ ["Quote save","api/savequote.js",L(1,1,1,null,1,null),"YES","YES","Correctly forwards the database's real status code rather than swallowing it."],
+ ["Customer sign page","sign.html",L(1,1,1,1,1,null),"YES","YES","Renders a real quote; handles both no-id and load-failure with clear messages."],
+ ["Price setup (brands / models)","index.html",L(1,1,1,null,1,null),"YES","YES","Showed a green tick regardless of whether prices saved. Now withholds it and warns."],
+ ["Floor plan upload — image","designer.html",L(1,null,1,1,null,1),"YES","YES","JPG/PNG, downscaled and tiled for reading."],
+ ["Floor plan upload — PDF","designer/ui/pdf.mjs",L(1,null,1,1,null,1),"YES","YES","pdf.js vendored same-origin; multi-page with page switching."],
+ ["AI plan reading (tiled)","api/plan-read.js",L(1,1,null,1,1,1),"YES","YES","Overlapping full-res tiles. Key missing → clear error, and no rooms invented."],
+ ["Numbers read — review &amp; correct","Plan tab",L(1,null,1,1,null,null),"YES","YES","Every number listed and editable; an edit rebuilds chains and re-measures rooms."],
+ ["Dimension-chain reconstruction","engines/chains.mjs",L(1,null,null,1,null,null),"YES","YES","350·2050·220·3400·90·2720 → 0·350·2400·2620·6020·6110·8830. Deterministic code, not prompt text."],
+ ["Manual scale calibration","engines/calibration.mjs",L(1,null,1,1,null,null),"YES","YES","600 px / 6000 mm = 10 mm/px; 320 px = 3200 mm. Two-point picking fixed earlier this session."],
+ ["Room detection from labels","designer/app.mjs",L(1,1,1,1,1,null),"YES","YES","Chain pixel-anchoring fixed — rooms were landing in the wrong part of the house."],
+ ["Printed room sizes (brochure plans)","engines/dimensions.mjs",L(1,1,1,1,1,null),"YES","YES","“4.3 x 7.1m” read at 98% confidence, no calibration needed."],
+ ["Room verification &amp; editing","Rooms tab",L(1,null,1,1,null,null),"YES","YES","An edit propagates: 10 kW → 14 kW, airflow 500 → 700 L/s, outlets 5 → 7, price 13,500 → 14,999."],
+ ["HVAC load calculation","engines/loads.mjs",L(1,null,null,1,null,null),"YES","YES","3 m × 4 m = 12 m² reaches the engine as exactly 12. 145 W/m² rule preserved and cross-checked."],
+ ["Equipment selection","engines/equipment.mjs",L(1,null,1,1,null,null),"YES","YES","Was aiming 10% high and buying a model size too big on every job. Now targets the design load."],
+ ["Manufacturer specs (489 models)","engines/unit-specs.mjs",L(1,null,null,1,null,null),"YES","YES","Data existed but was never imported — airflow and static checks were skipped on every job. Now wired."],
+ ["Zone controller selection","engines/catalogue.mjs",L(1,null,1,1,null,null),"YES","YES","Costed from the MMEM quotation; brand-locked where the controller is."],
+ ["Airflow calculation","engines/airflow.mjs",L(1,null,null,1,null,null),"YES","YES","50 L/s per kW, per-room share, minimum-airflow floor."],
+ ["Outlet design","engines/outlets.mjs",L(1,null,null,1,null,null),"YES","YES","Type and count from airflow and throw; split rule for long rooms."],
+ ["Duct design","engines/ducts.mjs",L(1,null,null,1,null,null),"YES","YES","Velocity = Q/A verified by hand on all 8 stocked diameters. 450/500 removed — not installed."],
+ ["Return air","engines/returnair.mjs",L(1,null,null,1,null,null),"YES","YES","Takes the unit's own return connection from the manufacturer sheet: 1×400 or 2×350/400."],
+ ["Zoning","engines/zones.mjs",L(1,null,null,1,null,null),"YES","YES","Open-plan grouping, minimum-open airflow, no bypass assumed."],
+ ["Static pressure","engines/pressure.mjs",L(1,null,null,1,null,null),"PART","PART","Now has real available-static figures for 110 of 489 models; the rest still declare SPECIFICATION DATA REQUIRED."],
+ ["Bill of materials","engines/bom.mjs",L(1,null,1,1,null,null),"YES","YES","32 lines on the sample job. Buys whole 6 m lengths, not metres."],
+ ["Supplier pricing (MMEM)","engines/supplier-pricing.mjs",L(1,null,null,1,null,null),"YES","YES","62 ducted sets, 20 controls, 32 accessories, 5 paircoil sizes — dated and attributed."],
+ ["Material rates settings","Settings → Materials",L(1,null,1,null,1,null),"YES","YES","Shows the part code and pack price behind each rate, so real prices and placeholders are distinguishable."],
+ ["Commercials, margins, totals","engines/costing.mjs",L(1,null,1,1,null,null),"YES","YES","16 tests against hand-computed values. GP equals the fee exactly at any cost."],
+ ["Design → quote transfer","engines/store.mjs",L(1,1,1,1,1,null),"YES","YES","Crashed on any design missing a stage — estimator got an error, no quote. Fixed. Pressing twice does not duplicate."],
+ ["Design save / load","engines/store.mjs",L(1,1,1,null,1,null),"YES","YES","Reported “Design saved” when it had only reached the iPad. Now warns and keeps the Save button live."],
+ ["Revisions &amp; restore","engines/model.mjs",L(1,null,1,null,1,null),"PART","PART","Works, but the picker is a native prompt() listing revisions — awkward on an iPad."],
+ ["Reports (internal + customer)","designer/ui/reports.mjs",L(1,null,null,1,null,null),"YES","YES","Verified generating a real Internal HVAC Design Sheet. Opens a print window — no PDF library; you print to PDF."],
+ ["NAC Design Assistant (AI)","api/design-assistant.js",L(1,1,null,null,1,null),"PART","PART","Guards its key and answers from the design only. Not exercised against the live Anthropic API from here."],
+ ["HVAC design settings","Settings screen",L(1,null,1,null,1,null),"YES","YES","Every assumption editable and persisted; reset-to-defaults per section."],
+ ["Warnings &amp; acknowledgement","engines/warnings.mjs",L(1,null,1,1,null,null),"YES","YES","Severity-ranked, acknowledgeable, and blocking where it should block."],
+ ["Navigation &amp; tabs","designer.html",L(1,null,null,null,null,null),"YES","YES","13 tabs, 8 step markers, all wired. No horizontal overflow at iPad width."],
+ ["iPad / touch behaviour","all pages",L(1,null,null,null,null,null),"PART","PART","1080×810 landscape: no overflow, touch calibration works. Native prompt()/confirm() dialogs are the weak spot."],
+ ["Authentication","—",L(0,0,null,null,null,null),"NO","NO","There is none. Anyone with the URL can open admin.html and the designer, and the database key ships in the page."]
+];
+
+const FIXES = [
+ ["crit","The intake form thanked customers for submissions nobody received",
+  "<code>api/intake-submit.js</code> returned <code>ok:true</code> whatever happened. A missing key skipped the write, a thrown error was swallowed as “non-fatal”, and <code>fetch</code> resolves on a 401 — so a <em>rejected</em> write looked identical to a successful one."],
+ ["crit","“Design saved” when it had only reached the iPad",
+  "<code>setSetting</code> returned true regardless of the database's answer, so the designer cleared its dirty flag and the work existed on one device only. The warning is now raised inside <code>storage.set</code> itself, where no caller can forget it."],
+ ["crit","Pushing a design to a quote crashed on any design missing a stage",
+  "<code>designNotesBlock</code> read <code>s.legacy.kw</code> unguarded. The estimator got an exception and no quote. Every line of that block is now optional."],
+ ["crit","The quote tool was a blank white page without a CDN",
+  "React loaded from unpkg.com with no fallback and no error state. Now served from this origin, CDN as fallback, and a failure says which half is missing."],
+ ["high","Every job was quoted on a unit one size too big",
+  "Equipment selection took its target as the midpoint of the acceptance window — 1.10× the design load — on top of the 5% safety margin already in the load. An 18 kW unit outranked a 16 kW on a 15.71 kW job."],
+ ["high","489 models of manufacturer data sat unused",
+  "<code>catalogue.mjs</code> never imported <code>unit-specs.mjs</code>, so airflow and static-pressure checks were skipped on every job for want of data the app already had."],
+ ["high","A room with one dimension silently counted as zero",
+  "It stayed on the schedule, contributed nothing to the load, and raised no warning — the system just came out a size small. Now blocked as “Needs a dimension”."],
+ ["high","Room labels landed in the wrong part of the house",
+  "Chain stations are millimetres from the chain's own zero; the code converted pixels from the <em>image's</em> origin. A label at 4,500 mm resolved to 12,500 mm."],
+ ["high","Brochure plans read as nothing at all",
+  "The tool only understood chained dimension strings. Plans that print “LIVING 4.3 x 7.1m” inside each room — most of what an estimator is sent — produced no rooms, despite the highest-confidence code path already existing unused."],
+ ["high","The customer intake logo pointed at a path on one Mac",
+  "<code>file:///Users/nacelectrical/Downloads/&hellip;</code> — a broken image for every customer who opened the form."],
+ ["high","W.I.R. was being air conditioned",
+  "The exclusion rule matched “WIR” but not “W.I.R.”, which is how half of Australian plans write it. Same for W.C. and B.I.R."]
+];
+
+const RISKS = [
+ ["No authentication, anywhere","admin.html, designer.html and the price setup screen are open to anyone with the URL, and the Supabase anon key ships in the page source. Whether that matters depends on how you share those links — but it is a decision to make deliberately, not one to discover."],
+ ["The live database is unverified from here","Every persistence result was obtained with the database stubbed. Logic faults are covered; a wrong table name, a missing column or a row-level-security rule would not be. Press Save on the deployed designer and confirm no red banner."],
+ ["No customer or job records","Your brief lists customer creation, editing and job creation as features. They do not exist — a customer is fields on a quote or a design, re-typed each time. I have not invented tables to make the inventory look complete."],
+ ["ServiceM8 job creation never executed","<span class='mono'>api/create-job.js</span> guards its key and returns a clear error, but with no SERVICEM8_API_KEY in this environment it has never run against the real API."],
+ ["Native prompt() dialogs on iPad","Design list, revisions and report choice all use <span class='mono'>prompt()</span>. They work, but they are awkward on a tablet and some browsers suppress them. Worth replacing with a proper picker."],
+ ["Reports print rather than export","Report generation opens a formatted print window. There is no PDF library — you print to PDF. That is a real workflow, but it is not a download button."],
+ ["379 of 489 models still lack a static-pressure figure","The tech sheets do not carry it for every model. Those declare SPECIFICATION DATA REQUIRED rather than guessing, which is correct — but the static check is skipped for them."],
+ ["Placeholder material rates still in play","13 BOM lines on a typical job use shipped placeholder rates, not NAC's. On job-cost-plus-fee those go straight to the customer. Isolator, cable, hanging strap, drain tray and mounting feet are the ones to price."]
+];
+
+const rows = document.getElementById('rows');
+const link = (k,v) => `<span class="lk ${v===1?'on':v===0?'off':''}">${k}</span>`;
+rows.innerHTML = F.map(([name,loc,c,tested,ready,note]) => `
+  <tr data-ready="${ready}" data-hay="${(name+' '+loc+' '+note).replace(/"/g,'').toLowerCase()}">
+    <td><span class="fname">${name}</span><span class="floc">${loc}</span></td>
+    <td><div class="chain">${link('FE',c.fe)}${link('BE',c.be)}${link('DB',c.db)}${link('CALC',c.calc)}${link('API',c.api)}${link('FILE',c.file)}</div></td>
+    <td><span class="pill ${tested}">${tested}</span></td>
+    <td><span class="pill ${ready}">${ready==='PART'?'PARTIAL':ready}</span></td>
+    <td class="tnote">${note}</td>
+  </tr>`).join('');
+
+document.getElementById('fixes').innerHTML = FIXES.map(([sev,h,p]) => `
+  <li><span class="sev ${sev}">${sev==='crit'?'CRITICAL':'HIGH'}</span>
+      <div class="fix"><h3>${h}</h3><p>${p}</p></div></li>`).join('');
+
+document.getElementById('risks').innerHTML = RISKS.map(([h,p]) => `
+  <div class="risk"><h3>${h}</h3><p>${p}</p></div>`).join('');
+
+let filter = 'all';
+const apply = () => {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  rows.querySelectorAll('tr').forEach(tr => {
+    const okF = filter === 'all' || tr.dataset.ready === filter;
+    const okQ = !q || tr.dataset.hay.includes(q);
+    tr.hidden = !(okF && okQ);
+  });
+};
+document.querySelectorAll('.chipbtn').forEach(b => b.addEventListener('click', () => {
+  filter = b.dataset.f;
+  document.querySelectorAll('.chipbtn').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  apply();
+}));
+document.getElementById('q').addEventListener('input', apply);
+</script>

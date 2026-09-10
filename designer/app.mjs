@@ -1281,9 +1281,17 @@ export class DesignerApp {
   async save(reason = 'Saved by estimator') {
     this.design = addRevision(this.design, { by: 'estimator', reason });
     const r = await Store.saveDesign(this.design);
-    this.dirty = false;
-    toast(r.ok ? 'Design saved (revision ' + this.design.revisions.length + ').'
-               : 'Saved locally only — no connection.', r.ok ? '' : 'warn');
+    // Only a database write clears the dirty flag. A local-only copy is still
+    // unsaved work as far as any other device is concerned, so the Save button
+    // must keep asking to be pressed.
+    this.dirty = !r.synced;
+    if (r.synced) {
+      toast('Design saved (revision ' + this.design.revisions.length + ').');
+    } else {
+      toast('SAVED ON THIS DEVICE ONLY — it has not reached the database' +
+            (r.error ? ' (' + r.error + ')' : '') +
+            '. It will not appear on another device. Press Save again when you have signal.', 'bad');
+    }
     this.render();
   }
 
