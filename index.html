@@ -1,4 +1,4 @@
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body><div id="root"></div><script src="https://unpkg.com/react@18/umd/react.production.min.js"></script><script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script><script>var exports = {};
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body><div id="root"></div><script src="/vendor/react.production.min.js"></script><script src="/vendor/react-dom.production.min.js"></script><script>if(!window.React||!window.ReactDOM){document.write('<scr'+'ipt src="https://unpkg.com/react@18/umd/react.production.min.js"></scr'+'ipt>');document.write('<scr'+'ipt src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></scr'+'ipt>');}</script><script>var exports = {};
 window.storage={get:async k=>{try{return{value:localStorage.getItem("nac_"+k)}}catch(e){return null}},set:async(k,v)=>{localStorage.setItem("nac_"+k,v)},delete:async k=>{localStorage.removeItem("nac_"+k)},list:async p=>{return{keys:Object.keys(localStorage).filter(k=>k.startsWith("nac_"+(p||"")))}}};function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 Object.defineProperty(exports, "__esModule", {
   value: true
@@ -4025,4 +4025,27 @@ function App() {
       textAlign: "center"
     })
   }, "Start New Quote")))));
-}ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));</script></body></html>
+}ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));</script><script>
+// The one start-up failure this page can detect for certain: the React runtime
+// never arrived. Deliberately NOT keyed on #root being empty — the first render
+// waits on the database, so an empty root is a slow load, not a broken one, and
+// painting an error over it would be a lie.
+window.addEventListener('load', function () {
+  if (window.React && window.ReactDOM) return;
+  var r = document.getElementById('root');
+  if (!r) return;
+  var msg = document.createElement('div');
+  msg.style.cssText = 'padding:24px;font:15px -apple-system,sans-serif;color:#fff';
+  var h = document.createElement('h2');
+  h.style.cssText = 'color:#F5C200;margin:0 0 8px';
+  h.textContent = 'The quote tool could not start';
+  var p1 = document.createElement('p');
+  p1.textContent = 'The React runtime did not load, so nothing on this page can run. Check the connection and reload.';
+  var p2 = document.createElement('p');
+  p2.style.opacity = '.7';
+  p2.textContent = 'React: ' + (window.React ? 'loaded' : 'MISSING') +
+                   ' \u00b7 ReactDOM: ' + (window.ReactDOM ? 'loaded' : 'MISSING');
+  msg.appendChild(h); msg.appendChild(p1); msg.appendChild(p2);
+  r.appendChild(msg);
+});
+</script></body></html>
