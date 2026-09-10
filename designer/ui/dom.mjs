@@ -88,11 +88,16 @@ export function field(label, control, hint) {
 }
 
 export function input(value, onchange, opts = {}) {
-  return h('input', {
+  const el = h('input', {
     class: 'inp', type: opts.type || 'text', value: value ?? '', placeholder: opts.placeholder || '',
     step: opts.step, min: opts.min, max: opts.max, inputmode: opts.inputmode,
     onchange: (e) => onchange(e.target.value)
   });
+  // `change` only fires on blur. Where the very next tap acts on the value
+  // (iPad Safari does not always blur a text field before a button's click
+  // handler runs) the field must report every keystroke instead.
+  if (opts.live) el.addEventListener('input', (e) => onchange(e.target.value));
+  return el;
 }
 
 export function select(value, options, onchange) {

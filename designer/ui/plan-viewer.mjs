@@ -520,7 +520,15 @@ export function createPlanViewer(container, opts = {}) {
       draw();
     },
     getMode: () => state.mode,
-    setCalibration(c) { state.calibration = c; state.calibrationPoints = []; draw(); },
+    // Called on every app render, so it must be idempotent: clearing the
+    // picking points unconditionally made it impossible to ever place the
+    // second calibration point (each click re-rendered and wiped the first).
+    setCalibration(c) {
+      const changed = state.calibration !== c;
+      state.calibration = c;
+      if (changed) state.calibrationPoints = [];
+      draw();
+    },
     resetCalibrationPoints() { state.calibrationPoints = []; draw(); },
     setRooms(rooms) { state.rooms = rooms || []; draw(); },
     selectRoom(id) { state.selectedRoomId = id; draw(); },
