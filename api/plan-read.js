@@ -55,6 +55,9 @@ WHAT TO REPORT
 - scaleLabelText: any printed scale note, verbatim (e.g. "SCALE 1:100 @ A3").
 - overallDimensions: the outermost overall width/depth numbers IF they are
   clearly printed as overalls. Otherwise null.
+- floorAreas: the FLOOR AREA schedule if the sheet prints one, verbatim — the
+  label and the number exactly as written (e.g. {"label":"RESIDENCE","text":"139.0 m2"}).
+  Do not add them up and do not convert. Report [] if there is no schedule.
 - quality: "good" | "fair" | "poor" — how legible the image is.
 - notes: short plain sentences about anything unclear.
 
@@ -64,6 +67,7 @@ Respond with JSON only, no prose, matching this shape exactly:
  "walls":[{"id":"w1","orientation":"horizontal|vertical","box":{"x":0,"y":0,"w":0,"h":0}}],
  "roomLabels":[{"id":"r1","text":"BED 2","box":{"x":0,"y":0,"w":0,"h":0}}],
  "scaleLabelText":"SCALE 1:100 @ A3","overallDimensions":{"widthText":"18020","depthText":"14250"},
+ "floorAreas":[{"label":"RESIDENCE","text":"139.0 m2"}],
  "quality":"good","notes":["..."]}`;
 
 function box(v) {
@@ -134,7 +138,14 @@ function sanitise(raw, { imageWidthPx, imageHeightPx }) {
       overallDimensions: {
         widthText: typeof od.widthText === 'string' ? od.widthText.slice(0, 32) : null,
         depthText: typeof od.depthText === 'string' ? od.depthText.slice(0, 32) : null
-      }
+      },
+      floorAreas: (Array.isArray(raw.floorAreas) ? raw.floorAreas : [])
+        .map(a => ({
+          label: typeof a.label === 'string' ? a.label.trim().slice(0, 32) : '',
+          text: typeof a.text === 'string' ? a.text.trim().slice(0, 24) : ''
+        }))
+        .filter(a => a.label && a.text)
+        .slice(0, 12)
     },
     quality,
     notes,

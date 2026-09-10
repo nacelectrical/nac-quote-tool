@@ -5,6 +5,8 @@
 // acknowledgement. A CRITICAL warning blocks design approval until it is
 // explicitly acknowledged by a named estimator.
 
+import { crossCheckFloorArea, incompleteRooms } from './rooms.mjs';
+
 export const SEVERITY = { INFO: 'INFO', CHECK: 'CHECK', WARNING: 'WARNING', CRITICAL: 'CRITICAL' };
 export const SEVERITY_ORDER = { CRITICAL: 0, WARNING: 1, CHECK: 2, INFO: 3 };
 
@@ -47,6 +49,25 @@ export function collectWarnings(design, opts = {}) {
   }
 
   const rooms = design.rooms || [];
+
+  // Does the room schedule agree with the floor area printed on the sheet?
+  if (design.printedResidenceSqM) {
+    const check = crossCheckFloorArea(rooms, design.printedResidenceSqM);
+    if (check) push(check.warnings, 'plan');
+  }
+
+  // A conditioned room with only one dimension counts as nothing in the load,
+  // which would silently under-size the system.
+  const half = incompleteRooms(rooms);
+  if (half.length) {
+    out.push(normalise({ code: 'ROOM_MISSING_A_DIMENSION', severity: SEVERITY.CRITICAL,
+      message: half.length + ' conditioned room(s) have only one dimension, so they are counting as ' +
+        'zero area and the system would be under-sized: ' +
+        half.map(r => r.label + ' (' + r.missing + ' missing' +
+          (r.knownMm ? ', ' + r.knownMm + ' mm known' : '') + ')').join(', ') +
+        '. Enter the missing number on the Rooms tab.' }, 'rooms'));
+  }
+
   for (const r of rooms) {
     if (!r.conditioned) continue;
     if (r.confidenceBand === 'LOW') {

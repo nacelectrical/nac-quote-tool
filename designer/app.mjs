@@ -18,7 +18,8 @@ import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
 import { calibrate, parseScaleLabel } from './engines/calibration.mjs';
 import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
-import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom } from './engines/rooms.mjs';
+import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
+         parseFloorAreaText, crossCheckFloorArea } from './engines/rooms.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
@@ -335,6 +336,7 @@ export class DesignerApp {
         (d.interpretation?.tileCount > 1 ? ' across ' + d.interpretation.tileCount + ' sections of the sheet' : '') +
         '. ' + (d.chains || []).length + ' chain(s) built.'),
       ...(d.interpretation?.notes || []).map(n => banner('info', n)),
+      ...this.floorAreaCheck(),
       table([
         { key: 'text', label: 'As printed', width: '90px' },
         { key: 'orientation', label: 'Axis', width: '60px',
@@ -354,6 +356,25 @@ export class DesignerApp {
           () => { this.showAllNumbers = !showAll; this.render(); }, 'ghost small'),
         button('Re-read the plan', () => this.readPlan(), 'ghost small'),
         button('Clear all', () => this.clearDetectedDimensions(), 'ghost small')));
+  }
+
+  /**
+   * The floor-area schedule off the sheet, and whether the rooms agree with it.
+   * Room areas are internal faces and the schedule measures to the outside of
+   * the external walls, so the rooms should come in a little UNDER. Coming in
+   * over means two rooms are claiming the same floor.
+   */
+  floorAreaCheck() {
+    const d = this.design;
+    if (!d.printedResidenceSqM) return [];
+    const check = crossCheckFloorArea(d.rooms || [], d.printedResidenceSqM);
+    if (!check) return [];
+    return [
+      h('div', { class: 'note' },
+        'The sheet prints ' + check.printedSqM + ' m² under roof; the rooms add to ' +
+        check.summedSqM + ' m² (' + (check.deltaPct > 0 ? '+' : '') + check.deltaPct + '%).'),
+      ...check.warnings.map(w => banner(w.severity === 'WARNING' ? 'warn' : 'info', w.message))
+    ];
   }
 
   /** Correct a number the reader got wrong, and rebuild the chains from it. */
@@ -741,6 +762,14 @@ export class DesignerApp {
       d.walls = obs.walls || [];
       d.openings = obs.openings || [];
       if (obs.scaleLabelText) d.scaleLabel = parseScaleLabel(obs.scaleLabelText);
+
+      // The floor-area schedule the sheet prints is an independent check on the
+      // room schedule — the one number on the drawing that catches an open-plan
+      // area measured twice.
+      d.floorAreas = obs.floorAreas || [];
+      const residence = (d.floorAreas || []).find(a => /residence|dwelling|house|living\s*area/i.test(a.label))
+        || (d.floorAreas || []).find(a => /total/i.test(a.label));
+      d.printedResidenceSqM = residence ? parseFloorAreaText(residence.text) : null;
 
       // Build candidate rooms from the labels the reader found, matched against
       // the reconstructed chains where the label sits inside a chain bay.

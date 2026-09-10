@@ -56,6 +56,12 @@ const UNCONDITIONED_PATTERNS = [
   /\boutdoor\b/i, /\bbalcony\b/i, /\bcourtyard\b/i, /\bvoid\b/i, /\bportico\b/i
 ];
 
+/** Areas a floor-area schedule lists separately from the residence. */
+const OUTDOOR_PATTERNS = [
+  /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
+  /\bbalcony\b/i, /\bcourtyard\b/i, /\bportico\b/i, /\bgarage\b/i, /\bcarport\b/i
+];
+
 const ROOM_TYPE_PATTERNS = [
   [/\bmaster\b|\bbed\s*\d?\b|\bbedroom\b|\bguest\b/i, 'bedroom'],
   [/\bkitchen\b|\bkitch\b/i, 'kitchen'],
@@ -96,15 +102,32 @@ export function roomTypeFromLabel(label) {
 // ── Measurement construction ─────────────────────────────────────────────────
 
 function measurement(widthMm, lengthMm, source, evidence, extra = {}) {
-  const w = round(Number(widthMm), 1);
-  const l = round(Number(lengthMm), 1);
+  const num = (v) => {
+    const n = round(Number(v), 1);
+    return isFinite(n) && n > 0 ? n : null;
+  };
+  const w = num(widthMm);
+  const l = num(lengthMm);
+  // A room read off a plan often gives up one dimension and not the other —
+  // the second string is creased, cropped or simply not printed. That must NOT
+  // become a 0 m² room: zero area sails through every check and quietly takes
+  // the whole room out of the load. It is recorded as incomplete instead, and
+  // the room is blocked until the missing number is supplied.
+  const incomplete = w === null || l === null;
   return {
     widthMm: w,
     lengthMm: l,
-    areaSqM: round(areaM2(w, l), 3),
+    areaSqM: incomplete ? null : round(areaM2(w, l), 3),
     source,
     sourceLabel: SOURCE_LABELS[source],
-    evidence: evidence || [],
+    evidence: incomplete
+      ? [...(evidence || []),
+         (w === null && l === null) ? 'Neither dimension is known.'
+           : w === null ? 'Width is missing — only the length is known.'
+           : 'Length is missing — only the width is known.']
+      : (evidence || []),
+    incomplete,
+    missingDimension: w === null && l === null ? 'both' : w === null ? 'width' : l === null ? 'length' : null,
     ...extra
   };
 }
@@ -276,6 +299,20 @@ export function scoreMeasurement(m, opts = {}) {
 
   if (m.source === 'estimated') add(0, 'No measurement source — estimator input required.');
 
+  // Half a room is not a measurement, whoever supplied it. This overrides even
+  // a manual entry, because the estimator typing one dimension and moving on is
+  // exactly the case that must not slip through.
+  if (m.incomplete) {
+    return {
+      score: 0,
+      band: 'LOW',
+      factors: [...factors, { delta: 0, reason: m.missingDimension === 'both'
+        ? 'No dimensions yet.' : 'Only one dimension is known — the ' + m.missingDimension + ' is missing.' }],
+      requiresVerification: true,
+      incomplete: true
+    };
+  }
+
   const finalScore = round(Math.max(0, Math.min(100, score)), 1);
   return {
     score: finalScore,
@@ -300,6 +337,10 @@ export function buildRoom(input, opts = {}) {
     : isConditionedLabel(label);
 
   let status = input.status;
+  // An incomplete measurement always resets the status, even a status carried
+  // over from a previous read — a room cannot stay Verified once a dimension
+  // it was verified on has gone.
+  if (measurementRec?.incomplete) status = 'Needs a dimension';
   if (!status) {
     if (!conditioned) status = 'Excluded';
     else if (measurementRec.source === 'manual') status = 'Manual';
@@ -386,13 +427,28 @@ export function verifyRoom(room, who = 'estimator') {
 export function sizableRooms(rooms, { allowOverride = false } = {}) {
   return (rooms || []).filter(r =>
     r.conditioned &&
+    !r.measurement?.incomplete &&
     r.areaSqM > 0 &&
     (r.status === 'Verified' || r.status === 'Manual' || (allowOverride && r.overrideApproved)));
 }
 
 export function blockedRooms(rooms) {
   return (rooms || []).filter(r =>
-    r.conditioned && r.status !== 'Verified' && r.status !== 'Manual' && !r.overrideApproved);
+    r.conditioned &&
+    (r.measurement?.incomplete ||
+     (r.status !== 'Verified' && r.status !== 'Manual' && !r.overrideApproved)));
+}
+
+/**
+ * Conditioned rooms the tool has only half a measurement for. These are the
+ * ones worth naming out loud: the room is on the plan, it will be air
+ * conditioned, and its area is currently counting as nothing.
+ */
+export function incompleteRooms(rooms) {
+  return (rooms || []).filter(r => r.conditioned && r.measurement?.incomplete)
+    .map(r => ({ id: r.id, label: r.label,
+                 missing: r.measurement.missingDimension,
+                 knownMm: r.measurement.widthMm ?? r.measurement.lengthMm ?? null }));
 }
 
 export function totalConditionedArea(rooms) {
@@ -413,4 +469,66 @@ export function verificationTable(rooms) {
     confidenceBand: r.confidenceBand,
     status: r.status
   }));
+}
+
+/**
+ * Cross-check the room schedule against the floor area printed on the sheet.
+ *
+ * Almost every Australian plan prints one — "FLOOR AREA / RESIDENCE 139.0 m2".
+ * Room areas that add to MORE than that mean two rooms are claiming the same
+ * floor, which is what happens when an open-plan space is measured as separate
+ * rectangles: the Lounge rectangle already contains the Dining and Family
+ * labels sitting inside it. That over-sizes the system and nothing else in the
+ * chain would notice, because each rectangle is individually plausible.
+ *
+ * The two numbers are not measured the same way, and that sets the tolerances.
+ * A floor-area schedule measures to the OUTSIDE of the external walls; room
+ * dimensions are internal faces. So summed rooms should land somewhat UNDER the
+ * printed area — the external walls and every internal wall are missing from
+ * the sum. Summed rooms coming out ABOVE the printed area is therefore not
+ * within tolerance at all: it means the same floor has been counted twice.
+ *
+ * @param {Array}  rooms
+ * @param {number} printedResidenceSqM  the sheet's own under-roof residence area
+ */
+export function crossCheckFloorArea(rooms, printedResidenceSqM, opts = {}) {
+  const printed = Number(printedResidenceSqM);
+  if (!isFinite(printed) || printed <= 0) return null;
+  // Only enough headroom to absorb rounding and a room measured to the outside
+  // of a wall by mistake — not enough to hide a double-counted room.
+  const overPct = opts.overTolerancePct ?? 2;
+  // Walls typically account for 6-12% of the under-roof area, so a sum well
+  // below that is a room that never made it onto the schedule.
+  const underPct = opts.underTolerancePct ?? 20;
+
+  // Everything under the roof, conditioned or not — that is what the schedule
+  // measures. Outdoor areas are listed separately on the sheet.
+  const indoor = (rooms || []).filter(r => !OUTDOOR_PATTERNS.some(p => p.test(normaliseRoomLabel(r.label))));
+  const summed = round(indoor.reduce((s, r) => s + (r.areaSqM || 0), 0), 2);
+  const deltaSqM = round(summed - printed, 2);
+  const deltaPct = round((deltaSqM / printed) * 100, 1);
+
+  const warnings = [];
+  if (deltaPct > overPct) {
+    warnings.push({ code: 'ROOM_AREAS_EXCEED_PRINTED_FLOOR_AREA', severity: 'WARNING',
+      message: 'The rooms add to ' + summed + ' m2 but the sheet prints ' + printed + ' m2 under roof — ' +
+        deltaSqM + ' m2 (' + deltaPct + '%) too much. Two rooms are claiming the same floor. ' +
+        'This is usually an open-plan area measured as separate rectangles: check whether the ' +
+        'living, dining and family boxes overlap.' });
+  } else if (deltaPct < -underPct) {
+    warnings.push({ code: 'ROOMS_MISSING_AGAINST_PRINTED_FLOOR_AREA', severity: 'CHECK',
+      message: 'The rooms add to ' + summed + ' m2 but the sheet prints ' + printed + ' m2 under roof — ' +
+        Math.abs(deltaSqM) + ' m2 (' + Math.abs(deltaPct) + '%) short. A room is probably missing ' +
+        'from the schedule, or one is only half measured.' });
+  }
+  return { printedSqM: round(printed, 2), summedSqM: summed, deltaSqM, deltaPct,
+           agrees: deltaPct <= overPct && deltaPct >= -underPct, warnings };
+}
+
+/** Parse a printed floor-area schedule row, e.g. "139.0 m2" -> 139. */
+export function parseFloorAreaText(text) {
+  const m = String(text || '').match(/(\d+(?:[.,]\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(',', '.'));
+  return isFinite(n) && n > 0 ? n : null;
 }
