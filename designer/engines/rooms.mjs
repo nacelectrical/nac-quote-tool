@@ -222,7 +222,13 @@ export function bestMeasurement(candidates, fallbackAreaSqM = null) {
       source: 'estimated',
       sourceLabel: SOURCE_LABELS.estimated,
       evidence: ['No dimension, chain station or calibration was available for this room.'],
-      needsEstimatorInput: true
+      needsEstimatorInput: true,
+      // No measurement at all is the same failure as half of one: the room is
+      // on the plan, it will be air conditioned, and it is counting as nothing.
+      // A fallback area supplied by the estimator is a measurement, so only the
+      // truly blank case is incomplete.
+      incomplete: fallbackAreaSqM === null || fallbackAreaSqM === undefined,
+      missingDimension: 'both'
     };
   }
   list.sort((a, b) => SOURCE_PRIORITY[a.source] - SOURCE_PRIORITY[b.source]);
