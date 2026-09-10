@@ -32,6 +32,16 @@ ABSOLUTE RULES
    than guessing a box.
 6. Copy dimension text EXACTLY as printed, including any unit suffix. "3400"
    stays "3400". "3.4m" stays "3.4m". Never convert.
+7. Read every digit off the drawing. Do NOT round a number, drop a trailing
+   digit, or make one "look right" against its neighbours. Australian plans use
+   4-digit millimetres for rooms (3400, 4210) and 2-3 digit millimetres for wall
+   thicknesses and setbacks (90, 110, 220). A 4-digit number is never 3 digits.
+8. If a digit is genuinely ambiguous — 3 against 8, 6 against 5, 0 against 8 —
+   leave that number OUT and say so in notes. A dimension chain that is missing
+   a segment is obvious and fixable. One with a wrong digit is neither: it adds
+   up to something plausible and quietly sizes the wrong system.
+9. Never read the same number twice into two entries, and never invent a number
+   to fill a gap in a row. Rows of dimensions on a plan are often incomplete.
 
 WHAT TO REPORT
 - detections: every number-like piece of text on or around the plan, with its
@@ -151,15 +161,28 @@ export default async function handler(req, res) {
     ? `The image you are looking at is ${imageWidthPx} × ${imageHeightPx} pixels. Report all boxes in those pixel coordinates.`
     : 'Report all boxes in the pixel coordinates of the image as supplied.';
 
+  // A tiled read: say so, so a part-drawing is not treated as a whole plan and
+  // an edge-clipped number is left out rather than completed from imagination.
+  const { region } = req.body || {};
+  const regionNote = region && region.total > 1
+    ? `\n\nThis is section ${region.index} of ${region.total} of a larger sheet — ` +
+      'a crop, not the whole plan. Read only what is inside this crop. Numbers ' +
+      'clipped by the edge of the image are covered by another section, so leave ' +
+      'them out rather than guessing the missing digits. Do not report overall ' +
+      'building dimensions unless you can see the full dimension line and both ' +
+      'its ends within this crop.'
+    : '';
+
   try {
     const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 8000,
+        max_tokens: 16000,
         system: SYSTEM,
-        messages: [{ role: 'user', content: [planBlock, { type: 'text', text: sizeNote + '\n\nRead this plan now. JSON only.' }] }]
+        messages: [{ role: 'user', content: [planBlock,
+          { type: 'text', text: sizeNote + regionNote + '\n\nRead this plan now. JSON only.' }] }]
       })
     });
 
@@ -181,12 +204,24 @@ export default async function handler(req, res) {
     let parsed;
     try { parsed = JSON.parse(match[0]); }
     catch (e) {
+      // A response cut off at the token limit ends mid-JSON. Say which it was,
+      // because "there was too much on the sheet" and "the reader misbehaved"
+      // call for different things from the estimator.
+      const truncated = data.stop_reason === 'max_tokens';
       return res.status(200).json({
         observations: { detections: [], openings: [], walls: [], roomLabels: [], scaleLabelText: null,
                         overallDimensions: { widthText: null, depthText: null } },
         quality: 'poor',
-        notes: ['The plan reader returned malformed data and it has been discarded. Use manual entry.']
+        notes: [truncated
+          ? 'There was more text on this part of the plan than the reader could return in one pass, ' +
+            'so its answer was cut off and discarded. Crop the plan to the floor plan itself and read again.'
+          : 'The plan reader returned malformed data and it has been discarded. Use manual entry.']
       });
+    }
+    if (data.stop_reason === 'max_tokens') {
+      parsed.notes = [...(Array.isArray(parsed.notes) ? parsed.notes : []),
+        'The reader ran out of room before it finished this section, so some numbers are missing. ' +
+        'Check the drawing for anything it did not list.'];
     }
 
     return res.status(200).json(sanitise(parsed, { imageWidthPx, imageHeightPx }));

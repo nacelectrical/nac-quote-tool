@@ -22,7 +22,10 @@ export function h(tag, attrs = {}, ...children) {
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-export const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+// `remove()` rather than `removeChild()`: a re-render triggered from a blur or
+// change handler can run while the browser has already moved the node, and
+// removeChild throws in that case where remove() simply does nothing.
+export const clear = (el) => { while (el.firstChild) el.firstChild.remove(); return el; };
 export const mount = (el, ...children) => { clear(el); children.flat(4).filter(Boolean).forEach(c => el.appendChild(c)); return el; };
 
 export const money = (n) => n === null || n === undefined
