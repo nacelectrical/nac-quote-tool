@@ -40,174 +40,85 @@ var _h = function _h() {
   };
 };
 window.storage = {
-  get: function () {
-    var _get = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(k) {
-      var r, d, v, _t, _t2;
-      return _regenerator().w(function (_context) {
-        while (1) switch (_context.p = _context.n) {
-          case 0:
-            _context.p = 0;
-            _context.n = 1;
-            return fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k) + '&select=value', {
-              headers: _h()
-            });
-          case 1:
-            r = _context.v;
-            _context.n = 2;
-            return r.json();
-          case 2:
-            d = _context.v;
-            if (!(d && d[0])) {
-              _context.n = 3;
-              break;
-            }
-            return _context.a(2, {
-              value: d[0].value
-            });
-          case 3:
-            _context.n = 5;
-            break;
-          case 4:
-            _context.p = 4;
-            _t = _context.v;
-          case 5:
-            _context.p = 5;
-            v = localStorage.getItem('nac_' + k);
-            if (!v) {
-              _context.n = 6;
-              break;
-            }
-            return _context.a(2, {
-              value: v
-            });
-          case 6:
-            _context.n = 8;
-            break;
-          case 7:
-            _context.p = 7;
-            _t2 = _context.v;
-          case 8:
-            return _context.a(2, null);
-        }
-      }, _callee, null, [[5, 7], [0, 4]]);
-    }));
-    function get(_x) {
-      return _get.apply(this, arguments);
+  // set() returns TRUE for `synced` only when the DATABASE accepted the write.
+  // localStorage is written first so a bad connection never loses work in the
+  // field, but a local write is not a save: it lives on one device, and
+  // reporting it as saved is how a quote is lost between the ute and the office.
+  //
+  // The warning is raised HERE rather than left to each caller, because a
+  // caller that forgets is a silent data-loss bug and there is no way to tell
+  // from the screen that it happened.
+  lastError: null,
+  _notifyTimer: null,
+  _warnNotSynced: function (what, why) {
+    window.storage.lastError = why || 'the database could not be reached';
+    try {
+      var id = 'nac-sync-warning';
+      var el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7a1620;' +
+          'color:#fff;padding:12px 16px;font:13px/1.45 -apple-system,sans-serif;' +
+          'box-shadow:0 -2px 12px rgba(0,0,0,.4)';
+        (document.body || document.documentElement).appendChild(el);
+      }
+      el.textContent = 'SAVED ON THIS DEVICE ONLY — "' + what + '" did not reach the database (' +
+        window.storage.lastError + '). It will not appear on another device. ' +
+        'Check the connection and save again.';
+      clearTimeout(window.storage._notifyTimer);
+      window.storage._notifyTimer = setTimeout(function () {
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }, 15000);
+    } catch (e) { /* no DOM (tests) — the return value still carries the truth */ }
+  },
+  get: async function (k) {
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k) + '&select=value', { headers: _h() });
+      // fetch resolves on a 4xx/5xx, so the status must be read or a rejected
+      // read looks like an empty result and silently falls back to the device.
+      if (r.ok) {
+        var d = await r.json();
+        if (d && d[0]) return { value: d[0].value };
+      }
+    } catch (e) {}
+    try { var v = localStorage.getItem('nac_' + k); if (v) return { value: v }; } catch (e) {}
+    return null;
+  },
+  set: async function (k, v) {
+    window.storage.lastError = null;
+    try { localStorage.setItem('nac_' + k, v); } catch (e) {}
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings', {
+        method: 'POST',
+        headers: Object.assign({}, _h(), { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }),
+        body: JSON.stringify({ key: k, value: v, updated_at: new Date().toISOString() })
+      });
+      if (r.ok) return { key: k, value: v, ok: true, synced: true };
+      window.storage._warnNotSynced(k, 'database returned ' + r.status);
+    } catch (e) {
+      window.storage._warnNotSynced(k, 'could not reach the database');
     }
-    return get;
-  }(),
-  set: function () {
-    var _set = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(k, v) {
-      var _t3;
-      return _regenerator().w(function (_context2) {
-        while (1) switch (_context2.p = _context2.n) {
-          case 0:
-            try {
-              localStorage.setItem('nac_' + k, v);
-            } catch (e) {}
-            _context2.p = 1;
-            _context2.n = 2;
-            return fetch(_SU + '/rest/v1/nac_settings', {
-              method: 'POST',
-              headers: _objectSpread(_objectSpread({}, _h()), {}, {
-                'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates'
-              }),
-              body: JSON.stringify({
-                key: k,
-                value: v,
-                updated_at: new Date().toISOString()
-              })
-            });
-          case 2:
-            _context2.n = 4;
-            break;
-          case 3:
-            _context2.p = 3;
-            _t3 = _context2.v;
-          case 4:
-            return _context2.a(2, {
-              key: k,
-              value: v
-            });
-        }
-      }, _callee2, null, [[1, 3]]);
-    }));
-    function set(_x2, _x3) {
-      return _set.apply(this, arguments);
+    return { key: k, value: v, ok: false, synced: false, error: window.storage.lastError };
+  },
+  delete: async function (k) {
+    try { localStorage.removeItem('nac_' + k); } catch (e) {}
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k), { method: 'DELETE', headers: _h() });
+      if (!r.ok) window.storage._warnNotSynced(k, 'delete returned ' + r.status);
+      return { key: k, deleted: true, ok: r.ok, synced: r.ok };
+    } catch (e) {
+      window.storage._warnNotSynced(k, 'could not reach the database');
+      return { key: k, deleted: true, ok: false, synced: false };
     }
-    return set;
-  }(),
-  "delete": function () {
-    var _delete2 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(k) {
-      var _t4;
-      return _regenerator().w(function (_context3) {
-        while (1) switch (_context3.p = _context3.n) {
-          case 0:
-            try {
-              localStorage.removeItem('nac_' + k);
-            } catch (e) {}
-            _context3.p = 1;
-            _context3.n = 2;
-            return fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k), {
-              method: 'DELETE',
-              headers: _h()
-            });
-          case 2:
-            _context3.n = 4;
-            break;
-          case 3:
-            _context3.p = 3;
-            _t4 = _context3.v;
-          case 4:
-            return _context3.a(2, {
-              key: k,
-              deleted: true
-            });
-        }
-      }, _callee3, null, [[1, 3]]);
-    }));
-    function _delete(_x4) {
-      return _delete2.apply(this, arguments);
-    }
-    return _delete;
-  }(),
-  list: function () {
-    var _list = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(p) {
-      var r, d, _t5;
-      return _regenerator().w(function (_context4) {
-        while (1) switch (_context4.p = _context4.n) {
-          case 0:
-            _context4.p = 0;
-            _context4.n = 1;
-            return fetch(_SU + '/rest/v1/nac_settings?key=like.' + encodeURIComponent((p || '') + '*') + '&select=key', {
-              headers: _h()
-            });
-          case 1:
-            r = _context4.v;
-            _context4.n = 2;
-            return r.json();
-          case 2:
-            d = _context4.v;
-            return _context4.a(2, {
-              keys: (d || []).map(function (x) {
-                return x.key;
-              })
-            });
-          case 3:
-            _context4.p = 3;
-            _t5 = _context4.v;
-            return _context4.a(2, {
-              keys: []
-            });
-        }
-      }, _callee4, null, [[0, 3]]);
-    }));
-    function list(_x5) {
-      return _list.apply(this, arguments);
-    }
-    return list;
-  }()
+  },
+  list: async function (p) {
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=like.' + encodeURIComponent((p || '') + '*') + '&select=key', { headers: _h() });
+      if (r.ok) { var d = await r.json(); return { keys: (d || []).map(function (x) { return x.key; }) }; }
+    } catch (e) {}
+    return { keys: [] };
+  }
 };
 var Y = "#F5C200";
 var B = "#2B6CB8";

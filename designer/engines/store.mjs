@@ -38,23 +38,44 @@ let designsTableAvailable = null;   // null = untested, true/false once known
 export async function getSetting(key) {
   try {
     const r = await fetch(SUPA_URL + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(key) + '&select=value', { headers: H() });
-    const d = await r.json();
-    if (d && d[0]) return d[0].value;
+    // fetch resolves on a 4xx/5xx, so the status has to be read or a rejected
+    // read looks like an empty result and quietly falls back to the device.
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d[0]) return d[0].value;
+    }
   } catch (e) { /* fall through to local */ }
   try { return localStorage.getItem('nac_' + key); } catch (e) { return null; }
 }
 
+/**
+ * Write a key/value setting.
+ *
+ * Returns TRUE only when the database accepted the write. Local storage is
+ * written first so an iPad on a bad connection never loses work, but a local
+ * write is not a save: it lives on that one device, and reporting it as saved
+ * is how an estimator loses a job between the ute and the office.
+ */
 export async function setSetting(key, value) {
   try { localStorage.setItem('nac_' + key, value); } catch (e) { /* quota / private mode */ }
   try {
-    await fetch(SUPA_URL + '/rest/v1/nac_settings', {
+    const r = await fetch(SUPA_URL + '/rest/v1/nac_settings', {
       method: 'POST',
       headers: { ...JH(), Prefer: 'resolution=merge-duplicates' },
       body: JSON.stringify({ key, value, updated_at: new Date().toISOString() })
     });
-    return true;
-  } catch (e) { return false; }
+    if (r.ok) return true;
+    lastStoreError = 'database returned ' + r.status;
+    return false;
+  } catch (e) {
+    lastStoreError = 'could not reach the database: ' + e.message;
+    return false;
+  }
 }
+
+/** Why the last write did not reach the database, if it did not. */
+let lastStoreError = null;
+export function lastStorageError() { return lastStoreError; }
 
 export async function getJson(key, fallback = null) {
   const v = await getSetting(key);
@@ -124,11 +145,14 @@ export async function saveDesign(design) {
           updated_at: payload.updatedAt
         })
       });
-      if (r.ok) return { ok: true, storage: 'nac_designs' };
-    } catch (e) { /* fall through */ }
+      if (r.ok) return { ok: true, storage: 'nac_designs', synced: true };
+      lastStoreError = 'nac_designs returned ' + r.status;
+    } catch (e) { lastStoreError = 'could not reach nac_designs: ' + e.message; }
   }
   const ok = await setSetting(SETTINGS_KEY_PREFIX + payload.id, json);
-  return { ok, storage: ok ? 'nac_settings' : 'local_only' };
+  // `synced` is the only thing that means the work left this device.
+  return { ok, synced: ok, storage: ok ? 'nac_settings' : 'local_only',
+           error: ok ? null : lastStoreError };
 }
 
 export async function loadDesign(id) {

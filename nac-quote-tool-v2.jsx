@@ -4,33 +4,84 @@ import { useState, useEffect, useRef } from "react";
 const _SU = "https://icnznjhwybryizbdqrgx.supabase.co", _SK = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw";
 const _h = () => ({'apikey': _SK, 'Authorization': 'Bearer ' + _SK});
 window.storage = {
-  get: async (k) => {
+  // set() returns TRUE for `synced` only when the DATABASE accepted the write.
+  // localStorage is written first so a bad connection never loses work in the
+  // field, but a local write is not a save: it lives on one device, and
+  // reporting it as saved is how a quote is lost between the ute and the office.
+  //
+  // The warning is raised HERE rather than left to each caller, because a
+  // caller that forgets is a silent data-loss bug and there is no way to tell
+  // from the screen that it happened.
+  lastError: null,
+  _notifyTimer: null,
+  _warnNotSynced: function (what, why) {
+    window.storage.lastError = why || 'the database could not be reached';
     try {
-      const r = await fetch(_SU+'/rest/v1/nac_settings?key=eq.'+encodeURIComponent(k)+'&select=value', {headers:_h()});
-      const d = await r.json();
-      if (d&&d[0]) return {value:d[0].value};
-    } catch(e) {}
-    try { const v=localStorage.getItem('nac_'+k); if(v) return {value:v}; } catch(e) {}
+      var id = 'nac-sync-warning';
+      var el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7a1620;' +
+          'color:#fff;padding:12px 16px;font:13px/1.45 -apple-system,sans-serif;' +
+          'box-shadow:0 -2px 12px rgba(0,0,0,.4)';
+        (document.body || document.documentElement).appendChild(el);
+      }
+      el.textContent = 'SAVED ON THIS DEVICE ONLY — "' + what + '" did not reach the database (' +
+        window.storage.lastError + '). It will not appear on another device. ' +
+        'Check the connection and save again.';
+      clearTimeout(window.storage._notifyTimer);
+      window.storage._notifyTimer = setTimeout(function () {
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }, 15000);
+    } catch (e) { /* no DOM (tests) — the return value still carries the truth */ }
+  },
+  get: async function (k) {
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k) + '&select=value', { headers: _h() });
+      // fetch resolves on a 4xx/5xx, so the status must be read or a rejected
+      // read looks like an empty result and silently falls back to the device.
+      if (r.ok) {
+        var d = await r.json();
+        if (d && d[0]) return { value: d[0].value };
+      }
+    } catch (e) {}
+    try { var v = localStorage.getItem('nac_' + k); if (v) return { value: v }; } catch (e) {}
     return null;
   },
-  set: async (k, v) => {
-    try { localStorage.setItem('nac_'+k, v); } catch(e) {}
+  set: async function (k, v) {
+    window.storage.lastError = null;
+    try { localStorage.setItem('nac_' + k, v); } catch (e) {}
     try {
-      await fetch(_SU+'/rest/v1/nac_settings', {method:'POST', headers:{..._h(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'}, body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})});
-    } catch(e) {}
-    return {key:k,value:v};
+      var r = await fetch(_SU + '/rest/v1/nac_settings', {
+        method: 'POST',
+        headers: Object.assign({}, _h(), { 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }),
+        body: JSON.stringify({ key: k, value: v, updated_at: new Date().toISOString() })
+      });
+      if (r.ok) return { key: k, value: v, ok: true, synced: true };
+      window.storage._warnNotSynced(k, 'database returned ' + r.status);
+    } catch (e) {
+      window.storage._warnNotSynced(k, 'could not reach the database');
+    }
+    return { key: k, value: v, ok: false, synced: false, error: window.storage.lastError };
   },
-  delete: async (k) => {
-    try { localStorage.removeItem('nac_'+k); } catch(e) {}
-    try { await fetch(_SU+'/rest/v1/nac_settings?key=eq.'+encodeURIComponent(k), {method:'DELETE',headers:_h()}); } catch(e) {}
-    return {key:k,deleted:true};
-  },
-  list: async (p) => {
+  delete: async function (k) {
+    try { localStorage.removeItem('nac_' + k); } catch (e) {}
     try {
-      const r = await fetch(_SU+'/rest/v1/nac_settings?key=like.'+encodeURIComponent((p||'')+'*')+'&select=key', {headers:_h()});
-      const d = await r.json();
-      return {keys:(d||[]).map(x=>x.key)};
-    } catch(e) { return {keys:[]}; }
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k), { method: 'DELETE', headers: _h() });
+      if (!r.ok) window.storage._warnNotSynced(k, 'delete returned ' + r.status);
+      return { key: k, deleted: true, ok: r.ok, synced: r.ok };
+    } catch (e) {
+      window.storage._warnNotSynced(k, 'could not reach the database');
+      return { key: k, deleted: true, ok: false, synced: false };
+    }
+  },
+  list: async function (p) {
+    try {
+      var r = await fetch(_SU + '/rest/v1/nac_settings?key=like.' + encodeURIComponent((p || '') + '*') + '&select=key', { headers: _h() });
+      if (r.ok) { var d = await r.json(); return { keys: (d || []).map(function (x) { return x.key; }) }; }
+    } catch (e) {}
+    return { keys: [] };
   }
 };
 
@@ -272,12 +323,13 @@ function PriceSetup({ brands, controllers, onSave, onBack }) {
   const setCPrice = (cid,v) => setLc(p=>p.map(c=>c.id===cid?{...c,price:v}:c));
 
   async function save() {
-    try {
-      await window.storage.set("nac_brands_v4", JSON.stringify(lb));
-      await window.storage.set("nac_ctrl_v4", JSON.stringify(lc));
-      setSaved(true); setTimeout(()=>setSaved(false),2000);
-      onSave(lb, lc);
-    } catch(e) { console.error(e); }
+    // Both writes must reach the database. A local-only copy means the next
+    // device to open the tool quotes off the OLD prices. storage.set raises the
+    // on-screen warning itself; here we only withhold the "Saved" tick.
+    const a = await window.storage.set("nac_brands_v4", JSON.stringify(lb));
+    const b = await window.storage.set("nac_ctrl_v4", JSON.stringify(lc));
+    onSave(lb, lc);
+    if (a.synced && b.synced) { setSaved(true); setTimeout(()=>setSaved(false),2000); }
   }
 
   const brand = lb.find(b=>b.id===ab);
@@ -459,11 +511,11 @@ export default function App() {
 
   async function saveDraft() {
     const draft = { step,client,jobDesc,validDays,opts,chosen,selCtrl,zones,sensors,extras,notes };
-    try {
-      await window.storage.set("nac_draft_v2", JSON.stringify(draft));
-      setDraftSaved(true); setHasDraft(true);
-      setTimeout(()=>setDraftSaved(false),2000);
-    } catch(e){}
+    const r = await window.storage.set("nac_draft_v2", JSON.stringify(draft));
+    setHasDraft(true);
+    // The draft IS on this device and will restore here, but a local-only copy
+    // will not open anywhere else, so it does not get the "Saved" tick.
+    if (r.synced) { setDraftSaved(true); setTimeout(()=>setDraftSaved(false),2000); }
   }
   async function restoreDraft() {
     try {
