@@ -54,6 +54,20 @@ why **resizing or re-exporting the image cannot change a room dimension**.
 4. Calibrated drawing geometry
 5. Manual estimator input
 
+## PDF plans
+
+Builder plans arrive as PDFs, so opening one is the first thing an estimator
+does and it cannot depend on a CDN. pdf.js is **vendored** in
+`designer/vendor/` and served from the same origin as the app; cdnjs, jsDelivr
+and unpkg remain as fallbacks if those files ever go missing. It loads only
+when someone actually picks a PDF, never on page load, and the panel says which
+source it is trying rather than sitting silent.
+
+A plan set is usually several pages and the floor plan is rarely page 1, so the
+page count comes back with the render and the estimator can switch pages. A
+different page is a different sheet at a different scale, so switching clears
+the calibration and anything measured from the image.
+
 ## Scale
 
 A printed `SCALE 1:100 @ A3` label is **supporting information only** — an
@@ -71,6 +85,9 @@ designer/ui/plan-viewer.mjs       zoom/pan/pinch canvas: calibrate, rooms, route
 designer/ui/tabs.mjs              the 13 design tabs
 designer/ui/settings-screen.mjs   HVAC Design Settings
 designer/ui/reports.mjs           internal + customer print sheets
+designer/ui/pdf.mjs               PDF plans: on-demand reader, page rendering
+designer/vendor/                  pdf.js 3.11.174 (Apache-2.0), served from our
+                                  own origin so a plan opens without a CDN
 designer/schema.sql               OPTIONAL nac_designs table (works without it)
 
 designer/engines/                 deterministic engineering — no DOM, no AI

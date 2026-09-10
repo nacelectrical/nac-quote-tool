@@ -8,6 +8,7 @@
 
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
+import { renderPdfPage } from './ui/pdf.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
@@ -265,13 +266,26 @@ export class DesignerApp {
 
   renderUploadPanel() {
     const d = this.design;
+    const plan = d.plan;
     return card('1. Floor plan', 'PDF, JPG, JPEG or PNG',
-      h('input', { type: 'file', class: 'inp', accept: 'image/*,application/pdf',
+      h('input', { type: 'file', class: 'inp', accept: '.pdf,.png,.jpg,.jpeg,image/*,application/pdf',
+        disabled: this.busy,
         onchange: (e) => this.handleUpload(e.target.files[0]) }),
+      this.busy ? h('div', { class: 'plan-status' }, this.planStatus || 'Opening the plan…') : null,
+      plan?.isPdf && plan.pageCount > 1
+        ? h('div', { class: 'page-switch' },
+            h('span', {}, 'Page'),
+            button('‹', () => this.setPlanPage(plan.pageNumber - 1), 'tiny ghost'),
+            select(String(plan.pageNumber),
+              Array.from({ length: plan.pageCount }, (_, i) => ({ value: String(i + 1), label: String(i + 1) })),
+              v => this.setPlanPage(Number(v))),
+            button('›', () => this.setPlanPage(plan.pageNumber + 1), 'tiny ghost'),
+            h('span', {}, 'of ' + plan.pageCount))
+        : null,
       d.plan ? h('div', { class: 'note' },
         d.plan.fileName +
         (d.plan.widthPx ? ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' : '') +
-        (d.plan.isPdf ? ' (PDF page 1 rendered)' : '') +
+        (d.plan.isPdf && d.plan.pageCount > 1 ? ' · page ' + d.plan.pageNumber + ' of ' + d.plan.pageCount : '') +
         (d.plan.fromIntake ? ' · from the customer\'s intake form' : '')) : null,
       d.intake?.photoUrls?.length
         ? h('div', { class: 'note' }, d.intake.photoUrls.length + ' site photo(s) from the intake: ',
@@ -412,35 +426,87 @@ export class DesignerApp {
 
   async handleUpload(file) {
     if (!file) return;
-    const isPdf = file.type.includes('pdf');
+    const isPdf = file.type.includes('pdf') || /\.pdf$/i.test(file.name || '');
+    this.busy = true; this.render();
     try {
       const dataUrl = await new Promise((res, rej) => {
         const r = new FileReader();
-        r.onload = () => res(r.result); r.onerror = rej;
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(new Error('the file could not be read'));
         r.readAsDataURL(file);
       });
-      let imageUrl = dataUrl;
+
+      let imageUrl = dataUrl, pageNumber = null, pageCount = null, dims;
+
       if (isPdf) {
-        imageUrl = await renderPdfFirstPage(dataUrl);
-        if (!imageUrl) {
-          toast('This PDF could not be rendered in the browser. Export it as a PNG or JPG and upload that.', 'bad');
-          return;
-        }
+        const page = await renderPdfPage(dataUrl, 1, {
+          onProgress: (m) => { this.planStatus = m; this.render(); }
+        });
+        imageUrl = page.dataUrl;
+        pageNumber = page.pageNumber;
+        pageCount = page.pageCount;
       }
-      const dims = await this.viewer.setImage(imageUrl);
+
+      dims = await this.viewer.setImage(imageUrl);
       this.loadedPlanUrl = imageUrl;
       this.design.plan = {
         fileName: file.name, mediaType: file.type, isPdf,
-        dataUrl: imageUrl, originalDataUrl: dataUrl,
-        widthPx: dims.width, heightPx: dims.height, uploadedAt: new Date().toISOString()
+        dataUrl: imageUrl,
+        originalDataUrl: dataUrl,      // kept so another page can be rendered
+        pageNumber, pageCount,
+        widthPx: dims.width, heightPx: dims.height,
+        uploadedAt: new Date().toISOString()
       };
       // A new plan invalidates the old calibration — it is never carried over.
       this.design.calibration = null;
       this.dirty = true;
-      toast('Plan loaded. Calibrate it next.');
+      toast(pageCount > 1
+        ? 'Page 1 of ' + pageCount + ' loaded. Switch pages if the floor plan is further in, then calibrate.'
+        : 'Plan loaded. Calibrate it next.');
       this.update();
     } catch (e) {
-      toast('Could not read that file: ' + e.message, 'bad');
+      const detail = String(e.message || 'unknown error').replace(/\.?$/, '.');
+      toast('Could not open that plan — ' + detail +
+        (isPdf ? ' Export the page as a PNG or JPG and upload that instead.' : ''), 'bad');
+    } finally {
+      this.busy = false;
+      this.planStatus = null;
+      this.render();
+    }
+  }
+
+  /** Switch to another page of a multi-page plan set. */
+  async setPlanPage(pageNumber) {
+    const plan = this.design.plan;
+    if (!plan?.isPdf || !plan.originalDataUrl) return;
+    const n = Math.round(Number(pageNumber));
+    if (!n || n === plan.pageNumber) return;
+
+    this.busy = true; this.render();
+    try {
+      const page = await renderPdfPage(plan.originalDataUrl, n, {
+        onProgress: (m) => { this.planStatus = m; this.render(); }
+      });
+      const dims = await this.viewer.setImage(page.dataUrl);
+      this.loadedPlanUrl = page.dataUrl;
+      this.design.plan = { ...plan, dataUrl: page.dataUrl, pageNumber: page.pageNumber,
+                           pageCount: page.pageCount, widthPx: dims.width, heightPx: dims.height };
+      // A different page is a different sheet at a different scale, so the
+      // calibration and anything measured from the image no longer apply.
+      this.design.calibration = null;
+      this.design.rooms = (this.design.rooms || []).map(r => ({ ...r, boundaryPx: null }));
+      this.design.ductRoutes = {};
+      this.design.mainRoute = null;
+      this.design.layout = {};
+      this.dirty = true;
+      toast('Page ' + page.pageNumber + ' of ' + page.pageCount + '. Calibrate this page before measuring.');
+      this.update();
+    } catch (e) {
+      toast('Could not render page ' + n + ': ' + e.message, 'bad');
+    } finally {
+      this.busy = false;
+      this.planStatus = null;
+      this.render();
     }
   }
 
@@ -1294,27 +1360,4 @@ function bayContaining(chain, mm) {
   return null;
 }
 
-/**
- * Render page 1 of a PDF to a PNG data URL using pdf.js when it is available.
- * If it is not, the caller falls back to asking for an image — the estimator is
- * never left without a way forward.
- */
-async function renderPdfFirstPage(dataUrl) {
-  const pdfjs = window.pdfjsLib;
-  if (!pdfjs) return null;
-  try {
-    const raw = atob(dataUrl.split(',')[1]);
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    const doc = await pdfjs.getDocument({ data: bytes }).promise;
-    const page = await doc.getPage(1);
-    // Render at a generous scale — plan text has to stay legible when zoomed.
-    const viewport = page.getViewport({ scale: 2.5 });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width; canvas.height = viewport.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    return canvas.toDataURL('image/png');
-  } catch (e) {
-    return null;
-  }
-}
+
