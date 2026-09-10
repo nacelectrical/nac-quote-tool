@@ -181,7 +181,7 @@ test('velocity and ideal diameter are correct round-duct fluid mechanics', () =>
 
 test('duct diameters are chosen from the configured list within the velocity band', () => {
   const branch = selectDiameter(105, 'branch');
-  assert.equal(branch.diameterMm, 175);
+  assert.equal(branch.diameterMm, 200);   // 175 is not a stocked flex size
   assert.ok(branch.velocityMs <= DEFAULT_SETTINGS.duct.velocity.branch.preferred);
   assert.ok(DEFAULT_SETTINGS.duct.availableDiametersMm.includes(branch.diameterMm));
   assert.ok(branch.considered.length === DEFAULT_SETTINGS.duct.availableDiametersMm.length);
@@ -192,7 +192,7 @@ test('the brief\'s example is reproduced: 150 mm at 105 L/s is over the preferre
   assert.ok(v > DEFAULT_SETTINGS.duct.velocity.branch.preferred, v + ' m/s should exceed the preferred 4.5 m/s');
   const s = sizeSection({ id: 'b', role: 'branch', destination: 'Bed 3', airflowLs: 105, lengthMm: 6000, diameterMm: 150 });
   assert.ok(s.warnings.some(w => w.code === 'DUCT_VELOCITY_ABOVE_PREFERRED'));
-  assert.equal(selectDiameter(105, 'branch').diameterMm, 175);   // what the engine would pick
+  assert.equal(selectDiameter(105, 'branch').diameterMm, 200);   // what the engine would pick
 });
 
 test('excessive velocity is a warning, not a silent resize', () => {
@@ -403,11 +403,24 @@ test('the BOM is derived from the design, with quantities that trace back', () =
     .reduce((s, i) => s + i.quantity, 0);
   assert.equal(diffusers, o.totals.total);
 
-  const motors = bom.items.find(i => i.key === 'zone_motor');
-  assert.equal(motors.quantity, z.zones.filter(x => !x.alwaysOpen).length);
+  // Zone motors are split by damper diameter, so count across the lines.
+  const motors = bom.items.filter(i => i.key === 'zone_motor')
+    .reduce((s, i) => s + i.quantity, 0);
+  assert.equal(motors, z.zones.filter(x => !x.alwaysOpen).length);
+  // One 15 m zone lead per motorised damper.
+  const cable = bom.items.find(i => i.key === 'zone_cable');
+  assert.equal(cable.quantity, z.zones.filter(x => !x.alwaysOpen).length);
 
-  const flexTotal = bom.items.filter(i => i.key === 'flex_duct').reduce((s, i) => s + i.quantity, 0);
-  assert.ok(Math.abs(flexTotal - (net.totalDuctLengthM + ret.duct.lengthM)) < 0.05);
+  // Flex is bought in whole 6 m lengths, and must cover supply plus return.
+  const flexNeeded = bom.items.filter(i => i.key === 'flex_duct')
+    .reduce((s, i) => s + i.metresRequired, 0);
+  assert.ok(Math.abs(flexNeeded - (net.totalDuctLengthM + ret.duct.lengthM)) < 0.05);
+  for (const f of bom.items.filter(i => i.key === 'flex_duct')) {
+    assert.ok(f.metresBought >= f.metresRequired);
+    // Sizes MMEM quote come in 6 m lengths; the rest are still per-metre.
+    if (f.unit === '6 m length') assert.equal(f.quantity, Math.ceil(f.metresRequired / 6));
+    else assert.equal(f.quantity, f.metresRequired);
+  }
 
   assert.ok(bom.totalCost > 0);
   assert.ok(bom.equipmentCost >= 6800);
@@ -425,11 +438,18 @@ test("NAC's own material rates take over from the placeholders", () => {
   const { o, net, z, ret } = sampleDesignParts();
   const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret },
     { nacRates: { zone_motor: 189, flex_duct: { 200: 24.5 } } });
-  const motor = bom.items.find(i => i.key === 'zone_motor');
-  assert.equal(motor.unitCost, 189);
-  assert.equal(motor.priceSource, 'nac');
+  // A flat NAC rate wins even on a line the tool sizes by diameter.
+  for (const motor of bom.items.filter(i => i.key === 'zone_motor')) {
+    assert.equal(motor.unitCost, 189);
+    assert.equal(motor.priceSource, 'nac');
+  }
   const flex200 = bom.items.find(i => i.key === 'flex_duct' && i.diameterMm === 200);
-  if (flex200) { assert.equal(flex200.unitCost, 24.5); assert.equal(flex200.priceSource, 'nac'); }
+  if (flex200) {
+    // A NAC rate is per metre, so it replaces the whole-length pack price.
+    assert.equal(flex200.unitCost, 24.5);
+    assert.equal(flex200.priceSource, 'nac');
+    assert.equal(flex200.unit, 'm');
+  }
 });
 
 test('a BOM line can be edited and the totals follow', () => {
@@ -778,7 +798,7 @@ test('zone controllers carry their supplier cost and brand lock', () => {
   assert.ok(daikinLocked.length >= 5);
   assert.ok(daikinLocked.every(c => c.cost > 0));
   const at5 = ZONE_CONTROLLERS.find(c => c.id === 'at5_daikin');
-  assert.equal(at5.cost, 1120);
+  assert.equal(at5.cost, 1100);   // MMEM quote 447-321514-000
   assert.equal(at5.maxZones, 16);
 });
 
@@ -801,10 +821,10 @@ test("NAC's house-standard controller is used when one is set", () => {
 });
 
 test('paircoil is priced per metre off the roll rate, not as a placeholder', () => {
-  assert.equal(paircoilRatePerM('AIRBTT3858'), 16.15);   // $323 / 20 m
-  assert.equal(paircoilRatePerM('AIRBTT1438'), 8.3);     // $166 / 20 m
+  assert.equal(paircoilRatePerM('AIRBTT3858'), 17.1);    // $342 / 20 m
+  assert.equal(paircoilRatePerM('AIRBTT1438'), 9.95);    // $199 / 20 m
   const r = resolveCost('refrigerant_pipe', {});
-  assert.equal(r.cost, 16.15);
+  assert.equal(r.cost, 17.1);
   assert.equal(r.source, 'supplier_list');
   assert.match(r.note, /MMEM/);
 });
@@ -815,6 +835,9 @@ test('a supplier-list rate does not count as a placeholder in the BOM', () => {
     refrigerantPipeM: 8 });
   const pipe = bom.items.find(i => i.key === 'refrigerant_pipe');
   assert.equal(pipe.priceSource, 'supplier_list');
-  assert.equal(pipe.totalCost, Math.round(16.15 * 8 * 100) / 100);
+  // Paircoil comes on a 20 m roll, so an 8 m run buys one roll.
+  assert.equal(pipe.quantity, 1);
+  assert.equal(pipe.metresRequired, 8);
+  assert.equal(pipe.totalCost, 342);
   assert.ok(!bom.items.filter(i => i.priceSource === 'default_placeholder').includes(pipe));
 });

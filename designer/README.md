@@ -115,15 +115,15 @@ designer/engines/                 deterministic engineering — no DOM, no AI
   model.mjs          data models + revisions
   pipeline.mjs       runs every stage
   store.mjs          Supabase + localStorage persistence
-  supplier-pricing.mjs  NAC's MMEM trade price list — ducted sets, zone
-                     controls and paircoil, dated and attributed
+  supplier-pricing.mjs  NAC's MMEM pricing — ducted sets, zone controls,
+                     paircoil and 32 accessory lines, dated and attributed
   sample-plan.mjs    the PART 36 realistic builder plan
   sample-plan-image.mjs  draws that plan so it can be worked on screen
 
 api/plan-read.js        AI plan reader (observations only)
 api/design-assistant.js NAC Design Assistant (grounded in the design)
 
-tests/                  162 tests, run with `node --test tests/*.test.mjs`
+tests/                  178 tests, run with `node --test tests/*.test.mjs`
 ```
 
 ## Integration points
@@ -244,13 +244,42 @@ reconstructed, not read off a label.
 |---|---|
 | 62 ducted indoor + outdoor sets | Daikin, Mitsubishi Electric, Fujitsu, Gree, Panasonic, Samsung, Braemar |
 | 20 zone controls | AirTouch 5, Daikin, Mitsubishi, Fujitsu, Siemens |
-| 4 paircoil sizes | priced per 20 m roll, converted to a per-metre rate |
+| 5 paircoil sizes | priced per 20 m roll, converted to a per-metre rate |
+| 32 accessory lines | flex duct, plenums, return air, diffusers, take-offs, Y-pieces, zone motors and leads, drain, tape |
 
-It is dated and attributed (`MMEM_META`) so it is obvious when it needs
-reissuing. Costs merge onto the existing catalogue by model code — regional
+Two sources, each dated and attributed so it is obvious when one needs
+reissuing: `MMEM_META` (Trade Price List, January 2026) for the ducted sets, and
+`MMEM_ACCESSORIES_META` (quotation 447-321514-000, 10/09/2026, valid to
+09/11/2026) for the accessories, paircoil and the Siemens/AirTouch controls,
+which it supersedes. Costs merge onto the existing catalogue by model code — regional
 suffixes like `.TH` and `/SA` are handled — and models MMEM sell that the quote
 tool never listed (the current Daikin range, Gree, Panasonic) are appended so
 they can be selected and costed.
+
+### Accessories, and what they are bought in
+
+Flex duct, drain pipe and paircoil are sold in whole lengths and rolls, so the
+BOM buys whole units rather than pretending duct is cut to the metre. The job
+total per diameter is what gets rounded up — off-cuts of the same size are
+reused across the job — and each line shows the metres needed, the metres
+bought and the off-cut.
+
+The quotation covers 200–400 mm flex, 200–400 mm zone motors and 250/300 mm
+diffusers. Anything outside that is still on a shipped placeholder and raises
+`SIZE_NOT_ON_SUPPLIER_QUOTE`, because an unquoted size is a buying problem, not
+just a pricing one. For the same reason the duct size ladder no longer offers
+175 mm or 225 mm: they are not stocked flex sizes, so the engine was sizing to
+a duct NAC cannot buy.
+
+MMEM quote the return air grille and its filter as one item, so the BOM adds a
+separate filter line only if the grille rate in use does not already cover it.
+
+Take-offs (B8/B9/B11, DB6/DB8) and Y-pieces (Y3–Y6) carry MMEM's own size codes.
+The quotation does not say which duct diameter each one suits, so the tool does
+not guess — it uses a mid-range default the estimator can swap.
+
+`UNQUOTED` in `materials.mjs` lists every line MMEM have not priced, so the gap
+is visible rather than buried in the table.
 
 Models the quote tool lists that MMEM no longer price stay in the catalogue with
 no cost, are listed under "models with no supplier cost on file" on the

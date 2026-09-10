@@ -165,7 +165,10 @@ export const DEFAULT_SETTINGS = {
 
   // ── Duct sizing (PART 16) ───────────────────────────────────────────────────
   duct: {
-    availableDiametersMm: [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500],
+    // Standard Australian flex sizes. 175 and 225 are not stocked lines — MMEM
+    // quote 200–400 — so the engine no longer sizes to a duct NAC cannot buy.
+    // Add them back here if a supplier can actually supply them.
+    availableDiametersMm: [100, 125, 150, 200, 250, 300, 350, 400, 450, 500],
     // Preferred / maximum velocities in m/s by duct role.
     velocity: {
       main:   { preferredMin: 4.0, preferred: 6.0, max: 8.0 },
