@@ -123,7 +123,7 @@ designer/engines/                 deterministic engineering — no DOM, no AI
 api/plan-read.js        AI plan reader (observations only)
 api/design-assistant.js NAC Design Assistant (grounded in the design)
 
-tests/                  178 tests, run with `node --test tests/*.test.mjs`
+tests/                  189 tests, run with `node --test tests/*.test.mjs`
 ```
 
 ## Integration points
@@ -235,6 +235,31 @@ wall thicknesses inside the chains, opening widths on their own row, and
 annotations that look numeric but are not lengths. Every room dimension in it is
 reconstructed, not read off a label.
 
+
+### Anchoring a chain to the image
+
+A chain's stations are millimetres from its own zero, and that zero sits
+wherever the first dimension falls in the drawing — not at the edge of the
+image. Reading a plan means putting a room label against a station, so each
+chain also records where it lives in pixel space (`pixelAnchor`).
+
+It is fitted by least squares from the chain's own dimension text: a dimension
+is printed centred over the span it measures, so every segment gives one pair of
+(millimetre midpoint, pixel centre). The fit yields the scale *and* the origin,
+plus an `r2` so a misgrouped row does not become a confident mapping. Use
+`chainMmAtPx` and `chainPxAtMm` to convert; both return null when a chain has
+too few segments to anchor.
+
+A useful consequence: a room whose label sits inside a chain bay is measured
+straight from the printed dimensions, with no calibration step at all. Manual
+calibration is still needed for anything drawn by hand on the image.
+
+The copy of the plan sent to the reader is downscaled to 1600 px on its longest
+edge (`designer/ui/image.mjs`), so every box comes back in that smaller space and
+is scaled to page pixels before anything else touches it. The reader is always
+sent the *rendered* page, never the source PDF — otherwise it reads page 1
+whatever page is on screen, and returns boxes in a different coordinate space
+than the canvas.
 
 ## Supplier price list
 
