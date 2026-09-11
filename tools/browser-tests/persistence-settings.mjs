@@ -1,7 +1,9 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
-const ctx=await b.newContext();          // one context = one "browser session"
+const ctx=await b.newContext();
+await signInContext(ctx);          // one context = one "browser session"
 const store=new Map();                   // survives reloads, like a real table
 const designs=new Map();
 

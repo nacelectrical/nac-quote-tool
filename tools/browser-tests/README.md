@@ -16,6 +16,8 @@ node tools/browser-tests/financials-chain.mjs       # typed costs recompute the 
 node tools/browser-tests/ai-failure-handling.mjs    # AI down / rubbish -> no invented rooms
 node tools/browser-tests/end-to-end.mjs             # the whole workflow, plan to signed quote
 node tools/browser-tests/static-pressure-gate.mjs   # a missing ESP is never read as a pass
+node tools/browser-tests/dialogs.mjs                # the modals that replaced prompt()/confirm()
+node tools/browser-tests/dialogs-in-app.mjs         # those modals driven from the real buttons
 node tools/page-health.mjs                          # every page: console + network errors
 ```
 

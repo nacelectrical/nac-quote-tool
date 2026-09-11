@@ -1,9 +1,11 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
 
 async function scenario(name, {dbStatus=200, dbThrows=false}) {
   const ctx = await b.newContext();
+  await signInContext(ctx);
   const p = await ctx.newPage();
   const store = new Map();      // stands in for the nac_settings table
   await p.route('**/rest/v1/nac_settings**', async route => {

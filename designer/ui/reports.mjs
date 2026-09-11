@@ -8,6 +8,7 @@
 //   CUSTOMER HVAC DESIGN SUMMARY   — no costs, no internal engineering detail
 
 import { ENGINEERING_DISCLAIMER } from './tabs.mjs';
+import { alertDialog } from './modal.mjs';
 import { PRESSURE_DISCLAIMER } from '../engines/pressure.mjs';
 
 const esc = (s) => String(s === null || s === undefined ? '' : s)
@@ -383,8 +384,14 @@ export function customerReportHtml(design, { logo = null, planSnapshot = null } 
 
 export function openReport(html, title) {
   const w = window.open('', '_blank');
-  if (!w) { alert('Allow pop-ups to open the ' + title + '.'); return; }
+  if (!w) {
+    alertDialog({ title: 'The report could not open',
+      message: 'This browser blocked the pop-up. Allow pop-ups for this site, then press ' +
+               'Reports again to open the ' + title + '.' });
+    return false;
+  }
   w.document.open();
   w.document.write(html);
   w.document.close();
+  return true;
 }
