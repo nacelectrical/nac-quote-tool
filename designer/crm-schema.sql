@@ -60,6 +60,19 @@ alter table public.nac_designs add column if not exists job_ref     text;
 alter table public.nac_quotes  add column if not exists customer_id text;
 alter table public.nac_quotes  add column if not exists job_ref     text;
 
+-- What happened when NAC tried to create the ServiceM8 job for an accepted
+-- quote. Written server-side by api/create-job.js, because the customer's
+-- browser is only allowed to set `accepted` and because a failure must survive
+-- them closing the tab. All nullable; nothing reads them but NAC.
+alter table public.nac_quotes add column if not exists servicem8_status       text;
+alter table public.nac_quotes add column if not exists servicem8_job_uuid     text;
+alter table public.nac_quotes add column if not exists servicem8_job_id       text;
+alter table public.nac_quotes add column if not exists servicem8_company_uuid text;
+alter table public.nac_quotes add column if not exists servicem8_error        text;
+alter table public.nac_quotes add column if not exists servicem8_attempted_at timestamptz;
+
+create index if not exists nac_quotes_sm8_status_idx on public.nac_quotes (servicem8_status);
+
 create index if not exists nac_designs_customer_id_idx on public.nac_designs (customer_id);
 create index if not exists nac_designs_job_ref_idx     on public.nac_designs (job_ref);
 create index if not exists nac_quotes_customer_id_idx  on public.nac_quotes  (customer_id);
@@ -99,3 +112,9 @@ create policy nac_jobs_staff_all on public.nac_jobs
 --   alter table public.nac_designs drop column if exists job_ref;
 --   alter table public.nac_quotes  drop column if exists customer_id;
 --   alter table public.nac_quotes  drop column if exists job_ref;
+--   alter table public.nac_quotes  drop column if exists servicem8_status;
+--   alter table public.nac_quotes  drop column if exists servicem8_job_uuid;
+--   alter table public.nac_quotes  drop column if exists servicem8_job_id;
+--   alter table public.nac_quotes  drop column if exists servicem8_company_uuid;
+--   alter table public.nac_quotes  drop column if exists servicem8_error;
+--   alter table public.nac_quotes  drop column if exists servicem8_attempted_at;
