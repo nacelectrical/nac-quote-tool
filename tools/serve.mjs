@@ -2,7 +2,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 const ROOT = '/home/user/nac-quote-tool';
-const TYPES = { '.html':'text/html', '.mjs':'text/javascript', '.js':'text/javascript',
+// Character set declared on every text type. Without it the browser guesses,
+// and a UTF-8 page of em dashes and m² renders as mojibake.
+const TYPES = { '.html':'text/html; charset=utf-8', '.mjs':'text/javascript; charset=utf-8',
+  '.js':'text/javascript; charset=utf-8',
   '.css':'text/css', '.json':'application/json', '.jpg':'image/jpeg', '.png':'image/png', '.sql':'text/plain' };
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);

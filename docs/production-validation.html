@@ -1,0 +1,540 @@
+<meta charset="utf-8">
+<title>NAC Production Validation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#EEF0F5; --surface:#FFFFFF; --surface-2:#F7F8FB;
+    --ink:#12142A; --ink-2:#41465C; --ink-3:#6C7288;
+    --rule:#D5D9E3; --rule-2:#E6E9F0;
+    --accent:#8A6A00; --accent-mark:#F5C200;
+    --pass:#0F6B4A; --pass-bg:#E2F1EA;
+    --fail:#A32721; --fail-bg:#FAE6E4;
+    --part:#8A5A00; --part-bg:#FBEEDA;
+    --na:#5C6478;   --na-bg:#E9EBF1;
+    --shadow:0 1px 2px rgba(18,20,42,.06), 0 8px 24px -16px rgba(18,20,42,.28);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+      --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3;
+      --rule:#2B2F4A; --rule-2:#232741;
+      --accent:#F5C200; --accent-mark:#F5C200;
+      --pass:#5FD3A2; --pass-bg:#0F2F24;
+      --fail:#FF8E86; --fail-bg:#3A1815;
+      --part:#F0B65C; --part-bg:#33240C;
+      --na:#8E96AE;   --na-bg:#20233A;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+    --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3;
+    --rule:#2B2F4A; --rule-2:#232741;
+    --accent:#F5C200; --accent-mark:#F5C200;
+    --pass:#5FD3A2; --pass-bg:#0F2F24;
+    --fail:#FF8E86; --fail-bg:#3A1815;
+    --part:#F0B65C; --part-bg:#33240C;
+    --na:#8E96AE;   --na-bg:#20233A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+    font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px; margin:0 auto; padding-inline:20px; padding-block:36px 72px}
+  h1,h2,h3{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif; text-wrap:balance; margin:0}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums}
+  a{color:var(--accent)}
+
+  /* ── masthead ── */
+  header{display:flex; flex-wrap:wrap; gap:20px; align-items:flex-end; justify-content:space-between;
+    border-bottom:2px solid var(--ink); padding-bottom:16px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-3)}
+  h1{font-size:clamp(27px,4.2vw,40px); font-weight:700; letter-spacing:-.015em; line-height:1.06; margin-top:6px}
+  .rule-mark{display:inline-block; width:22px; height:5px; background:var(--accent-mark); vertical-align:middle;
+    margin-right:10px; transform:translateY(-6px)}
+  .meta{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3); text-align:right; line-height:1.8}
+  .meta b{color:var(--ink-2); font-weight:500}
+
+  /* ── the verdict: the one lifted element on the page ── */
+  .verdict{margin-top:28px; background:var(--surface); border:1px solid var(--rule);
+    border-left:6px solid var(--fail); box-shadow:var(--shadow); padding:26px 28px}
+  .verdict .q{font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--ink-3)}
+  .verdict .a{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:clamp(42px,8vw,68px);
+    font-weight:700; line-height:1; letter-spacing:-.02em; color:var(--fail); margin-top:8px}
+  .verdict .because{margin-top:14px; font-size:15.5px; color:var(--ink-2); max-width:62ch}
+  .verdict .because b{color:var(--ink)}
+
+  /* ── scoreboard ── */
+  .board{display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:1px;
+    background:var(--rule); border:1px solid var(--rule); margin-top:26px}
+  .cell{background:var(--surface); padding:15px 17px}
+  .cell .k{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-3)}
+  .cell .v{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:32px; font-weight:700;
+    letter-spacing:-.02em; line-height:1.12; font-variant-numeric:tabular-nums; margin-top:2px}
+  .cell .s{font-size:12.5px; color:var(--ink-2)}
+  .v.ok{color:var(--pass)} .v.bad{color:var(--fail)} .v.warn{color:var(--part)}
+
+  section{margin-top:46px}
+  h2{font-size:20px; font-weight:700; letter-spacing:-.01em; display:flex; align-items:baseline;
+    gap:12px; flex-wrap:wrap}
+  h2 .n{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-3); font-weight:500}
+  .lede{color:var(--ink-2); font-size:14.5px; max-width:64ch; margin-top:6px}
+  h3{font-size:15.5px; font-weight:600; margin-top:26px}
+  p{max-width:64ch}
+
+  .note{border-left:3px solid var(--accent-mark); background:var(--surface); padding:14px 18px;
+    margin-top:20px; font-size:14px; color:var(--ink-2); max-width:74ch}
+  .note b{color:var(--ink)}
+  .note.danger{border-left-color:var(--fail)}
+
+  /* ── tables ── */
+  .scroll{overflow-x:auto; margin-top:16px; border:1px solid var(--rule); background:var(--surface)}
+  table{border-collapse:collapse; width:100%; min-width:760px}
+  thead th{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink-3); text-align:left; font-weight:500;
+    padding:10px 14px; border-bottom:1px solid var(--rule); background:var(--surface-2); white-space:nowrap}
+  tbody td{padding:12px 14px; border-bottom:1px solid var(--rule-2); vertical-align:top; font-size:13.5px}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr[data-s="NOT TESTABLE"]{background:linear-gradient(90deg,var(--na-bg) 0 3px, transparent 3px)}
+  tbody tr[data-s="TESTED — FAIL"]{background:linear-gradient(90deg,var(--fail-bg) 0 3px, transparent 3px)}
+  tbody tr[data-s="TESTED — PASS"]{background:linear-gradient(90deg,var(--pass-bg) 0 3px, transparent 3px)}
+  .pid{font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink)}
+  .pname{font-weight:600; color:var(--ink); display:block}
+  .psub{font-size:12.5px; color:var(--ink-2); display:block; margin-top:3px; max-width:46ch}
+  .pill{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.05em; font-weight:600;
+    padding:3px 8px; border-radius:2px; white-space:nowrap; display:inline-block}
+  .pill.pass{background:var(--pass-bg); color:var(--pass)}
+  .pill.fail{background:var(--fail-bg); color:var(--fail)}
+  .pill.na{background:var(--na-bg); color:var(--na)}
+  code{font-family:"IBM Plex Mono",monospace; font-size:.92em; background:var(--surface-2);
+    border:1px solid var(--rule-2); padding:1px 5px; border-radius:2px}
+
+  /* ── the blockers: a real sequence, so it is numbered ── */
+  ol.steps{list-style:none; counter-reset:step; margin:18px 0 0; padding:0;
+    display:flex; flex-direction:column; gap:1px; background:var(--rule);
+    border:1px solid var(--rule)}
+  ol.steps li{counter-increment:step; background:var(--surface); padding:18px 20px 18px 62px; position:relative}
+  ol.steps li::before{content:counter(step); position:absolute; left:20px; top:17px;
+    font-family:"IBM Plex Mono",monospace; font-size:13px; font-weight:600;
+    width:26px; height:26px; line-height:26px; text-align:center;
+    background:var(--ink); color:var(--ground)}
+  ol.steps .t{font-weight:600; color:var(--ink); font-size:15px}
+  ol.steps .d{color:var(--ink-2); font-size:13.5px; margin-top:5px; max-width:66ch}
+  ol.steps .w{color:var(--ink-3); font-size:12.5px; margin-top:7px;
+    font-family:"IBM Plex Mono",monospace}
+
+  /* ── findings ── */
+  .finds{display:flex; flex-direction:column; gap:1px; background:var(--rule);
+    border:1px solid var(--rule); margin-top:16px}
+  .find{background:var(--surface); padding:16px 18px; display:grid;
+    grid-template-columns:minmax(0,1fr) auto; gap:6px 16px; align-items:start}
+  .find .h{font-weight:600; color:var(--ink); font-size:14.5px}
+  .find .b{grid-column:1/-1; color:var(--ink-2); font-size:13.5px; max-width:72ch}
+  .tag{font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.06em;
+    padding:3px 7px; border-radius:2px; white-space:nowrap; font-weight:600}
+  .tag.mine{background:var(--fail-bg); color:var(--fail)}
+  .tag.old{background:var(--na-bg); color:var(--na)}
+
+  ul.plain{margin:12px 0 0; padding-left:20px; color:var(--ink-2); font-size:14px; max-width:70ch}
+  ul.plain li{margin-bottom:7px}
+  ul.plain b{color:var(--ink)}
+
+  footer{margin-top:56px; border-top:1px solid var(--rule); padding-top:16px;
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-3); line-height:1.9}
+
+  @media (max-width:560px){
+    .find{grid-template-columns:1fr}
+    .meta{text-align:left}
+    ol.steps li{padding:16px 16px 16px 54px}
+    ol.steps li::before{left:16px}
+  }
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none; padding-block:0}
+    .verdict, .board, .scroll, .finds, ol.steps{box-shadow:none}
+    section{break-inside:avoid-page}
+    .find, ol.steps li, tbody tr{break-inside:avoid}
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div>
+    <div class="eyebrow">NAC Electrical Air &amp; Refrigeration — issue 2</div>
+    <h1><span class="rule-mark"></span>Production validation</h1>
+  </div>
+  <div class="meta">
+    <b>Branch</b> claude/nac-ai-hvac-designer-9oda35<br>
+    <b>Head</b> 7895139<br>
+    <b>Date</b> 11 September 2026
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="q">Ready for NAC to use on real customer quotes?</div>
+  <div class="a">NO</div>
+  <p class="because">
+    Not yet — and <b>not because of the code</b>. Every one of the five things standing in
+    the way is a step on the live system that this environment cannot reach or perform:
+    the database, the security policies, your material rates, and the ServiceM8 key.
+    They are listed in order at the foot of this page. Nothing on that list needs a
+    developer.
+  </p>
+</div>
+
+<div class="board">
+  <div class="cell"><div class="k">Unit tests</div><div class="v ok">388</div><div class="s">24 files, all passing</div></div>
+  <div class="cell"><div class="k">Browser tests</div><div class="v ok">16</div><div class="s">suites, all passing</div></div>
+  <div class="cell"><div class="k">Dead buttons</div><div class="v ok">0</div><div class="s">of 97 wired</div></div>
+  <div class="cell"><div class="k">Defects fixed</div><div class="v warn">10</div><div class="s">4 of them mine</div></div>
+  <div class="cell"><div class="k">Blockers left</div><div class="v bad">5</div><div class="s">all yours to run</div></div>
+</div>
+
+<div class="note danger">
+  <b>Read this before the rest.</b> Every persistence, security and integration result below was
+  produced against a <b>stub</b>, because the network policy in this environment blocks
+  <span class="mono">icnznjhwybryizbdqrgx.supabase.co</span> and
+  <span class="mono">api.servicem8.com</span>. Those are marked
+  <span class="pill na">NOT TESTABLE</span> and no amount of work here will change that.
+  A stub proves the application asks the right questions and reacts correctly to the answers.
+  It proves nothing about your database.
+</div>
+
+<section>
+  <h2><span class="n">01</span> The eight priorities</h2>
+  <p class="lede">
+    Three words only, as you asked: tested and passed, tested and failed, or not testable.
+    Nothing here is called done on the strength of a stub.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>P</th><th>What was asked for</th><th>Status</th><th>What that rests on</th></tr></thead>
+      <tbody>
+        <tr data-s="NOT TESTABLE">
+          <td class="pid">P1</td>
+          <td><span class="pname">Live database validation</span>
+              <span class="psub">Create, save, refresh, reload, edit, save, close, reopen — designs, quotes, settings, rooms, equipment, materials, revisions.</span></td>
+          <td><span class="pill na">NOT TESTABLE</span></td>
+          <td>Supabase is unreachable from here. <code>/db-selftest.html</code> runs the whole
+              round trip from your browser against the real project and reports the HTTP status
+              and database error on every step.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P2</td>
+          <td><span class="pname">Placeholder material pricing</span>
+              <span class="psub">No placeholder may be treated as a verified supplier cost.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>52 material lines: <b>27 real, 25 placeholder, 0 unpriced</b>. An unpriced line
+              stops the quote outright; placeholders raise an itemised confirmation naming the
+              count, the dollars and the lines. The 25 rates are yours to set.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P3</td>
+          <td><span class="pname">Authentication and security</span>
+              <span class="psub">No customer, pricing or design information to an unauthenticated visitor. Customer pages keep working.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>The gate holds on all three internal pages, no database call is made before
+              sign-in, and the staff token reaches every request. <b>The RLS half is NOT
+              TESTABLE</b> until <code>designer/rls.sql</code> is applied — until then the anon
+              key in the page source still reads everything.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P4</td>
+          <td><span class="pname">Static pressure data</span>
+              <span class="psub">Missing data must never produce a false pass.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>Three states, not two. <b>35 of 120 models</b> have manufacturer ESP on file; the
+              other 85 raise a blocking critical reading
+              <span class="mono">STATIC PRESSURE CHECK NOT COMPLETED</span> rather than going
+              quiet. Nothing was invented to fill a gap.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P5</td>
+          <td><span class="pname">Responsive dialogs</span>
+              <span class="psub">No native prompt or confirm. Works at iPad landscape.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>All 26 replaced. 48px buttons, 52px rows, 16px inputs so iOS does not zoom.
+              Verified at 1180×820 and 390×844, and the test fails the run if any native dialog
+              appears at all.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P6</td>
+          <td><span class="pname">Real PDF export</span>
+              <span class="psub">Customer PDF must not expose supplier costs, margins or internal notes.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>Both documents generated from a real costed design and read back with pdf.js:
+              page size, no line crossing a margin, and <b>no dollar figure anywhere</b> in the
+              customer summary. One content model, two renderers, so they cannot drift.</td>
+        </tr>
+        <tr data-s="TESTED — PASS">
+          <td class="pid">P7</td>
+          <td><span class="pname">Customer and job records</span>
+              <span class="psub">Customer → job → design → quote. Do not destroy existing customer information.</span></td>
+          <td><span class="pill pass">TESTED — PASS</span></td>
+          <td>The whole chain written and read back across seven scenarios. A merge fills blanks
+              and never overwrites. <b>The live migration is NOT TESTABLE</b> —
+              <code>/crm-migrate.html</code> shows you the dry run first and writes nothing
+              until you press APPLY.</td>
+        </tr>
+        <tr data-s="NOT TESTABLE">
+          <td class="pid">P8</td>
+          <td><span class="pname">ServiceM8</span>
+              <span class="psub">Never show JOB CREATED unless ServiceM8 confirms it.</span></td>
+          <td><span class="pill na">NOT TESTABLE</span></td>
+          <td>The API is blocked here and there is no key in this environment. Three false
+              success paths were found and fixed by reading the code, and the handler is tested
+              against the answers a real API gives — but it has never spoken to ServiceM8.
+              <code>/api/servicem8-selftest</code> settles it on the deployed app.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span> Defects found and fixed</h2>
+  <p class="lede">
+    Ten, in the order they were found. Four were mine, introduced during this work — they are
+    marked, because a report that only lists other people's mistakes is not worth reading.
+  </p>
+
+  <div class="finds">
+    <div class="find">
+      <div class="h">The quote tool showed a blank page to anyone not signed in</div>
+      <span class="tag mine">MINE — P3</span>
+      <div class="b">The sign-in gate hid the whole document, and the sign-in form lives inside
+        that document. Opening <code>index.html</code> or <code>admin.html</code> gave a blank
+        page — no form, no message, no way in. It was live on the branch for four commits.
+        The worst defect in this round, and it was found by chasing a page health check that
+        reported "0 characters" rather than writing it off.</div>
+    </div>
+    <div class="find">
+      <div class="h">A static pressure check that never happened looked like one that passed</div>
+      <span class="tag old">EXISTING</span>
+      <div class="b">The engine never invented a figure, but nothing said the comparison had not
+        been made and nothing stopped approval. For 85 of 120 models that is a false pass.</div>
+    </div>
+    <div class="find">
+      <div class="h">A three-phase unit could be quoted with no mention of the supply</div>
+      <span class="tag old">EXISTING</span>
+      <div class="b">Found by running your brochure plan. On a single-phase house that is a
+        supply upgrade discovered on installation day and never quoted. The Equipment tab now
+        asks what the site has; unconfirmed ranks single-phase units first, and a site recorded
+        as single-phase makes it critical.</div>
+    </div>
+    <div class="find">
+      <div class="h">The PDF font width table was misread, so text would overflow the page</div>
+      <span class="tag mine">MINE — P6</span>
+      <div class="b">Parsed on a four-character stride while <code>@</code> is 1015 — four digits
+        — so every width after it was read from the wrong offset. Customer documents would have
+        had text running off the edge. There is now a test asserting the published Helvetica
+        widths and that no wrapped line can exceed its column.</div>
+    </div>
+    <div class="find">
+      <div class="h">ServiceM8 answering 200 with no record id was reported as a created job</div>
+      <span class="tag old">EXISTING</span>
+      <div class="b">That is a job nobody can find. It is a failure now, with what ServiceM8
+        actually said. The job is also read back afterwards, which is both the confirmation and
+        where the job number comes from.</div>
+    </div>
+    <div class="find">
+      <div class="h">When a ServiceM8 job failed to create, nobody found out</div>
+      <span class="tag old">EXISTING</span>
+      <div class="b"><code>sign.html</code> fired the request and dropped the result. Not the
+        customer's problem — but it was not reaching you either. The outcome is written onto the
+        quote row server-side now, where a closed tab cannot lose it.</div>
+    </div>
+    <div class="find">
+      <div class="h">Five browser tests were hanging forever, silently</div>
+      <span class="tag mine">MINE — P3</span>
+      <div class="b">The sign-in gate broke them and they simply never finished, which is
+        exactly what a real user would have experienced. Fixed, and
+        <code>auth-gate.mjs</code> now checks the gate is on screen rather than merely present
+        in the DOM — present-but-invisible was the whole of the blank page defect above, and
+        the old assertion could not tell the difference.</div>
+    </div>
+    <div class="find">
+      <div class="h">CUP'D was counted as conditioned floor area</div>
+      <span class="tag old">EXISTING</span>
+      <div class="b">It is a cupboard. On your brochure plan it carries no size so it changed
+        nothing, but on a plan where it does it would have gone straight into the load. CUP'D,
+        CUPB, CPD, CUPBOARD, broom and cloak are all excluded now.</div>
+    </div>
+    <div class="find">
+      <div class="h">A second design at the same site interrupted the estimator on every save</div>
+      <span class="tag mine">MINE — P7</span>
+      <div class="b">"Ducted install" then "Add a second system" is one job described two ways.
+        The record keeps the first wording and nobody is asked about it.</div>
+    </div>
+    <div class="find">
+      <div class="h">A customer's second property was reported as a data entry error</div>
+      <span class="tag mine">MINE — P7</span>
+      <div class="b">The address on a design is the <b>site</b> address, not the customer's own.
+        It belongs to the job, where it always did.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">03</span> Your plan, read end to end</h2>
+  <p class="lede">
+    The brochure ground-floor sheet you sent: twenty labelled rooms, eleven with a printed
+    size, and two conditioned rooms with no size at all.
+  </p>
+
+  <div class="board" style="margin-top:18px">
+    <div class="cell"><div class="k">Read correctly</div><div class="v ok">11/11</div><div class="s">printed sizes</div></div>
+    <div class="cell"><div class="k">Kept out of load</div><div class="v ok">52.13</div><div class="s">m² excluded, garage included</div></div>
+    <div class="cell"><div class="k">Conditioned</div><div class="v">160.25</div><div class="s">m² once MEALS and STUDY measured</div></div>
+    <div class="cell"><div class="k">Two methods</div><div class="v ok">0.9%</div><div class="s">apart — 23.2 vs 23.45 kW</div></div>
+  </div>
+
+  <p style="margin-top:20px">
+    <b>MEALS and STUDY have no size printed and it did not guess.</b> They come through with no
+    area and low confidence, get no airflow and no outlet, and the design will not approve until
+    you deal with them. The garage — 41.4 m², the biggest room on the page and worth about 6 kW
+    if read in — stays out, with the laundry, bath, ensuite, WC, pantry, porch and alfresco.
+  </p>
+  <p>
+    It then flagged what an estimator would: past a single unit, one return cannot carry
+    1199 L/s, eleven zones exceeds the controller's ten, and a material line with no cost blocks
+    the quote. No duct above 400 mm anywhere. At 23.45 kW there is no single-phase ducted unit
+    in the catalogue, so the only honest single-unit answer is three-phase — which is now said
+    out loud rather than assumed.
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">04</span> What is still not right</h2>
+  <p class="lede">
+    Limitations that remain after this round. None is a bug; all of them shape what the tool can
+    tell you.
+  </p>
+  <ul class="plain">
+    <li><b>85 of 120 models have no manufacturer static pressure on file.</b> Braemar, Gree,
+      Midea, Mitsubishi Electric, Mitsubishi Heavy and Samsung have none at all. Designs on
+      those models cannot complete the static check until the figure is typed in from the data
+      sheet. The full list is in <code>docs/static-pressure-audit.txt</code>.</li>
+    <li><b>58 of 120 models have no supplier cost</b>, so they cannot be costed or quoted
+      without one being entered.</li>
+    <li><b>25 of 52 material lines are shipped placeholder rates</b>, not NAC prices. On
+      cost-plus-fee they go straight through to the customer.</li>
+    <li><b>Plan reading by AI was never exercised here</b> — the AI endpoints are unreachable
+      from this environment. The deterministic engines behind them were tested instead, which is
+      the half that must be right every time.</li>
+    <li><b>Row-level security is unproven until it is applied.</b> Until then the sign-in screen
+      is a door with no lock behind it.</li>
+    <li><b>There is one staff tier.</b> Any authenticated user is treated as NAC staff. No
+      second tier was invented because none was asked for.</li>
+    <li><b>No load or performance testing</b> has been done at any point.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">05</span> The five blockers, in order</h2>
+  <p class="lede">
+    Each one depends on the one before it. None needs a developer, and none takes long.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <div class="t">Apply the security policies</div>
+      <div class="d">Run <code>designer/rls.sql</code> in the Supabase SQL editor. Until this is
+        done the anon key that ships in the page source can still read every customer, every
+        price and every design, whatever the sign-in screen says. The file explains each policy
+        and carries its own undo block.</div>
+      <div class="w">Proves: an unauthenticated visitor gets nothing. Customer signing pages keep working.</div>
+    </li>
+    <li>
+      <div class="t">Prove the database really persists</div>
+      <div class="d">Open <code>/db-selftest.html</code> on the deployed app, signed in, and run
+        it. It creates, reads back, updates, lists and deletes real rows in
+        <code>nac_settings</code>, <code>nac_quotes</code> and <code>nac_designs</code>, and
+        checks a whole design survives with its rooms, equipment, materials, pricing and
+        revisions. Test rows are prefixed <span class="mono">ZZ-SELFTEST-</span> and deleted
+        afterwards. Then sign out and run it again — the results should differ, and that
+        difference is step 1 working.</div>
+      <div class="w">Turns P1 from NOT TESTABLE into a real answer. Do not skip the signed-out run.</div>
+    </li>
+    <li>
+      <div class="t">Set the 25 material rates</div>
+      <div class="d">HVAC Design Settings → Material rates. Run
+        <code>node tools/material-price-report.mjs</code> for the list, or read it off the
+        Materials tab where every placeholder is marked. Flexible duct, diffusers, dampers,
+        grilles, cable, isolators and sundries are the bulk of it.</div>
+      <div class="w">Until then every quote carries a confirmation naming the guessed dollars.</div>
+    </li>
+    <li>
+      <div class="t">Create the customer and job records</div>
+      <div class="d">Run <code>designer/crm-schema.sql</code> — additive, no drops, no renames —
+        then open <code>/crm-migrate.html</code> and press <b>DRY RUN</b>. Read what it says it
+        would do, especially the disagreements it found, before pressing APPLY. Nothing is
+        written until you do, nothing you already have is overwritten, and running it twice
+        changes nothing the second time.</div>
+      <div class="w">Existing quotes, designs and the signing page are unaffected either way.</div>
+    </li>
+    <li>
+      <div class="t">Connect ServiceM8</div>
+      <div class="d">Set <code>SERVICEM8_API_KEY</code> in the Vercel project, then open
+        <code>/api/servicem8-selftest</code>. It creates nothing — it reports whether the key is
+        accepted, whether the records a job needs can be read, and whether failures can be
+        recorded. Then accept one real quote and check the job appears.</div>
+      <div class="w">Turns P8 from NOT TESTABLE into a real answer.</div>
+    </li>
+  </ol>
+
+  <div class="note">
+    <b>When all five are done</b>, the answer at the top of this page changes on evidence rather
+    than on optimism. Until then the honest position is that the application behaves correctly
+    against everything that could be tested here, and four of the eight priorities depend on
+    systems this environment was never able to reach.
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">06</span> How it was tested</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>What</th><th>Count</th><th>What it actually proves</th></tr></thead>
+      <tbody>
+        <tr><td>Unit tests</td><td class="mono">388 in 24 files</td>
+            <td>The engines: plan reading, room measurement, loads, equipment, airflow, ducts,
+                return, zones, static pressure, materials, costing, warnings, customers, jobs,
+                the two documents, the PDF writer and the ServiceM8 handler.</td></tr>
+        <tr><td>Browser tests</td><td class="mono">16 suites</td>
+            <td>Real pages in Chromium with the database stubbed: persistence across reloads,
+                save failures, the pricing gate, the sign-in gate, the dialogs, the PDFs read
+                back with pdf.js, the customer and job chain, and the whole workflow from plan
+                to signed quote.</td></tr>
+        <tr><td>Button audit</td><td class="mono">97 buttons</td>
+            <td>Every button on every tab has a real click handler, checked through the debugger
+                rather than by reading <code>onclick</code>.</td></tr>
+        <tr><td>Page health</td><td class="mono">8 pages</td>
+            <td>No console errors and no failed requests other than the hosts this environment
+                blocks. Gated pages are reported as gated, not as blank.</td></tr>
+        <tr><td>Real plans</td><td class="mono">2</td>
+            <td>A dimension-chain builder plan and your printed-size brochure sheet, both read
+                end to end.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  NAC Electrical Air &amp; Refrigeration · ABN 97 636 392 982 · nacelectrical.com.au<br>
+  Every figure on this page was produced by running the code, not by reading it.
+  Where something could not be run, it says NOT TESTABLE.
+</footer>
+
+</div>
