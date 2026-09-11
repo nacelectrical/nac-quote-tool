@@ -547,7 +547,22 @@ export function createPlanViewer(container, opts = {}) {
     zoomOut: () => zoomBy(1 / 1.25),
     fit,
     redraw: draw,
-    /** A PNG of the current view, for the internal design sheet. */
-    snapshot() { try { return canvas.toDataURL('image/png'); } catch (e) { return null; } }
+    /**
+     * The current view as a data URL, for the design documents.
+     *
+     * JPEG by default: a PDF embeds JPEG bytes verbatim, so the plan goes into
+     * the file with no re-encoding and no library. The canvas is painted solid
+     * before anything is drawn on it, so there is no transparency to lose.
+     * Quality 0.92 keeps the dimension text on the plan readable.
+     */
+    snapshot({ type = 'image/jpeg', quality = 0.92 } = {}) {
+      // No plan, or a canvas that was never laid out because the Plan tab has
+      // not been opened, gives a 1-pixel image. Embedding that puts a blank
+      // rectangle in a customer document, which looks like a printing fault.
+      // Nothing is better than nothing pretending to be something.
+      if (!state.image) return null;
+      if (canvas.width < 80 || canvas.height < 80) return null;
+      try { return canvas.toDataURL(type, quality); } catch (e) { return null; }
+    }
   };
 }

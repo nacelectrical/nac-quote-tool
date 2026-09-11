@@ -12,7 +12,8 @@ import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
-import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
+import { internalReportHtml, customerReportHtml, openReport,
+         downloadReportPdf, REPORT_KIND } from './ui/reports.mjs';
 import { confirmDialog, alertDialog, formDialog, pickDialog, linkDialog } from './ui/modal.mjs';
 
 import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
@@ -1542,16 +1543,39 @@ export class DesignerApp {
     const snapshot = this.viewer?.snapshot() || null;
     const logo = document.querySelector('.brand img')?.src || null;
     const which = await pickDialog({
-      title: 'Which report?',
+      title: 'Which document?',
+      message: 'Download saves a PDF file. View opens a print page, which is the ' +
+               'way out if a download is blocked.',
       options: [
-        { value: 'internal', label: 'Internal HVAC Design Sheet',
+        { value: 'internal-pdf', label: 'DOWNLOAD INTERNAL HVAC DESIGN PDF',
           sub: 'The full working — supplier costs, margin, every calculation. NAC only.' },
-        { value: 'customer', label: 'Customer HVAC Design Summary',
-          sub: 'What the system is and what is included. No costs, no margin, no internal notes.' }
+        { value: 'customer-pdf', label: 'DOWNLOAD CUSTOMER HVAC DESIGN SUMMARY PDF',
+          sub: 'The system and what is included. No supplier costs, no margin, no internal notes.' },
+        { value: 'internal-view', label: 'View the internal sheet',
+          sub: 'Opens a print page. Save as PDF from there.' },
+        { value: 'customer-view', label: 'View the customer summary',
+          sub: 'Opens a print page. Save as PDF from there.' }
       ]
     });
-    if (which === 'internal') openReport(internalReportHtml(this.design, { logo, planSnapshot: snapshot }), 'internal sheet');
-    else if (which === 'customer') openReport(customerReportHtml(this.design, { logo, planSnapshot: snapshot }), 'customer summary');
+    if (!which) return;
+    const opts = { logo, planSnapshot: snapshot };
+
+    if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
+    if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');
+
+    const kind = which === 'customer-pdf' ? REPORT_KIND.CUSTOMER : REPORT_KIND.INTERNAL;
+    const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
+    const r = downloadReportPdf(this.design, kind, opts);
+    // Never say "downloaded" unless it actually was.
+    if (r.ok) {
+      toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
+    } else {
+      await alertDialog({
+        title: 'The PDF was not saved',
+        message: r.error + '\n\nOpen the print page instead and use Save as PDF.' });
+      openReport(kind === REPORT_KIND.CUSTOMER
+        ? customerReportHtml(this.design, opts) : internalReportHtml(this.design, opts), label);
+    }
   }
 
   // ── NAC Design Assistant (PART 28) ────────────────────────────────────────

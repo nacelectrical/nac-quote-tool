@@ -18,7 +18,10 @@ node tools/browser-tests/end-to-end.mjs             # the whole workflow, plan t
 node tools/browser-tests/static-pressure-gate.mjs   # a missing ESP is never read as a pass
 node tools/browser-tests/dialogs.mjs                # the modals that replaced prompt()/confirm()
 node tools/browser-tests/dialogs-in-app.mjs         # those modals driven from the real buttons
+node tools/browser-tests/report-pdf.mjs             # real PDFs, read back with pdf.js
 node tools/page-health.mjs                          # every page: console + network errors
+node tools/pdf-render.mjs <file.pdf> 1,2             # look at a generated PDF
+node tools/pdf-check.mjs  <file.pdf>                 # read one back: text, margins, metadata
 ```
 
 Each exits non-zero on failure.

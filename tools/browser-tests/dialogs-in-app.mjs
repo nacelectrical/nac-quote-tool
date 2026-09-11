@@ -34,8 +34,10 @@ await p.keyboard.press('Escape'); await p.waitForTimeout(300);
 await p.locator('button', { hasText: 'Reports' }).first().click();
 await p.waitForTimeout(500);
 const rt = await p.locator('.dlg-body').innerText();
-say('the Reports button offers both reports', /Internal HVAC Design Sheet/.test(rt) && /Customer HVAC Design Summary/.test(rt));
-say('it says what the customer one leaves out', /No costs/.test(rt));
+say('the Reports button offers both PDF downloads',
+  /DOWNLOAD INTERNAL HVAC DESIGN PDF/.test(rt) && /DOWNLOAD CUSTOMER HVAC DESIGN SUMMARY PDF/.test(rt));
+say('it says what the customer one leaves out', /No supplier costs/.test(rt));
+say('and it keeps the print path as a fallback', /View the internal sheet/.test(rt));
 await p.keyboard.press('Escape'); await p.waitForTimeout(300);
 
 await p.locator('button', { hasText: 'Revisions' }).first().click();
