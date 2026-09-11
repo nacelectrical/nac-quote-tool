@@ -141,7 +141,12 @@ export async function saveDesign(design) {
           customer_name: payload.customer?.name || '',
           customer_address: payload.customer?.address || '',
           quote_id: payload.quoteId || null,
-          job_id: payload.jobId || null,
+          job_id: payload.jobId || null,          // the ServiceM8 job, unchanged
+          // The NAC customer and job records (designer/crm-schema.sql). Sent
+          // only when the design carries them, so a project without those
+          // columns is never sent a field it does not have.
+          ...(payload.customerRef ? { customer_id: payload.customerRef } : {}),
+          ...(payload.jobRef ? { job_ref: payload.jobRef } : {}),
           status: payload.status,
           design: json,
           updated_at: payload.updatedAt
@@ -266,6 +271,11 @@ export async function pushDesignToQuote(design, { quoteId = null, notes = '' } =
     id,
     client: design.customer?.name || '',
     job_desc: design.job?.description || 'Ducted AC Supply & Install',
+    // The quote joins the same customer and job the design belongs to, when
+    // those records exist. Omitted otherwise, so a project that has not run
+    // designer/crm-schema.sql is never sent a column it does not have.
+    ...(design.customerRef ? { customer_id: design.customerRef } : {}),
+    ...(design.jobRef ? { job_ref: design.jobRef } : {}),
     line_items: JSON.stringify(design.quoteLineItems || []),
     notes: [existingNotes, notes, DESIGN_NOTES_MARK, designNotesBlock(design)]
       .filter(Boolean).join('\n\n'),

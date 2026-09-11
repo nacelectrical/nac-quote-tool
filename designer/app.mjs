@@ -29,6 +29,9 @@ import { routeLength } from './engines/ducts.mjs';
 import { acknowledge } from './engines/warnings.mjs';
 import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
 import * as Store from './engines/store.mjs';
+import * as Crm from './engines/crm-store.mjs';
+import { findCustomer, findJob, mergeCustomer, mergeJob, normaliseCustomer, normaliseJob,
+         customerId as makeCustomerId, jobId as makeJobId, customerIsEmpty } from './engines/crm.mjs';
 import * as Sample from './engines/sample-plan.mjs';
 import { samplePlanDataUrl } from './engines/sample-plan-image.mjs';
 
@@ -71,6 +74,9 @@ export class DesignerApp {
     this.assistantLog = [];
     this.routeTargetRoomId = null;
     this.dirty = false;
+    // Differences between this design and the customer record that have already
+    // been put to the estimator, so a repeated save does not repeat the question.
+    this.seenCustomerConflicts = new Set();
     this.busy = false;
   }
 
@@ -190,6 +196,7 @@ export class DesignerApp {
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
         button('Save', () => this.save(), 'small'),
+        button('Customers', () => this.showCustomerPicker(), 'ghost small'),
         button('Designs', () => this.showDesignList(), 'ghost small'),
         button('Revisions', () => this.showRevisions(), 'ghost small'),
         button('Settings', () => this.openSettings(), 'ghost small'),
@@ -1364,21 +1371,200 @@ export class DesignerApp {
 
   // ── Persistence & quote (PART 23) ─────────────────────────────────────────
 
+  /**
+   * Attach the design to a CUSTOMER and a JOB record, reusing the existing ones.
+   *
+   *     CUSTOMER → JOB → HVAC DESIGN → QUOTE
+   *
+   * The same rule as the migration: an existing record is never overwritten.
+   * What the estimator typed fills a blank on the customer; where the two
+   * disagree the customer record keeps what it had and the estimator is told,
+   * so nothing NAC holds is lost by saving a design.
+   *
+   * This never blocks a save. If the records cannot be reached the design still
+   * saves — it just is not linked yet, and the next save links it.
+   */
+  async linkCustomerAndJob() {
+    const d = this.design;
+    const candidate = normaliseCustomer({
+      name: d.customer?.name, email: d.customer?.email,
+      phone: d.customer?.phone, address: d.customer?.address
+    });
+    if (customerIsEmpty(candidate)) return { linked: false, why: 'no customer details entered yet' };
+
+    let customers, jobs;
+    try {
+      customers = await Crm.listCustomers();
+      jobs = await Crm.listJobs();
+    } catch (e) {
+      return { linked: false, why: 'the customer records could not be read: ' + e.message };
+    }
+
+    // ── Customer ──
+    const hit = findCustomer(customers, candidate);
+    let customer, conflicts = [];
+    if (hit) {
+      const m = mergeCustomer(hit.customer, candidate);
+      customer = m.customer;
+      // The address on a design is the SITE — where the work is. That belongs
+      // to the job, and a customer with a second property is not a data entry
+      // error, so it is never raised as a disagreement about the customer. It
+      // still fills the customer's address when they have none on file.
+      conflicts = m.conflicts.filter(c => c.field !== 'address');
+      if (m.changed) {
+        const w = await Crm.saveCustomer(customer);
+        if (!w.synced) return { linked: false, why: w.error || 'the customer record did not save' };
+      }
+    } else {
+      customer = normaliseCustomer({ ...candidate, id: makeCustomerId(candidate, customers.length + 1) });
+      const w = await Crm.saveCustomer(customer);
+      if (!w.synced) return { linked: false, why: w.error || 'the customer record did not save' };
+    }
+
+    // ── Job ──
+    const wantJob = normaliseJob({
+      customerId: customer.id,
+      description: d.job?.description || 'Ducted AC Supply & Install',
+      siteAddress: d.customer?.address || '',
+      status: d.quoteId ? 'quoted' : 'designed',
+      servicem8JobId: d.jobId || ''
+    });
+    const mine = jobs.filter(j => !j.customerId || j.customerId === customer.id);
+    const jhit = findJob(mine, wantJob);
+    let job;
+    let jobConflicts = [];
+    if (jhit) {
+      const m = mergeJob(jhit.job, wantJob);
+      job = m.job;
+      // A job description that reads differently on a second design for the
+      // same site is normal — "Ducted install" then "Add a second system" is
+      // one job, described two ways. The record keeps the first wording and
+      // nobody is interrupted over it. Only the CUSTOMER's own details are
+      // worth stopping for.
+      jobConflicts = m.conflicts;
+      if (m.changed) {
+        const w = await Crm.saveJob(job);
+        if (!w.synced) return { linked: false, why: w.error || 'the job record did not save', customer };
+      }
+    } else {
+      job = normaliseJob({ ...wantJob, id: makeJobId(wantJob, jobs.length + 1) });
+      const w = await Crm.saveJob(job);
+      if (!w.synced) return { linked: false, why: w.error || 'the job record did not save', customer };
+    }
+
+    this.design.customerRef = customer.id;
+    this.design.jobRef = job.id;
+    return { linked: true, customer, job, conflicts, jobConflicts, reused: !!hit };
+  }
+
   async save(reason = 'Saved by estimator') {
     this.design = addRevision(this.design, { by: 'estimator', reason });
+    // Before the design is written, so the row carries the links.
+    const link = await this.linkCustomerAndJob();
     const r = await Store.saveDesign(this.design);
     // Only a database write clears the dirty flag. A local-only copy is still
     // unsaved work as far as any other device is concerned, so the Save button
     // must keep asking to be pressed.
     this.dirty = !r.synced;
     if (r.synced) {
-      toast('Design saved (revision ' + this.design.revisions.length + ').');
+      toast('Design saved (revision ' + this.design.revisions.length + ')' +
+        (link.linked ? ' — ' + (link.reused ? 'filed under existing customer ' : 'new customer ') +
+          link.customer.name : '') + '.');
+      // A disagreement with the customer's own details is never resolved
+      // quietly — but it is raised ONCE. Saving six times should not mean
+      // answering the same question six times.
+      const unseen = (link.conflicts || []).filter(c => {
+        const key = c.field + '|' + c.kept + '|' + c.offered;
+        if (this.seenCustomerConflicts.has(key)) return false;
+        this.seenCustomerConflicts.add(key);
+        return true;
+      });
+      if (unseen.length) {
+        await alertDialog({
+          title: 'This differs from the customer record',
+          message: 'The design is saved and linked. NAC\'s existing record was KEPT — nothing was ' +
+                   'overwritten. Change it in the customer record itself if the new value is right.',
+          lines: unseen.map(c =>
+            c.field + ': record has "' + c.kept + '", this design says "' + c.offered + '"')
+        });
+      }
     } else {
       toast('SAVED ON THIS DEVICE ONLY — it has not reached the database' +
             (r.error ? ' (' + r.error + ')' : '') +
             '. It will not appear on another device. Press Save again when you have signal.', 'bad');
     }
     this.render();
+  }
+
+  /**
+   * Pick a customer NAC already has, then one of their jobs.
+   *
+   * This is the point of the records: the second job for the same person is
+   * their details already filled in, not typed again with a different spelling
+   * of the street.
+   */
+  async showCustomerPicker() {
+    let customers;
+    try { customers = await Crm.listCustomers(); }
+    catch (e) { return toast('Could not read the customer records: ' + e.message, 'bad'); }
+
+    const id = await pickDialog({
+      title: 'Customers',
+      message: customers.length
+        ? 'Choosing one fills this design in with their details.'
+        : null,
+      options: customers.map(c => ({
+        value: c.id,
+        label: c.name,
+        sub: [c.phone, c.email].filter(Boolean).join('  ·  ') || 'no contact details on file',
+        meta: c.address || ''
+      })),
+      emptyText: 'No customer records yet. Save a design with a customer name on it and ' +
+                 'the record is created for you.'
+    });
+    if (!id) return;
+    const customer = customers.find(c => c.id === id);
+    if (!customer) return;
+
+    // Their jobs, so a second system at the same house joins the same job
+    // rather than starting a new one.
+    let jobs = [];
+    try { jobs = await Crm.listJobs({ customerId: customer.id }); } catch (e) { /* new customer */ }
+
+    let job = null;
+    if (jobs.length) {
+      const jid = await pickDialog({
+        title: customer.name + ' — which job?',
+        message: 'A job is one piece of work at one site. Pick the site this design is for.',
+        options: jobs.map(j => ({
+          value: j.id,
+          label: j.siteAddress || j.description || j.id,
+          sub: j.description || '',
+          meta: j.status
+        })).concat([{ value: '__new__', label: 'A new job at a different address',
+                      sub: 'Starts a fresh job for this customer' }])
+      });
+      if (jid === null) return;
+      if (jid !== '__new__') job = jobs.find(j => j.id === jid) || null;
+    }
+
+    this.design.customer = {
+      ...this.design.customer,
+      name: customer.name, email: customer.email, phone: customer.phone,
+      address: job?.siteAddress || customer.address
+    };
+    if (job) {
+      this.design.job = { ...this.design.job, description: job.description || this.design.job?.description };
+      this.design.customerRef = customer.id;
+      this.design.jobRef = job.id;
+    } else {
+      this.design.customerRef = customer.id;
+      this.design.jobRef = null;
+    }
+    this.dirty = true;
+    this.seenCustomerConflicts = new Set();
+    toast(customer.name + (job ? ' — ' + (job.siteAddress || job.description) : '') + ' loaded into this design.');
+    this.update();
   }
 
   async showDesignList() {
