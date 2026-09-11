@@ -1318,6 +1318,34 @@ export class DesignerApp {
     if (!d.commercials?.sellPriceIncGst) {
       return toast('No sell price. Set the installed price for this model in the existing Price Setup screen.', 'bad');
     }
+
+    // A line with NO cost makes the sell price short by whatever it is worth.
+    // On job-cost-plus-fee that is money given away, so it stops the quote.
+    if (d.bom?.unpricedCount) {
+      return toast(d.bom.unpricedCount + ' material line(s) have no cost at all, so the price is short by ' +
+        'whatever they are worth: ' + (d.bom.unpricedLabels || []).join(', ') +
+        '. Enter their cost on the Materials tab before quoting.', 'bad');
+    }
+
+    // Placeholder rates are shipped starting values, not NAC prices. On this
+    // basis they go straight through to the customer, so the estimator is shown
+    // exactly which lines are guesses and what they are worth before a quote
+    // exists — never silently.
+    if (d.bom?.placeholderCount) {
+      const detail = (d.bom.placeholderDetail || []).slice(0, 10)
+        .map(l => '  · ' + l.label + '  ' + l.quantity + ' ' + l.unit +
+                  ' @ $' + Number(l.unitCost).toFixed(2) + ' = $' + Number(l.totalCost).toFixed(2))
+        .join('\n');
+      const more = (d.bom.placeholderCount > 10) ? '\n  · …and ' + (d.bom.placeholderCount - 10) + ' more' : '';
+      const ok = confirm(
+        'UNCONFIRMED MATERIAL PRICES\n\n' +
+        d.bom.placeholderCount + ' line(s) use shipped placeholder rates, not NAC prices. ' +
+        'They are worth $' + Number(d.bom.placeholderCost).toFixed(2) + ' of the $' +
+        Number(d.commercials.totalJobCost).toFixed(2) + ' job cost, and on the job-cost-plus-fee ' +
+        'basis that goes straight to the customer:\n\n' + detail + more +
+        '\n\nSet the real rates in Settings → Material rates, or send the quote on these figures?');
+      if (!ok) return;
+    }
     try {
       const r = await Store.pushDesignToQuote(d);
       this.design.quoteId = r.quoteId;

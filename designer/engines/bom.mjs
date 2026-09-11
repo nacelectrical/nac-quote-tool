@@ -241,6 +241,20 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
+  return summariseBom(items);
+}
+
+/**
+ * Everything about a bill of materials that is DERIVED from its lines: the
+ * money, the counts, and the warnings.
+ *
+ * This exists as one function because it has to run again after every estimator
+ * edit. It used to be inline, so editing a line recomputed the totals but left
+ * unpricedCount, placeholderCount and the warnings stale — an estimator who
+ * entered the missing cost was still told the line had no cost, and (once the
+ * quote gate was added) could never get past it.
+ */
+export function summariseBom(items) {
   const placeholderLines = items.filter(i => i.priceSource === PRICE_SOURCE.PLACEHOLDER);
   const unpricedLines = items.filter(i => !i.priced);
 
@@ -278,6 +292,11 @@ export function buildBillOfMaterials(design, opts = {}) {
     byCategory[i.category] = round((byCategory[i.category] || 0) + (i.totalCost || 0), 2);
   }
 
+  // What the placeholder lines are actually worth. On job-cost-plus-fee this
+  // is the amount of the customer's price built on rates nobody at NAC has
+  // confirmed — the number the estimator needs before sending a quote.
+  const placeholderCost = round(placeholderLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
+
   return {
     items,
     byCategory,
@@ -288,6 +307,11 @@ export function buildBillOfMaterials(design, opts = {}) {
       .reduce((s, i) => s + (i.totalCost || 0), 0), 2),
     lineCount: items.length,
     placeholderCount: placeholderLines.length,
+    placeholderCost,
+    placeholderLabels: placeholderLines.map(l => l.label),
+    placeholderDetail: placeholderLines.map(l => ({ label: l.label, quantity: l.quantity,
+                                                    unit: l.unit, unitCost: l.unitCost,
+                                                    totalCost: l.totalCost })),
     unpricedCount: unpricedLines.length,
     unpricedLabels: unpricedLines.map(l => l.label),
     warnings
@@ -325,12 +349,8 @@ export function editBomLine(bom, index, patch) {
     next.priceSource = PRICE_SOURCE.NAC;
     return next;
   });
-  const byCategory = {};
-  for (const i of items) byCategory[i.category] = round((byCategory[i.category] || 0) + (i.totalCost || 0), 2);
-  return {
-    ...bom, items, byCategory,
-    totalCost: round(items.reduce((s, i) => s + (i.totalCost || 0), 0), 2),
-    materialsCost: round(items.filter(i => i.category !== 'equipment').reduce((s, i) => s + (i.totalCost || 0), 0), 2),
-    equipmentCost: round(items.filter(i => i.category === 'equipment').reduce((s, i) => s + (i.totalCost || 0), 0), 2)
-  };
+  // Re-derive EVERYTHING from the new lines. Recomputing only the totals left
+  // the counts and warnings describing a bill of materials that no longer
+  // existed.
+  return { ...bom, ...summariseBom(items) };
 }
