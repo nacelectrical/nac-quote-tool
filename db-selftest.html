@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAC — Database self test</title>
+<style>
+  :root{
+    --ground:#EEF0F5; --surface:#fff; --surface-2:#F7F8FB;
+    --ink:#12142A; --ink-2:#41465C; --ink-3:#6C7288; --rule:#D5D9E3;
+    --pass:#0F6B4A; --pass-bg:#E2F1EA; --fail:#A32721; --fail-bg:#FAE6E4;
+    --warn:#8A5A00; --warn-bg:#FBEEDA; --mark:#F5C200;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+      --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3; --rule:#2B2F4A;
+      --pass:#5FD3A2; --pass-bg:#0F2F24; --fail:#FF8E86; --fail-bg:#3A1815;
+      --warn:#F0B65C; --warn-bg:#33240C;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding-inline:18px;padding-block:32px 64px}
+  h1{font-size:26px;margin:0;letter-spacing:-.015em}
+  .mark{display:inline-block;width:20px;height:5px;background:var(--mark);
+    vertical-align:middle;margin-right:9px;transform:translateY(-5px)}
+  .sub{color:var(--ink-2);margin:8px 0 0;max-width:62ch;font-size:14px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:22px}
+  button{font:600 14px/1 inherit;padding:12px 18px;border:0;border-radius:4px;
+    background:var(--ink);color:var(--ground);cursor:pointer;min-height:44px}
+  button.ghost{background:transparent;color:var(--ink-2);border:1px solid var(--rule)}
+  button[disabled]{opacity:.5;cursor:default}
+  button:focus-visible{outline:2px solid var(--mark);outline-offset:2px}
+  .verdict{margin-top:22px;padding:16px 18px;border-radius:4px;font-weight:600;display:none}
+  .verdict.on{display:block}
+  .verdict.ok{background:var(--pass-bg);color:var(--pass)}
+  .verdict.bad{background:var(--fail-bg);color:var(--fail)}
+  .grp{margin-top:24px;border:1px solid var(--rule);background:var(--surface);border-radius:4px;overflow:hidden}
+  .grp h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+    margin:0;padding:11px 16px;background:var(--surface-2);border-bottom:1px solid var(--rule);font-weight:600}
+  .row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;
+    padding:11px 16px;border-bottom:1px solid var(--rule)}
+  .row:last-child{border-bottom:0}
+  .tag{font:600 10.5px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.06em;
+    padding:2px 7px;border-radius:3px;white-space:nowrap}
+  .tag.PASS{background:var(--pass-bg);color:var(--pass)}
+  .tag.FAIL{background:var(--fail-bg);color:var(--fail)}
+  .tag.WARN{background:var(--warn-bg);color:var(--warn)}
+  .tag.RUN{background:var(--surface-2);color:var(--ink-3)}
+  .what{font-size:14px}
+  .detail{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--ink-3);
+    margin-top:3px;word-break:break-word}
+  .ms{font:11px/1 ui-monospace,monospace;color:var(--ink-3);white-space:nowrap;padding-top:4px}
+  textarea{width:100%;min-height:150px;margin-top:10px;font:11.5px/1.5 ui-monospace,monospace;
+    background:var(--surface-2);color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:10px}
+  .foot{margin-top:26px;padding-top:14px;border-top:1px solid var(--rule);
+    font-size:12.5px;color:var(--ink-3)}
+  code{font:12px ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;
+    border:1px solid var(--rule);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="mark"></span>Database self test</h1>
+  <p class="sub">Runs the real create / read / update / delete round trip against the live Supabase
+  project, using the same anon key and the same endpoints the quote tool and the designer use.
+  Test rows are written under a <code>ZZ-SELFTEST-</code> prefix and deleted at the end, so nothing
+  touches real customer data.</p>
+
+  <div class="bar">
+    <button id="run">Run the test</button>
+    <button id="copy" class="ghost" disabled>Copy result</button>
+  </div>
+
+  <div id="verdict" class="verdict"></div>
+  <div id="out"></div>
+  <textarea id="log" readonly hidden aria-label="Raw result for copying"></textarea>
+
+  <p class="foot">If a check fails, the HTTP status and the database's own error message are shown
+  against it — that is what is needed to fix it. A failure here is a real failure: nothing on this
+  page is stubbed.</p>
+</div>
+
+<script>
+// Same credentials and endpoints the application itself uses.
+const SUPA = 'https://icnznjhwybryizbdqrgx.supabase.co';
+const KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
+const H  = () => ({ apikey: KEY, Authorization: 'Bearer ' + KEY });
+const JH = () => ({ ...H(), 'Content-Type': 'application/json' });
+
+const STAMP = 'ZZ-SELFTEST-' + Date.now();
+const out = document.getElementById('out');
+const lines = [];
+let group = null, failures = 0, warnings = 0;
+
+function addGroup(title){
+  group = document.createElement('div');
+  group.className = 'grp';
+  group.innerHTML = '<h2>' + title + '</h2>';
+  out.appendChild(group);
+  lines.push('\n== ' + title + ' ==');
+}
+function addRow(state, what, detail, ms){
+  const r = document.createElement('div');
+  r.className = 'row';
+  r.innerHTML = '<span class="tag ' + state + '">' + state + '</span>' +
+    '<div><div class="what"></div>' + (detail ? '<div class="detail"></div>' : '') + '</div>' +
+    '<span class="ms">' + (ms == null ? '' : ms + ' ms') + '</span>';
+  r.querySelector('.what').textContent = what;
+  if (detail) r.querySelector('.detail').textContent = detail;
+  group.appendChild(r);
+  lines.push(state.padEnd(5) + ' ' + what + (detail ? '  — ' + detail : '') + (ms != null ? '  [' + ms + 'ms]' : ''));
+  if (state === 'FAIL') failures++;
+  if (state === 'WARN') warnings++;
+}
+
+/** One HTTP call, reporting exactly what the database said. */
+async function call(method, path, body, extraHeaders){
+  const t0 = performance.now();
+  try{
+    const res = await fetch(SUPA + '/rest/v1/' + path, {
+      method,
+      headers: { ...(body ? JH() : H()), ...(extraHeaders || {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let json = null; try { json = text ? JSON.parse(text) : null; } catch(e){}
+    return { ok: res.ok, status: res.status, text, json, ms: Math.round(performance.now() - t0) };
+  }catch(e){
+    return { ok:false, status:0, text:String(e.message||e), json:null, ms: Math.round(performance.now() - t0),
+             networkError:true };
+  }
+}
+const why = r => r.networkError ? 'network: ' + r.text
+  : 'HTTP ' + r.status + (r.json?.message ? ' — ' + r.json.message : (r.text ? ' — ' + r.text.slice(0,160) : ''));
+
+/** Does the table exist, and does it have every column the app writes? */
+async function checkShape(table, columns){
+  const r = await call('GET', table + '?select=' + columns.join(',') + '&limit=1');
+  if (r.ok){ addRow('PASS', table + ' — table and all ' + columns.length + ' expected columns exist',
+                    columns.join(', '), r.ms); return true; }
+  if (r.status === 404 || /does not exist|Could not find the table/i.test(r.text)){
+    addRow('FAIL', table + ' — TABLE DOES NOT EXIST', why(r), r.ms); return false;
+  }
+  if (/column .* does not exist|Could not find the '.*' column/i.test(r.text)){
+    addRow('FAIL', table + ' — a column the app writes is missing', why(r), r.ms); return false;
+  }
+  addRow('FAIL', table + ' — cannot be read', why(r), r.ms);
+  return false;
+}
+
+async function testSettings(){
+  addGroup('nac_settings — settings, prices, and the designer fallback store');
+  if (!await checkShape('nac_settings', ['key','value'])) return;
+  const key = STAMP + '-settings';
+
+  let r = await call('POST', 'nac_settings', { key, value: 'created', updated_at: new Date().toISOString() },
+                     { Prefer: 'resolution=merge-duplicates' });
+  if (!r.ok){ addRow('FAIL','INSERT rejected — nothing can be saved', why(r), r.ms); return; }
+  addRow('PASS','INSERT accepted', null, r.ms);
+
+  r = await call('GET', 'nac_settings?key=eq.' + encodeURIComponent(key) + '&select=value');
+  const got = r.json?.[0]?.value;
+  if (got === 'created') addRow('PASS','READ BACK returns what was written', 'value = "created"', r.ms);
+  else { addRow('FAIL','READ BACK did not return the row', got === undefined ? why(r) + ' (no row)' : 'got: ' + got, r.ms); return; }
+
+  r = await call('POST', 'nac_settings', { key, value: 'edited', updated_at: new Date().toISOString() },
+                 { Prefer: 'resolution=merge-duplicates' });
+  if (!r.ok){ addRow('FAIL','UPDATE (upsert) rejected — edits cannot be saved', why(r), r.ms); }
+  else {
+    r = await call('GET', 'nac_settings?key=eq.' + encodeURIComponent(key) + '&select=value');
+    const v = r.json?.[0]?.value;
+    if (v === 'edited') addRow('PASS','UPDATE persisted, and did NOT create a duplicate row', 'value = "edited"', r.ms);
+    else addRow('FAIL','UPDATE did not persist', 'got: ' + v, r.ms);
+    const all = await call('GET','nac_settings?key=eq.' + encodeURIComponent(key) + '&select=key');
+    if ((all.json||[]).length > 1) addRow('FAIL','upsert created ' + all.json.length + ' rows for one key','merge-duplicates is not working', all.ms);
+  }
+
+  r = await call('DELETE', 'nac_settings?key=eq.' + encodeURIComponent(key));
+  if (r.ok) addRow('PASS','DELETE accepted (test row cleaned up)', null, r.ms);
+  else addRow('WARN','DELETE rejected — the test row remains','key: ' + key + ' · ' + why(r), r.ms);
+}
+
+async function testQuotes(){
+  addGroup('nac_quotes — the customer’s quote');
+  if (!await checkShape('nac_quotes', ['id','client','job_desc','line_items','accepted'])) return;
+  const id = STAMP + '-quote';
+
+  let r = await call('POST','nac_quotes',
+    { id, client:'ZZ Self Test', job_desc:'Self test — safe to delete',
+      line_items: JSON.stringify([{name:'test line', price:1}]), notes:'self test', accepted:false },
+    { Prefer:'resolution=merge-duplicates' });
+  if (!r.ok){ addRow('FAIL','INSERT rejected — quotes cannot be created', why(r), r.ms); return; }
+  addRow('PASS','INSERT accepted', null, r.ms);
+
+  r = await call('GET','nac_quotes?id=eq.' + encodeURIComponent(id) + '&select=id,client,line_items,accepted');
+  const row = r.json?.[0];
+  if (row?.client === 'ZZ Self Test') addRow('PASS','READ BACK returns the quote', 'line_items parsed: ' +
+    (()=>{ try { return JSON.parse(row.line_items).length + ' item(s)'; } catch(e){ return 'NOT VALID JSON'; } })(), r.ms);
+  else { addRow('FAIL','READ BACK did not return the quote', why(r), r.ms); return; }
+
+  r = await call('PATCH','nac_quotes?id=eq.' + encodeURIComponent(id), { accepted:true });
+  if (r.ok){
+    const chk = await call('GET','nac_quotes?id=eq.' + encodeURIComponent(id) + '&select=accepted');
+    if (chk.json?.[0]?.accepted === true) addRow('PASS','PATCH persisted — a customer can accept a quote', 'accepted = true', chk.ms);
+    else addRow('FAIL','PATCH did not persist — customer acceptance would be lost','got: ' + JSON.stringify(chk.json?.[0]), chk.ms);
+  } else addRow('FAIL','PATCH rejected — a customer could not accept a quote', why(r), r.ms);
+
+  r = await call('DELETE','nac_quotes?id=eq.' + encodeURIComponent(id));
+  if (r.ok) addRow('PASS','DELETE accepted (test quote cleaned up)', null, r.ms);
+  else addRow('WARN','DELETE rejected — the test quote remains','id: ' + id + ' · ' + why(r), r.ms);
+}
+
+async function testDesigns(){
+  addGroup('nac_designs — HVAC designs, rooms, equipment, BOM and revisions');
+  const shape = await call('GET','nac_designs?select=id&limit=1');
+  if (!shape.ok && (shape.status === 404 || /does not exist|Could not find the table/i.test(shape.text))){
+    addRow('WARN','nac_designs does not exist — designs fall back to nac_settings',
+      'This is supported, but designs are then key/value blobs that cannot be listed or joined. ' +
+      'Run designer/schema.sql to create it.', shape.ms);
+    return;
+  }
+  if (!await checkShape('nac_designs',
+      ['id','customer_name','customer_address','quote_id','job_id','status','design','updated_at'])) return;
+
+  const id = STAMP + '-design';
+  // A design carrying rooms, an equipment selection, a BOM and a revision —
+  // the things that must survive a save and reload.
+  const payload = JSON.stringify({
+    id, customer:{name:'ZZ Self Test'},
+    rooms:[{id:'r1',label:'Bed 1',areaSqM:12,measurement:{widthMm:3000,lengthMm:4000,source:'manual'}}],
+    selectedUnit:{brandName:'Daikin',model:'FDYA140AV19',capacityKw:14},
+    bom:{lineCount:32,totalCost:9469.58},
+    commercials:{sellPriceIncGst:17016.54},
+    revisions:[{number:1,reason:'self test'}]
+  });
+  let r = await call('POST','nac_designs',
+    { id, customer_name:'ZZ Self Test', customer_address:'1 Test St', quote_id:null, job_id:null,
+      status:'draft', design:payload, updated_at:new Date().toISOString() },
+    { Prefer:'resolution=merge-duplicates' });
+  if (!r.ok){ addRow('FAIL','INSERT rejected — designs cannot be saved', why(r), r.ms); return; }
+  addRow('PASS','INSERT accepted (rooms, equipment, BOM and a revision inside)', null, r.ms);
+
+  r = await call('GET','nac_designs?id=eq.' + encodeURIComponent(id) + '&select=design,status,updated_at');
+  let d = null;
+  try { d = JSON.parse(r.json?.[0]?.design || 'null'); } catch(e){}
+  if (d){
+    const bits = [
+      ['room data', d.rooms?.length === 1 && d.rooms[0].areaSqM === 12],
+      ['equipment selection', d.selectedUnit?.model === 'FDYA140AV19'],
+      ['BOM / materials', d.bom?.lineCount === 32],
+      ['pricing', d.commercials?.sellPriceIncGst === 17016.54],
+      ['revisions', d.revisions?.length === 1]
+    ];
+    const bad = bits.filter(b => !b[1]).map(b => b[0]);
+    if (bad.length) addRow('FAIL','READ BACK lost part of the design', 'missing: ' + bad.join(', '), r.ms);
+    else addRow('PASS','READ BACK returns the whole design intact',
+      'rooms, equipment, BOM, pricing and revisions all survived', r.ms);
+  } else { addRow('FAIL','READ BACK did not return the design', why(r), r.ms); return; }
+
+  const edited = JSON.parse(payload);
+  edited.rooms[0].areaSqM = 18; edited.revisions.push({ number:2, reason:'edited' });
+  r = await call('POST','nac_designs',
+    { id, customer_name:'ZZ Self Test EDITED', customer_address:'2 New Rd', status:'quoted',
+      design: JSON.stringify(edited), updated_at:new Date().toISOString() },
+    { Prefer:'resolution=merge-duplicates' });
+  if (!r.ok) addRow('FAIL','UPDATE rejected — an edited design cannot be re-saved', why(r), r.ms);
+  else {
+    const chk = await call('GET','nac_designs?id=eq.' + encodeURIComponent(id) + '&select=customer_name,status,design');
+    let e = null; try { e = JSON.parse(chk.json?.[0]?.design || 'null'); } catch(err){}
+    const okEdit = chk.json?.[0]?.customer_name === 'ZZ Self Test EDITED' &&
+                   chk.json?.[0]?.status === 'quoted' &&
+                   e?.rooms?.[0]?.areaSqM === 18 && e?.revisions?.length === 2;
+    if (okEdit) addRow('PASS','UPDATE persisted — edited room, status and a second revision','area 12 → 18 m², 2 revisions', chk.ms);
+    else addRow('FAIL','UPDATE did not fully persist', JSON.stringify({
+      customer_name: chk.json?.[0]?.customer_name, status: chk.json?.[0]?.status,
+      area: e?.rooms?.[0]?.areaSqM, revisions: e?.revisions?.length }), chk.ms);
+    const dupes = await call('GET','nac_designs?id=eq.' + encodeURIComponent(id) + '&select=id');
+    if ((dupes.json||[]).length > 1) addRow('FAIL','re-saving created ' + dupes.json.length + ' rows','the primary key or upsert is wrong', dupes.ms);
+  }
+
+  const list = await call('GET','nac_designs?select=id,customer_name,updated_at&order=updated_at.desc&limit=5');
+  if (list.ok) addRow('PASS','LIST works — the Designs picker can find saved designs', (list.json||[]).length + ' row(s) returned', list.ms);
+  else addRow('FAIL','LIST failed — saved designs cannot be reopened', why(list), list.ms);
+
+  r = await call('DELETE','nac_designs?id=eq.' + encodeURIComponent(id));
+  if (r.ok) addRow('PASS','DELETE accepted (test design cleaned up)', null, r.ms);
+  else addRow('WARN','DELETE rejected — the test design remains','id: ' + id + ' · ' + why(r), r.ms);
+}
+
+async function testSecurity(){
+  addGroup('Access control — what an anonymous visitor can do');
+  const noKey = await fetch(SUPA + '/rest/v1/nac_quotes?select=id&limit=1').then(r => r.status).catch(() => 0);
+  if (noKey === 401 || noKey === 403)
+    addRow('PASS','A request with NO api key is refused', 'HTTP ' + noKey, null);
+  else addRow('FAIL','A request with no api key was not refused','HTTP ' + noKey + ' — the project is open to the internet', null);
+
+  const r = await call('GET','nac_quotes?select=id,client&limit=3');
+  if (r.ok){
+    addRow('WARN','The anon key can READ every quote',
+      (r.json||[]).length + ' row(s) returned. Anyone who opens the page source has this key, so ' +
+      'customer names and prices are readable by anyone with the URL. RLS is permissive.', r.ms);
+  } else {
+    addRow('PASS','The anon key cannot read quotes freely — RLS is restricting reads', why(r), r.ms);
+  }
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  const btn = document.getElementById('run');
+  btn.disabled = true; btn.textContent = 'Running…';
+  out.innerHTML = ''; lines.length = 0; failures = 0; warnings = 0;
+  const v = document.getElementById('verdict'); v.className = 'verdict';
+
+  lines.push('NAC database self test · ' + new Date().toISOString());
+  lines.push('project: ' + SUPA);
+
+  try{
+    await testSettings();
+    await testQuotes();
+    await testDesigns();
+    await testSecurity();
+  }catch(e){
+    addGroup('Unexpected');
+    addRow('FAIL','The test itself threw', String(e && e.message || e), null);
+  }
+
+  v.classList.add('on', failures ? 'bad' : 'ok');
+  v.textContent = failures
+    ? failures + ' CHECK(S) FAILED — persistence is NOT production ready. The detail against each failure is what is needed to fix it.'
+    : 'ALL CHECKS PASSED' + (warnings ? ' (' + warnings + ' warning(s) — read them)' : '') +
+      ' — the live database accepts, returns, updates and deletes everything the application writes.';
+  lines.push('\nRESULT: ' + v.textContent);
+  document.getElementById('log').value = lines.join('\n');
+  document.getElementById('copy').disabled = false;
+  btn.disabled = false; btn.textContent = 'Run the test again';
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const ta = document.getElementById('log');
+  ta.hidden = false; ta.select();
+  try { await navigator.clipboard.writeText(ta.value);
+        document.getElementById('copy').textContent = 'Copied'; }
+  catch(e){ document.getElementById('copy').textContent = 'Select the text below and copy'; }
+});
+</script>
+</body>
+</html>
