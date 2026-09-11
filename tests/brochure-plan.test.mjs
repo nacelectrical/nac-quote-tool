@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import { parseRoomDimensionPair } from '../designer/engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, architecturalMeasurement, isConditionedLabel,
-         verifyRoom } from '../designer/engines/rooms.mjs';
+         verifyRoom, summariseRoomMeasurements } from '../designer/engines/rooms.mjs';
 import { createDesign } from '../designer/engines/model.mjs';
 import { runPipeline } from '../designer/engines/pipeline.mjs';
 import { buildCatalogue } from '../designer/engines/catalogue.mjs';
@@ -278,4 +278,47 @@ test('one return cannot carry this house, and the design says so', () => {
   const codes = (d.returnDesign.warnings || []).map(w => w.code);
   assert.ok(codes.includes('RETURN_AIR_UNDERSIZED'),
     'over 700 L/s through one return must be flagged: ' + codes.join(', '));
+});
+
+test('a plan with no dimension chain is not reported as a failed read', () => {
+  // Nick opened the deployed designer on his phone, uploaded this plan, and the
+  // page said "0 dimensions read, 0 chains, 0 closing". Those are the
+  // DIMENSION-CHAIN counters, and a brochure sheet has no chain — every room is
+  // measured from a size printed against it. The read had worked; the message
+  // said it had not.
+  const rooms = roomsFromSheet();
+  const s = summariseRoomMeasurements(rooms);
+
+  // Twelve rooms carry a printed size — BEDROOM 2 and BEDROOM 3 share the same
+  // string "3.0 x 3.2m", so there are only ELEVEN distinct strings for twelve
+  // rooms. Counting the strings instead of the rooms is an easy mistake.
+  assert.equal(s.printed, 12, 'twelve rooms measured from printed sizes');
+  assert.equal(s.chain, 0, 'and none from a chain, because there is no chain');
+  assert.equal(s.unmeasured, 8, 'eight labelled rooms carry no size at all');
+  assert.equal(s.measured, 12);
+
+  assert.match(s.sentence, /12 of 20 room\(s\) measured/);
+  assert.match(s.sentence, /from sizes printed on the plan/);
+  assert.match(s.sentence, /need one typed in/);
+  assert.ok(!/^0 /.test(s.sentence), 'it must not open with a zero');
+});
+
+test('a chain plan still reports its chains, and a plan with nothing says so', () => {
+  const chained = summariseRoomMeasurements([
+    { areaSqM: 12, measurement: { source: 'dimension_chain' } },
+    { areaSqM: 9, measurement: { source: 'chain_plus_wall_geometry' } }
+  ]);
+  assert.equal(chained.chain, 2);
+  assert.match(chained.sentence, /2 from the dimension chains/);
+
+  const calibrated = summariseRoomMeasurements([
+    { areaSqM: 12, measurement: { source: 'calibrated_geometry' } }
+  ]);
+  assert.match(calibrated.sentence, /from the calibrated drawing/);
+
+  assert.match(summariseRoomMeasurements([]).sentence, /No rooms were found/);
+  const nothing = summariseRoomMeasurements([{ areaSqM: null, measurement: { source: 'estimated' } }]);
+  assert.equal(nothing.measured, 0);
+  assert.match(nothing.sentence, /0 of 1 room\(s\) measured/);
+  assert.match(nothing.sentence, /need one typed in/);
 });

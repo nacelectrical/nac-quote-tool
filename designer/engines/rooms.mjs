@@ -460,6 +460,42 @@ export function incompleteRooms(rooms) {
                  knownMm: r.measurement.widthMm ?? r.measurement.lengthMm ?? null }));
 }
 
+/**
+ * How a set of rooms actually got measured.
+ *
+ * The plan reader used to report only its dimension-chain counters, so a
+ * builder's brochure plan — which has no chain at all, just a size printed
+ * against each room — came back as "0 dimensions read, 0 chains, 0 closing"
+ * even when every room had been measured from the architect's own figures at
+ * full confidence. That reads as total failure. This counts what was really
+ * obtained, so the page can say so.
+ */
+export function summariseRoomMeasurements(rooms) {
+  const list = rooms || [];
+  let printed = 0, chain = 0, geometry = 0, none = 0;
+  for (const r of list) {
+    const src = r.measurement?.source;
+    if (!r.areaSqM) { none++; continue; }
+    if (src === 'verified_architectural') printed++;
+    else if (src === 'dimension_chain' || src === 'chain_plus_wall_geometry') chain++;
+    else geometry++;
+  }
+  const measured = printed + chain + geometry;
+  return {
+    total: list.length, measured, printed, chain, geometry, unmeasured: none,
+    /** One line an estimator can act on. */
+    sentence: !list.length
+      ? 'No rooms were found on this plan.'
+      : [
+          measured + ' of ' + list.length + ' room(s) measured',
+          printed ? printed + ' from sizes printed on the plan' : null,
+          chain ? chain + ' from the dimension chains' : null,
+          geometry ? geometry + ' from the calibrated drawing' : null
+        ].filter(Boolean).join(' — ') +
+        (none ? '. ' + none + ' room(s) have no size on the plan and need one typed in.' : '.')
+  };
+}
+
 export function totalConditionedArea(rooms) {
   return round(sizableRooms(rooms).reduce((s, r) => s + (r.areaSqM || 0), 0), 2);
 }

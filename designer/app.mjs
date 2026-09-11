@@ -22,7 +22,8 @@ import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
 import { parseRoomDimensionPair } from './engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
-         parseFloorAreaText, crossCheckFloorArea } from './engines/rooms.mjs';
+         parseFloorAreaText, crossCheckFloorArea,
+         summariseRoomMeasurements } from './engines/rooms.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
@@ -312,10 +313,14 @@ export class DesignerApp {
         button('+', () => this.viewer.zoomIn(), 'ghost small'),
         button('−', () => this.viewer.zoomOut(), 'ghost small')) : null,
       d.interpretation ? h('div', { class: 'note' },
-        d.interpretation.summary.lengthCount + ' dimensions read, ' +
-        d.interpretation.summary.chainCount + ' chains, ' +
-        d.interpretation.summary.closingChains + ' closing. Image quality: ' +
-        (d.interpretation.quality || '—') + '.') : null,
+        // What was obtained comes first; the chain counters are the working.
+        d.roomRead ? d.roomRead.sentence + ' ' : '',
+        'Dimension chains: ' + d.interpretation.summary.lengthCount + ' dimension(s) read, ' +
+        d.interpretation.summary.chainCount + ' chain(s), ' +
+        d.interpretation.summary.closingChains + ' closing' +
+        (d.interpretation.summary.chainCount === 0
+          ? ' — this plan has no dimension chain, which is normal for a brochure sheet.' : '.') +
+        ' Image quality: ' + (d.interpretation.quality || '—') + '.') : null,
       (d.interpretation?.notes || []).length
         ? h('ul', { class: 'evidence' }, d.interpretation.notes.map(n => h('li', {}, n))) : null,
       button('Load the sample builder plan', () => { this.loadSample(); this.update(); }, 'ghost small'));
@@ -793,9 +798,12 @@ export class DesignerApp {
           : r);
       }
 
-      toast(interp.summary.lengthCount + ' dimensions read, ' + interp.summary.closingChains + ' chain(s) closed.' +
-        (rooms.length ? ' ' + rooms.length + ' rooms proposed — verify them.' : '') +
-        ' Check every number against the drawing.');
+      // Report what was actually OBTAINED, not just the dimension-chain
+      // counters. A builder's brochure plan has no chain at all — every room is
+      // measured from a size printed against it — and reporting only the chain
+      // counters made a successful read look like a total failure.
+      d.roomRead = summariseRoomMeasurements(rooms);
+      toast(d.roomRead.sentence + ' Check every number against the drawing.');
       if (merged.conflictCount) {
         toast(merged.conflictCount + ' number(s) were read two different ways. Both are listed — check them.', 'warn');
       }
