@@ -43,6 +43,21 @@ for (const page of ['designer.html','admin.html','index.html']) {
   await p.goto('http://127.0.0.1:8777/'+page,{waitUntil:'load'});
   await p.waitForTimeout(2200);
   const gate=await p.evaluate(()=>!!document.getElementById('nac-signin'));
+  // Present in the DOM is not the same as ON SCREEN. Hiding the whole document
+  // once hid the sign-in screen along with it, leaving a blank page and no way
+  // in — so the form is checked for being visible and usable, not just there.
+  const usable=await p.evaluate(()=>{
+    const g=document.getElementById('nac-signin');
+    if(!g) return null;
+    const cs=getComputedStyle(g), r=g.getBoundingClientRect();
+    const email=document.getElementById('nac-email');
+    const btn=document.getElementById('nac-go');
+    return { visibility:cs.visibility, display:cs.display, opacity:Number(cs.opacity),
+             w:Math.round(r.width), h:Math.round(r.height),
+             emailVisible: !!email && getComputedStyle(email).visibility==='visible',
+             buttonVisible: !!btn && getComputedStyle(btn).visibility==='visible',
+             text:(g.innerText||'').trim().length };
+  });
   const visible=await p.evaluate(()=>{
     const g=document.getElementById('nac-signin');
     const all=document.body.innerText||'';
@@ -51,6 +66,14 @@ for (const page of ['designer.html','admin.html','index.html']) {
   });
   console.log(`  ${page}`);
   say('    sign-in screen is shown', gate);
+  say('    it is actually ON SCREEN, not hidden with the page',
+    !!usable && usable.visibility==='visible' && usable.display!=='none' && usable.opacity>0.9 &&
+    usable.w>200 && usable.h>200,
+    usable? JSON.stringify({v:usable.visibility,w:usable.w,h:usable.h}) : 'no gate');
+  say('    the email box and Sign in button can be seen and used',
+    !!usable && usable.emailVisible && usable.buttonVisible);
+  say('    it says something, rather than being a blank screen',
+    !!usable && usable.text>30, usable? usable.text+' chars of gate text' : '0');
   say('    NO page content is readable', visible.length<40, visible.length+' chars behind the gate');
   say('    no data was fetched before sign-in', dbAuth.length===0, dbAuth.length+' db calls');
   await ctx.close();

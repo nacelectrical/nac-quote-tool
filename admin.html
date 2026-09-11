@@ -39,10 +39,22 @@ input:focus,select:focus{border-color:#2B6CB8}
 // be issued before the sign-in gate exists. A module would be deferred and the
 // app would already have fetched.
 window.nacAuthReady = (function () {
-  document.documentElement.style.visibility = 'hidden';
+  // Hide THE PAGE, not the whole document. Hiding documentElement also hid the
+  // sign-in screen appended to it, which left a visitor looking at a blank
+  // page with no way in.
+  //
+  // A class on <html> rather than an inline style on the container: the
+  // container is not parsed yet when this runs, and an already-signed-in user
+  // resolves before it is — so a hide scheduled for later could otherwise
+  // land AFTER the show and blank the page for good. A class has no ordering
+  // to get wrong.
+  var style = document.createElement('style');
+  style.textContent = 'html.nac-locked .wrap { visibility: hidden !important; }';
+  (document.head || document.documentElement).appendChild(style);
+  document.documentElement.classList.add('nac-locked');
   return import('./designer/auth.mjs').then(function (m) {
     return m.requireSignIn({ pageName: 'NAC Internal Quote Builder' }).then(function (s) {
-      document.documentElement.style.visibility = '';
+      document.documentElement.classList.remove('nac-locked');
       window.nacDbHeaders = m.dbHeaders;
       window.nacSignOut = m.signOut;
       window.nacUser = m.currentUserEmail();
