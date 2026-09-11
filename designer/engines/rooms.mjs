@@ -52,6 +52,9 @@ const UNCONDITIONED_PATTERNS = [
   /\bbath(room)?\b/i, /\bensuite\b/i, /\bens\b/i, /\bwc\b/i, /\btoilet\b/i, /\bpowder\b/i,
   /\bwir\b/i, /\bbir\b/i, /\bwalk[- ]?in[- ]?robe\b/i, /\brobe\b/i, /\bwardrobe\b/i,
   /\blinen\b/i, /\bpantry\b/i, /\bp'?try\b/i, /\bstore\b/i, /\bstorage\b/i,
+  // Cupboards. Australian plans label them CUP'D, CUPB, CPD or CUPBOARD, and a
+  // dimensioned one would otherwise be read in as conditioned floor area.
+  /\bcup'?d\b/i, /\bcupb(oard)?\b/i, /\bcpd\b/i, /\bbroom\b/i, /\bcloak\b/i,
   /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
   /\boutdoor\b/i, /\bbalcony\b/i, /\bcourtyard\b/i, /\bvoid\b/i, /\bportico\b/i
 ];

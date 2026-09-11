@@ -14,7 +14,7 @@ import { allModels, SPEC_REQUIRED } from './catalogue.mjs';
  *
  * @param {Array}  catalogue     from buildCatalogue()
  * @param {Object} systemLoadRec from loads.systemLoad()
- * @param {Object} opts { settings, brandPreference, phase, requirePrice,
+ * @param {Object} opts { settings, brandPreference, phase, sitePhase, requirePrice,
  *                        designAirflowLs, requiredStaticPa }
  */
 export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
@@ -80,6 +80,22 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
           message: m.brandName + ' ' + m.name + ' has no supplier cost on file.' });
       }
       if (!m.hasPrice) notes.push('No NAC price configured for this model — set it in the existing Price Setup screen.');
+
+      // A three-phase unit on a house that has not been confirmed as
+      // three-phase is a supply upgrade the customer has not been quoted for,
+      // and it is found on the day. It is never assumed either way: unless the
+      // job says the site HAS three phase, selecting one has to be a decision.
+      const threePhase = /3\s*ph|three\s*phase/i.test(String(m.phase || ''));
+      if (threePhase && !opts.sitePhase) {
+        warnings.push({ code: 'THREE_PHASE_UNIT_UNCONFIRMED', severity: 'WARNING',
+          message: m.brandName + ' ' + m.name + ' is a THREE-PHASE unit. Confirm the site has ' +
+            'three-phase supply before quoting it — a single-phase house needs a supply upgrade ' +
+            'that is not in this price. Set the supply on the Equipment tab to stop this being asked.' });
+      } else if (threePhase && String(opts.sitePhase) === '1') {
+        warnings.push({ code: 'THREE_PHASE_UNIT_ON_SINGLE_PHASE_SITE', severity: 'CRITICAL',
+          message: m.brandName + ' ' + m.name + ' is three-phase and this site is recorded as ' +
+            'single-phase. It cannot be installed without a supply upgrade.' });
+      }
 
       // Score: closeness to the target capacity, then commercial readiness.
       // A shortfall counts harder than a surplus — running short on a design

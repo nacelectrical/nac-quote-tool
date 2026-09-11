@@ -334,7 +334,15 @@ export function renderEquipment(app) {
         v => app.setDesignField('brandPreference', v || null))),
       field('Phase', select(d.phase || '',
         [{ value: '', label: 'Any' }, { value: '1Ph', label: 'Single phase' }, { value: '3Ph', label: 'Three phase' }],
-        v => app.setDesignField('phase', v || null))),
+        v => app.setDesignField('phase', v || null)),
+        'Which models to list'),
+      // What the HOUSE has, which is the expensive question. A three-phase unit
+      // on a single-phase house is a supply upgrade nobody quoted for.
+      field('Supply at the site', select(d.sitePhase || '',
+        [{ value: '', label: 'Not confirmed' }, { value: '1', label: 'Single phase' },
+         { value: '3', label: 'Three phase' }],
+        v => app.setDesignField('sitePhase', v || null)),
+        'Confirm this before quoting a three-phase unit'),
       field('Availability', h('div', {},
         checkbox(!!d.requireCost, 'Only models with a supplier cost',
           v => app.setDesignField('requireCost', v)),

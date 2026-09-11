@@ -80,6 +80,9 @@ export function runPipeline(design, ctx = {}) {
     settings,
     brandPreference: ctx.brandPreference || d.brandPreference,
     phase: ctx.phase || d.phase,
+    // What the SITE has, which is a different question from what to filter the
+    // catalogue by. Left unset, a three-phase unit has to be confirmed.
+    sitePhase: ctx.sitePhase ?? d.sitePhase ?? null,
     requirePrice: ctx.requirePrice ?? d.requirePrice,
     requireCost: ctx.requireCost ?? d.requireCost,
     designAirflowLs: provisionalAirflowLs
@@ -158,6 +161,9 @@ export function runPipeline(design, ctx = {}) {
       settings,
       brandPreference: ctx.brandPreference || d.brandPreference,
       phase: ctx.phase || d.phase,
+    // What the SITE has, which is a different question from what to filter the
+    // catalogue by. Left unset, a three-phase unit has to be confirmed.
+    sitePhase: ctx.sitePhase ?? d.sitePhase ?? null,
       requirePrice: ctx.requirePrice ?? d.requirePrice,
       requireCost: ctx.requireCost ?? d.requireCost,
       designAirflowLs: d.airflow.allocatedAirflowLs,
