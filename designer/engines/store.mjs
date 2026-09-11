@@ -12,9 +12,11 @@
 // `nac_settings`, so nothing has to be migrated before the designer can be used.
 
 const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
-const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
-
-const H = () => ({ apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY });
+// A signed-in NAC user's token goes on every request, so the RLS policies in
+// designer/rls.sql apply to them. Signed out, this falls back to the bare anon
+// key — which, once RLS is applied, can no longer read designs or settings.
+import { dbHeaders } from '../auth.mjs';
+const H = () => dbHeaders();
 const JH = () => ({ ...H(), 'Content-Type': 'application/json' });
 
 const LS_PREFIX = 'nac_design_';

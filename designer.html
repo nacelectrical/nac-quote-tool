@@ -248,7 +248,11 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 <noscript><p style="padding:24px">NAC AI HVAC Designer needs JavaScript enabled.</p></noscript>
 
 <script type="module">
+  import { requireSignIn } from './designer/auth.mjs';
   import { DesignerApp } from './designer/app.mjs';
+  // Nothing about a customer, a price or a design is rendered until a NAC user
+  // has signed in.
+  await requireSignIn({ pageName: 'NAC AI HVAC Designer' });
   const app = new DesignerApp(document.getElementById('app'));
   window.nacDesigner = app;
   app.init().catch(e => {

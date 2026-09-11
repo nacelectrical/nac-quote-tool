@@ -1,4 +1,23 @@
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body><div id="root"></div><script src="/vendor/react.production.min.js"></script><script src="/vendor/react-dom.production.min.js"></script><script>if(!window.React||!window.ReactDOM){document.write('<scr'+'ipt src="https://unpkg.com/react@18/umd/react.production.min.js"></scr'+'ipt>');document.write('<scr'+'ipt src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></scr'+'ipt>');}</script><script>var exports = {};
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body>
+<script>
+// Runs synchronously, ahead of the application script, so no database call can
+// be issued before the sign-in gate exists. A module would be deferred and the
+// app would already have fetched.
+window.nacAuthReady = (function () {
+  document.documentElement.style.visibility = 'hidden';
+  return import('./designer/auth.mjs').then(function (m) {
+    return m.requireSignIn({ pageName: 'NAC Ducted Quote Tool' }).then(function (s) {
+      document.documentElement.style.visibility = '';
+      window.nacDbHeaders = m.dbHeaders;
+      window.nacSignOut = m.signOut;
+      window.nacUser = m.currentUserEmail();
+      return s;
+    });
+  });
+})();
+</script>
+
+<div id="root"></div><script src="/vendor/react.production.min.js"></script><script src="/vendor/react-dom.production.min.js"></script><script>if(!window.React||!window.ReactDOM){document.write('<scr'+'ipt src="https://unpkg.com/react@18/umd/react.production.min.js"></scr'+'ipt>');document.write('<scr'+'ipt src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></scr'+'ipt>');}</script><script>var exports = {};
 window.storage={get:async k=>{try{return{value:localStorage.getItem("nac_"+k)}}catch(e){return null}},set:async(k,v)=>{localStorage.setItem("nac_"+k,v)},delete:async k=>{localStorage.removeItem("nac_"+k)},list:async p=>{return{keys:Object.keys(localStorage).filter(k=>k.startsWith("nac_"+(p||"")))}}};function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 Object.defineProperty(exports, "__esModule", {
   value: true
@@ -33,11 +52,12 @@ var NAC_LOGO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEBLAEsAAD/4QKaRXhpZgAAT
 
 var _SU = "https://icnznjhwybryizbdqrgx.supabase.co",
   _SK = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw";
+// A signed-in NAC user's token goes on every database request, so the RLS
+// policies in designer/rls.sql apply to them. Before sign-in completes this is
+// the bare anon key, which those policies no longer trust with prices.
 var _h = function _h() {
-  return {
-    'apikey': _SK,
-    'Authorization': 'Bearer ' + _SK
-  };
+  return window.nacDbHeaders ? window.nacDbHeaders()
+                             : { 'apikey': _SK, 'Authorization': 'Bearer ' + _SK };
 };
 window.storage = {
   // set() returns TRUE for `synced` only when the DATABASE accepted the write.
@@ -73,6 +93,8 @@ window.storage = {
     } catch (e) { /* no DOM (tests) — the return value still carries the truth */ }
   },
   get: async function (k) {
+    // No read leaves the browser until the estimator has signed in.
+    if (window.nacAuthReady) { try { await window.nacAuthReady; } catch (e) {} }
     try {
       var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k) + '&select=value', { headers: _h() });
       // fetch resolves on a 4xx/5xx, so the status must be read or a rejected
@@ -86,6 +108,7 @@ window.storage = {
     return null;
   },
   set: async function (k, v) {
+    if (window.nacAuthReady) { try { await window.nacAuthReady; } catch (e) {} }
     window.storage.lastError = null;
     try { localStorage.setItem('nac_' + k, v); } catch (e) {}
     try {
