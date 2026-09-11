@@ -7,6 +7,9 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { indexRun } from './ducts.mjs';
 
+/** Shown wherever a static result would otherwise be read as a pass. */
+export const STATIC_NOT_COMPLETED = 'STATIC PRESSURE CHECK NOT COMPLETED — MANUFACTURER DATA REQUIRED';
+
 export const PRESSURE_DISCLAIMER =
   'DESIGN ESTIMATE — COMMISSIONING VERIFICATION REQUIRED';
 
@@ -44,13 +47,16 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
 
   // Return side.
   if (returnDesign) {
-    const returnDuctPa = returnDesign.duct.lengthM
-      ? round(returnDesign.duct.lengthM * 2.2, 1)     // typical flex return loss per metre
+    // A return design part-built (or restored from an older save) must still
+    // produce an estimate rather than throw — this runs on the way to a quote.
+    const rd = returnDesign.duct || {};
+    const returnDuctPa = rd.lengthM
+      ? round(rd.lengthM * 2.2, 1)                    // typical flex return loss per metre
       : 0;
-    if (returnDuctPa) components.push({ item: 'Return duct', detail: returnDesign.duct.diameterMm + ' mm × ' + returnDesign.duct.lengthM + ' m', pa: returnDuctPa });
+    if (returnDuctPa) components.push({ item: 'Return duct', detail: rd.diameterMm + ' mm × ' + rd.lengthM + ' m', pa: returnDuctPa });
     components.push({ item: 'Return plenum', detail: 'Equivalent allowance', pa: round(settings.pressure.equivalentLengthM.return_plenum * 2.2, 1) });
-    components.push({ item: 'Return grille', detail: returnDesign.returns[0]?.grilleSize || '', pa: C.return_grille });
-    components.push({ item: 'Filter (clean)', detail: returnDesign.filter.size, pa: C.filter_clean });
+    components.push({ item: 'Return grille', detail: returnDesign.returns?.[0]?.grilleSize || '', pa: C.return_grille });
+    components.push({ item: 'Filter (clean)', detail: returnDesign.filter?.size || '', pa: C.filter_clean });
     components.push({ item: 'Filter loading allowance', detail: 'Dirty-filter allowance', pa: C.filter_dirty_allowance });
   }
 
@@ -72,9 +78,21 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
         message: 'Only ' + marginPa + ' Pa (' + marginPct + '%) of static margin remains on ' + selectedUnit.model + '.' });
     }
   } else {
-    warnings.push({ code: 'MISSING_MANUFACTURER_DATA', severity: 'CHECK',
-      message: 'Available external static pressure is not on file for the selected unit — the pressure estimate cannot be compared against the unit. Enter it in HVAC Design Settings → Equipment specifications.' });
+    // Without the manufacturer's figure there is nothing to compare the
+    // estimate against, so the check DID NOT HAPPEN. That is a different
+    // thing from passing, and it has to read differently — an estimator who
+    // sees no red must not conclude the design cleared its static check.
+    // CRITICAL, not WARNING. A warning can be scrolled past; a critical has to
+    // be acknowledged by a named estimator before the design can be approved.
+    // That is the difference between "we could not check this" and a false pass.
+    warnings.push({ code: 'STATIC_PRESSURE_CHECK_NOT_COMPLETED', severity: 'CRITICAL',
+      message: STATIC_NOT_COMPLETED + '. The estimate of ' + totalPa + ' Pa has not been compared ' +
+        'against ' + (selectedUnit ? selectedUnit.model : 'the selected unit') +
+        ' because its available external static pressure is not on file. ' +
+        'Enter it from the manufacturer data sheet in HVAC Design Settings → Equipment specifications.' });
   }
+
+  const checkCompleted = availablePa !== null && availablePa !== undefined;
 
   return {
     disclaimer: PRESSURE_DISCLAIMER,
@@ -84,6 +102,14 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
     unitAvailableStaticPa: availablePa,
     remainingMarginPa: marginPa,
     remainingMarginPct: marginPct,
+    // Three states, never two. `checkCompleted: false` is NOT a pass.
+    checkCompleted,
+    status: !checkCompleted ? 'not_completed'
+      : (marginPa !== null && marginPa < 0) ? 'fail' : 'pass',
+    statusLabel: !checkCompleted ? STATIC_NOT_COMPLETED
+      : (marginPa !== null && marginPa < 0)
+        ? 'STATIC PRESSURE CHECK FAILED — the estimate exceeds the unit'
+        : 'Static pressure check passed',
     warnings
   };
 }

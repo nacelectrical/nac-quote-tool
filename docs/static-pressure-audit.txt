@@ -1,0 +1,143 @@
+NAC — STATIC PRESSURE DATA AUDIT
+Manufacturer source on file: MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS (2026-09), 489 rows
+
+BRAND                INDOOR MODEL              CAPACITY   STATIC AVAILABLE   SOURCE                                   ACTION REQUIRED
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Braemar              KDHA070 — Ducted RC           7 kW   NO                 none on file                             Enter available ESP from the Braemar KDHA070 — Ducted RC data sheet in HVAC Design Settings → Equipment specifications
+Braemar              MMABRAKCHV070D1B              7 kW   NO                 none on file                             Enter available ESP from the Braemar MMABRAKCHV070D1B data sheet in HVAC Design Settings → Equipment specifications
+Braemar              KDHA100 — Ducted RC          10 kW   NO                 none on file                             Enter available ESP from the Braemar KDHA100 — Ducted RC data sheet in HVAC Design Settings → Equipment specifications
+Braemar              MMABRAKCHV100D1B             10 kW   NO                 none on file                             Enter available ESP from the Braemar MMABRAKCHV100D1B data sheet in HVAC Design Settings → Equipment specifications
+Braemar              KDHA120 — Ducted RC          12 kW   NO                 none on file                             Enter available ESP from the Braemar KDHA120 — Ducted RC data sheet in HVAC Design Settings → Equipment specifications
+Braemar              Dominator S2 KGHV120       12.2 kW   NO                 none on file                             Enter available ESP from the Braemar Dominator S2 KGHV120 data sheet in HVAC Design Settings → Equipment specifications
+Braemar              MMABRAKCHV125D1B           12.5 kW   NO                 none on file                             Enter available ESP from the Braemar MMABRAKCHV125D1B data sheet in HVAC Design Settings → Equipment specifications
+Braemar              KDHA140 — Ducted RC          14 kW   NO                 none on file                             Enter available ESP from the Braemar KDHA140 — Ducted RC data sheet in HVAC Design Settings → Equipment specifications
+Braemar              MMABRAKCHV140D1B             14 kW   NO                 none on file                             Enter available ESP from the Braemar MMABRAKCHV140D1B data sheet in HVAC Design Settings → Equipment specifications
+Braemar              Dominator S2 KGHV160         16 kW   NO                 none on file                             Enter available ESP from the Braemar Dominator S2 KGHV160 data sheet in HVAC Design Settings → Equipment specifications
+Braemar              KDHA160 — Ducted RC          16 kW   NO                 none on file                             Enter available ESP from the Braemar KDHA160 — Ducted RC data sheet in HVAC Design Settings → Equipment specifications
+Braemar              MMABRAKCHV160D1B             16 kW   NO                 none on file                             Enter available ESP from the Braemar MMABRAKCHV160D1B data sheet in HVAC Design Settings → Equipment specifications
+Braemar              SDHV200 — Ducted RC 3Ph      20 kW   NO                 none on file                             Enter available ESP from the Braemar SDHV200 — Ducted RC 3Ph data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYAN50AV1 / RZA50C2V1        5 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN50LCV1                   5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN50LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYAN60AV1 / RZA60C2V1        6 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYA71AV19 / RZAS71C2V1       7 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN71AV1 / RZA71C2V1        7 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN71AV1 / RZA71C2Y1        7 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN71LBV1                 7.1 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN71LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN71LCV1                 7.1 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN71LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYA85AV19 / RZAS85C2V1       8 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN85AV1 / RZA85C2V1        8 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN85LCV1                 8.5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN85LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYA100AV19 / RZAS100C2V1     10 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN100AV1 / RZA100C2V1     10 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN100AV1 / RZA100C2Y1     10 kW   YES — 130 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN100LBV1                 10 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN100LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN100LCV1                 10 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN100LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYA125AV19 / RZAS125C2V1     12 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN125AV1 / RZA125C2V1     12 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN125AV1 / RZA125C2Y1     12 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN125LBV1               12.5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN125LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN125LCV1               12.5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN125LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYA140AV19 / RZAS140C2V1     14 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN140AV1 / RZA140C2V1     14 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN140AV1 / RZA140C2Y1     14 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN140LBV1                 14 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN140LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN140LCV1                 14 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN140LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN155LBV1               15.5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN155LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN155LCV1               15.5 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN155LCV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYA160AV19 / RZAS160C2V1     16 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN160AV1 / RZA160C2V1     16 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYAN160AV1 / RZA160C2Y1     16 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYA180AV1                   18 kW   NO                 none on file                             Enter available ESP from the Daikin FDYA180AV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN180LBV1                 18 kW   NO                 none on file                             Enter available ESP from the Daikin FDYQN180LBV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN180LCV1 / RZQ180M2Y1     18 kW   YES — 210 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYA200AV1                   20 kW   NO                 none on file                             Enter available ESP from the Daikin FDYA200AV1 data sheet in HVAC Design Settings → Equipment specifications
+Daikin               FDYQN200LCV1 / RZQ200MY1     20 kW   YES — 250 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Daikin               FDYQN250LBV1 / RZQ250LY1     24 kW   YES — 200 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG22LDTA                    6 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG22LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH24KHTA / AOTH24KBTA       7 kW   YES — 210 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG30LDTA                    8 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG30LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH30KHTA / AOTH30KBTA       8 kW   YES — 210 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG36LDTA                   10 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG36LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH36KHTA                   10 kW   YES — 210 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG45LDTA                 11.5 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG45LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH45KHTA                 11.5 kW   YES — 260 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG54LDTA                   14 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG54LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH54KHTA                   14 kW   YES — 260 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG60LDTA                   16 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG60LDTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH60KHTA / AOTH60KBTA      16 kW   YES — 260 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTH60KHTB                   16 kW   YES — 250 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Fujitsu              ARTG90LHTC                   18 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG90LHTC data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH65KHTA / AOTH65KBTA      18 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTH65KHTA / AOTH65KBTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTH72KHTA                   18 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTH72KHTA data sheet in HVAC Design Settings → Equipment specifications
+Fujitsu              ARTG90LDTA                   22 kW   NO                 none on file                             Enter available ESP from the Fujitsu ARTG90LDTA data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD50PHS1/C-S / GUD50W1/NhC-S      5 kW   NO                 none on file                             Enter available ESP from the Gree GUD50PHS1/C-S / GUD50W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD71PHS1/C-S / GUD71W1/NhC-S      7 kW   NO                 none on file                             Enter available ESP from the Gree GUD71PHS1/C-S / GUD71W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD100PHS1/C-S / GUD100W1/NhC-S     10 kW   NO                 none on file                             Enter available ESP from the Gree GUD100PHS1/C-S / GUD100W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD125PHS1/C-S / GUD125W1/NhC-S     12 kW   NO                 none on file                             Enter available ESP from the Gree GUD125PHS1/C-S / GUD125W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD140PHS1/C-S / GUD140W1/NhC-S     14 kW   NO                 none on file                             Enter available ESP from the Gree GUD140PHS1/C-S / GUD140W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Gree                 GUD160PHS1/C-S / GUD160W1/NhC-S     16 kW   NO                 none on file                             Enter available ESP from the Gree GUD160PHS1/C-S / GUD160W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI70IB / UCMI70OB        7.1 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI70IB / UCMI70OB data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI105IHB / UCMI105OB      10 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI105IHB / UCMI105OB data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI90IB / UCMI90OB       10.5 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI90IB / UCMI90OB data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI125IHB / UCMI125OB      12 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI125IHB / UCMI125OB data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI140IHB / UCMI140OB      14 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI140IHB / UCMI140OB data sheet in HVAC Design Settings → Equipment specifications
+Midea                DUCMI170IHB / UCMI170OB      17 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI170IHB / UCMI170OB data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEAD-M50JAA — Low Profile      5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M50JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEAD-M71JAA — Low Profile    7.1 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M71JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M100GAA                  10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M100GAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M100HAA                  10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M100HAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEAD-M100JAA — Low Profile     10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M100JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M125GAA                12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M125GAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M125HAA                12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M125HAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEAD-M125JAA — Low Profile   12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M125JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M140GAA                  14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M140GAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M140HAA                  14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M140HAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEAD-M140JAA — Low Profile     14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M140JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M160GAA                  16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M160GAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M160HAA / PUZ-ZM160VKA-A.TH     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M160HAA / PUZ-ZM160VKA-A.TH data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M180LAA                  18 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M180LAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Electric  PEA-M200LAA                  20 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M200LAA data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDU71AVNXWVH — Slimline     7.1 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU71AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDU100AVNXWVH — Slimline     10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU100AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA100AVNAWVH — High Static     10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA100AVNAWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDU125AVNXWVH — Slimline   12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU125AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA125AVNXWVH — High Static   12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA125AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDU140AVNXWVH — Slimline     14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU140AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA140AVNXWVH — High Static     14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA140AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA160AVNXWVH — High Static     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA160AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA160AVSAWVH — High Static 3Ph     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA160AVSAWVH — High Static 3Ph data sheet in HVAC Design Settings → Equipment specifications
+Mitsubishi Heavy     FDUA200AVSAWVH — High Static 3Ph     20 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA200AVSAWVH — High Static 3Ph data sheet in HVAC Design Settings → Equipment specifications
+Panasonic            S-60PE3R / U-60PZ3R5          6 kW   YES — 60 Pa        MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-71PE3R / U-71PZ3R5          7 kW   YES — 71 Pa        MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-100PE3R / U-100PZ3R5       10 kW   YES — 100 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-125PE3R / U-125PZ3R5       12 kW   YES — 125 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-140PE3R / U-140PZ3R5       14 kW   YES — 140 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-160PE3R / U-160PZH3R5      16 kW   YES — 160 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
+Panasonic            S-180PE4R / U-180PZH3R5      18 kW   NO                 none on file                             Enter available ESP from the Panasonic S-180PE4R / U-180PZH3R5 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC052TNHDKG — Duct S2       5.2 kW   NO                 none on file                             Enter available ESP from the Samsung AC052TNHDKG — Duct S2 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC071TNHDKG — Duct S2       7.1 kW   NO                 none on file                             Enter available ESP from the Samsung AC071TNHDKG — Duct S2 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC090TNHDKG — Duct S2       8.5 kW   NO                 none on file                             Enter available ESP from the Samsung AC090TNHDKG — Duct S2 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC100TNHPKG — Duct S2+       10 kW   NO                 none on file                             Enter available ESP from the Samsung AC100TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC120TNHDKG — Duct S2        12 kW   NO                 none on file                             Enter available ESP from the Samsung AC120TNHDKG — Duct S2 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC120TNHPKG — Duct S2+     12.5 kW   NO                 none on file                             Enter available ESP from the Samsung AC120TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC140TNHDKG — Duct S2        14 kW   NO                 none on file                             Enter available ESP from the Samsung AC140TNHDKG — Duct S2 data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC140TNHPKG — Duct S2+       14 kW   NO                 none on file                             Enter available ESP from the Samsung AC140TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
+Samsung              AC160TNHPKG — Duct S2+       16 kW   NO                 none on file                             Enter available ESP from the Samsung AC160TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+TOTAL 120 selectable indoor models: 35 with static pressure on file, 85 without.
+
+  Braemar                   0 / 13   no static pressure data at all for this brand
+  Daikin                   22 / 37
+  Fujitsu                   7 / 17
+  Gree                       0 / 6   no static pressure data at all for this brand
+  Midea                      0 / 6   no static pressure data at all for this brand
+  Mitsubishi Electric       0 / 15   no static pressure data at all for this brand
+  Mitsubishi Heavy          0 / 10   no static pressure data at all for this brand
+  Panasonic                  6 / 7
+  Samsung                    0 / 9   no static pressure data at all for this brand
+
+WHAT HAPPENS ON A MODEL WITH NO FIGURE
+  The engine sets status = "not_completed" and raises a CRITICAL warning:
+  "STATIC PRESSURE CHECK NOT COMPLETED — MANUFACTURER DATA REQUIRED"
+  The design cannot be approved until a named estimator acknowledges it,
+  or the manufacturer figure is entered. It is never reported as a pass.

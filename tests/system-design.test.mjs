@@ -393,14 +393,59 @@ test('static pressure is estimated over the index run and compared with unit ESP
   assert.ok(p.components.some(c => /Return grille/.test(c.item)));
 });
 
-test('without ESP on file the comparison is declared missing, not guessed', () => {
+test('without ESP on file the check is declared NOT COMPLETED, never passed', () => {
   const a = calculateAirflow(LOAD);
   const o = designOutlets(ROOMS, a.rows);
   const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
   const p = estimateStaticPressure({ network: net, outlets: o, selectedUnit: { model: 'X', availableStaticPa: null } });
   assert.equal(p.unitAvailableStaticPa, null);
   assert.equal(p.remainingMarginPa, null);
-  assert.ok(p.warnings.some(w => w.code === 'MISSING_MANUFACTURER_DATA'));
+  // Three states, never two: not completed is NOT a pass.
+  assert.equal(p.checkCompleted, false);
+  assert.equal(p.status, 'not_completed');
+  assert.match(p.statusLabel, /NOT COMPLETED/);
+  assert.match(p.statusLabel, /MANUFACTURER DATA REQUIRED/);
+  const w = p.warnings.find(x => x.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED');
+  assert.ok(w, 'the estimator must be told the check did not happen');
+  // CRITICAL so it blocks approval until a named estimator acknowledges it.
+  assert.equal(w.severity, 'CRITICAL');
+});
+
+test('a not-completed static check blocks approval until it is acknowledged', () => {
+  const a = calculateAirflow(LOAD);
+  const o = designOutlets(ROOMS, a.rows);
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  const pressure = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'X', availableStaticPa: null } });
+
+  const blocked = summarise(collectWarnings({ pressure }));
+  assert.equal(blocked.canApprove, false,
+    'a design whose static pressure was never checked must not approve silently');
+  assert.ok(blocked.unacknowledgedCritical.some(w => w.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED'));
+
+  // With the manufacturer figure entered, the same design approves.
+  const checked = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'X', availableStaticPa: 250 } });
+  const clear = summarise(collectWarnings({ pressure: checked }));
+  assert.ok(!clear.unacknowledgedCritical.some(w => w.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED'));
+});
+
+test('with ESP on file the check completes and says which way it went', () => {
+  const a = calculateAirflow(LOAD);
+  const o = designOutlets(ROOMS, a.rows);
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  const ok = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'Y', availableStaticPa: 250 } });
+  assert.equal(ok.checkCompleted, true);
+  assert.equal(ok.status, 'pass');
+  assert.ok(ok.remainingMarginPa > 0);
+
+  const bad = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'Z', availableStaticPa: 10 } });
+  assert.equal(bad.checkCompleted, true);
+  assert.equal(bad.status, 'fail');
+  assert.match(bad.statusLabel, /FAILED/);
+  assert.ok(bad.remainingMarginPa < 0);
 });
 
 // ── PART 22/24: materials and money ─────────────────────────────────────────

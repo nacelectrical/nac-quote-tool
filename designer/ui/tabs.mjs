@@ -66,9 +66,12 @@ export function renderOverview(app) {
       d.returnDesign ? d.returnDesign.filter.size + ' filter' : null),
     stat('Zones', int(s.zoneCount), d.controller ? d.controller.name : 'No controller selected'),
     stat('Estimated static', num(s.estimatedStaticPa, 0) + ' Pa',
-      s.unitAvailableStaticPa ? 'Unit available: ' + s.unitAvailableStaticPa + ' Pa'
+      // Never let the absence of a failure read as a pass.
+      d.pressure && !d.pressure.checkCompleted ? d.pressure.statusLabel
+        : s.unitAvailableStaticPa ? 'Unit available: ' + s.unitAvailableStaticPa + ' Pa'
         : SPEC_REQUIRED + ' — unit ESP not on file',
-      s.unitAvailableStaticPa ? '' : 'warn'),
+      d.pressure && d.pressure.status === 'fail' ? 'bad'
+        : s.unitAvailableStaticPa ? '' : 'warn'),
     stat('Estimated cost', money(s.estimatedCost),
       d.labour?.mode === 'flat' ? 'Equipment + materials (the fee is margin)' : 'Equipment + materials + labour'),
     stat('Sell price (inc GST)', money(s.sellPrice),
@@ -631,6 +634,13 @@ export function renderReturn(app) {
 
     card('Static pressure estimate', PRESSURE_DISCLAIMER,
       d.pressure ? h('div', {},
+        // Three states, and silence is not one of them. Without the
+        // manufacturer's available static on file the check DID NOT HAPPEN,
+        // and the estimator has to be told that in those words — an absence
+        // of red must never read as a pass.
+        banner(d.pressure.status === 'pass' ? 'ok' : 'bad', d.pressure.statusLabel,
+          d.pressure.status === 'not_completed'
+            ? button('Enter unit static', () => app.setTab('equipment'), 'small') : null),
         h('div', { class: 'grid-3' },
           stat('Estimated requirement', d.pressure.estimatedRequirementPa + ' Pa',
             d.pressure.indexRun ? 'Index run: ' + d.pressure.indexRun.destination : null),

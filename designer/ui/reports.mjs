@@ -122,7 +122,8 @@ export function internalReportHtml(design, { logo = null, planSnapshot = null } 
     ['Return', d.returnDesign ? d.returnDesign.returnCount + ' × ' + (d.returnDesign.returns[0]?.grilleSize || '') : '—',
       d.returnDesign ? d.returnDesign.perReturnLs + ' L/s each' : ''],
     ['Estimated static', nn(d.pressure?.estimatedRequirementPa, 0) + ' Pa',
-      d.pressure?.unitAvailableStaticPa ? 'of ' + d.pressure.unitAvailableStaticPa + ' Pa available'
+      d.pressure && !d.pressure.checkCompleted ? d.pressure.statusLabel
+        : d.pressure?.unitAvailableStaticPa ? 'of ' + d.pressure.unitAvailableStaticPa + ' Pa available'
         : 'unit ESP not on file'],
     ['Plan calibration', d.calibration ? nn(d.calibration.pixelsPerMm, 5) + ' px/mm' : 'NOT CALIBRATED']
   ]);
@@ -218,14 +219,21 @@ export function internalReportHtml(design, { logo = null, planSnapshot = null } 
   }
 
   if (d.pressure) {
-    b += '<h2>Static pressure — ' + esc(PRESSURE_DISCLAIMER) + '</h2>' + tbl([
+    b += '<h2>Static pressure — ' + esc(PRESSURE_DISCLAIMER) + '</h2>';
+    // The three states are spelled out. A report that simply omitted the
+    // comparison would let a reader assume the design cleared it.
+    if (d.pressure.status !== 'pass') {
+      b += '<div class="warnbox' + (d.pressure.status === 'fail' ? ' crit' : '') + '"><strong>' +
+        esc(d.pressure.statusLabel) + '</strong></div>';
+    }
+    b += tbl([
       { label: 'Component', key: 'item' },
       { label: 'Detail', key: 'detail' },
       { label: 'Pa', r: true, key: 'pa' }
     ], d.pressure.components) +
     '<p class="note">Estimated requirement ' + esc(d.pressure.estimatedRequirementPa) + ' Pa. Unit available ' +
       esc(d.pressure.unitAvailableStaticPa ?? 'not on file') + '. Margin ' +
-      esc(d.pressure.remainingMarginPa ?? '—') + ' Pa.</p>';
+      esc(d.pressure.remainingMarginPa ?? '—') + ' Pa. Result: ' + esc(d.pressure.statusLabel) + '.</p>';
   }
 
   b += '<h2 class="pagebreak">Design assumptions</h2>' + tbl([
