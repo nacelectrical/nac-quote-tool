@@ -118,10 +118,20 @@ export const DUCTED_CATALOGUE = [
  * the top so a quote raised the old way still resolves.
  */
 export const ZONE_CONTROLLERS = [
-  { id: 'std', name: 'Brand Standard Controller', maxZones: 8, brandLock: null, cost: null,
-    note: 'Manufacturer’s own zone controller supplied with the system. No separate cost on file.' },
-  { id: 'at5', name: 'Airtouch 5', maxZones: 16, brandLock: null, cost: null,
-    note: 'Generic Airtouch 5 entry from the existing quote tool. Prefer the costed MMEM kit below.' },
+  // Supplied WITH the system, so it adds nothing to the job cost. That is not
+  // a price anyone invented — it is the manufacturer's own controller in the
+  // box, and carrying it as "no price on file" made it read as a hole in the
+  // costing and blocked quotes that used it.
+  { id: 'std', name: 'Brand Standard Controller', maxZones: 8, brandLock: null, cost: 0,
+    includedInSystem: true,
+    note: 'Manufacturer’s own zone controller, supplied with the system — no separate charge.' },
+
+  // The generic 'Airtouch 5' row carried no price and shadowed the real thing.
+  // NAC buy the AirTouch as a KIT (MMEM MMAAT5DK, $1100 ex GST) and the
+  // controller is part of that price, so the kit below is the only AirTouch
+  // entry there should be. Removing the duplicate also means no zone
+  // controller in the catalogue is left without a cost.
+
   ...MMEM_ZONE_CONTROLS
     .filter(c => !c.perZoneAccessory)
     .map(c => ({

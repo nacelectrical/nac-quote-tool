@@ -120,6 +120,26 @@ export function collectWarnings(design, opts = {}) {
         Math.round((ratio - 1) * 100) + '% above the ' + design.systemLoad.designKw + ' kW design load.' }, 'equipment'));
   }
 
+  // A zoned design with no controller is a system that cannot be zoned and a
+  // quote that is short by whatever the controller costs. The selection returns
+  // null when nothing in the catalogue fits the brand and the zone count, and
+  // nothing downstream noticed.
+  if (design.zones?.zoneCount > 1 && !design.controller) {
+    const brand = design.selectedUnit?.brandName || 'the selected brand';
+    out.push(normalise({ code: 'NO_COMPATIBLE_ZONE_CONTROLLER', severity: SEVERITY.CRITICAL,
+      message: 'No zone controller in the catalogue supports ' + design.zones.zoneCount +
+        ' zones on ' + brand + '. The design has no controller and the quote carries no cost for ' +
+        'one. Add the controller and its cost in HVAC Design Settings, or reduce the zone count.' },
+      'zones'));
+  }
+
+  // A controller that fits but has no cost is the same hole, one step later.
+  if (design.controller && (design.controller.cost === null || design.controller.cost === undefined)) {
+    out.push(normalise({ code: 'ZONE_CONTROLLER_HAS_NO_COST', severity: SEVERITY.CRITICAL,
+      message: design.controller.name + ' has no cost on file, so the quote is short by whatever ' +
+        'it is worth. Enter it in HVAC Design Settings.' }, 'zones'));
+  }
+
   // De-duplicate identical code+message pairs, keeping the highest severity.
   const seen = new Map();
   for (const w of out) {

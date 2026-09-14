@@ -118,8 +118,43 @@ test('zone controllers are filtered by brand lock and zone count', () => {
   const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'fujitsu', zoneCount: 12 });
   assert.ok(!r.compatible.some(c => c.id === 'daikin_zone'));   // brand locked
   assert.ok(!r.compatible.some(c => c.id === 'std'));           // only 8 zones
-  assert.equal(r.recommended.id, 'at5');
   assert.ok(r.incompatible.every(c => c.reason));
+
+  // MMEM quoted only the DAIKIN AirTouch kit, so a Fujitsu job above 8 zones
+  // has nothing in the catalogue. That is the truth, and it is reported rather
+  // than filled with a controller nobody has a price for.
+  assert.equal(r.recommended, null);
+
+  // On Daikin the same 12 zones are covered by the costed kit.
+  const daikin = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 12 });
+  assert.equal(daikin.recommended.id, 'at5_daikin');
+  assert.equal(daikin.recommended.cost, 1100);
+});
+
+test('every zone controller in the catalogue has a cost', () => {
+  // An entry with no cost silently shortens a quote by whatever it is worth.
+  const noCost = ZONE_CONTROLLERS.filter(c => c.cost === null || c.cost === undefined);
+  assert.deepEqual(noCost.map(c => c.name), [],
+    'these carry no cost: ' + noCost.map(c => c.name).join(', '));
+});
+
+test('a zoned design with no controller is reported, not left silent', () => {
+  const warnings = collectWarnings({ zones: { zoneCount: 12 }, controller: null,
+                                     selectedUnit: { brandName: 'Fujitsu' } });
+  const w = warnings.find(x => x.code === 'NO_COMPATIBLE_ZONE_CONTROLLER');
+  assert.ok(w, 'the estimator must be told');
+  assert.equal(w.severity, 'CRITICAL');
+  assert.match(w.message, /12 zones on Fujitsu/);
+  assert.equal(summarise(warnings).canApprove, false);
+
+  // One zone is not a zoned system, so it raises nothing.
+  assert.ok(!collectWarnings({ zones: { zoneCount: 1 }, controller: null })
+    .some(x => x.code === 'NO_COMPATIBLE_ZONE_CONTROLLER'));
+
+  // A controller that fits but carries no cost is the same hole, later.
+  const noCost = collectWarnings({ zones: { zoneCount: 4 },
+    controller: { name: 'Something', cost: null } });
+  assert.ok(noCost.some(x => x.code === 'ZONE_CONTROLLER_HAS_NO_COST'));
 });
 
 // ── PART 14: airflow ────────────────────────────────────────────────────────
