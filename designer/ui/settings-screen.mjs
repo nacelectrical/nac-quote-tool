@@ -3,13 +3,89 @@
 // not buried in source. Saved to the existing nac_settings store.
 
 import { h, card, table, field, input, select, button, banner, mount, money } from './dom.mjs';
-import { MATERIAL_CATALOGUE } from '../engines/materials.mjs';
+import { MATERIAL_CATALOGUE, resolveCost } from '../engines/materials.mjs';
+import { DEFAULT_SETTINGS } from '../engines/settings.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
 import { MMEM_META, MMEM_ACCESSORIES_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
 
 /** Read a nested settings value by dotted path. Writes go through app.updateSetting. */
 function pathGet(obj, path) {
   return path.split('.').reduce((o, k) => (o === undefined || o === null ? o : o[k]), obj);
+}
+
+/**
+ * Every material rate NAC can set, per diameter where the line has diameters.
+ *
+ * A line's own table is not the list of sizes it can be ASKED for: a diameter
+ * on the duct ladder but missing from the table has no price at all, which is
+ * the worst case and the easiest to miss. Both are offered here, so there is
+ * nowhere the application can ask for a price that cannot then be entered.
+ */
+function materialRateCards(app) {
+  const LADDER = DEFAULT_SETTINGS.duct.availableDiametersMm;
+  const rateInput = (id, shipped) => input(pathGet(app.materialRates || {}, id) ?? '',
+    v => app.updateMaterialRate(id, v === '' ? null : Number(v)),
+    { type: 'number', step: '0.01', inputmode: 'decimal',
+      placeholder: shipped === null || shipped === undefined ? '' : Number(shipped).toFixed(2) });
+
+  const rows = [];
+  for (const [key, def] of Object.entries(MATERIAL_CATALOGUE)) {
+    if (def.byDiameter) {
+      const sizes = [...new Set([...Object.keys(def.byDiameter).map(Number), ...LADDER])]
+        .sort((a, b) => a - b);
+      for (const dia of sizes) {
+        const r = resolveCost(key, { diameterMm: dia });
+        rows.push({
+          id: key + '.' + dia,
+          label: def.label + ' ' + dia + ' mm',
+          unit: def.unit,
+          shipped: r.cost,
+          origin: r.cost === null ? 'NO PRICE AT ALL'
+            : r.source === 'default_placeholder' ? 'PLACEHOLDER'
+            : (r.supplierCode || MMEM_ACCESSORIES_META.quoteNo)
+        });
+      }
+    } else {
+      const r = resolveCost(key, {});
+      rows.push({
+        id: key, label: def.label, unit: def.unit, shipped: r.cost,
+        origin: r.cost === null ? 'NO PRICE AT ALL'
+          : r.source === 'default_placeholder' ? 'PLACEHOLDER'
+          : (def.supplierCode || MMEM_ACCESSORIES_META.quoteNo)
+      });
+    }
+  }
+
+  const toConfirm = rows.filter(r => r.origin === 'PLACEHOLDER' || r.origin === 'NO PRICE AT ALL');
+  const set = rows.filter(r => pathGet(app.materialRates || {}, r.id) !== undefined &&
+                               pathGet(app.materialRates || {}, r.id) !== null);
+
+  const cols = [
+    { key: 'label', label: 'Item' },
+    { key: 'unit', label: 'Unit', width: '78px' },
+    { key: 'shipped', label: 'Shipped rate', align: 'right',
+      format: v => v === undefined || v === null ? 'NONE' : '$' + Number(v).toFixed(2) },
+    { key: 'origin', label: 'Source' },
+    { key: 'nac', label: 'NAC rate', align: 'right', width: '140px',
+      render: (r) => rateInput(r.id, r.shipped) }
+  ];
+
+  return [
+    toConfirm.length
+      ? banner('warn', toConfirm.length + ' rate(s) are still to be confirmed — ' +
+          toConfirm.filter(r => r.origin === 'NO PRICE AT ALL').length + ' with no price at all and ' +
+          toConfirm.filter(r => r.origin === 'PLACEHOLDER').length + ' on shipped placeholders. ' +
+          'Anything typed here becomes NAC\'s own rate and overrides both.' +
+          (set.length ? ' ' + set.length + ' rate(s) already entered.' : ''))
+      : banner('info', 'Every material rate is either a confirmed supplier price or a NAC rate you have entered.'),
+
+    card('Still to confirm', 'The only rates that change a quote you cannot stand behind',
+      toConfirm.length ? table(cols, toConfirm)
+        : h('p', { class: 'note' }, 'None — every line has a real price.')),
+
+    card('Confirmed rates', 'From the MMEM quotation, or already entered by NAC',
+      table(cols, rows.filter(r => r.origin !== 'PLACEHOLDER' && r.origin !== 'NO PRICE AT ALL')))
+  ];
 }
 
 export function renderSettingsScreen(app, section = 'load') {
@@ -269,40 +345,12 @@ export function renderSettingsScreen(app, section = 'load') {
         'quotation of ' + MMEM_ACCESSORIES_META.date + ' (' + MMEM_ACCESSORIES_META.basis + ') and are real ' +
         'costs. Rates marked PLACEHOLDER are shipped starting values that nobody at NAC has confirmed — ' +
         'every design that uses one says so on the Materials tab. Anything you enter here overrides both.'),
-      card('Flexible duct rate by diameter ($/m)',
-        'MMEM quote 200–400 mm in 6 m lengths. The other sizes are placeholders.',
-        table([
-          { key: 'dia', label: 'Diameter (mm)', align: 'right' },
-          { key: 'shipped', label: 'Shipped rate', align: 'right', format: v => '$' + v.toFixed(2) },
-          { key: 'origin', label: 'Source' },
-          { key: 'nac', label: 'NAC rate', align: 'right', width: '140px',
-            render: (r) => input(app.materialRates?.flex_duct?.[r.dia] ?? '',
-              v => app.updateMaterialRate('flex_duct.' + r.dia, v === '' ? null : Number(v)),
-              { type: 'number', step: '0.01', placeholder: r.shipped.toFixed(2) }) }
-        ], Object.entries(MATERIAL_CATALOGUE.flex_duct.byDiameter)
-          .map(([dia, cost]) => {
-            const code = MATERIAL_CATALOGUE.flex_duct.codeByDiameter?.[dia];
-            const pack = MATERIAL_CATALOGUE.flex_duct.packByDiameter?.[dia];
-            return { id: dia, dia: Number(dia), shipped: cost,
-              origin: code ? code + ' — $' + pack.cost.toFixed(2) + ' / ' + pack.lengthM + ' m length'
-                           : 'PLACEHOLDER' };
-          }))),
-      card('Item rates', null,
-        table([
-          { key: 'label', label: 'Item' },
-          { key: 'unit', label: 'Unit', width: '70px' },
-          { key: 'shipped', label: 'Shipped rate', align: 'right',
-            format: v => v === undefined || v === null ? '—' : '$' + Number(v).toFixed(2) },
-          { key: 'origin', label: 'Source' },
-          { key: 'nac', label: 'NAC rate', align: 'right', width: '140px',
-            render: (r) => input(app.materialRates?.[r.id] ?? '',
-              v => app.updateMaterialRate(r.id, v === '' ? null : Number(v)),
-              { type: 'number', step: '0.01',
-                placeholder: r.shipped !== undefined && r.shipped !== null ? Number(r.shipped).toFixed(2) : '' }) }
-        ], Object.entries(MATERIAL_CATALOGUE).filter(([k]) => k !== 'flex_duct')
-          .map(([id, v]) => ({ id, label: v.label, unit: v.unit, shipped: v.cost,
-            origin: v.source === 'supplier_list'
-              ? (v.supplierCode || MMEM_ACCESSORIES_META.quoteNo) : 'PLACEHOLDER' }))))
+      // Every rate NAC can set, including the per-diameter ones. This used to
+      // render flexible duct by diameter and everything else as a single flat
+      // row — so a diffuser or zone motor rate for one size had nowhere to be
+      // typed, and the Materials tab asked for prices the settings screen gave
+      // no way to enter.
+      ...materialRateCards(app)
     ],
 
     specs: () => [

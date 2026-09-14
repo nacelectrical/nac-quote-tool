@@ -1369,12 +1369,22 @@ export class DesignerApp {
   }
 
   async saveSettings() {
-    await Promise.all([
-      Store.setJson(Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride),
-      Store.setJson(Store.SETTINGS_KEYS.materialRates, this.materialRates),
-      Store.setJson(Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs)
-    ]);
-    toast('HVAC Design Settings saved.');
+    // setJson returns whether the DATABASE took it. Ignoring that and toasting
+    // "saved" is how an estimator types a night's worth of supplier rates,
+    // believes they are safe, and finds them gone on the next device.
+    const parts = [
+      ['design settings', Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride],
+      ['material rates', Store.SETTINGS_KEYS.materialRates, this.materialRates],
+      ['equipment specs', Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs]
+    ];
+    const results = await Promise.all(parts.map(([, key, value]) => Store.setJson(key, value)));
+    const failed = parts.filter((_, i) => !results[i]).map(([name]) => name);
+
+    if (!failed.length) { toast('HVAC Design Settings saved.'); return true; }
+    toast('SAVED ON THIS DEVICE ONLY — ' + failed.join(' and ') + ' did not reach the database' +
+      (Store.lastStorageError() ? ' (' + Store.lastStorageError() + ')' : '') +
+      '. They will not appear on another device. Press Save again when you have signal.', 'bad');
+    return false;
   }
 
   // ── Persistence & quote (PART 23) ─────────────────────────────────────────
