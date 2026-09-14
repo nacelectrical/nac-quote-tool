@@ -78,10 +78,19 @@ test('quoted diameters are supplier-priced and the rest stay placeholders', () =
     assert.equal(r.pack.lengthM, 6);
     assert.match(r.note, /447-321514-000/);
   }
-  for (const d of [100, 125, 150, 450, 500]) {
+  for (const d of [100, 125, 150]) {
     const r = resolveCost('flex_duct', { diameterMm: d });
     assert.equal(r.source, 'default_placeholder', d + ' mm is not on the quote');
     assert.equal(r.pack, null);
+  }
+  // 450 and 500 carry no rate at all, because NAC never run them — two 350/400s
+  // instead, and 400 only on a return. They are off the duct ladder too, so a
+  // rate here could never be selected and only inflated the count of prices
+  // still to be confirmed.
+  for (const d of [450, 500]) {
+    const r = resolveCost('flex_duct', { diameterMm: d });
+    assert.equal(r.cost, null, d + ' mm must not carry a rate');
+    assert.equal(r.missing, true);
   }
 });
 

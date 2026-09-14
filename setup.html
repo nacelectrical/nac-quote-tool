@@ -1,0 +1,365 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAC — production setup</title>
+<style>
+  :root{--bg:#0c0c24;--panel:#16162e;--panel-2:#0f0f26;--line:#252545;--ink:#fff;--ink-2:#8080b0;
+        --ink-3:#5a5a80;--yellow:#F5C200;--blue:#2B6CB8;--ok:#3fbf6f;--warn:#F5C200;--bad:#ff5f5f}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;padding:20px}
+  .wrap{max-width:920px;margin:0 auto}
+  h1{font-size:18px;letter-spacing:.4px;margin:0 0 4px}
+  h1 .mark{display:inline-block;width:22px;height:5px;background:var(--yellow);
+           vertical-align:middle;margin-right:10px;transform:translateY(-4px)}
+  .sub{color:var(--ink-2);font-size:13.5px;margin:0 0 22px;max-width:68ch}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:0 0 14px}
+  .card h2{font-size:11.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink-2);margin:0 0 12px}
+  button{min-height:52px;padding:0 22px;border-radius:9px;border:1px solid var(--line);
+         background:#1c1c3a;color:var(--ink);font:700 15px inherit;font-family:inherit;cursor:pointer}
+  button.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
+  button[disabled]{opacity:.5;cursor:default}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .step{border-left:3px solid var(--line);padding:10px 0 10px 14px;margin:0 0 4px}
+  .step.run{border-left-color:var(--yellow)}
+  .step.ok{border-left-color:var(--ok)}
+  .step.bad{border-left-color:var(--bad)}
+  .step .t{font-weight:600;font-size:14.5px}
+  .step .d{color:var(--ink-2);font-size:12.5px;margin-top:3px}
+  .grp{margin:16px 0 6px;font-size:11px;letter-spacing:.9px;text-transform:uppercase;color:var(--ink-3);
+       border-bottom:1px solid var(--line);padding-bottom:5px}
+  .row{display:grid;grid-template-columns:64px 1fr auto;gap:10px;padding:7px 0;
+       border-bottom:1px solid #1e1e3c;align-items:start;font-size:13px}
+  .row:last-child{border-bottom:0}
+  .tag{font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.5px;
+       padding:3px 6px;border-radius:4px;text-align:center;white-space:nowrap}
+  .tag.PASS{background:rgba(63,191,111,.18);color:var(--ok)}
+  .tag.FAIL{background:rgba(255,95,95,.18);color:var(--bad)}
+  .tag.WARN{background:rgba(245,194,0,.18);color:var(--warn)}
+  .what{min-width:0}
+  .detail{color:var(--ink-2);font-size:11.5px;margin-top:2px;word-break:break-word}
+  .ms{color:var(--ink-3);font:11px ui-monospace,Menlo,monospace;white-space:nowrap}
+  .verdict{display:none;margin:16px 0 0;padding:16px 18px;border-radius:10px;font-weight:700;font-size:15px}
+  .verdict.on{display:block}
+  .verdict.ok{background:rgba(63,191,111,.14);border:1px solid rgba(63,191,111,.45);color:#9ff0c4}
+  .verdict.bad{background:rgba(255,95,95,.12);border:1px solid rgba(255,95,95,.45);color:#ffb3ae}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--panel-2);border:1px solid var(--line);
+      border-radius:8px;padding:12px;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:10px 0 0}
+  textarea{width:100%;min-height:200px;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+           border-radius:8px;padding:12px;font:11.5px/1.55 ui-monospace,Menlo,monospace}
+  .note{border-left:3px solid var(--yellow);background:var(--panel-2);padding:12px 15px;
+        font-size:13px;color:var(--ink-2);margin:0 0 14px}
+  .note b{color:var(--ink)}
+  .note.bad{border-left-color:var(--bad)}
+  @media (max-width:560px){body{padding:12px} button{width:100%} .row{grid-template-columns:58px 1fr}
+    .ms{display:none}}
+
+  /* the dialogs from designer/ui/modal.mjs */
+  .dlg-host{position:fixed;inset:0;z-index:1000;background:rgba(6,6,18,.72);display:flex;
+    align-items:center;justify-content:center;padding:16px}
+  .dlg-panel{width:100%;max-width:460px;max-height:calc(100dvh - 32px);display:flex;flex-direction:column;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .dlg-panel.wide{max-width:680px}
+  .dlg-head{padding:18px 20px 12px;border-bottom:1px solid var(--line)}
+  .dlg-head h3{margin:0;font-size:15px;font-weight:800}
+  .dlg-sub{margin:5px 0 0;font-size:11.5px;color:var(--ink-2)}
+  .dlg-body{padding:16px 20px;overflow-y:auto}
+  .dlg-text{margin:0 0 12px;font-size:13px;line-height:1.65;white-space:pre-wrap}
+  .dlg-list{margin:0 0 12px;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--ink-2)}
+  .dlg-foot{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;padding:14px 20px;
+    border-top:1px solid var(--line);background:var(--panel-2)}
+  .dlg-btn{min-height:48px;padding:0 20px;border-radius:8px;border:1px solid var(--line);
+    background:#1c1c3a;color:var(--ink);font:600 14px inherit;font-family:inherit;cursor:pointer}
+  .dlg-btn.ghost{background:transparent;color:var(--ink-2)}
+  .dlg-btn.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
+  .dlg-btn.danger.primary{background:var(--bad);border-color:var(--bad);color:#fff}
+  @media (max-width:560px){ .dlg-host{padding:0;align-items:flex-end}
+    .dlg-panel,.dlg-panel.wide{max-width:none;border-radius:12px 12px 0 0;max-height:92dvh}
+    .dlg-foot{flex-direction:column-reverse} .dlg-btn{width:100%} }
+</style>
+
+<div class="wrap">
+  <h1><span class="mark"></span>Production setup</h1>
+  <p class="sub">
+    Everything that has to be proved against the live system, in one run. It writes only its own
+    test rows and deletes them, and it stops to show you exactly what the customer/job migration
+    would do before writing anything.
+  </p>
+
+  <div class="card">
+    <h2>Before you press it</h2>
+    <p class="note">
+      Run <b>designer/production-setup.sql</b> in the Supabase SQL editor first. That is the one
+      thing this page cannot do for you — Supabase has no way to run SQL from a browser session.
+      If you have not run it, press the button anyway: the results will tell you precisely what
+      is missing.
+    </p>
+    <div class="btn-row">
+      <button id="run" class="primary">RUN THE WHOLE SETUP CHECK</button>
+      <button id="copy" disabled>Copy the report</button>
+    </div>
+  </div>
+
+  <div class="card" id="plan"><h2>Progress</h2><div id="steps"></div></div>
+  <div class="verdict" id="verdict"></div>
+  <div id="out"></div>
+  <div class="card" id="logCard" hidden><h2>Report — paste this back to Claude</h2>
+    <textarea id="log" readonly></textarea></div>
+</div>
+
+<script type="module">
+import { requireSignIn, currentUserEmail, currentSession, dbHeaders } from '/designer/auth.mjs';
+import { runDatabaseSelfTest, runCustomerPathTest } from '/designer/engines/selftest.mjs';
+import { planBackfill, describePlan, planIsEmpty } from '/designer/engines/crm.mjs';
+import { loadMigrationSources, applyPlan, tableAvailable } from '/designer/engines/crm-store.mjs';
+import { confirmDialog, alertDialog } from '/designer/ui/modal.mjs';
+
+await requireSignIn({ pageName: 'NAC production setup' });
+
+const out = document.getElementById('out');
+const stepsEl = document.getElementById('steps');
+const lines = [];
+let failures = 0, warnings = 0, passes = 0;
+
+const STEPS = [
+  ['sql',      'Security policies and the new tables', 'Checks designer/production-setup.sql has been applied'],
+  ['db',       'Live database round trip',             'Create, read back, edit, list and delete — real rows'],
+  ['customer', 'The customer’s own signing page',      'Must still work with no account'],
+  ['crm',      'Customers and jobs migration',         'Dry run first; nothing is written until you say so'],
+  ['sm8',      'ServiceM8',                            'Read-only check of the key and the endpoints']
+];
+for (const [id, title, detail] of STEPS) {
+  const el = document.createElement('div');
+  el.className = 'step'; el.id = 'step-' + id;
+  el.innerHTML = '<div class="t"></div><div class="d"></div>';
+  el.querySelector('.t').textContent = title;
+  el.querySelector('.d').textContent = detail;
+  stepsEl.appendChild(el);
+}
+const setStep = (id, state, detail) => {
+  const el = document.getElementById('step-' + id);
+  el.className = 'step ' + (state || '');
+  if (detail) el.querySelector('.d').textContent = detail;
+};
+
+let group = null;
+const addGroup = (title) => {
+  group = document.createElement('div');
+  group.className = 'card';
+  const h = document.createElement('div');
+  h.className = 'grp'; h.textContent = title;
+  group.appendChild(h);
+  out.appendChild(group);
+  lines.push('\n== ' + title);
+};
+const addRow = (state, what, detail, ms) => {
+  if (state === 'FAIL') failures++; else if (state === 'WARN') warnings++; else passes++;
+  if (!group) addGroup('Checks');
+  const r = document.createElement('div');
+  r.className = 'row';
+  r.innerHTML = '<span class="tag"></span><span class="what"><span class="w"></span>' +
+                '<span class="detail"></span></span><span class="ms"></span>';
+  r.querySelector('.tag').classList.add(state);
+  r.querySelector('.tag').textContent = state;
+  r.querySelector('.w').textContent = what;
+  if (detail) r.querySelector('.detail').textContent = detail;
+  if (ms != null) r.querySelector('.ms').textContent = ms + 'ms';
+  group.appendChild(r);
+  lines.push(state.padEnd(4) + ' ' + what + (detail ? '  — ' + detail : ''));
+};
+const io = { group: addGroup, row: addRow };
+
+const SUPA = 'https://icnznjhwybryizbdqrgx.supabase.co';
+const get = (path, headers) => fetch(SUPA + '/rest/v1/' + path, { headers: headers || dbHeaders() })
+  .then(async r => ({ ok: r.ok, status: r.status, json: await r.json().catch(() => null) }))
+  .catch(e => ({ ok: false, status: 0, json: null, error: e.message }));
+
+// ── 1. Has the SQL been applied? ──────────────────────────────────────────
+async function checkSql() {
+  addGroup('designer/production-setup.sql — has it been run?');
+  let applied = true;
+
+  for (const t of ['nac_customers', 'nac_jobs']) {
+    const r = await get(t + '?select=id&limit=1');
+    if (r.ok) addRow('PASS', t + ' exists', null, null);
+    else { applied = false; addRow('FAIL', t + ' does not exist', 'HTTP ' + r.status + ' — the SQL has not been run.', null); }
+  }
+  for (const [t, col] of [['nac_quotes', 'customer_id'], ['nac_designs', 'job_ref'],
+                          ['nac_quotes', 'servicem8_status']]) {
+    const r = await get(t + '?select=' + col + '&limit=1');
+    if (r.ok) addRow('PASS', t + '.' + col + ' exists', null, null);
+    else { applied = false; addRow('FAIL', t + '.' + col + ' is missing', 'HTTP ' + r.status, null); }
+  }
+
+  // The one that matters: is the public key still able to read NAC's prices?
+  const anon = { apikey: dbHeaders().apikey, Authorization: 'Bearer ' + dbHeaders().apikey };
+  const leak = await get('nac_settings?select=key&limit=1', anon);
+  if (leak.ok && (leak.json || []).length) {
+    addRow('FAIL', 'THE PUBLIC KEY CAN STILL READ NAC SETTINGS',
+      'Cost prices are readable by anyone who opens the page source. The security half of the SQL ' +
+      'has not taken effect.', null);
+    applied = false;
+  } else {
+    addRow('PASS', 'The public key can no longer read NAC settings', 'HTTP ' + leak.status, null);
+  }
+  setStep('sql', applied ? 'ok' : 'bad',
+    applied ? 'Applied — tables, columns and policies all present'
+            : 'NOT applied — run designer/production-setup.sql in the Supabase SQL editor');
+  return applied;
+}
+
+// ── 4. Customers and jobs ─────────────────────────────────────────────────
+async function migrateCrm() {
+  addGroup('Customers and jobs — customer → job → design → quote');
+  if (!await tableAvailable('nac_customers')) {
+    addRow('FAIL', 'Migration skipped — nac_customers does not exist',
+      'Run designer/production-setup.sql first.', null);
+    setStep('crm', 'bad', 'Skipped — the tables do not exist');
+    return;
+  }
+  const src = await loadMigrationSources();
+  if (src.errors.length) addRow('WARN', 'Some source rows could not be read', src.errors.join('; '), null);
+
+  const plan = planBackfill(src);
+  addRow('PASS', 'Dry run complete', describePlan(plan).replace(/\n/g, ' '), null);
+
+  if (planIsEmpty(plan) && plan.links.length === 0) {
+    addRow('PASS', 'Nothing to migrate — every customer and job already exists', null, null);
+    setStep('crm', 'ok', 'Already done — running it again changes nothing');
+    return;
+  }
+
+  const s = plan.summary;
+  const ok = await confirmDialog({
+    title: 'Write these customer and job records?',
+    message: 'Nothing you already have is overwritten — only blanks are filled, and every ' +
+             'disagreement stays listed for you to settle.' +
+             (plan.conflicts.length ? '\n\n' + plan.conflicts.length + ' disagreement(s) found; ' +
+              'the existing value is KEPT in every case.' : ''),
+    lines: [
+      s.customersCreated + ' new customer record(s)',
+      s.customersUpdated + ' existing customer(s) with blanks filled in',
+      s.jobsCreated + ' new job(s)',
+      s.linked + ' existing quote/design row(s) linked'
+    ].concat(plan.conflicts.slice(0, 6).flatMap(c =>
+      c.differences.map(d => 'KEPT ' + c.id + ' ' + d.field + ' = "' + d.kept + '" (not "' + d.offered + '")'))),
+    confirmLabel: 'Write them', cancelLabel: 'Not now'
+  });
+  if (!ok) {
+    addRow('WARN', 'Migration not applied — you chose not to', 'Run this page again when ready.', null);
+    setStep('crm', 'bad', 'Dry run shown; not applied');
+    return;
+  }
+
+  const r = await applyPlan(plan);
+  if (r.errors.length) {
+    addRow('FAIL', 'Migration stopped part way', r.errors.join('; ') +
+      ' · wrote ' + r.done.customers + ' customer(s), ' + r.done.jobs + ' job(s), ' + r.done.links + ' link(s). ' +
+      'What was written stays written; run this page again to finish.', null);
+    setStep('crm', 'bad', 'Stopped part way — see the report');
+    return;
+  }
+  addRow('PASS', 'Migration applied',
+    r.done.customers + ' customer(s), ' + r.done.jobs + ' job(s), ' + r.done.links + ' row(s) linked', null);
+
+  // Prove the chain joins up, on the live data.
+  const q = await get('nac_quotes?select=id,client,customer_id,job_ref&customer_id=not.is.null&limit=1');
+  const joined = q.json?.[0];
+  if (joined) {
+    const c = await get('nac_customers?id=eq.' + encodeURIComponent(joined.customer_id) + '&select=id,name');
+    const j = joined.job_ref
+      ? await get('nac_jobs?id=eq.' + encodeURIComponent(joined.job_ref) + '&select=id,customer_id,site_address')
+      : { json: [] };
+    const cust = c.json?.[0], job = j.json?.[0];
+    if (cust && (!joined.job_ref || (job && job.customer_id === cust.id))) {
+      addRow('PASS', 'The chain resolves on live data',
+        'quote ' + joined.id + ' → ' + cust.name + (job ? ' → ' + (job.site_address || job.id) : ''), null);
+    } else {
+      addRow('FAIL', 'A quote is linked but the chain does not resolve',
+        JSON.stringify({ quote: joined.id, customer_id: joined.customer_id, job_ref: joined.job_ref }), null);
+    }
+  } else {
+    addRow('WARN', 'No quote carries a customer link yet', 'Nothing to join — is there a quote in the database?', null);
+  }
+
+  // And that nothing was destroyed.
+  const before = src.quotes.length, after = (await get('nac_quotes?select=id&limit=1000')).json?.length ?? 0;
+  if (after >= before) addRow('PASS', 'Every existing quote is still there', before + ' before, ' + after + ' after', null);
+  else addRow('FAIL', 'QUOTES ARE MISSING AFTER THE MIGRATION', before + ' before, ' + after + ' after', null);
+
+  setStep('crm', 'ok', r.done.customers + ' customer(s), ' + r.done.jobs + ' job(s) created and linked');
+}
+
+// ── 5. ServiceM8 ──────────────────────────────────────────────────────────
+async function checkServiceM8() {
+  addGroup('ServiceM8');
+  let d = null;
+  try {
+    const r = await fetch('/api/servicem8-selftest');
+    d = await r.json();
+  } catch (e) {
+    addRow('FAIL', 'The ServiceM8 self test could not be reached', String(e.message || e), null);
+    setStep('sm8', 'bad', 'Endpoint unreachable'); return;
+  }
+  for (const c of (d.checks || [])) addRow(c.result === 'PASS' ? 'PASS' : 'FAIL', c.name, c.detail, null);
+  if (d.summary) addRow(d.ready ? 'PASS' : 'WARN', 'Summary', d.summary, null);
+  setStep('sm8', d.ready ? 'ok' : 'bad',
+    d.ready ? 'Reachable and the key works' : 'Not ready — see the report');
+}
+
+// ── Run it all ────────────────────────────────────────────────────────────
+document.getElementById('run').addEventListener('click', async () => {
+  const btn = document.getElementById('run');
+  btn.disabled = true; btn.textContent = 'Running…';
+  out.innerHTML = ''; lines.length = 0; failures = warnings = passes = 0;
+  const v = document.getElementById('verdict'); v.className = 'verdict';
+  for (const [id] of STEPS) setStep(id, '');
+
+  lines.push('NAC production setup · ' + new Date().toISOString());
+  lines.push('signed in as: ' + (currentUserEmail() || 'unknown'));
+
+  try {
+    setStep('sql', 'run');
+    await checkSql();
+
+    setStep('db', 'run');
+    const dbBefore = failures;
+    await runDatabaseSelfTest(io);
+    setStep('db', failures > dbBefore ? 'bad' : 'ok',
+      failures > dbBefore ? 'Something the application writes does not persist' : 'Everything written came back intact');
+
+    setStep('customer', 'run');
+    const custBefore = failures;
+    await runCustomerPathTest(io);
+    setStep('customer', failures > custBefore ? 'bad' : 'ok',
+      failures > custBefore ? 'The signing page is broken — fix before quoting' : 'A customer can still open and accept their quote');
+
+    setStep('crm', 'run');
+    await migrateCrm();
+
+    setStep('sm8', 'run');
+    await checkServiceM8();
+  } catch (e) {
+    addGroup('Unexpected');
+    addRow('FAIL', 'The setup run itself threw', String(e && e.message || e), null);
+  }
+
+  v.classList.add('on', failures ? 'bad' : 'ok');
+  v.textContent = failures
+    ? failures + ' CHECK(S) FAILED — not ready for real customer quotes. Every failure above carries ' +
+      'the reason, which is what is needed to fix it.'
+    : 'ALL ' + passes + ' CHECKS PASSED' + (warnings ? ' (' + warnings + ' warning(s) — read them)' : '') +
+      ' — the live system does everything the application needs.';
+  lines.push('\nRESULT: ' + v.textContent);
+  document.getElementById('log').value = lines.join('\n');
+  document.getElementById('logCard').hidden = false;
+  document.getElementById('copy').disabled = false;
+  btn.disabled = false; btn.textContent = 'Run it again';
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const ta = document.getElementById('log');
+  try { await navigator.clipboard.writeText(ta.value);
+        document.getElementById('copy').textContent = 'Copied'; }
+  catch (e) { ta.select(); document.getElementById('copy').textContent = 'Select the text and copy'; }
+});
+</script>

@@ -61,7 +61,11 @@ function diameterRates(group, placeholders) {
 
 const FLEX = diameterRates('flex', {
   // MMEM have not quoted these sizes — still placeholders.
-  100: 11.50, 125: 13.00, 150: 15.50, 450: 72.00, 500: 88.00
+  // 450 and 500 are deliberately absent: NAC never run them — two 350/400s
+  // instead, and 400 only on a return. They are not on the duct ladder in
+  // settings.mjs either, so a priced row here could never be selected and
+  // only inflated the count of prices still to be confirmed.
+  100: 11.50, 125: 13.00, 150: 15.50
 });
 const ZONE_MOTORS = diameterRates('zone_motor', {});
 const DIFFUSERS = diameterRates('diffuser', {
