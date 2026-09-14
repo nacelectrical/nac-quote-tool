@@ -299,6 +299,16 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .qactions{flex-direction:column;align-items:stretch}
 }
 
+/* Route editing — the help line and the touch targets. */
+.edit-help{background:rgba(245,194,0,.08);border:1px solid rgba(245,194,0,.35);
+  border-radius:8px;padding:9px 11px;line-height:1.6}
+@media (pointer:coarse){
+  /* On a touch screen every control in the route panel gets a real target. */
+  .plan-tools .btn{min-height:40px;padding-left:14px;padding-right:14px}
+  .plan-tools select,.plan-tools input{min-height:40px}
+  .btn.tiny{min-height:36px;min-width:40px}
+}
+
 /* Routed run table — the colour tells you what job the duct does. */
 .role-dot{display:inline-block;width:8px;height:8px;border-radius:2px;vertical-align:middle}
 .role-dot.main,.role-dot.trunk{background:#F5C200}

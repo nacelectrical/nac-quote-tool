@@ -17,8 +17,20 @@ export const MODES = {
   CALIBRATE: 'calibrate',
   ROOM: 'room',
   ROUTE: 'route',
-  LAYOUT: 'layout'
+  LAYOUT: 'layout',
+  EDIT_ROUTE: 'edit_route'
 };
+
+/**
+ * How big a target a handle is, in SCREEN pixels.
+ *
+ * An estimator is doing this on an iPad with a finger, standing in a roof
+ * space. A 4 px dot is unusable — Apple's own guidance is 44 px and duct nodes
+ * sit close together, so the drawn handle is modest and the TOUCH TARGET around
+ * it is large. The two are deliberately different sizes.
+ */
+export const HANDLE_DRAW_R = 7;
+export const HANDLE_TOUCH_R = 22;
 
 const LAYOUT_ICONS = {
   indoorUnit:   { label: 'Indoor unit',   glyph: 'IDU', fill: '#2B6CB8' },
@@ -42,6 +54,9 @@ export function createPlanViewer(container, opts = {}) {
     selectedRoomId: null,
     routes: {},            // key -> { points: [{x,y}], label }
     markers: [],           // junctions, reducers and zone dampers, drawn as symbols
+    handles: [],           // draggable nodes, only while EDIT_ROUTE is on
+    activeHandleId: null,
+    hoverHandleId: null,
     activeRouteKey: null,
     draftRoute: [],
     layout: {},            // key -> { x, y, label, type }
@@ -131,6 +146,7 @@ export function createPlanViewer(container, opts = {}) {
     if (state.showRooms) drawRooms();
     if (state.showRoutes) { drawRoutes(); drawMarkers(); }
     if (state.showLayout) drawLayout();
+    if (state.mode === MODES.EDIT_ROUTE) drawHandles();
     drawCalibration();
   }
 
@@ -308,6 +324,52 @@ export function createPlanViewer(container, opts = {}) {
     }
   }
 
+  /**
+   * The handles, drawn only in EDIT ROUTE mode.
+   *
+   * Normal view stays a clean design drawing — an estimator showing a customer
+   * the plan does not want it covered in dots. Turn editing on and every node
+   * an estimator can grab appears.
+   */
+  function drawHandles() {
+    for (const h of state.handles) {
+      const p = toScreen(h);
+      const active = h.id === state.activeHandleId;
+      const hover = h.id === state.hoverHandleId;
+      const r = HANDLE_DRAW_R * (active ? 1.35 : hover ? 1.15 : 1);
+      ctx.save();
+
+      // A halo showing the real touch target, so a finger knows where to land.
+      if (active || hover) {
+        ctx.fillStyle = 'rgba(245,194,0,0.16)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_TOUCH_R, 0, Math.PI * 2); ctx.fill();
+      }
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#0c0c24';
+      if (h.locked) {
+        // A locked node is a square with a bar through it: it reads as fixed,
+        // and it reads that way in a roof space on a dim iPad screen.
+        ctx.fillStyle = '#8f98b5';
+        ctx.beginPath(); ctx.rect(p.x - r, p.y - r, r * 2, r * 2); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(p.x - r * 0.55, p.y); ctx.lineTo(p.x + r * 0.55, p.y); ctx.stroke();
+      } else if (h.kind === 'junction') {
+        ctx.fillStyle = active ? '#ffe680' : '#F5C200';
+        ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.15, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (h.kind === 'end') {
+        ctx.fillStyle = active ? '#ffffff' : '#8fd0ff';
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else {
+        ctx.fillStyle = active ? '#ffffff' : '#5fa8ff';
+        ctx.beginPath();
+        ctx.rect(p.x - r * 0.8, p.y - r * 0.8, r * 1.6, r * 1.6);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   function drawLayout() {
     for (const [key, item] of Object.entries(state.layout)) {
       if (!item || item.x === undefined) continue;
@@ -440,6 +502,34 @@ export function createPlanViewer(container, opts = {}) {
       return;
     }
 
+    if (state.mode === MODES.EDIT_ROUTE) {
+      // The touch radius is in SCREEN px, so it has to be converted at the
+      // current zoom — otherwise a handle is easy to hit zoomed in and
+      // impossible zoomed out, which is exactly backwards.
+      const radius = HANDLE_TOUCH_R / state.scale;
+      const h = opts.onHandlePick?.(img, radius) || null;
+      if (h) {
+        state.activeHandleId = h.id;
+        state.dragging = { kind: 'handle', handle: h, start: img, last: img, moved: false };
+        // A press and hold on a node offers to delete it. On an iPad there is
+        // no right-click, and an estimator has one finger free.
+        state.holdTimer = setTimeout(() => {
+          if (state.dragging?.kind === 'handle' && !state.dragging.moved) {
+            state.dragging = null;
+            state.activeHandleId = null;
+            opts.onHandleHold?.(h);
+            draw();
+          }
+        }, 550);
+        draw();
+        return;
+      }
+      // Not on a handle: a tap on a run adds a point to it.
+      const leg = opts.onRoutePick?.(img, radius * 1.2) || null;
+      if (leg) { state.dragging = { kind: 'route-tap', leg, start: img, moved: false }; return; }
+      // Otherwise fall through to panning, so the plan can still be moved.
+    }
+
     if (state.mode === MODES.LAYOUT) {
       const key = layoutHit(img);
       if (key) { state.dragging = { kind: 'layout', key }; return; }
@@ -478,6 +568,32 @@ export function createPlanViewer(container, opts = {}) {
     }
 
     const img = toImage(e.clientX, e.clientY);
+
+    if (state.dragging?.kind === 'handle') {
+      const moved = Math.hypot(img.x - state.dragging.start.x, img.y - state.dragging.start.y);
+      // A little slop before it counts as a drag, so a tap with a shaky hand on
+      // a ladder is still a tap.
+      if (moved > 2 / state.scale) {
+        state.dragging.moved = true;
+        clearTimeout(state.holdTimer);
+        opts.onHandleDrag?.(state.dragging.handle, img);
+      }
+      state.dragging.last = img;
+      return;
+    }
+    if (state.dragging?.kind === 'route-tap') {
+      if (Math.hypot(img.x - state.dragging.start.x, img.y - state.dragging.start.y) > 3 / state.scale) {
+        state.dragging.moved = true;
+      }
+      return;
+    }
+    if (state.mode === MODES.EDIT_ROUTE && !state.dragging) {
+      // Light up what is under the pointer, so a mouse user can see what they
+      // are about to grab before they grab it.
+      const h = opts.onHandlePick?.(img, HANDLE_TOUCH_R / state.scale) || null;
+      const id = h?.id || null;
+      if (id !== state.hoverHandleId) { state.hoverHandleId = id; draw(); }
+    }
 
     if (state.dragging?.kind === 'layout') {
       const item = state.layout[state.dragging.key];
@@ -534,6 +650,23 @@ export function createPlanViewer(container, opts = {}) {
     if (state.dragging) {
       const d = state.dragging;
       state.dragging = null;
+      clearTimeout(state.holdTimer);
+
+      if (d.kind === 'handle') {
+        state.activeHandleId = null;
+        // One commit at the END of a drag, not on every pointermove. The whole
+        // design recalculates on a commit — length, pressure, materials, cost —
+        // and doing that sixty times a second would make the iPad crawl.
+        if (d.moved) opts.onHandleDrop?.(d.handle, d.last);
+        else opts.onHandleTap?.(d.handle);
+        draw();
+        return;
+      }
+      if (d.kind === 'route-tap') {
+        if (!d.moved) opts.onRouteTap?.(d.leg, d.start);
+        return;
+      }
+
       if (d.kind === 'layout') opts.onLayoutMove?.(d.key, state.layout[d.key]);
       else {
         const room = state.rooms.find(r => r.id === d.roomId);
@@ -623,6 +756,9 @@ export function createPlanViewer(container, opts = {}) {
     selectRoom(id) { state.selectedRoomId = id; draw(); },
     setRoutes(routes) { state.routes = routes || {}; draw(); },
     setMarkers(markers) { state.markers = markers || []; draw(); },
+    setHandles(handles) { state.handles = handles || []; draw(); },
+    /** Image px per screen px — the app needs it to size a touch radius. */
+    imagePerScreen() { return 1 / state.scale; },
     setActiveRoute(key) { state.activeRouteKey = key; state.draftRoute = []; draw(); },
     clearDraftRoute() { state.draftRoute = []; draw(); },
     undoDraftPoint() { state.draftRoute.pop(); draw(); return state.draftRoute.slice(); },

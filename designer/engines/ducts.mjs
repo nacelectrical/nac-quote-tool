@@ -351,7 +351,11 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       // quietly overwrites it.
       locked: !!seg.locked,
       lockedBy: seg.lockedBy || null,
-      lockedAt: seg.lockedAt || null
+      lockedAt: seg.lockedAt || null,
+      // Geometry the estimator moved by hand, so the drawing can show which
+      // runs are theirs and which the tool laid out.
+      edited: !!seg.edited,
+      editedAt: seg.editedAt || null
     });
   }
 

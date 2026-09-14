@@ -287,22 +287,40 @@ export function runPipeline(design, ctx = {}) {
 }
 
 /**
- * Put back any segment the estimator locked, and any they hand-edited.
+ * Put back the geometry the estimator has moved, and anything they locked.
  *
- * PART 9/10: RE-ROUTE UNLOCKED recalculates only what is not locked. A locked
- * run is geometry somebody has stood in a roof space and decided on, and it
- * outranks anything this tool works out from a drawing.
+ * Two stores, and the order matters:
+ *
+ *   routeEdits    every run the estimator has dragged. Applied first.
+ *   lockedRoutes  runs they have fixed in place. Applied second, so a lock
+ *                 always wins, and RE-ROUTE UNLOCKED keeps exactly these.
+ *
+ * This is the join that makes dragging safe: an edit is geometry on a REAL duct
+ * section, so the moment it is applied the length, the pressure, the materials
+ * and the cost all follow from it. There is no separate drawing to fall out of
+ * step with the design.
  */
 function applyLockedGeometry(tree, design, settings) {
+  const edits = design.routeEdits || {};
   const locked = design.lockedRoutes || {};
-  if (!tree?.segments?.length || !Object.keys(locked).length) return tree;
+  if (!tree?.segments?.length) return tree;
+  if (!Object.keys(edits).length && !Object.keys(locked).length) return tree;
+
   const segments = tree.segments.map(seg => {
+    let out = seg;
+    const edited = edits[seg.id];
+    if (edited?.points?.length >= 2) {
+      out = { ...out, points: edited.points, edited: true, editedAt: edited.at || null };
+    }
     const keep = locked[seg.id];
-    if (!keep?.points || keep.points.length < 2) return seg;
-    return { ...seg, points: keep.points, locked: true, lockedBy: keep.by || null,
-             lockedAt: keep.at || null };
+    if (keep?.points?.length >= 2) {
+      out = { ...out, points: keep.points, locked: true, lockedBy: keep.by || null,
+              lockedAt: keep.at || null };
+    }
+    return out;
   });
-  // Anything locked has to be re-measured on its own geometry.
+  // Moved geometry has to be re-measured on its own path, or every number
+  // downstream is still describing where the duct used to be.
   return measureTree({ ...tree, segments }, design.calibration, { settings });
 }
 

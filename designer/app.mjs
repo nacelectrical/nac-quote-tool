@@ -28,6 +28,8 @@ import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
 import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
+         routeHandles, handleAt, dragHandle, dragBranch, addRoutePoint,
+         deleteRoutePoint, snapToHandles, checkDiameterOverride, crossingCheck,
          LABEL_DETAIL, DEFAULT_LABEL_DETAIL, ROUTING_MODE,
          AUTO_ROUTE_NOTICE } from './engines/router.mjs';
 import { supplierOrderList, installerSheet, jobState, JOB_STATE,
@@ -82,6 +84,12 @@ export class DesignerApp {
     this.quickStep = 'upload';
     this.interruptions = { blocking: [], confirm: [], notes: [], all: [],
                            canQuote: false, canAutoProceed: false, summary: '' };
+    // Route editing. The undo stack holds geometry only — the design rebuilds
+    // itself from it, so an undo can never leave the drawing and the numbers
+    // describing two different systems.
+    this.editHistory = [];
+    this.editFuture = [];
+    this.liveDrag = null;
     this.selectedRoomId = null;
     this.settingsSection = null;
     this.specModelKey = '';
@@ -555,6 +563,13 @@ export class DesignerApp {
         onRoomDrawn: (box) => this.createRoomFromBox(box),
         onRouteComplete: (pts) => this.completeRoute(pts),
         onRouteDraft: () => this.render(),
+        onHandlePick: (at, r) => this.pickHandle(at, r),
+        onHandleDrag: (h, to) => this.onHandleDrag(h, to),
+        onHandleDrop: (h, to) => this.onHandleDrop(h, to),
+        onHandleTap: (h) => this.onHandleTap(h),
+        onHandleHold: (h) => this.onHandleHold(h),
+        onRoutePick: (at, r) => this.pickRoute(at, r),
+        onRouteTap: (leg, at) => this.onRouteTap(leg, at),
         onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
       });
     }
@@ -579,6 +594,7 @@ export class DesignerApp {
            label: z.zone, title: 'Zone damper — ' + z.zone }))]
       : []);
     this.viewer.setLayout(d.layout || {});
+    this.viewer.setHandles(this.currentHandles());
     this.viewer.redraw();
     return this.viewer;
   }
@@ -879,6 +895,39 @@ export class DesignerApp {
               () => this.unlockAllRoutes(),
               Object.keys(d.lockedRoutes || {}).length ? 'ghost small' : 'ghost small disabled'))
         : null,
+
+      // ── EDIT ROUTE ────────────────────────────────────────────────────────
+      routed ? h('div', { class: 'btn-row' },
+        button(mode === MODES.EDIT_ROUTE ? '✓ EDITING ROUTES' : 'EDIT ROUTES',
+          () => {
+            this.viewer.setMode(mode === MODES.EDIT_ROUTE ? MODES.VIEW : MODES.EDIT_ROUTE);
+            this.viewer.setHandles(this.currentHandles());
+            this.render();
+          },
+          mode === MODES.EDIT_ROUTE ? 'primary small' : 'small'),
+        button('↶ Undo', () => this.undoEdit(), this.canUndo() ? 'small' : 'ghost small disabled'),
+        button('↷ Redo', () => this.redoEdit(), this.canRedo() ? 'small' : 'ghost small disabled'),
+        Object.keys(d.ductDiameterOverrides || {}).length
+          ? button('Reset sizes to auto', () => this.resetAllDiameters(), 'ghost small')
+          : null,
+        Object.keys(d.routeEdits || {}).length
+          ? button('Undo all my moves', () => this.clearRouteEdits(), 'ghost small')
+          : null) : null,
+
+      mode === MODES.EDIT_ROUTE
+        ? h('div', { class: 'note edit-help' },
+            h('strong', {}, 'Drag any node to move it. '),
+            'A junction moves every run that meets it, so nothing comes apart. ' +
+            'Tap a duct to add a point, press and hold a point to remove it. ' +
+            'Locked runs will not move. Every move recalculates the length, the ' +
+            'pressure, the materials and the price.')
+        : null,
+
+      routed && Object.keys(d.routeEdits || {}).length
+        ? h('div', { class: 'note' },
+            Object.keys(d.routeEdits).length + ' run(s) moved by hand. ' +
+            'RE-ROUTE UNLOCKED will lay those out again unless they are locked.')
+        : null,
       !d.calibration ? banner('warn', 'Calibrate the plan first — routes cannot be measured without it.') : null,
       h('div', { class: 'grid-2' },
         field('Route for', select(this.routeTargetRoomId || '',
@@ -919,6 +968,186 @@ export class DesignerApp {
         : null);
   }
 
+  // ── PART 8: DRAGGABLE ROUTE EDITING ───────────────────────────────────────
+
+  /** Everything the estimator can grab, recomputed from the sized sections. */
+  currentHandles() {
+    if (!this.design.network?.routed) return [];
+    return routeHandles(this.design.network,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+  }
+
+  /** What is under the finger. The radius comes in already converted to image px. */
+  pickHandle(at, radius) {
+    return handleAt(this.currentHandles(), at, radius);
+  }
+
+  /** Which run a tap landed on, for adding a point to it. */
+  pickRoute(at, radius) {
+    let best = null, bestD = radius;
+    for (const s of (this.design.network?.sections || [])) {
+      if (!s.points || s.points.length < 2) continue;
+      for (let i = 1; i < s.points.length; i++) {
+        const d = this.distanceToLeg(at, s.points[i - 1], s.points[i]);
+        if (d < bestD) { bestD = d; best = { sectionId: s.id, at }; }
+      }
+    }
+    return best;
+  }
+
+  distanceToLeg(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(p.x - a.x, p.y - a.y);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  /**
+   * While the finger is down: redraw only.
+   *
+   * The whole design recalculates on a commit — length, pressure, materials,
+   * cost — and doing that on every pointermove would make an iPad crawl. So a
+   * drag shows the new geometry immediately and the engineering follows the
+   * moment the finger lifts.
+   */
+  onHandleDrag(handle, to) {
+    if (!this.design.network?.routed) return;
+    const snapped = snapToHandles(to, this.currentHandles(), { exclude: [handle.id], radius: 14 });
+    const { edits } = dragHandle(this.design.network, handle, snapped,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    this.liveDrag = edits;
+    // Paint the moved geometry straight onto the viewer, without touching the
+    // design, so nothing is half-committed if the drag is abandoned.
+    const overlay = this.routeOverlay();
+    for (const [id, points] of Object.entries(edits)) {
+      if (overlay[id]) overlay[id] = { ...overlay[id], points };
+    }
+    this.viewer.setRoutes(overlay);
+    this.viewer.redraw();
+  }
+
+  /** Finger up: commit the geometry and let the whole design follow. */
+  onHandleDrop(handle, to) {
+    this.liveDrag = null;
+    if (!this.design.network?.routed) return;
+    const snapped = snapToHandles(to, this.currentHandles(), { exclude: [handle.id], radius: 14 });
+    const { edits, blocked } = dragHandle(this.design.network, handle, snapped,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    if (!Object.keys(edits).length) {
+      this.update();
+      return void toast(blocked.length ? 'That run is locked. Unlock it to move it.' : 'Nothing moved.',
+        blocked.length ? 'bad' : '');
+    }
+    this.commitRouteEdits(edits,
+      (handle.kind === 'junction' ? 'Moved a junction' : 'Moved a duct node') +
+      (blocked.length ? ' — ' + blocked.length + ' locked run(s) stayed put' : ''));
+  }
+
+  /** A tap on a node selects its run, so the size and lock controls follow it. */
+  onHandleTap(handle) {
+    this.activeSegmentId = handle.sectionIds[0] || null;
+    this.render();
+  }
+
+  /** Press and hold a node to remove it — there is no right-click on an iPad. */
+  async onHandleHold(handle) {
+    const a = handle.attach.find(x => !x.end) || handle.attach[0];
+    if (!a) return;
+    const r = deleteRoutePoint(this.design.network, a.sectionId, a.index,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    if (!Object.keys(r.edits).length) {
+      return void toast(r.reason || 'That point cannot be removed.', 'bad');
+    }
+    const ok = await confirmDialog({
+      title: 'Remove this point?',
+      message: 'The run will go straight through instead. Its length, pressure and materials ' +
+               'all change with it.',
+      confirmLabel: 'Remove it' });
+    if (!ok) return;
+    this.commitRouteEdits(r.edits, 'Removed a route point');
+  }
+
+  /** A tap on a run adds a point there, ready to be dragged. */
+  onRouteTap(leg, at) {
+    const r = addRoutePoint(this.design.network, leg.sectionId, at,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    if (!Object.keys(r.edits).length) return void toast('That run is locked.', 'bad');
+    this.commitRouteEdits(r.edits, 'Added a route point');
+  }
+
+  /** Move a whole branch rather than node by node. */
+  moveWholeBranch(sectionId, delta) {
+    const r = dragBranch(this.design.network, sectionId, delta,
+      { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    if (!Object.keys(r.edits).length) return void toast('That branch is locked.', 'bad');
+    this.commitRouteEdits(r.edits, 'Moved a branch');
+  }
+
+  /**
+   * THE ONE PLACE AN EDIT LANDS.
+   *
+   * Geometry goes onto the design, the pipeline reruns, and everything
+   * downstream follows in the same breath: routed length, pressure drop, bill
+   * of materials, costing, warnings, the installer sheet and the order list.
+   * There is no second button to press and nothing to remember to refresh.
+   */
+  commitRouteEdits(edits, label) {
+    this.pushEditHistory(label);
+    const next = { ...(this.design.routeEdits || {}) };
+    for (const [id, points] of Object.entries(edits)) {
+      next[id] = { points, at: new Date().toISOString() };
+    }
+    this.design.routeEdits = next;
+    this.update();
+    const n = this.design.network?.totalDuctLengthM;
+    toast((label || 'Route edited') + (n != null ? ' — now ' + n + ' m of duct' : ''));
+  }
+
+  /** Geometry only, so an undo can never desynchronise the drawing and the numbers. */
+  editSnapshot() {
+    return JSON.stringify({
+      routeEdits: this.design.routeEdits || {},
+      lockedRoutes: this.design.lockedRoutes || {},
+      ductDiameterOverrides: this.design.ductDiameterOverrides || {}
+    });
+  }
+
+  pushEditHistory(label) {
+    this.editHistory.push({ label: label || 'edit', snapshot: this.editSnapshot() });
+    if (this.editHistory.length > 60) this.editHistory.shift();
+    // A new edit ends the redo chain — the future it led to no longer exists.
+    this.editFuture = [];
+  }
+
+  applyEditSnapshot(snapshot) {
+    const s = JSON.parse(snapshot);
+    this.design.routeEdits = s.routeEdits;
+    this.design.lockedRoutes = s.lockedRoutes;
+    this.design.ductDiameterOverrides = s.ductDiameterOverrides;
+    this.update();
+  }
+
+  undoEdit() {
+    const prev = this.editHistory.pop();
+    if (!prev) return void toast('Nothing to undo.');
+    this.editFuture.push({ label: prev.label, snapshot: this.editSnapshot() });
+    this.applyEditSnapshot(prev.snapshot);
+    toast('Undone: ' + prev.label);
+  }
+
+  redoEdit() {
+    const next = this.editFuture.pop();
+    if (!next) return void toast('Nothing to redo.');
+    this.editHistory.push({ label: next.label, snapshot: this.editSnapshot() });
+    this.applyEditSnapshot(next.snapshot);
+    toast('Redone: ' + next.label);
+  }
+
+  canUndo() { return this.editHistory.length > 0; }
+  canRedo() { return this.editFuture.length > 0; }
+
   /** PART 10 — AUTO ROUTE. Lays out the whole system from scratch. */
   async autoRoute() {
     const d = this.design;
@@ -958,6 +1187,7 @@ export class DesignerApp {
    */
   toggleRouteLock(sectionId) {
     const d = this.design;
+    this.pushEditHistory('Lock/unlock a run');
     const locked = { ...(d.lockedRoutes || {}) };
     if (locked[sectionId]) {
       delete locked[sectionId];
@@ -972,6 +1202,21 @@ export class DesignerApp {
     }
     d.lockedRoutes = locked;
     this.update();
+  }
+
+  /** Throw away every hand-moved run and go back to what the tool laid out. */
+  async clearRouteEdits() {
+    const n = Object.keys(this.design.routeEdits || {}).length;
+    if (!n) return;
+    const ok = await confirmDialog({
+      title: 'Undo all ' + n + ' of your route moves?',
+      message: 'Every run goes back to where the tool put it. Locked runs stay locked.',
+      confirmLabel: 'Undo my moves', danger: true });
+    if (!ok) return;
+    this.pushEditHistory('Undo all route moves');
+    this.design.routeEdits = {};
+    this.update();
+    toast('Back to the automatic layout.');
   }
 
   unlockAllRoutes() {
@@ -1033,13 +1278,37 @@ export class DesignerApp {
     ], rows, { compact: true });
   }
 
-  /** A size the estimator sets by hand outranks the calculated one. */
+  /**
+   * A size the estimator sets by hand outranks the calculated one, and it is
+   * NEVER quietly put back. If it pushes the velocity outside NAC's band that
+   * is said out loud and the size is kept; RESET TO AUTO is the only thing that
+   * undoes it.
+   */
   setSegmentDiameter(sectionId, value) {
+    this.pushEditHistory(value === '' || value === null
+      ? 'Reset a duct size to auto' : 'Set a duct size by hand');
     const o = { ...(this.design.ductDiameterOverrides || {}) };
     if (value === '' || value === null) delete o[sectionId];
     else o[sectionId] = Number(value);
     this.design.ductDiameterOverrides = o;
     this.update();
+
+    const sec = (this.design.network?.sections || []).find(s => s.id === sectionId);
+    const conflict = sec ? checkDiameterOverride(sec, this.settings) : null;
+    if (conflict) toast(conflict.message, conflict.severity === 'WARNING' ? 'bad' : '');
+    else if (value !== '' && value !== null && sec) {
+      toast(sec.destination + ' set to ' + sec.diameterMm + ' mm — ' + sec.velocityMs + ' m/s.');
+    }
+  }
+
+  resetSegmentDiameter(sectionId) { this.setSegmentDiameter(sectionId, null); }
+
+  resetAllDiameters() {
+    if (!Object.keys(this.design.ductDiameterOverrides || {}).length) return;
+    this.pushEditHistory('Reset every duct size to auto');
+    this.design.ductDiameterOverrides = {};
+    this.update();
+    toast('Every duct size back to the calculated one.');
   }
 
   renderLayoutPanel() {
