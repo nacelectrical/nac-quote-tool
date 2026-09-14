@@ -817,3 +817,319 @@ export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
   }
   return out;
 }
+
+// ── PART 8: EDITING THE ROUTE ───────────────────────────────────────────────
+//
+// The auto layout is a first pass. An estimator who has stood in the roof space
+// knows where the duct can actually go, and getting it there has to take
+// seconds — so every node on the drawing is draggable.
+//
+// THE RULE THAT MAKES THIS SAFE: an edit is a change to the GEOMETRY OF A REAL
+// DUCT SECTION, never to a drawing that sits alongside one. There is no second
+// model to drift out of step. Move a node and the length changes, which changes
+// the pressure, the bill of materials, the cost and the installer's sheet,
+// because they were all reading that section all along.
+//
+// Everything here is PURE: sections and a drag in, new geometry out. The viewer
+// does the pointer work and the app stores the result; the rules about what
+// stays connected to what live here, where they can be tested.
+
+/** How close two points have to be to count as the same node, in image px. */
+export const JOIN_TOLERANCE_PX = 1.5;
+
+const near = (a, b, tol = JOIN_TOLERANCE_PX) =>
+  a && b && Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol;
+
+/**
+ * Every handle an estimator can grab, with what it is attached to.
+ *
+ * A junction is not a separate object — it is the place where a trunk ends, the
+ * next trunk starts and the branches leave. So a handle carries EVERY section
+ * point that sits at that spot, and dragging it moves all of them together.
+ * That is what keeps the system connected when a junction is moved.
+ */
+export function routeHandles(network, { lockedIds = [] } = {}) {
+  const locked = new Set(lockedIds);
+  const byPos = new Map();
+  const key = (p) => Math.round(p.x / JOIN_TOLERANCE_PX) + ':' + Math.round(p.y / JOIN_TOLERANCE_PX);
+
+  for (const s of (network?.sections || [])) {
+    if (!s.points || s.points.length < 2) continue;
+    s.points.forEach((p, i) => {
+      const k = key(p);
+      const entry = byPos.get(k) || { x: p.x, y: p.y, attach: [] };
+      entry.x = p.x; entry.y = p.y;
+      entry.attach.push({ sectionId: s.id, index: i, role: s.role,
+                          end: i === 0 || i === s.points.length - 1 });
+      byPos.set(k, entry);
+    });
+  }
+
+  const handles = [];
+  for (const [k, e] of byPos) {
+    const roles = [...new Set(e.attach.map(a => a.role))];
+    const shared = e.attach.length > 1;
+    // A spot where more than one run meets IS the junction.
+    const kind = shared ? 'junction'
+      : e.attach[0].end ? 'end' : 'node';
+    handles.push({
+      id: 'h_' + k,
+      x: e.x, y: e.y,
+      kind,
+      roles,
+      attach: e.attach,
+      sectionIds: [...new Set(e.attach.map(a => a.sectionId))],
+      // A handle is locked if ANY run meeting there is locked — moving it would
+      // drag a locked run with it.
+      locked: e.attach.some(a => locked.has(a.sectionId)),
+      shared
+    });
+  }
+  return handles.sort((a, b) => (a.kind === 'junction' ? -1 : 1) - (b.kind === 'junction' ? -1 : 1));
+}
+
+/** The handle nearest a point, within `radius` image px. Junctions win ties. */
+export function handleAt(handles, at, radius) {
+  let best = null, bestD = Infinity;
+  for (const h of handles) {
+    const d = Math.hypot(h.x - at.x, h.y - at.y);
+    if (d > radius) continue;
+    // A junction under the same finger beats a plain node: it is the thing an
+    // estimator is almost always reaching for, and it is the harder one to hit.
+    const score = d - (h.kind === 'junction' ? radius * 0.35 : 0);
+    if (score < bestD) { bestD = score; best = h; }
+  }
+  return best;
+}
+
+/**
+ * Square every leg of a run, leaving the ENDS exactly where they are.
+ *
+ * A duct drawing full of diagonals is not a duct layout, it is spaghetti. But
+ * pinning a dragged corner to stay square is impossible when both its
+ * neighbours are fixed — the corner simply cannot move. So instead the point
+ * goes exactly where it was dropped and any leg that came out diagonal gets an
+ * ELBOW put in it, which is what a fitter would do with the actual duct.
+ *
+ * The ends never move: one is where the run leaves the trunk, the other is the
+ * outlet, and shifting either would change what the run connects to.
+ */
+export function squarePolyline(points, { preferVerticalFirst = null } = {}) {
+  if (!Array.isArray(points) || points.length < 2) return (points || []).map(p => ({ ...p }));
+  const out = [{ ...points[0] }];
+  let lastWasHorizontal = null;
+
+  for (let i = 1; i < points.length; i++) {
+    const a = out[out.length - 1];
+    const b = points[i];
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+
+    if (dx < 0.01 || dy < 0.01) {
+      out.push({ ...b });
+      if (dx >= 0.01) lastWasHorizontal = true;
+      else if (dy >= 0.01) lastWasHorizontal = false;
+      continue;
+    }
+
+    // Diagonal. Put an elbow in, carrying on in the direction the run was
+    // already going so the drawing keeps its shape.
+    const verticalFirst = preferVerticalFirst !== null ? preferVerticalFirst
+      : (lastWasHorizontal === true ? false : lastWasHorizontal === false ? true : dy > dx);
+    out.push(verticalFirst ? { x: a.x, y: b.y } : { x: b.x, y: a.y });
+    out.push({ ...b });
+    lastWasHorizontal = !verticalFirst;
+  }
+  return dedupePoints(out);
+}
+
+/**
+ * Move one point of a run, keeping every leg square unless a free one is asked
+ * for. The point lands exactly where it was dropped; the squaring happens in
+ * the legs around it.
+ */
+export function orthogonalise(points, index, to, { allowDiagonal = false } = {}) {
+  const moved = points.map((p, i) => (i === index ? { ...to } : { ...p }));
+  return allowDiagonal ? moved : squarePolyline(moved);
+}
+
+/** Snap to another handle, so runs actually meet rather than nearly meet. */
+export function snapToHandles(at, handles, { exclude = [], radius = 12 } = {}) {
+  const skip = new Set(exclude);
+  let best = null, bestD = Infinity;
+  for (const h of handles) {
+    if (skip.has(h.id)) continue;
+    const d = Math.hypot(h.x - at.x, h.y - at.y);
+    if (d <= radius && d < bestD) { bestD = d; best = h; }
+  }
+  return best ? { x: best.x, y: best.y, snappedTo: best.id } : { ...at, snappedTo: null };
+}
+
+/**
+ * Drag one handle and return the new geometry of every section it touches.
+ *
+ * MOVE A JUNCTION AND EVERYTHING STAYS JOINED. The handle carries every
+ * section point sitting at that spot, so the trunk arriving, the trunk leaving
+ * and each branch hanging off it all move with it — a junction cannot be pulled
+ * apart by accident, which would be the easiest way to produce a drawing that
+ * looks fine and is not a system.
+ *
+ * A LOCKED SECTION DOES NOT MOVE. If a handle is shared with a locked run, the
+ * locked run keeps its geometry and the others follow the drag, so the lock
+ * always wins.
+ *
+ * @returns {{edits: Object, moved: String[], blocked: String[]}}
+ */
+export function dragHandle(network, handle, to, { lockedIds = [], allowDiagonal = false } = {}) {
+  const locked = new Set(lockedIds);
+  const byId = new Map((network?.sections || []).map(s => [s.id, s]));
+  const edits = {};
+  const moved = [];
+  const blocked = [];
+
+  for (const a of (handle?.attach || [])) {
+    const s = byId.get(a.sectionId);
+    if (!s?.points) continue;
+    if (locked.has(a.sectionId)) { blocked.push(a.sectionId); continue; }
+    const base = edits[a.sectionId] || s.points;
+    // A shared point is a joint: it lands exactly where it is put, because
+    // nudging it per-section would tear the junction apart. The legs leading
+    // away from it are still squared, so moving a junction does not leave four
+    // diagonals behind it.
+    const placed = base.map((p, i) => (i === a.index ? { ...to } : { ...p }));
+    edits[a.sectionId] = allowDiagonal ? placed : squarePolyline(placed);
+    moved.push(a.sectionId);
+  }
+  return { edits, moved: [...new Set(moved)], blocked: [...new Set(blocked)] };
+}
+
+/**
+ * Move a whole branch, keeping it attached where it leaves the trunk.
+ *
+ * Dragging one node at a time to shift a run across a room is the sort of thing
+ * that makes an estimator give up and draw it by hand.
+ */
+export function dragBranch(network, sectionId, delta, { lockedIds = [] } = {}) {
+  if ((lockedIds || []).includes(sectionId)) return { edits: {}, moved: [], blocked: [sectionId] };
+  const s = (network?.sections || []).find(x => x.id === sectionId);
+  if (!s?.points || s.points.length < 2) return { edits: {}, moved: [], blocked: [] };
+  // The first point is the take-off and stays on the trunk; everything after it
+  // shifts. Otherwise the branch comes away from the system.
+  const pts = s.points.map((p, i) => (i === 0 ? { ...p }
+    : { x: round(p.x + delta.x, 2), y: round(p.y + delta.y, 2) }));
+  return { edits: { [sectionId]: pts }, moved: [sectionId], blocked: [] };
+}
+
+/** Add a point part way along a run, so a duct can be taken around something. */
+export function addRoutePoint(network, sectionId, at, { lockedIds = [] } = {}) {
+  if ((lockedIds || []).includes(sectionId)) return { edits: {}, blocked: [sectionId] };
+  const s = (network?.sections || []).find(x => x.id === sectionId);
+  if (!s?.points || s.points.length < 2) return { edits: {}, blocked: [] };
+
+  // Put it on the leg it was actually dropped on.
+  let bestLeg = 0, bestD = Infinity;
+  for (let i = 1; i < s.points.length; i++) {
+    const d = distanceToSegment(at, s.points[i - 1], s.points[i]);
+    if (d < bestD) { bestD = d; bestLeg = i; }
+  }
+  const pts = [...s.points.slice(0, bestLeg).map(p => ({ ...p })),
+               { x: round(at.x, 2), y: round(at.y, 2) },
+               ...s.points.slice(bestLeg).map(p => ({ ...p }))];
+  return { edits: { [sectionId]: pts }, index: bestLeg, blocked: [] };
+}
+
+/**
+ * Remove a point.
+ *
+ * The two ends are not removable: one is where the duct leaves the trunk and
+ * the other is the outlet. Deleting either would disconnect the run rather than
+ * simplify it.
+ */
+export function deleteRoutePoint(network, sectionId, index, { lockedIds = [] } = {}) {
+  if ((lockedIds || []).includes(sectionId)) return { edits: {}, blocked: [sectionId], reason: 'locked' };
+  const s = (network?.sections || []).find(x => x.id === sectionId);
+  if (!s?.points) return { edits: {}, blocked: [] };
+  if (index <= 0 || index >= s.points.length - 1) {
+    return { edits: {}, blocked: [sectionId],
+             reason: 'An end point is where this run joins the system. Move it instead.' };
+  }
+  if (s.points.length <= 2) {
+    return { edits: {}, blocked: [sectionId], reason: 'A run needs at least two points.' };
+  }
+  return { edits: { [sectionId]: s.points.filter((_, i) => i !== index).map(p => ({ ...p })) },
+           blocked: [] };
+}
+
+function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (!len2) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/**
+ * Is a manual diameter at odds with what the design actually needs?
+ *
+ * A manual size is never changed back — the estimator may know something the
+ * tool does not. But it is never silently accepted either: if it pushes the
+ * velocity outside NAC's configured band, that is said out loud.
+ */
+export function checkDiameterOverride(section, settings = DEFAULT_SETTINGS) {
+  if (!section?.selection?.manual) return null;
+  const role = section.role === 'trunk' ? 'main' : section.role;
+  const band = settings.duct.velocity[role] || settings.duct.velocity.branch;
+  const v = section.velocityMs;
+  if (v > band.max) {
+    return { code: 'MANUAL_DIAMETER_OVER_VELOCITY', severity: 'WARNING',
+      message: (section.destination || section.id) + ': the ' + section.diameterMm +
+        ' mm you set runs at ' + round(v, 2) + ' m/s, over the ' + band.max +
+        ' m/s maximum for a ' + role + ' duct. It has been kept — reset it to auto to undo.' };
+  }
+  if (v > band.preferred) {
+    return { code: 'MANUAL_DIAMETER_ABOVE_PREFERRED', severity: 'CHECK',
+      message: (section.destination || section.id) + ': ' + round(v, 2) + ' m/s at the ' +
+        section.diameterMm + ' mm you set, above the preferred ' + band.preferred + ' m/s.' };
+  }
+  if (v > 0 && v < band.preferredMin) {
+    return { code: 'MANUAL_DIAMETER_BELOW_PREFERRED', severity: 'CHECK',
+      message: (section.destination || section.id) + ': ' + round(v, 2) + ' m/s at the ' +
+        section.diameterMm + ' mm you set, below the preferred ' + band.preferredMin +
+        ' m/s — oversized for the air it carries.' };
+  }
+  return null;
+}
+
+/** PART 16 — do any two runs cross where they should not? */
+export function crossingCheck(network) {
+  const runs = (network?.sections || []).filter(s => s.points?.length >= 2);
+  const hits = [];
+  for (let i = 0; i < runs.length; i++) {
+    for (let j = i + 1; j < runs.length; j++) {
+      const a = runs[i], b = runs[j];
+      // Runs that share a joint are supposed to meet.
+      if (a.parentId === b.id || b.parentId === a.id) continue;
+      if (legsCross(a.points, b.points)) hits.push([a.id, b.id]);
+    }
+  }
+  return hits;
+}
+
+function legsCross(A, B) {
+  for (let i = 1; i < A.length; i++) {
+    for (let j = 1; j < B.length; j++) {
+      if (segmentsIntersect(A[i - 1], A[i], B[j - 1], B[j])) return true;
+    }
+  }
+  return false;
+}
+
+function segmentsIntersect(p1, p2, p3, p4) {
+  const d = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
+  // Touching at a shared endpoint is a joint, not a crossing.
+  if (near(p1, p3) || near(p1, p4) || near(p2, p3) || near(p2, p4)) return false;
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
