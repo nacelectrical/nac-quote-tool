@@ -247,9 +247,14 @@
               <span class="psub">No customer, pricing or design information to an unauthenticated visitor. Customer pages keep working.</span></td>
           <td><span class="pill pass">TESTED — PASS</span></td>
           <td>The gate holds on all three internal pages, no database call is made before
-              sign-in, and the staff token reaches every request. <b>The RLS half is NOT
-              TESTABLE</b> until <code>designer/rls.sql</code> is applied — until then the anon
-              key in the page source still reads everything.</td>
+              sign-in, and the staff token reaches every request. The RLS half has since been
+              <b>run against a real PostgreSQL 16</b> on a copy of the live schema: signed out,
+              settings, designs and customers return nothing; a customer can still open and
+              accept their own quote; an attempt to change the price is refused. <b>One gap is
+              now proven rather than assumed</b> — the anon policy on <code>nac_quotes</code> is
+              <code>using (true)</code>, so the public key can still LIST every quote (names, job
+              descriptions, totals). Closing that means moving the signing page onto a server
+              endpoint; it is not done, and it is not closed by any SQL.</td>
         </tr>
         <tr data-s="TESTED — PASS">
           <td class="pid">P4</td>
@@ -460,13 +465,18 @@
       <div class="w">Note: after this, the internal pages ask for a sign-in. Create a NAC staff user in Supabase → Authentication → Users first, or you will lock yourself out.</div>
     </li>
     <li>
-      <div class="t">Paste one SQL file</div>
-      <div class="d">Open the Supabase SQL editor and run <code>designer/production-setup.sql</code>.
-        It is the security policies and the customer/job tables joined into one script, in the
-        order they have to run. Additive and reversible: it drops nothing, renames nothing and
-        changes no existing value. This is the one step no browser can do for you — Supabase has
-        no way to run SQL from a page.</div>
-      <div class="w">Until it runs, the public key in the page source can still read NAC's cost prices.</div>
+      <div class="t">Run two SQL files</div>
+      <div class="d">In the Supabase SQL editor, run <code>designer/schema-diagnostic.sql</code>
+        first — it is read-only and it prints exactly what is in the database — then
+        <code>designer/production-setup.sql</code>. The first version of that script failed with
+        <code>relation "public.nac_designs" does not exist</code>: it assumed a table that was
+        optional and had never been created. It now creates the missing tables before altering
+        anything, refuses to run at all if a live table is missing, carries the designs saved in
+        the key/value fallback across into <code>nac_designs</code>, and runs as one transaction
+        so a failure leaves nothing half-applied. Every path was run against a real PostgreSQL 16
+        on a copy of the live schema. This is the one step no browser can do — Supabase has no
+        way to run SQL from a page.</div>
+      <div class="w">Until it runs, the public key in the page source can still read NAC's cost prices. Check <code>SUPABASE_KEY</code> in Vercel is the SERVICE ROLE key before you run it, or the intake form will stop creating quotes — /setup.html now checks this for you.</div>
     </li>
     <li>
       <div class="t">Open /setup.html and press the button</div>

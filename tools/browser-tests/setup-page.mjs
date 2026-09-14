@@ -69,6 +69,22 @@ async function route(p, db) {
     if (/customer_id=not\.is\.null/.test(url)) rows = rows.filter(x => x.customer_id);
     return json(rows);
   });
+  // The server-key self test, answering the way it does when the Vercel
+  // variable SUPABASE_KEY holds the ANON key — the case that silently stops the
+  // intake form creating quotes once row level security is on.
+  await p.route('**/api/server-key-selftest', r => {
+    const auth = r.request().headers()['authorization'] || '';
+    if (!/^Bearer\s+\S/.test(auth)) {
+      return r.fulfill({ status: 401, contentType: 'application/json',
+        body: JSON.stringify({ error: 'NAC staff sign-in required.' }) });
+    }
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ready: false, willWrite: false,
+        summary: 'NOT READY. SUPABASE_KEY is the anon key. Applying the security SQL WILL stop ' +
+                 'the intake form creating quotes until it is changed to the service role key.',
+        checks: [{ name: 'It is the SERVICE ROLE key', result: 'FAIL',
+                   detail: 'It is the ANON key.' }] }) });
+  });
   // The ServiceM8 self test endpoint, as the deployed function would answer.
   await p.route('**/api/servicem8-selftest', r => {
     // Staff-only, exactly as the deployed function is.
@@ -150,6 +166,15 @@ console.log('\n[B] The SQL HAS been run — full setup, migration confirmed');
   say('the chain resolves on the live rows', /chain resolves on live data/.test(r.report),
     (/chain resolves on live data[^\n]*/.exec(r.report) || [''])[0].slice(0, 90));
   say('it proves no quote was destroyed', /Every existing quote is still there/.test(r.report));
+  // The check that stands between applying row level security and the intake
+  // form going quiet. It must be run, and an anon key must read as a FAILURE
+  // naming the consequence — not a note somebody scrolls past.
+  say('the server’s own key is checked at all', /SERVICE ROLE key/.test(r.report));
+  say('an anon server key is a FAILURE, not a warning',
+    /FAIL[^\n]*It is the SERVICE ROLE key/.test(r.report));
+  say('and it says what breaks', /intake form creating quotes/.test(r.report));
+  say('the server key check sent the staff token, not an anonymous request',
+    !/server key check refused the sign-in/.test(r.report));
   say('ServiceM8 is reported as not ready', /SERVICEM8_API_KEY/.test(r.report));
   say('the ServiceM8 check sent the staff token, not an anonymous request',
     !/refused the sign-in/.test(r.report));

@@ -125,6 +125,7 @@ const STEPS = [
   ['db',       'Live database round trip',             'Create, read back, edit, list and delete — real rows'],
   ['customer', 'The customer’s own signing page',      'Must still work with no account'],
   ['crm',      'Customers and jobs migration',         'Dry run first; nothing is written until you say so'],
+  ['serverkey','The server’s own key',                 'Can the intake form still create quotes once security is on?'],
   ['sm8',      'ServiceM8',                            'Read-only check of the key and the endpoints']
 ];
 for (const [id, title, detail] of STEPS) {
@@ -289,7 +290,37 @@ async function migrateCrm() {
   setStep('crm', 'ok', r.done.customers + ' customer(s), ' + r.done.jobs + ' job(s) created and linked');
 }
 
-// ── 5. ServiceM8 ──────────────────────────────────────────────────────────
+// ── 5. Can the SERVER still write quotes? ─────────────────────────────────
+// The intake form and the splits quote builder write through /api, using the
+// Vercel variable SUPABASE_KEY. Row level security refuses an anon INSERT into
+// nac_quotes, so if that variable holds the anon key rather than the service
+// role key, those two stop creating quotes the moment the SQL is applied — and
+// nothing on screen would say so. This is the check that catches it.
+async function checkServerKey() {
+  addGroup('The server’s own key — can the intake form still create quotes?');
+  let d = null;
+  try {
+    const r = await fetch('/api/server-key-selftest', {
+      headers: { Authorization: 'Bearer ' + (currentSession()?.access_token || '') }
+    });
+    d = await r.json();
+    if (r.status === 401) {
+      addRow('FAIL', 'The server key check refused the sign-in',
+        (d && d.error) || 'HTTP 401 — sign out and back in, then run this again.', null);
+      setStep('serverkey', 'bad', 'Sign-in was not accepted'); return;
+    }
+  } catch (e) {
+    addRow('FAIL', 'The server key check could not be reached', String(e.message || e), null);
+    setStep('serverkey', 'bad', 'Endpoint unreachable — deploy the latest build'); return;
+  }
+  for (const c of (d.checks || [])) addRow(c.result === 'PASS' ? 'PASS' : 'FAIL', c.name, c.detail, null);
+  if (d.summary) addRow(d.ready ? 'PASS' : 'FAIL', 'Summary', d.summary, null);
+  setStep('serverkey', d.ready ? 'ok' : 'bad',
+    d.ready ? 'Service role key — the intake form keeps working'
+            : 'The intake form will stop creating quotes until this is fixed');
+}
+
+// ── 6. ServiceM8 ──────────────────────────────────────────────────────────
 async function checkServiceM8() {
   addGroup('ServiceM8');
   let d = null;
@@ -343,6 +374,9 @@ document.getElementById('run').addEventListener('click', async () => {
 
     setStep('crm', 'run');
     await migrateCrm();
+
+    setStep('serverkey', 'run');
+    await checkServerKey();
 
     setStep('sm8', 'run');
     await checkServiceM8();
