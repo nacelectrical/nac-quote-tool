@@ -3,7 +3,6 @@ Verified source already loaded: MMEM Electrical Maroochydore quote 447-321514-00
 
 ITEM                                           UNIT             SHIPPED RATE   WHY IT IS LISTED
 --------------------------------------------------------------------------------------------------------------
-4-way ceiling diffuser                         each             $68.00         shipped placeholder, not a NAC or supplier price
 Condensate safety tray / pump                  each             $120.00        shipped placeholder, not a NAC or supplier price
 Duct hanging strap / support                   each             $4.80          shipped placeholder, not a NAC or supplier price
 Duct joiner                                    each             $9.50          shipped placeholder, not a NAC or supplier price
@@ -12,7 +11,7 @@ Insulated flexible duct R1.0 100 mm            m                $11.50         s
 Insulated flexible duct R1.0 125 mm            m                $13.00         shipped placeholder, not a NAC or supplier price
 Insulated flexible duct R1.0 150 mm            m                $15.50         shipped placeholder, not a NAC or supplier price
 Interconnecting cable                          m                $7.20          shipped placeholder, not a NAC or supplier price
-Linear bar grille                              each             $128.00        shipped placeholder, not a NAC or supplier price
+Linear bar grille                              each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 Manual balancing damper                        each             $42.00         shipped placeholder, not a NAC or supplier price
 Outdoor unit mounting feet / slab              set              $95.00         shipped placeholder, not a NAC or supplier price
 Power supply cable                             m                $9.40          shipped placeholder, not a NAC or supplier price
@@ -23,11 +22,9 @@ Round insulated diffuser 200 mm                each             $22.00         s
 Round insulated diffuser 350 mm                each             $30.00         shipped placeholder, not a NAC or supplier price
 Round insulated diffuser 400 mm                each             $34.00         shipped placeholder, not a NAC or supplier price
 Sealant, screws, cable ties, sundries          job              $145.00        shipped placeholder, not a NAC or supplier price
-Sidewall supply grille                         each             $58.00         shipped placeholder, not a NAC or supplier price
-Slot diffuser                                  each             $96.00         shipped placeholder, not a NAC or supplier price
 Weatherproof isolator                          each             $68.00         shipped placeholder, not a NAC or supplier price
 Zone motor / motorised damper 24 V 100 mm      each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 Zone motor / motorised damper 24 V 125 mm      each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 Zone motor / motorised damper 24 V 150 mm      each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 --------------------------------------------------------------------------------------------------------------
-26 price(s) to confirm — 3 with no price at all, 23 on placeholder rates.
+23 price(s) to confirm — 4 with no price at all, 19 on placeholder rates.

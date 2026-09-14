@@ -200,12 +200,29 @@ test('airflow above and below the unit rating are both reported', () => {
 // ── PART 15: outlets ────────────────────────────────────────────────────────
 
 test('outlet quantity follows the capacity table and the throw limit', () => {
-  const r = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320, { type: 'four_way' });
-  assert.equal(r.quantity, 2);
-  assert.equal(r.perOutletLs, 160);
+  // NAC fit round insulated diffusers: 90 L/s nominal, 130 L/s maximum.
+  const r = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320);
+  assert.equal(r.quantity, 3);
+  assert.ok(r.perOutletLs <= 130, r.perOutletLs + ' L/s exceeds the round diffuser maximum');
 
   const small = designRoomOutlets({ id: 's', label: 'Bed 2', widthMm: 3200, lengthMm: 3400 }, 85);
   assert.equal(small.quantity, 1);
+
+  // A linear bar grille carries more air, so the same room needs fewer.
+  const linear = designRoomOutlets({ id: 'l', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320,
+    { type: 'linear_bar' });
+  assert.ok(linear.quantity <= r.quantity);
+});
+
+test('an outlet type NAC no longer fit falls back rather than breaking a saved design', () => {
+  // 4-way, slot and sidewall were removed. A design saved before that must
+  // still open and still produce outlets.
+  const old = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320,
+    { type: 'four_way' });
+  assert.ok(old.quantity > 0, 'it still designs outlets');
+  assert.equal(old.quantity,
+    designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320).quantity,
+    'and it falls back to the round diffuser NAC actually fit');
 });
 
 test('a long room is split for throw even when one outlet would carry the air', () => {

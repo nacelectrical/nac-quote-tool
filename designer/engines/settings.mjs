@@ -157,12 +157,14 @@ export const DEFAULT_SETTINGS = {
   // ── Outlets (PART 15) ───────────────────────────────────────────────────────
   outlets: {
     // Practical capacity per outlet before noise becomes an issue.
+    // What NAC actually fit. The 4-way, slot and sidewall outlets were in here
+    // from the shipped defaults and NAC do not use them; offering them only
+    // meant an outlet type that could be chosen and then had no confirmed
+    // price behind it. The linear bar grille stays because it does go on
+    // occasionally — it is quoted separately, which the bill of materials says.
     types: {
       round_diffuser:  { label: 'Round ceiling diffuser', minLs: 25, nominalLs: 90,  maxLs: 130, throwM: 4.0, faceVelocityMs: 2.5 },
-      four_way:        { label: '4-way ceiling diffuser', minLs: 40, nominalLs: 130, maxLs: 190, throwM: 5.5, faceVelocityMs: 2.8 },
-      linear_bar:      { label: 'Linear bar grille',      minLs: 30, nominalLs: 110, maxLs: 160, throwM: 5.0, faceVelocityMs: 2.6 },
-      slot:            { label: 'Slot diffuser',          minLs: 25, nominalLs: 80,  maxLs: 120, throwM: 4.5, faceVelocityMs: 2.4 },
-      sidewall:        { label: 'Sidewall grille',        minLs: 30, nominalLs: 100, maxLs: 150, throwM: 6.0, faceVelocityMs: 2.5 }
+      linear_bar:      { label: 'Linear bar grille',      minLs: 30, nominalLs: 110, maxLs: 160, throwM: 5.0, faceVelocityMs: 2.6 }
     },
     defaultType: 'round_diffuser',
     // Rooms with a long dimension over this get a second outlet for throw.

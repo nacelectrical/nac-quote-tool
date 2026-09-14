@@ -4,7 +4,8 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
-import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE } from './materials.mjs';
+import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
+         QUOTED_SEPARATELY } from './materials.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -13,6 +14,7 @@ function line(key, quantity, ctx, extra = {}) {
     key,
     label: r.label,
     unit: r.unit,
+    quotedSeparately: QUOTED_SEPARATELY.includes(key),
     quantity: qty,
     unitCost: r.cost,
     totalCost: r.cost !== null ? round(r.cost * qty, 2) : null,
@@ -256,9 +258,19 @@ export function buildBillOfMaterials(design, opts = {}) {
  */
 export function summariseBom(items) {
   const placeholderLines = items.filter(i => i.priceSource === PRICE_SOURCE.PLACEHOLDER);
-  const unpricedLines = items.filter(i => !i.priced);
+  // A line NAC quote separately carries no rate ON PURPOSE. It is not a price
+  // somebody forgot, so it must not block the quote the way a genuine hole
+  // does — but it still appears on the bill of materials saying what it is.
+  const separateLines = items.filter(i => i.quotedSeparately);
+  const unpricedLines = items.filter(i => !i.priced && !i.quotedSeparately);
 
   const warnings = [];
+  if (separateLines.length) {
+    warnings.push({ code: 'QUOTED_SEPARATELY', severity: 'CHECK',
+      message: separateLines.map(l => l.label).join(', ') +
+        ' carries no rate here because NAC quote it separately. Add it to the quote as its own ' +
+        'line — the price below does not include it.' });
+  }
   if (placeholderLines.length) {
     warnings.push({ code: 'MATERIAL_PRICE_PLACEHOLDER', severity: 'CHECK',
       message: placeholderLines.length + ' material line(s) are still on shipped placeholder rates, not NAC prices: ' +
@@ -314,6 +326,8 @@ export function summariseBom(items) {
                                                     totalCost: l.totalCost })),
     unpricedCount: unpricedLines.length,
     unpricedLabels: unpricedLines.map(l => l.label),
+    quotedSeparatelyCount: separateLines.length,
+    quotedSeparatelyLabels: separateLines.map(l => l.label),
     warnings
   };
 }

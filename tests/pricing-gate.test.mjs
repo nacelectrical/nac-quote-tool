@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildBillOfMaterials, editBomLine, applyBomEdits, summariseBom } from '../designer/engines/bom.mjs';
+import { MATERIAL_CATALOGUE } from '../designer/engines/materials.mjs';
+import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { calculateCommercials, calculateLabour } from '../designer/engines/costing.mjs';
 
 const design = () => ({
@@ -121,4 +123,41 @@ test('summariseBom is the single source of the derived figures', () => {
                    'placeholderCount','placeholderCost','unpricedCount']) {
     assert.equal(again[k], bom[k], k);
   }
+});
+
+test('a line NAC quote separately does not block the quote, but is declared', () => {
+  // A linear bar grille is priced on its own when it goes on a job. Carrying a
+  // shipped rate meant a number nobody agreed could reach a customer; carrying
+  // no rate at all must not look like a price somebody forgot.
+  const bom = buildBillOfMaterials({
+    outlets: { rows: [{ roomId: 'r1', type: 'linear_bar', quantity: 2, label: 'Living' }] },
+    network: { sections: [], totalsByDiameter: {} }
+  });
+  const line = bom.items.find(i => /Linear bar grille/.test(i.label));
+  assert.ok(line, 'it still appears on the bill of materials');
+  assert.equal(line.unitCost, null, 'with no rate');
+  assert.equal(line.quotedSeparately, true);
+
+  assert.equal(bom.unpricedCount, 0, 'it is NOT counted as a hole in the pricing');
+  assert.ok(!(bom.unpricedLabels || []).includes('Linear bar grille'));
+  assert.equal(bom.quotedSeparatelyCount, 1);
+
+  const w = bom.warnings.find(x => x.code === 'QUOTED_SEPARATELY');
+  assert.ok(w, 'and the estimator is told to add it as its own line');
+  assert.match(w.message, /quote it separately/);
+});
+
+test('the outlets NAC do not fit are gone from the catalogue and the settings', () => {
+  for (const key of ['diffuser_4way', 'diffuser_slot', 'grille_sidewall']) {
+    assert.equal(MATERIAL_CATALOGUE[key], undefined, key + ' is still in the catalogue');
+  }
+  for (const type of ['four_way', 'slot', 'sidewall']) {
+    assert.equal(DEFAULT_SETTINGS.outlets.types[type], undefined, type + ' is still selectable');
+  }
+  // The two NAC do fit are still there.
+  assert.ok(DEFAULT_SETTINGS.outlets.types.round_diffuser);
+  assert.ok(DEFAULT_SETTINGS.outlets.types.linear_bar);
+  // And duct joiners and reducers stay — NAC use them.
+  assert.ok(MATERIAL_CATALOGUE.joiner);
+  assert.ok(MATERIAL_CATALOGUE.reducer);
 });

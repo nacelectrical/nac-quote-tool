@@ -78,10 +78,21 @@ const DIFFUSERS = diameterRates('diffuser', {
  * the gap is visible rather than buried in the table below.
  */
 export const UNQUOTED = [
-  'reducer', 'joiner', 'damper_manual', 'diffuser_4way', 'diffuser_slot',
-  'grille_linear', 'grille_sidewall', 'drain_kit', 'interconnect_cable',
-  'power_cable', 'isolator', 'hanging_kit', 'outdoor_feet'
+  'reducer', 'joiner', 'damper_manual',
+  'drain_kit', 'interconnect_cable', 'power_cable', 'isolator',
+  'hanging_kit', 'outdoor_feet'
 ];
+
+/**
+ * Outlets NAC quote as a separate line, not out of this price book.
+ *
+ * A linear bar grille goes on a job now and then, and when it does NAC price
+ * it on its own. Carrying a shipped rate for it meant a number nobody had
+ * agreed could walk into a customer's quote. It is listed on the bill of
+ * materials with no cost and said to be quoted separately, which is the truth
+ * and is not the same as a line somebody forgot to price.
+ */
+export const QUOTED_SEPARATELY = ['grille_linear'];
 
 export const MATERIAL_CATALOGUE = {
   // ── Quoted by MMEM (447-321514-000) ───────────────────────────────────────
@@ -148,10 +159,9 @@ export const MATERIAL_CATALOGUE = {
   reducer:          { label: 'Duct reducer',                     unit: 'each', cost: 18.00 },
   joiner:           { label: 'Duct joiner',                      unit: 'each', cost: 9.50 },
   damper_manual:    { label: 'Manual balancing damper',          unit: 'each', cost: 42.00 },
-  diffuser_4way:    { label: '4-way ceiling diffuser',           unit: 'each', cost: 68.00 },
-  diffuser_slot:    { label: 'Slot diffuser',                    unit: 'each', cost: 96.00 },
-  grille_linear:    { label: 'Linear bar grille',                unit: 'each', cost: 128.00 },
-  grille_sidewall:  { label: 'Sidewall supply grille',           unit: 'each', cost: 58.00 },
+  // Quoted separately on the jobs it appears on, so it carries NO rate here.
+  grille_linear:    { label: 'Linear bar grille',                unit: 'each', cost: null,
+                      quotedSeparately: true },
   drain_kit:        { label: 'Condensate safety tray / pump',    unit: 'each', cost: 120.00 },
   interconnect_cable:{ label: 'Interconnecting cable',           unit: 'm',    cost: 7.20 },
   power_cable:      { label: 'Power supply cable',               unit: 'm',    cost: 9.40 },
@@ -207,10 +217,11 @@ export function resolveCost(key, { diameterMm = null, nacRates = null } = {}) {
            missing: def.cost === undefined };
 }
 
+// NAC fit round insulated diffusers. Linear bar grilles go on occasionally and
+// are quoted separately (see QUOTED_SEPARATELY). The 4-way, slot and sidewall
+// outlets NAC do not fit at all, and carrying shipped rates for them only
+// lengthened the list of prices still to confirm.
 export const OUTLET_MATERIAL_KEY = {
   round_diffuser: 'diffuser_round',
-  four_way: 'diffuser_4way',
-  slot: 'diffuser_slot',
-  linear_bar: 'grille_linear',
-  sidewall: 'grille_sidewall'
+  linear_bar: 'grille_linear'
 };
