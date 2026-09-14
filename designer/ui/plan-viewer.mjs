@@ -192,21 +192,72 @@ export function createPlanViewer(container, opts = {}) {
     ctx.restore();
   }
 
+  /**
+   * A duct label has to be readable over a busy floor plan, so it is drawn on
+   * its own backing rather than straight onto the linework. A size the
+   * estimator cannot read is the same as no size at all.
+   */
+  function drawRouteLabel(text, at, colour) {
+    const lines = String(text).split('\n');
+    ctx.save();
+    ctx.font = '600 10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const pad = 3;
+    const lh = 12;
+    const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad * 2;
+    const h = lines.length * lh + pad * 2 - 2;
+    const x = at.x + 9;
+    const y = at.y - h / 2;
+    ctx.fillStyle = 'rgba(8,8,24,0.82)';
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 3); ctx.fill(); ctx.stroke(); }
+    else { ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); }
+    ctx.fillStyle = '#eef1ff';
+    lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad + i * lh));
+    ctx.restore();
+  }
+
   function drawRoutes() {
-    for (const [key, route] of Object.entries(state.routes)) {
+    // Heaviest ducts first, so a 400 trunk never paints over the 150 branch
+    // that has to be read beside it.
+    const entries = Object.entries(state.routes)
+      .sort((a, b) => (b[1].width || 0) - (a[1].width || 0));
+
+    for (const [key, route] of entries) {
       const active = key === state.activeRouteKey;
-      drawPolyline(route.points, active ? '#F5C200' : '#5fa8ff', active ? 3.5 : 2.5);
-      route.points.forEach(pt => {
-        const s = toScreen(pt);
-        ctx.fillStyle = active ? '#F5C200' : '#5fa8ff';
-        ctx.beginPath(); ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2); ctx.fill();
-      });
+      // Colour and weight come from the SIZED section (designer/engines/router.mjs),
+      // so the drawing always shows the design rather than a drawing convention.
+      const colour = active ? '#F5C200' : (route.colour || '#5fa8ff');
+      const width = route.width || (active ? 3.5 : 2.5);
+      // A locked route is drawn solid; an unlocked auto route is dashed, so the
+      // estimator can see at a glance what the next re-route will overwrite.
+      const dash = route.auto && !route.locked ? [9, 5] : null;
+      drawPolyline(route.points, colour, active ? width + 1.5 : width, dash);
+
+      // Nodes are the handles. On an auto route they are only worth showing
+      // when this is the route being worked on, or the plan turns into confetti.
+      const showNodes = active || !route.auto;
+      if (showNodes) {
+        route.points.forEach((pt, i) => {
+          const s = toScreen(pt);
+          const end = i === 0 || i === route.points.length - 1;
+          ctx.fillStyle = active ? '#F5C200' : colour;
+          ctx.beginPath(); ctx.arc(s.x, s.y, end ? 4.5 : 3.5, 0, Math.PI * 2); ctx.fill();
+          if (route.locked) {
+            ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.5; ctx.stroke();
+          }
+        });
+      }
+
       if (route.label && route.points.length) {
-        const s = toScreen(route.points[route.points.length - 1]);
-        ctx.fillStyle = '#dfe4ff';
-        ctx.font = '10px -apple-system, system-ui, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(route.label, s.x + 8, s.y - 6);
+        // Against the middle of the run, not the end: the end of a branch is
+        // where the outlet marker already is, and two things fight for it.
+        const mid = route.points[Math.floor((route.points.length - 1) / 2)];
+        const next = route.points[Math.floor((route.points.length - 1) / 2) + 1] || mid;
+        const at = toScreen({ x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 });
+        drawRouteLabel(route.label, at, colour);
       }
     }
     if (state.draftRoute.length) {

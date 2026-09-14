@@ -27,6 +27,8 @@ import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
+import { routeOverlayFromNetwork, LABEL_DETAIL, DEFAULT_LABEL_DETAIL,
+         AUTO_ROUTE_NOTICE } from './engines/router.mjs';
 import { acknowledge } from './engines/warnings.mjs';
 import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
 import * as Store from './engines/store.mjs';
@@ -545,6 +547,14 @@ export class DesignerApp {
             mode === MODES.ROUTE ? 'primary small' : 'small'),
           button('Undo point', () => { this.viewer.undoDraftPoint(); this.render(); }, 'ghost small'),
           button('Clear', () => { this.viewer.clearDraftRoute(); this.render(); }, 'ghost small')))),
+      // What each duct line says about itself. The estimator's default shows
+      // the diameter, because a duct drawing without a size on it is decoration.
+      field('Labels on the plan', select(this.labelDetail || DEFAULT_LABEL_DETAIL, [
+        { value: LABEL_DETAIL.DIAMETER, label: 'Diameter only' },
+        { value: LABEL_DETAIL.DIAMETER_FLOW, label: 'Diameter + airflow' },
+        { value: LABEL_DETAIL.FULL, label: 'Full detail (room, size, airflow, length)' },
+        { value: LABEL_DETAIL.HIDE, label: 'Hide labels' }
+      ], v => { this.labelDetail = v; this.render(); })),
       this.routeSummaryTable());
   }
 
@@ -902,15 +912,21 @@ export class DesignerApp {
     this.update();
   }
 
+  /**
+   * What the plan viewer draws: the estimator's geometry carrying the ENGINE's
+   * numbers. The diameter, airflow and length on every line come from the sized
+   * section, so a route can never show a size the design does not carry.
+   */
   routeOverlay() {
-    const out = {};
-    if (this.design.mainRoute?.points) out.main = { points: this.design.mainRoute.points, label: 'Main duct' };
-    for (const [roomId, r] of Object.entries(this.design.ductRoutes || {})) {
-      if (!r.points) continue;
-      const room = (this.design.rooms || []).find(x => x.id === roomId);
-      out[roomId] = { points: r.points, label: room?.label || roomId };
-    }
-    return out;
+    return routeOverlayFromNetwork({
+      network: this.design.network,
+      mainRoute: this.design.mainRoute,
+      ductRoutes: this.design.ductRoutes || {},
+      rooms: this.design.rooms || [],
+      returnRoute: this.design.returnRoute,
+      returnDesign: this.design.returnDesign,
+      labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL
+    });
   }
 
   completeRoute(points) {
