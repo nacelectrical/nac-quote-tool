@@ -173,8 +173,11 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
     // a placeholder rate is a pricing error, not just a costing note.
     warnings.push({ code: 'PRICE_BASED_ON_PLACEHOLDER_RATES', severity: 'WARNING',
       message: 'The sell price is built on ' + bom.placeholderCount + ' material line(s) still on shipped ' +
-        'placeholder rates. On the job-cost-plus-fee basis those rates go straight through to the customer — ' +
-        'set NAC\'s real rates in HVAC Design Settings → Material rates before quoting.' });
+        'placeholder rates, worth $' + round(bom.placeholderCost || 0, 2) + ' of the job cost. On the ' +
+        'job-cost-plus-fee basis those rates go straight through to the customer — set NAC\'s real rates ' +
+        'in HVAC Design Settings → Material rates before quoting.',
+      placeholderCost: round(bom.placeholderCost || 0, 2),
+      placeholderCount: bom.placeholderCount });
   } else if (bom?.placeholderCount) {
     warnings.push({ code: 'COST_BASED_ON_PLACEHOLDERS', severity: 'CHECK',
       message: 'Job cost includes ' + bom.placeholderCount + ' material line(s) still on shipped placeholder rates.' });

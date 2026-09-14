@@ -89,6 +89,11 @@ designer/ui/pdf.mjs               PDF plans: on-demand reader, page rendering
 designer/vendor/                  pdf.js 3.11.174 (Apache-2.0), served from our
                                   own origin so a plan opens without a CDN
 designer/schema.sql               OPTIONAL nac_designs table (works without it)
+designer/crm-schema.sql           OPTIONAL nac_customers + nac_jobs (works without them)
+designer/engines/crm.mjs          customer/job identity, matching, non-destructive merge
+designer/engines/crm-store.mjs    reading and writing those records
+/crm-migrate.html                 turn existing quotes and designs into customer and job
+                                  records — DRY RUN first, nothing written until APPLY
 
 designer/engines/                 deterministic engineering — no DOM, no AI
   units.mjs          millimetres internally, conversions at the edge

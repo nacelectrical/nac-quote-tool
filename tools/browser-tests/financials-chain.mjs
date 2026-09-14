@@ -1,6 +1,8 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 const ctx=await b.newContext(); const p=await ctx.newPage();
+await signInContext(ctx);
 p.on('pageerror',e=>console.log('[pageerror]',e.message.slice(0,140)));
 await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));
 await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);

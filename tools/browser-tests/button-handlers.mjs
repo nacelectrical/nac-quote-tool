@@ -5,8 +5,10 @@
 // reports 100% of buttons dead. Exits non-zero if any button does nothing.
 
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 const ctx=await b.newContext({viewport:{width:1400,height:1000}});
+await signInContext(ctx);
 const p=await ctx.newPage();
 const cdp=await ctx.newCDPSession(p);
 await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));

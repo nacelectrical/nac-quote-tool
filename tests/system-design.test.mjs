@@ -118,8 +118,43 @@ test('zone controllers are filtered by brand lock and zone count', () => {
   const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'fujitsu', zoneCount: 12 });
   assert.ok(!r.compatible.some(c => c.id === 'daikin_zone'));   // brand locked
   assert.ok(!r.compatible.some(c => c.id === 'std'));           // only 8 zones
-  assert.equal(r.recommended.id, 'at5');
   assert.ok(r.incompatible.every(c => c.reason));
+
+  // MMEM quoted only the DAIKIN AirTouch kit, so a Fujitsu job above 8 zones
+  // has nothing in the catalogue. That is the truth, and it is reported rather
+  // than filled with a controller nobody has a price for.
+  assert.equal(r.recommended, null);
+
+  // On Daikin the same 12 zones are covered by the costed kit.
+  const daikin = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 12 });
+  assert.equal(daikin.recommended.id, 'at5_daikin');
+  assert.equal(daikin.recommended.cost, 1100);
+});
+
+test('every zone controller in the catalogue has a cost', () => {
+  // An entry with no cost silently shortens a quote by whatever it is worth.
+  const noCost = ZONE_CONTROLLERS.filter(c => c.cost === null || c.cost === undefined);
+  assert.deepEqual(noCost.map(c => c.name), [],
+    'these carry no cost: ' + noCost.map(c => c.name).join(', '));
+});
+
+test('a zoned design with no controller is reported, not left silent', () => {
+  const warnings = collectWarnings({ zones: { zoneCount: 12 }, controller: null,
+                                     selectedUnit: { brandName: 'Fujitsu' } });
+  const w = warnings.find(x => x.code === 'NO_COMPATIBLE_ZONE_CONTROLLER');
+  assert.ok(w, 'the estimator must be told');
+  assert.equal(w.severity, 'CRITICAL');
+  assert.match(w.message, /12 zones on Fujitsu/);
+  assert.equal(summarise(warnings).canApprove, false);
+
+  // One zone is not a zoned system, so it raises nothing.
+  assert.ok(!collectWarnings({ zones: { zoneCount: 1 }, controller: null })
+    .some(x => x.code === 'NO_COMPATIBLE_ZONE_CONTROLLER'));
+
+  // A controller that fits but carries no cost is the same hole, later.
+  const noCost = collectWarnings({ zones: { zoneCount: 4 },
+    controller: { name: 'Something', cost: null } });
+  assert.ok(noCost.some(x => x.code === 'ZONE_CONTROLLER_HAS_NO_COST'));
 });
 
 // ── PART 14: airflow ────────────────────────────────────────────────────────
@@ -165,12 +200,29 @@ test('airflow above and below the unit rating are both reported', () => {
 // ── PART 15: outlets ────────────────────────────────────────────────────────
 
 test('outlet quantity follows the capacity table and the throw limit', () => {
-  const r = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320, { type: 'four_way' });
-  assert.equal(r.quantity, 2);
-  assert.equal(r.perOutletLs, 160);
+  // NAC fit round insulated diffusers: 90 L/s nominal, 130 L/s maximum.
+  const r = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320);
+  assert.equal(r.quantity, 3);
+  assert.ok(r.perOutletLs <= 130, r.perOutletLs + ' L/s exceeds the round diffuser maximum');
 
   const small = designRoomOutlets({ id: 's', label: 'Bed 2', widthMm: 3200, lengthMm: 3400 }, 85);
   assert.equal(small.quantity, 1);
+
+  // A linear bar grille carries more air, so the same room needs fewer.
+  const linear = designRoomOutlets({ id: 'l', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320,
+    { type: 'linear_bar' });
+  assert.ok(linear.quantity <= r.quantity);
+});
+
+test('an outlet type NAC no longer fit falls back rather than breaking a saved design', () => {
+  // 4-way, slot and sidewall were removed. A design saved before that must
+  // still open and still produce outlets.
+  const old = designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320,
+    { type: 'four_way' });
+  assert.ok(old.quantity > 0, 'it still designs outlets');
+  assert.equal(old.quantity,
+    designRoomOutlets({ id: 'r', label: 'Living', widthMm: 5400, lengthMm: 4200 }, 320).quantity,
+    'and it falls back to the round diffuser NAC actually fit');
 });
 
 test('a long room is split for throw even when one outlet would carry the air', () => {
@@ -393,14 +445,59 @@ test('static pressure is estimated over the index run and compared with unit ESP
   assert.ok(p.components.some(c => /Return grille/.test(c.item)));
 });
 
-test('without ESP on file the comparison is declared missing, not guessed', () => {
+test('without ESP on file the check is declared NOT COMPLETED, never passed', () => {
   const a = calculateAirflow(LOAD);
   const o = designOutlets(ROOMS, a.rows);
   const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
   const p = estimateStaticPressure({ network: net, outlets: o, selectedUnit: { model: 'X', availableStaticPa: null } });
   assert.equal(p.unitAvailableStaticPa, null);
   assert.equal(p.remainingMarginPa, null);
-  assert.ok(p.warnings.some(w => w.code === 'MISSING_MANUFACTURER_DATA'));
+  // Three states, never two: not completed is NOT a pass.
+  assert.equal(p.checkCompleted, false);
+  assert.equal(p.status, 'not_completed');
+  assert.match(p.statusLabel, /NOT COMPLETED/);
+  assert.match(p.statusLabel, /MANUFACTURER DATA REQUIRED/);
+  const w = p.warnings.find(x => x.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED');
+  assert.ok(w, 'the estimator must be told the check did not happen');
+  // CRITICAL so it blocks approval until a named estimator acknowledges it.
+  assert.equal(w.severity, 'CRITICAL');
+});
+
+test('a not-completed static check blocks approval until it is acknowledged', () => {
+  const a = calculateAirflow(LOAD);
+  const o = designOutlets(ROOMS, a.rows);
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  const pressure = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'X', availableStaticPa: null } });
+
+  const blocked = summarise(collectWarnings({ pressure }));
+  assert.equal(blocked.canApprove, false,
+    'a design whose static pressure was never checked must not approve silently');
+  assert.ok(blocked.unacknowledgedCritical.some(w => w.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED'));
+
+  // With the manufacturer figure entered, the same design approves.
+  const checked = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'X', availableStaticPa: 250 } });
+  const clear = summarise(collectWarnings({ pressure: checked }));
+  assert.ok(!clear.unacknowledgedCritical.some(w => w.code === 'STATIC_PRESSURE_CHECK_NOT_COMPLETED'));
+});
+
+test('with ESP on file the check completes and says which way it went', () => {
+  const a = calculateAirflow(LOAD);
+  const o = designOutlets(ROOMS, a.rows);
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  const ok = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'Y', availableStaticPa: 250 } });
+  assert.equal(ok.checkCompleted, true);
+  assert.equal(ok.status, 'pass');
+  assert.ok(ok.remainingMarginPa > 0);
+
+  const bad = estimateStaticPressure({ network: net, outlets: o,
+    selectedUnit: { model: 'Z', availableStaticPa: 10 } });
+  assert.equal(bad.checkCompleted, true);
+  assert.equal(bad.status, 'fail');
+  assert.match(bad.statusLabel, /FAILED/);
+  assert.ok(bad.remainingMarginPa < 0);
 });
 
 // ── PART 22/24: materials and money ─────────────────────────────────────────

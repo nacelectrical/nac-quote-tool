@@ -52,6 +52,9 @@ const UNCONDITIONED_PATTERNS = [
   /\bbath(room)?\b/i, /\bensuite\b/i, /\bens\b/i, /\bwc\b/i, /\btoilet\b/i, /\bpowder\b/i,
   /\bwir\b/i, /\bbir\b/i, /\bwalk[- ]?in[- ]?robe\b/i, /\brobe\b/i, /\bwardrobe\b/i,
   /\blinen\b/i, /\bpantry\b/i, /\bp'?try\b/i, /\bstore\b/i, /\bstorage\b/i,
+  // Cupboards. Australian plans label them CUP'D, CUPB, CPD or CUPBOARD, and a
+  // dimensioned one would otherwise be read in as conditioned floor area.
+  /\bcup'?d\b/i, /\bcupb(oard)?\b/i, /\bcpd\b/i, /\bbroom\b/i, /\bcloak\b/i,
   /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
   /\boutdoor\b/i, /\bbalcony\b/i, /\bcourtyard\b/i, /\bvoid\b/i, /\bportico\b/i
 ];
@@ -455,6 +458,42 @@ export function incompleteRooms(rooms) {
     .map(r => ({ id: r.id, label: r.label,
                  missing: r.measurement.missingDimension,
                  knownMm: r.measurement.widthMm ?? r.measurement.lengthMm ?? null }));
+}
+
+/**
+ * How a set of rooms actually got measured.
+ *
+ * The plan reader used to report only its dimension-chain counters, so a
+ * builder's brochure plan — which has no chain at all, just a size printed
+ * against each room — came back as "0 dimensions read, 0 chains, 0 closing"
+ * even when every room had been measured from the architect's own figures at
+ * full confidence. That reads as total failure. This counts what was really
+ * obtained, so the page can say so.
+ */
+export function summariseRoomMeasurements(rooms) {
+  const list = rooms || [];
+  let printed = 0, chain = 0, geometry = 0, none = 0;
+  for (const r of list) {
+    const src = r.measurement?.source;
+    if (!r.areaSqM) { none++; continue; }
+    if (src === 'verified_architectural') printed++;
+    else if (src === 'dimension_chain' || src === 'chain_plus_wall_geometry') chain++;
+    else geometry++;
+  }
+  const measured = printed + chain + geometry;
+  return {
+    total: list.length, measured, printed, chain, geometry, unmeasured: none,
+    /** One line an estimator can act on. */
+    sentence: !list.length
+      ? 'No rooms were found on this plan.'
+      : [
+          measured + ' of ' + list.length + ' room(s) measured',
+          printed ? printed + ' from sizes printed on the plan' : null,
+          chain ? chain + ' from the dimension chains' : null,
+          geometry ? geometry + ' from the calibrated drawing' : null
+        ].filter(Boolean).join(' — ') +
+        (none ? '. ' + none + ' room(s) have no size on the plan and need one typed in.' : '.')
+  };
 }
 
 export function totalConditionedArea(rooms) {

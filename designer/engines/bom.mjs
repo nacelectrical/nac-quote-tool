@@ -4,7 +4,8 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
-import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE } from './materials.mjs';
+import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
+         QUOTED_SEPARATELY } from './materials.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -13,6 +14,7 @@ function line(key, quantity, ctx, extra = {}) {
     key,
     label: r.label,
     unit: r.unit,
+    quotedSeparately: QUOTED_SEPARATELY.includes(key),
     quantity: qty,
     unitCost: r.cost,
     totalCost: r.cost !== null ? round(r.cost * qty, 2) : null,
@@ -241,10 +243,34 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
+  return summariseBom(items);
+}
+
+/**
+ * Everything about a bill of materials that is DERIVED from its lines: the
+ * money, the counts, and the warnings.
+ *
+ * This exists as one function because it has to run again after every estimator
+ * edit. It used to be inline, so editing a line recomputed the totals but left
+ * unpricedCount, placeholderCount and the warnings stale — an estimator who
+ * entered the missing cost was still told the line had no cost, and (once the
+ * quote gate was added) could never get past it.
+ */
+export function summariseBom(items) {
   const placeholderLines = items.filter(i => i.priceSource === PRICE_SOURCE.PLACEHOLDER);
-  const unpricedLines = items.filter(i => !i.priced);
+  // A line NAC quote separately carries no rate ON PURPOSE. It is not a price
+  // somebody forgot, so it must not block the quote the way a genuine hole
+  // does — but it still appears on the bill of materials saying what it is.
+  const separateLines = items.filter(i => i.quotedSeparately);
+  const unpricedLines = items.filter(i => !i.priced && !i.quotedSeparately);
 
   const warnings = [];
+  if (separateLines.length) {
+    warnings.push({ code: 'QUOTED_SEPARATELY', severity: 'CHECK',
+      message: separateLines.map(l => l.label).join(', ') +
+        ' carries no rate here because NAC quote it separately. Add it to the quote as its own ' +
+        'line — the price below does not include it.' });
+  }
   if (placeholderLines.length) {
     warnings.push({ code: 'MATERIAL_PRICE_PLACEHOLDER', severity: 'CHECK',
       message: placeholderLines.length + ' material line(s) are still on shipped placeholder rates, not NAC prices: ' +
@@ -278,6 +304,11 @@ export function buildBillOfMaterials(design, opts = {}) {
     byCategory[i.category] = round((byCategory[i.category] || 0) + (i.totalCost || 0), 2);
   }
 
+  // What the placeholder lines are actually worth. On job-cost-plus-fee this
+  // is the amount of the customer's price built on rates nobody at NAC has
+  // confirmed — the number the estimator needs before sending a quote.
+  const placeholderCost = round(placeholderLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
+
   return {
     items,
     byCategory,
@@ -288,8 +319,15 @@ export function buildBillOfMaterials(design, opts = {}) {
       .reduce((s, i) => s + (i.totalCost || 0), 0), 2),
     lineCount: items.length,
     placeholderCount: placeholderLines.length,
+    placeholderCost,
+    placeholderLabels: placeholderLines.map(l => l.label),
+    placeholderDetail: placeholderLines.map(l => ({ label: l.label, quantity: l.quantity,
+                                                    unit: l.unit, unitCost: l.unitCost,
+                                                    totalCost: l.totalCost })),
     unpricedCount: unpricedLines.length,
     unpricedLabels: unpricedLines.map(l => l.label),
+    quotedSeparatelyCount: separateLines.length,
+    quotedSeparatelyLabels: separateLines.map(l => l.label),
     warnings
   };
 }
@@ -325,12 +363,8 @@ export function editBomLine(bom, index, patch) {
     next.priceSource = PRICE_SOURCE.NAC;
     return next;
   });
-  const byCategory = {};
-  for (const i of items) byCategory[i.category] = round((byCategory[i.category] || 0) + (i.totalCost || 0), 2);
-  return {
-    ...bom, items, byCategory,
-    totalCost: round(items.reduce((s, i) => s + (i.totalCost || 0), 0), 2),
-    materialsCost: round(items.filter(i => i.category !== 'equipment').reduce((s, i) => s + (i.totalCost || 0), 0), 2),
-    equipmentCost: round(items.filter(i => i.category === 'equipment').reduce((s, i) => s + (i.totalCost || 0), 0), 2)
-  };
+  // Re-derive EVERYTHING from the new lines. Recomputing only the totals left
+  // the counts and warnings describing a bill of materials that no longer
+  // existed.
+  return { ...bom, ...summariseBom(items) };
 }

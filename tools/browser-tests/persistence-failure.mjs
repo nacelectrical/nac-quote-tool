@@ -1,9 +1,10 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 let failures=0; const say=(n,c)=>{console.log((c?'PASS  ':'FAIL  ')+n); if(!c) failures++;};
 
 for (const [label, status] of [['database rejects (403)', 403], ['database unreachable', null]]) {
-  const ctx=await b.newContext(); const p=await ctx.newPage();
+  const ctx=await b.newContext(); await signInContext(ctx); const p=await ctx.newPage();
   p.on('pageerror',e=>console.log('  [pageerror]',e.message.slice(0,120)));
   await p.route('**/rest/v1/**', r => status===null ? r.abort('connectionfailed')
     : r.fulfill({status, contentType:'application/json', body:'{"message":"no"}'}));

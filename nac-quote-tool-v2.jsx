@@ -2,7 +2,13 @@
 import { useState, useEffect, useRef } from "react";
 
 const _SU = "https://icnznjhwybryizbdqrgx.supabase.co", _SK = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw";
-const _h = () => ({'apikey': _SK, 'Authorization': 'Bearer ' + _SK});
+// A signed-in NAC user's token goes on every database request, so the RLS
+// policies in designer/rls.sql apply to them. Before sign-in completes this is
+// the bare anon key, which those policies no longer trust with prices.
+var _h = function _h() {
+  return window.nacDbHeaders ? window.nacDbHeaders()
+                             : { 'apikey': _SK, 'Authorization': 'Bearer ' + _SK };
+};
 window.storage = {
   // set() returns TRUE for `synced` only when the DATABASE accepted the write.
   // localStorage is written first so a bad connection never loses work in the
@@ -37,6 +43,8 @@ window.storage = {
     } catch (e) { /* no DOM (tests) — the return value still carries the truth */ }
   },
   get: async function (k) {
+    // No read leaves the browser until the estimator has signed in.
+    if (window.nacAuthReady) { try { await window.nacAuthReady; } catch (e) {} }
     try {
       var r = await fetch(_SU + '/rest/v1/nac_settings?key=eq.' + encodeURIComponent(k) + '&select=value', { headers: _h() });
       // fetch resolves on a 4xx/5xx, so the status must be read or a rejected
@@ -50,6 +58,7 @@ window.storage = {
     return null;
   },
   set: async function (k, v) {
+    if (window.nacAuthReady) { try { await window.nacAuthReady; } catch (e) {} }
     window.storage.lastError = null;
     try { localStorage.setItem('nac_' + k, v); } catch (e) {}
     try {

@@ -205,13 +205,33 @@ test('sample plan: the job is priced at cost plus the flat fee', () => {
   assert.match(design.selectedUnit.supplierSource, /MMEM/);
 });
 
-test('sample plan: static pressure is compared against the unit ESP on file', () => {
+test('sample plan: a single-phase unit is preferred while the site supply is unconfirmed', () => {
+  const { design } = buildSampleDesign();
+  // A three-phase unit on a house nobody has confirmed as three-phase is a
+  // supply upgrade found on installation day, so it is ranked below an
+  // equivalent single-phase unit until the estimator confirms the supply.
+  assert.match(design.selectedUnit.phase, /1\s*ph/i,
+    'selected ' + design.selectedUnit.model + ' (' + design.selectedUnit.phase + ')');
+  assert.equal(design.selectedUnit.warnings.filter(w => /PHASE/.test(w.code)).length, 0);
+});
+
+test('sample plan: the static pressure result states which of the three states it is', () => {
   const { design } = buildSampleDesign();
   assert.ok(design.pressure.estimatedRequirementPa > 0);
-  assert.equal(design.pressure.unitAvailableStaticPa, 200);
-  assert.equal(design.pressure.remainingMarginPa,
-    Math.round((200 - design.pressure.estimatedRequirementPa) * 10) / 10);
   assert.match(design.pressure.disclaimer, /COMMISSIONING VERIFICATION REQUIRED/);
+
+  if (design.pressure.unitAvailableStaticPa === null) {
+    // The preferred single-phase unit has no published ESP on file. That is
+    // NOT a pass, and the design must say so rather than going quiet.
+    assert.equal(design.pressure.checkCompleted, false);
+    assert.equal(design.pressure.status, 'not_completed');
+    assert.match(design.pressure.statusLabel, /NOT COMPLETED/);
+    assert.equal(design.pressure.remainingMarginPa, null);
+  } else {
+    assert.equal(design.pressure.checkCompleted, true);
+    assert.equal(design.pressure.remainingMarginPa,
+      Math.round((design.pressure.unitAvailableStaticPa - design.pressure.estimatedRequirementPa) * 10) / 10);
+  }
 });
 
 test('sample plan: quote line items match the existing nac_quotes shape', () => {

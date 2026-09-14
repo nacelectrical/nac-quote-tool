@@ -18,18 +18,28 @@ for (const page of PAGES) {
   p.on('pageerror',e=>errs.push('PAGEERROR: '+e.message.slice(0,160)));
   p.on('requestfailed',r=>net.push(r.url().slice(0,90)+' :: '+(r.failure()?.errorText||'')));
   p.on('response',r=>{ if(r.status()>=400) net.push('HTTP '+r.status()+' '+r.url().slice(0,90)); });
-  let bodyLen=0, title='';
+  let bodyLen=0, title='', gated=false, gateLen=0;
   try {
     await p.goto('http://127.0.0.1:8777/'+encodeURIComponent(page).replace(/%2F/g,'/'), {waitUntil:'load', timeout:20000});
     await p.waitForTimeout(2500);
-    bodyLen=await p.evaluate(()=>document.body.innerText.trim().length);
+    // An internal page shows the staff sign-in gate to a visitor who is not
+    // signed in, and the gate hides the page behind it — so innerText is
+    // legitimately empty. Reporting that as "0 chars" reads like a dead page,
+    // so the gate is detected and named instead.
+    const seen = await p.evaluate(() => ({
+      len: document.body.innerText.trim().length,
+      gated: !!document.getElementById('nac-signin'),
+      gateText: (document.getElementById('nac-signin')?.innerText || '').trim().length
+    }));
+    bodyLen = seen.len; gated = seen.gated; gateLen = seen.gateText;
     title=await p.title();
   } catch(e) { errs.push('NAV: '+e.message.slice(0,120)); }
   // Only errors that are NOT the blocked external hosts
   const real=errs.filter(e=>!/supabase|ERR_TUNNEL|Failed to load resource/i.test(e));
   const blocked=net.filter(n=>/supabase|googleapis|gstatic|cdn/i.test(n)).length;
   console.log(`\n== ${page}`);
-  console.log(`   title: "${title}"  rendered text: ${bodyLen} chars`);
+  console.log(`   title: "${title}"  rendered text: ${bodyLen} chars` +
+    (gated ? `  [STAFF SIGN-IN GATE shown — ${gateLen} chars; the page behind it is hidden, which is the point]` : ''));
   console.log(`   console errors: ${errs.length} (${real.length} not network-blocked)`);
   real.slice(0,6).forEach(e=>console.log('     ! '+e));
   console.log(`   failed requests: ${net.length} (${blocked} to blocked external hosts)`);

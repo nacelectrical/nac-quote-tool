@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAC — Database self test</title>
+<style>
+  :root{
+    --ground:#EEF0F5; --surface:#fff; --surface-2:#F7F8FB;
+    --ink:#12142A; --ink-2:#41465C; --ink-3:#6C7288; --rule:#D5D9E3;
+    --pass:#0F6B4A; --pass-bg:#E2F1EA; --fail:#A32721; --fail-bg:#FAE6E4;
+    --warn:#8A5A00; --warn-bg:#FBEEDA; --mark:#F5C200;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--ground:#0A0B16; --surface:#14162A; --surface-2:#1A1D33;
+      --ink:#E9EBF4; --ink-2:#AEB4C8; --ink-3:#828AA3; --rule:#2B2F4A;
+      --pass:#5FD3A2; --pass-bg:#0F2F24; --fail:#FF8E86; --fail-bg:#3A1815;
+      --warn:#F0B65C; --warn-bg:#33240C;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding-inline:18px;padding-block:32px 64px}
+  h1{font-size:26px;margin:0;letter-spacing:-.015em}
+  .mark{display:inline-block;width:20px;height:5px;background:var(--mark);
+    vertical-align:middle;margin-right:9px;transform:translateY(-5px)}
+  .sub{color:var(--ink-2);margin:8px 0 0;max-width:62ch;font-size:14px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:22px}
+  button{font:600 14px/1 inherit;padding:12px 18px;border:0;border-radius:4px;
+    background:var(--ink);color:var(--ground);cursor:pointer;min-height:44px}
+  button.ghost{background:transparent;color:var(--ink-2);border:1px solid var(--rule)}
+  button[disabled]{opacity:.5;cursor:default}
+  button:focus-visible{outline:2px solid var(--mark);outline-offset:2px}
+  .verdict{margin-top:22px;padding:16px 18px;border-radius:4px;font-weight:600;display:none}
+  .verdict.on{display:block}
+  .verdict.ok{background:var(--pass-bg);color:var(--pass)}
+  .verdict.bad{background:var(--fail-bg);color:var(--fail)}
+  .grp{margin-top:24px;border:1px solid var(--rule);background:var(--surface);border-radius:4px;overflow:hidden}
+  .grp h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+    margin:0;padding:11px 16px;background:var(--surface-2);border-bottom:1px solid var(--rule);font-weight:600}
+  .row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;
+    padding:11px 16px;border-bottom:1px solid var(--rule)}
+  .row:last-child{border-bottom:0}
+  .tag{font:600 10.5px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.06em;
+    padding:2px 7px;border-radius:3px;white-space:nowrap}
+  .tag.PASS{background:var(--pass-bg);color:var(--pass)}
+  .tag.FAIL{background:var(--fail-bg);color:var(--fail)}
+  .tag.WARN{background:var(--warn-bg);color:var(--warn)}
+  .tag.RUN{background:var(--surface-2);color:var(--ink-3)}
+  .what{font-size:14px}
+  .detail{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--ink-3);
+    margin-top:3px;word-break:break-word}
+  .ms{font:11px/1 ui-monospace,monospace;color:var(--ink-3);white-space:nowrap;padding-top:4px}
+  textarea{width:100%;min-height:150px;margin-top:10px;font:11.5px/1.5 ui-monospace,monospace;
+    background:var(--surface-2);color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:10px}
+  .foot{margin-top:26px;padding-top:14px;border-top:1px solid var(--rule);
+    font-size:12.5px;color:var(--ink-3)}
+  code{font:12px ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;
+    border:1px solid var(--rule);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="mark"></span>Database self test</h1>
+  <p class="sub">Runs the real create / read / update / delete round trip against the live Supabase
+  project, using the same anon key and the same endpoints the quote tool and the designer use.
+  Test rows are written under a <code>ZZ-SELFTEST-</code> prefix and deleted at the end, so nothing
+  touches real customer data.</p>
+
+  <div class="bar">
+    <button id="run">Run the test</button>
+    <button id="copy" class="ghost" disabled>Copy result</button>
+  </div>
+
+  <div id="verdict" class="verdict"></div>
+  <div id="out"></div>
+  <textarea id="log" readonly hidden aria-label="Raw result for copying"></textarea>
+
+  <p class="foot">If a check fails, the HTTP status and the database's own error message are shown
+  against it — that is what is needed to fix it. A failure here is a real failure: nothing on this
+  page is stubbed.</p>
+</div>
+
+<script type="module">
+// The checks live in designer/engines/selftest.mjs so this page and /setup.html
+// run the same ones. Credentials come from designer/auth.mjs: the signed-in
+// staff token when there is one, the public key when there is not — which is
+// the whole point of running this page both ways.
+import { runDatabaseSelfTest, runCustomerPathTest } from '/designer/engines/selftest.mjs';
+import { currentUserEmail } from '/designer/auth.mjs';
+
+const SUPA = 'https://icnznjhwybryizbdqrgx.supabase.co';
+const out = document.getElementById('out');
+const lines = [];
+let group = null, failures = 0, warnings = 0;
+
+function addGroup(title){
+  group = document.createElement('div');
+  group.className = 'grp';
+  group.innerHTML = '<h2>' + title + '</h2>';
+  out.appendChild(group);
+  lines.push('\n== ' + title + ' ==');
+}
+function addRow(state, what, detail, ms){
+  const r = document.createElement('div');
+  r.className = 'row';
+  r.innerHTML = '<span class="tag ' + state + '">' + state + '</span>' +
+    '<div><div class="what"></div>' + (detail ? '<div class="detail"></div>' : '') + '</div>' +
+    '<span class="ms">' + (ms == null ? '' : ms + ' ms') + '</span>';
+  r.querySelector('.what').textContent = what;
+  if (detail) r.querySelector('.detail').textContent = detail;
+  group.appendChild(r);
+  lines.push(state.padEnd(5) + ' ' + what + (detail ? '  — ' + detail : '') + (ms != null ? '  [' + ms + 'ms]' : ''));
+  if (state === 'FAIL') failures++;
+  if (state === 'WARN') warnings++;
+}
+
+// The round trip itself lives in designer/engines/selftest.mjs, so this page
+// and /setup.html run exactly the same checks and cannot drift apart.
+
+document.getElementById('run').addEventListener('click', async () => {
+  const btn = document.getElementById('run');
+  btn.disabled = true; btn.textContent = 'Running…';
+  out.innerHTML = ''; lines.length = 0; failures = 0; warnings = 0;
+  const v = document.getElementById('verdict'); v.className = 'verdict';
+
+  lines.push('NAC database self test · ' + new Date().toISOString());
+  lines.push('project: ' + SUPA);
+  lines.push('signed in as: ' + (currentUserEmail() || 'NOT SIGNED IN — this is the anonymous visitor run'));
+
+  const r = await runDatabaseSelfTest({ group: addGroup, row: addRow });
+  await runCustomerPathTest({ group: addGroup, row: addRow });
+  failures = r.failures; warnings = r.warnings;
+
+  v.classList.add('on', failures ? 'bad' : 'ok');
+  v.textContent = failures
+    ? failures + ' CHECK(S) FAILED — persistence is NOT production ready. The detail against each failure is what is needed to fix it.'
+    : 'ALL CHECKS PASSED' + (warnings ? ' (' + warnings + ' warning(s) — read them)' : '') +
+      ' — the live database accepts, returns, updates and deletes everything the application writes.';
+  lines.push('\nRESULT: ' + v.textContent);
+  document.getElementById('log').value = lines.join('\n');
+  document.getElementById('copy').disabled = false;
+  btn.disabled = false; btn.textContent = 'Run the test again';
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const ta = document.getElementById('log');
+  ta.hidden = false; ta.select();
+  try { await navigator.clipboard.writeText(ta.value);
+        document.getElementById('copy').textContent = 'Copied'; }
+  catch(e){ document.getElementById('copy').textContent = 'Select the text below and copy'; }
+});
+</script>
+</body>
+</html>

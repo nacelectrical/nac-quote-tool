@@ -12,7 +12,9 @@ import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
-import { internalReportHtml, customerReportHtml, openReport } from './ui/reports.mjs';
+import { internalReportHtml, customerReportHtml, openReport,
+         downloadReportPdf, REPORT_KIND } from './ui/reports.mjs';
+import { confirmDialog, alertDialog, formDialog, pickDialog, linkDialog } from './ui/modal.mjs';
 
 import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
 import { calibrate, parseScaleLabel } from './engines/calibration.mjs';
@@ -20,13 +22,17 @@ import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
 import { parseRoomDimensionPair } from './engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
-         parseFloorAreaText, crossCheckFloorArea } from './engines/rooms.mjs';
+         parseFloorAreaText, crossCheckFloorArea,
+         summariseRoomMeasurements } from './engines/rooms.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
 import { acknowledge } from './engines/warnings.mjs';
 import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
 import * as Store from './engines/store.mjs';
+import * as Crm from './engines/crm-store.mjs';
+import { findCustomer, findJob, mergeCustomer, mergeJob, normaliseCustomer, normaliseJob,
+         customerId as makeCustomerId, jobId as makeJobId, customerIsEmpty } from './engines/crm.mjs';
 import * as Sample from './engines/sample-plan.mjs';
 import { samplePlanDataUrl } from './engines/sample-plan-image.mjs';
 
@@ -69,6 +75,9 @@ export class DesignerApp {
     this.assistantLog = [];
     this.routeTargetRoomId = null;
     this.dirty = false;
+    // Differences between this design and the customer record that have already
+    // been put to the estimator, so a repeated save does not repeat the question.
+    this.seenCustomerConflicts = new Set();
     this.busy = false;
   }
 
@@ -188,6 +197,7 @@ export class DesignerApp {
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
         button('Save', () => this.save(), 'small'),
+        button('Customers', () => this.showCustomerPicker(), 'ghost small'),
         button('Designs', () => this.showDesignList(), 'ghost small'),
         button('Revisions', () => this.showRevisions(), 'ghost small'),
         button('Settings', () => this.openSettings(), 'ghost small'),
@@ -303,10 +313,14 @@ export class DesignerApp {
         button('+', () => this.viewer.zoomIn(), 'ghost small'),
         button('−', () => this.viewer.zoomOut(), 'ghost small')) : null,
       d.interpretation ? h('div', { class: 'note' },
-        d.interpretation.summary.lengthCount + ' dimensions read, ' +
-        d.interpretation.summary.chainCount + ' chains, ' +
-        d.interpretation.summary.closingChains + ' closing. Image quality: ' +
-        (d.interpretation.quality || '—') + '.') : null,
+        // What was obtained comes first; the chain counters are the working.
+        d.roomRead ? d.roomRead.sentence + ' ' : '',
+        'Dimension chains: ' + d.interpretation.summary.lengthCount + ' dimension(s) read, ' +
+        d.interpretation.summary.chainCount + ' chain(s), ' +
+        d.interpretation.summary.closingChains + ' closing' +
+        (d.interpretation.summary.chainCount === 0
+          ? ' — this plan has no dimension chain, which is normal for a brochure sheet.' : '.') +
+        ' Image quality: ' + (d.interpretation.quality || '—') + '.') : null,
       (d.interpretation?.notes || []).length
         ? h('ul', { class: 'evidence' }, d.interpretation.notes.map(n => h('li', {}, n))) : null,
       button('Load the sample builder plan', () => { this.loadSample(); this.update(); }, 'ghost small'));
@@ -784,9 +798,12 @@ export class DesignerApp {
           : r);
       }
 
-      toast(interp.summary.lengthCount + ' dimensions read, ' + interp.summary.closingChains + ' chain(s) closed.' +
-        (rooms.length ? ' ' + rooms.length + ' rooms proposed — verify them.' : '') +
-        ' Check every number against the drawing.');
+      // Report what was actually OBTAINED, not just the dimension-chain
+      // counters. A builder's brochure plan has no chain at all — every room is
+      // measured from a size printed against it — and reporting only the chain
+      // counters made a successful read look like a total failure.
+      d.roomRead = summariseRoomMeasurements(rooms);
+      toast(d.roomRead.sentence + ' Check every number against the drawing.');
       if (merged.conflictCount) {
         toast(merged.conflictCount + ' number(s) were read two different ways. Both are listed — check them.', 'warn');
       }
@@ -973,26 +990,42 @@ export class DesignerApp {
     this.update();
   }
 
-  verifyAll() {
+  async verifyAll() {
     const low = (this.design.rooms || []).filter(r => r.conditioned && r.confidenceBand === 'LOW');
-    if (low.length && !confirm(low.length + ' room(s) are LOW confidence:\n\n' +
-        low.map(r => '  • ' + r.label + ' (' + Math.round(r.confidence) + '%)').join('\n') +
-        '\n\nVerify them anyway? Check the dimensions on the plan first.')) return;
+    if (low.length && !await confirmDialog({
+        title: 'Verify rooms that are LOW confidence?',
+        message: low.length + ' room(s) were measured with low confidence. Check their dimensions ' +
+                 'against the plan before you verify them — verifying is what lets them into the sizing.',
+        lines: low.map(r => r.label + ' — ' + Math.round(r.confidence) + '% confidence'),
+        confirmLabel: 'Verify all anyway', danger: true })) return;
     this.design.rooms = (this.design.rooms || []).map(r => r.conditioned ? verifyRoom(r, 'estimator') : r);
     this.update();
   }
 
-  addManualRoom() {
-    const label = prompt('Room name?', 'New room');
-    if (label === null) return;
-    const w = Number(prompt('Width in metres? (leave blank to enter an area instead)', '') || 0);
-    const l = Number(prompt('Length in metres?', '') || 0);
+  async addManualRoom() {
+    // One form, not three chained prompts — a chain can be cut short by the
+    // browser and leave a half-entered room behind.
+    const v = await formDialog({
+      title: 'Add a room by hand',
+      message: 'Enter width and length, or leave them blank and enter the floor area instead.',
+      submitLabel: 'Add room',
+      fields: [
+        { key: 'label',  label: 'Room name', value: 'New room' },
+        { key: 'width',  label: 'Width (m)',  type: 'number', step: '0.01', min: 0, value: '' },
+        { key: 'length', label: 'Length (m)', type: 'number', step: '0.01', min: 0, value: '' },
+        { key: 'area',   label: 'Or floor area (m²)', type: 'number', step: '0.01', min: 0, value: '',
+          hint: 'Used only when width and length are left blank.' }
+      ]
+    });
+    if (!v) return;
+    const label = (v.label || '').trim() || 'New room';
+    const w = Number(v.width) || 0, l = Number(v.length) || 0;
     let room;
     if (w > 0 && l > 0) {
       room = buildRoom({ label, measurement: manualMeasurement(w * 1000, l * 1000) }, { settings: this.settings });
     } else {
-      const a = Number(prompt('Floor area in m²?', '') || 0);
-      if (!a) return;
+      const a = Number(v.area) || 0;
+      if (!a) return toast('Enter either width and length, or a floor area.', 'bad');
       room = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: a, source: 'manual',
         sourceLabel: 'Manual entry', evidence: ['Area entered by the estimator.'], areaOnly: true } },
         { settings: this.settings });
@@ -1002,22 +1035,31 @@ export class DesignerApp {
     this.update();
   }
 
-  deleteRoom(id) {
+  async deleteRoom(id) {
     const r = (this.design.rooms || []).find(x => x.id === id);
-    if (!confirm('Remove ' + (r?.label || 'this room') + ' from the design?')) return;
+    if (!await confirmDialog({
+      title: 'Remove ' + (r?.label || 'this room') + '?',
+      message: 'It comes out of the load, the airflow and the duct network. You can add it back by hand.',
+      confirmLabel: 'Remove room', danger: true })) return;
     this.design.rooms = (this.design.rooms || []).filter(x => x.id !== id);
     if (this.selectedRoomId === id) this.selectedRoomId = null;
     this.update();
   }
 
-  mergeRoomPrompt() {
+  async mergeRoomPrompt() {
     const rooms = this.design.rooms || [];
     const sel = rooms.find(r => r.id === this.selectedRoomId);
     if (!sel) return toast('Select a room first.', 'bad');
     const others = rooms.filter(r => r.id !== sel.id);
-    const name = prompt('Merge "' + sel.label + '" into which room?\n\n' +
-      others.map((r, i) => (i + 1) + '. ' + r.label).join('\n'), '1');
-    const target = others[Number(name) - 1];
+    if (!others.length) return toast('There is no other room to merge into.', 'bad');
+    const id = await pickDialog({
+      title: 'Merge "' + sel.label + '" into which room?',
+      message: 'The two areas are added together and kept under the room you choose.',
+      options: others.map(r => ({ value: r.id, label: r.label,
+        sub: r.areaSqM ? r.areaSqM.toFixed(2) + ' m²' : 'no area yet' })),
+      emptyText: 'There is no other room to merge into.'
+    });
+    const target = others.find(r => r.id === id);
     if (!target) return;
     const area = (sel.areaSqM || 0) + (target.areaSqM || 0);
     this.design.rooms = rooms
@@ -1029,14 +1071,26 @@ export class DesignerApp {
     this.update();
   }
 
-  splitRoomPrompt() {
+  async splitRoomPrompt() {
     const sel = (this.design.rooms || []).find(r => r.id === this.selectedRoomId);
     if (!sel) return toast('Select a room first.', 'bad');
     if (!sel.areaSqM) return toast('That room has no area to split.', 'bad');
-    const share = Number(prompt('What share of ' + sel.label + ' goes to the new room? (0–1)', '0.5'));
-    if (!(share > 0 && share < 1)) return;
+    const v = await formDialog({
+      title: 'Split ' + sel.label,
+      message: sel.label + ' is ' + sel.areaSqM.toFixed(2) + ' m². Choose how much of it becomes a new room.',
+      submitLabel: 'Split room',
+      fields: [
+        { key: 'share', label: 'Share going to the new room', type: 'number',
+          step: '0.05', min: 0.05, max: 0.95, value: '0.5',
+          hint: 'Between 0 and 1. 0.5 splits it in half.' },
+        { key: 'label', label: 'Name for the new room', value: sel.label + ' B' }
+      ]
+    });
+    if (!v) return;
+    const share = Number(v.share);
+    if (!(share > 0 && share < 1)) return toast('The share has to be between 0 and 1.', 'bad');
     const newArea = sel.areaSqM * share;
-    const label = prompt('Name for the new room?', sel.label + ' B') || (sel.label + ' B');
+    const label = (v.label || '').trim() || (sel.label + ' B');
     const kept = applyRoomOverride(sel, { areaSqM: sel.areaSqM - newArea }, 'estimator');
     const added = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: newArea,
       source: 'manual', sourceLabel: 'Manual entry',
@@ -1123,13 +1177,19 @@ export class DesignerApp {
 
   resetZones() { this.design.zoneDefinitions = null; this.update(); }
 
-  groupZonePrompt() {
+  async groupZonePrompt() {
     const zones = this.design.zones?.zones || [];
-    const pick = prompt('Group which zones into one? Enter numbers separated by commas.\n\n' +
-      zones.map((z, i) => (i + 1) + '. ' + z.name + ' (' + z.airflowLs + ' L/s)').join('\n'), '1,2');
-    if (!pick) return;
-    const idx = pick.split(',').map(x => Number(x.trim()) - 1).filter(i => zones[i]);
-    if (idx.length < 2) return;
+    if (zones.length < 2) return toast('There are not two zones to group.', 'bad');
+    // Tap the zones themselves — nobody should have to type "1,3,4".
+    const picked = await pickDialog({
+      title: 'Group zones into one',
+      message: 'Choose two or more zones. They become a single zone served together.',
+      multi: true, submitLabel: 'Group them',
+      options: zones.map(z => ({ value: z.id, label: z.name, meta: z.airflowLs + ' L/s' }))
+    });
+    if (!picked) return;
+    const idx = picked.map(id => zones.findIndex(z => z.id === id)).filter(i => i >= 0);
+    if (idx.length < 2) return toast('Choose at least two zones to group.', 'bad');
     const merged = idx.map(i => zones[i]);
     const rest = zones.filter((_, i) => !idx.includes(i));
     this.design.zoneDefinitions = [...rest, {
@@ -1156,27 +1216,49 @@ export class DesignerApp {
     this.update();
   }
 
-  addMaterialPrompt() {
-    const label = prompt('Material description?');
-    if (!label) return;
-    const quantity = Number(prompt('Quantity?', '1') || 1);
-    const unitCost = Number(prompt('Unit cost ($)?', '0') || 0);
+  async addMaterialPrompt() {
+    const v = await formDialog({
+      title: 'Add a material line',
+      message: 'This goes into the bill of materials at the cost you enter, and into the job cost.',
+      submitLabel: 'Add line',
+      fields: [
+        { key: 'label',    label: 'Description', value: '' },
+        { key: 'quantity', label: 'Quantity',    type: 'number', step: '0.01', min: 0, value: '1' },
+        { key: 'unitCost', label: 'Unit cost ($)', type: 'number', step: '0.01', min: 0, value: '0' }
+      ]
+    });
+    if (!v) return;
+    const label = (v.label || '').trim();
+    if (!label) return toast('Enter a description for the line.', 'bad');
     this.design.extraMaterials = [...(this.design.extraMaterials || []),
-      { label, quantity, unitCost, unit: 'each', category: 'other' }];
+      { label, quantity: Number(v.quantity) || 0, unitCost: Number(v.unitCost) || 0,
+        unit: 'each', category: 'other' }];
     this.update();
   }
 
-  addLabourPrompt() {
+  async addLabourPrompt() {
     const flat = this.settings.commercial.labourMode !== 'hourly';
-    const task = prompt(flat ? 'What is the extra charge for?' : 'Labour description?');
-    if (!task) return;
+    const v = await formDialog({
+      title: flat ? 'Add an extra charge' : 'Add a labour line',
+      message: flat
+        ? 'This job is priced at cost plus a flat fee, so an extra charge is added to the job cost.'
+        : 'Hours are costed at the labour rate in HVAC Design Settings.',
+      submitLabel: 'Add line',
+      fields: flat
+        ? [{ key: 'task', label: 'What is the charge for?', value: '' },
+           { key: 'cost', label: 'Amount ($)', type: 'number', step: '0.01', min: 0, value: '0' }]
+        : [{ key: 'task',  label: 'Labour description', value: '' },
+           { key: 'hours', label: 'Hours', type: 'number', step: '0.25', min: 0, value: '1' }]
+    });
+    if (!v) return;
+    const task = (v.task || '').trim();
+    if (!task) return toast('Enter a description for the line.', 'bad');
     if (flat) {
-      const cost = Number(prompt('Amount ($)?', '0') || 0);
-      if (!cost) return;
+      const cost = Number(v.cost) || 0;
+      if (!cost) return toast('Enter an amount for the charge.', 'bad');
       this.design.extraLabour = [...(this.design.extraLabour || []), { task, cost }];
     } else {
-      const hours = Number(prompt('Hours?', '1') || 0);
-      this.design.extraLabour = [...(this.design.extraLabour || []), { task, hours }];
+      this.design.extraLabour = [...(this.design.extraLabour || []), { task, hours: Number(v.hours) || 0 }];
     }
     this.update();
   }
@@ -1210,11 +1292,26 @@ export class DesignerApp {
     a.click();
   }
 
-  acknowledgeWarning(w) {
-    const who = prompt('Acknowledging "' + w.code + '".\n\n' + w.message + '\n\nYour name?');
-    if (!who) return;
-    const note = prompt('What have you done about it? (optional)') || '';
-    this.design.warningAcknowledgements = acknowledge(this.design, w, who, note);
+  async acknowledgeWarning(w) {
+    // An acknowledgement carries a name, so the warning text has to be fully
+    // readable at the moment it is signed for — not truncated in a prompt box.
+    const v = await formDialog({
+      title: 'Acknowledge ' + w.code,
+      subtitle: w.message,
+      message: 'Acknowledging records that you have read this and decided the design can proceed. ' +
+               'It is kept against the design with your name and the time.',
+      submitLabel: 'Acknowledge',
+      fields: [
+        { key: 'who',  label: 'Your name', value: this.lastAcknowledgedBy || '' },
+        { key: 'note', label: 'What have you done about it?', type: 'textarea', value: '',
+          hint: 'Optional, but it is what the next person reads.' }
+      ]
+    });
+    if (!v) return;
+    const who = (v.who || '').trim();
+    if (!who) return toast('An acknowledgement has to carry a name.', 'bad');
+    this.lastAcknowledgedBy = who;
+    this.design.warningAcknowledgements = acknowledge(this.design, w, who, (v.note || '').trim());
     this.update();
   }
 
@@ -1235,8 +1332,12 @@ export class DesignerApp {
     this.update();
   }
 
-  resetSettingsSection(section) {
-    if (!confirm('Reset the ' + section + ' settings to the shipped defaults?')) return;
+  async resetSettingsSection(section) {
+    if (!await confirmDialog({
+      title: 'Reset the ' + section + ' settings?',
+      message: 'Everything NAC has changed in this section goes back to the shipped defaults. ' +
+               'Other sections are left alone.',
+      confirmLabel: 'Reset ' + section, danger: true })) return;
     if (section === 'materials') this.materialRates = {};
     else if (section === 'specs') { /* specs are data, never reset in bulk */ toast('Equipment specs are manufacturer data — clear them one model at a time.', 'warn'); return; }
     else delete this.settingsOverride[section === 'return' ? 'returnAir' : section];
@@ -1268,25 +1369,143 @@ export class DesignerApp {
   }
 
   async saveSettings() {
-    await Promise.all([
-      Store.setJson(Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride),
-      Store.setJson(Store.SETTINGS_KEYS.materialRates, this.materialRates),
-      Store.setJson(Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs)
-    ]);
-    toast('HVAC Design Settings saved.');
+    // setJson returns whether the DATABASE took it. Ignoring that and toasting
+    // "saved" is how an estimator types a night's worth of supplier rates,
+    // believes they are safe, and finds them gone on the next device.
+    const parts = [
+      ['design settings', Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride],
+      ['material rates', Store.SETTINGS_KEYS.materialRates, this.materialRates],
+      ['equipment specs', Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs]
+    ];
+    const results = await Promise.all(parts.map(([, key, value]) => Store.setJson(key, value)));
+    const failed = parts.filter((_, i) => !results[i]).map(([name]) => name);
+
+    if (!failed.length) { toast('HVAC Design Settings saved.'); return true; }
+    toast('SAVED ON THIS DEVICE ONLY — ' + failed.join(' and ') + ' did not reach the database' +
+      (Store.lastStorageError() ? ' (' + Store.lastStorageError() + ')' : '') +
+      '. They will not appear on another device. Press Save again when you have signal.', 'bad');
+    return false;
   }
 
   // ── Persistence & quote (PART 23) ─────────────────────────────────────────
 
+  /**
+   * Attach the design to a CUSTOMER and a JOB record, reusing the existing ones.
+   *
+   *     CUSTOMER → JOB → HVAC DESIGN → QUOTE
+   *
+   * The same rule as the migration: an existing record is never overwritten.
+   * What the estimator typed fills a blank on the customer; where the two
+   * disagree the customer record keeps what it had and the estimator is told,
+   * so nothing NAC holds is lost by saving a design.
+   *
+   * This never blocks a save. If the records cannot be reached the design still
+   * saves — it just is not linked yet, and the next save links it.
+   */
+  async linkCustomerAndJob() {
+    const d = this.design;
+    const candidate = normaliseCustomer({
+      name: d.customer?.name, email: d.customer?.email,
+      phone: d.customer?.phone, address: d.customer?.address
+    });
+    if (customerIsEmpty(candidate)) return { linked: false, why: 'no customer details entered yet' };
+
+    let customers, jobs;
+    try {
+      customers = await Crm.listCustomers();
+      jobs = await Crm.listJobs();
+    } catch (e) {
+      return { linked: false, why: 'the customer records could not be read: ' + e.message };
+    }
+
+    // ── Customer ──
+    const hit = findCustomer(customers, candidate);
+    let customer, conflicts = [];
+    if (hit) {
+      const m = mergeCustomer(hit.customer, candidate);
+      customer = m.customer;
+      // The address on a design is the SITE — where the work is. That belongs
+      // to the job, and a customer with a second property is not a data entry
+      // error, so it is never raised as a disagreement about the customer. It
+      // still fills the customer's address when they have none on file.
+      conflicts = m.conflicts.filter(c => c.field !== 'address');
+      if (m.changed) {
+        const w = await Crm.saveCustomer(customer);
+        if (!w.synced) return { linked: false, why: w.error || 'the customer record did not save' };
+      }
+    } else {
+      customer = normaliseCustomer({ ...candidate, id: makeCustomerId(candidate, customers.length + 1) });
+      const w = await Crm.saveCustomer(customer);
+      if (!w.synced) return { linked: false, why: w.error || 'the customer record did not save' };
+    }
+
+    // ── Job ──
+    const wantJob = normaliseJob({
+      customerId: customer.id,
+      description: d.job?.description || 'Ducted AC Supply & Install',
+      siteAddress: d.customer?.address || '',
+      status: d.quoteId ? 'quoted' : 'designed',
+      servicem8JobId: d.jobId || ''
+    });
+    const mine = jobs.filter(j => !j.customerId || j.customerId === customer.id);
+    const jhit = findJob(mine, wantJob);
+    let job;
+    let jobConflicts = [];
+    if (jhit) {
+      const m = mergeJob(jhit.job, wantJob);
+      job = m.job;
+      // A job description that reads differently on a second design for the
+      // same site is normal — "Ducted install" then "Add a second system" is
+      // one job, described two ways. The record keeps the first wording and
+      // nobody is interrupted over it. Only the CUSTOMER's own details are
+      // worth stopping for.
+      jobConflicts = m.conflicts;
+      if (m.changed) {
+        const w = await Crm.saveJob(job);
+        if (!w.synced) return { linked: false, why: w.error || 'the job record did not save', customer };
+      }
+    } else {
+      job = normaliseJob({ ...wantJob, id: makeJobId(wantJob, jobs.length + 1) });
+      const w = await Crm.saveJob(job);
+      if (!w.synced) return { linked: false, why: w.error || 'the job record did not save', customer };
+    }
+
+    this.design.customerRef = customer.id;
+    this.design.jobRef = job.id;
+    return { linked: true, customer, job, conflicts, jobConflicts, reused: !!hit };
+  }
+
   async save(reason = 'Saved by estimator') {
     this.design = addRevision(this.design, { by: 'estimator', reason });
+    // Before the design is written, so the row carries the links.
+    const link = await this.linkCustomerAndJob();
     const r = await Store.saveDesign(this.design);
     // Only a database write clears the dirty flag. A local-only copy is still
     // unsaved work as far as any other device is concerned, so the Save button
     // must keep asking to be pressed.
     this.dirty = !r.synced;
     if (r.synced) {
-      toast('Design saved (revision ' + this.design.revisions.length + ').');
+      toast('Design saved (revision ' + this.design.revisions.length + ')' +
+        (link.linked ? ' — ' + (link.reused ? 'filed under existing customer ' : 'new customer ') +
+          link.customer.name : '') + '.');
+      // A disagreement with the customer's own details is never resolved
+      // quietly — but it is raised ONCE. Saving six times should not mean
+      // answering the same question six times.
+      const unseen = (link.conflicts || []).filter(c => {
+        const key = c.field + '|' + c.kept + '|' + c.offered;
+        if (this.seenCustomerConflicts.has(key)) return false;
+        this.seenCustomerConflicts.add(key);
+        return true;
+      });
+      if (unseen.length) {
+        await alertDialog({
+          title: 'This differs from the customer record',
+          message: 'The design is saved and linked. NAC\'s existing record was KEPT — nothing was ' +
+                   'overwritten. Change it in the customer record itself if the new value is right.',
+          lines: unseen.map(c =>
+            c.field + ': record has "' + c.kept + '", this design says "' + c.offered + '"')
+        });
+      }
     } else {
       toast('SAVED ON THIS DEVICE ONLY — it has not reached the database' +
             (r.error ? ' (' + r.error + ')' : '') +
@@ -1295,15 +1514,92 @@ export class DesignerApp {
     this.render();
   }
 
+  /**
+   * Pick a customer NAC already has, then one of their jobs.
+   *
+   * This is the point of the records: the second job for the same person is
+   * their details already filled in, not typed again with a different spelling
+   * of the street.
+   */
+  async showCustomerPicker() {
+    let customers;
+    try { customers = await Crm.listCustomers(); }
+    catch (e) { return toast('Could not read the customer records: ' + e.message, 'bad'); }
+
+    const id = await pickDialog({
+      title: 'Customers',
+      message: customers.length
+        ? 'Choosing one fills this design in with their details.'
+        : null,
+      options: customers.map(c => ({
+        value: c.id,
+        label: c.name,
+        sub: [c.phone, c.email].filter(Boolean).join('  ·  ') || 'no contact details on file',
+        meta: c.address || ''
+      })),
+      emptyText: 'No customer records yet. Save a design with a customer name on it and ' +
+                 'the record is created for you.'
+    });
+    if (!id) return;
+    const customer = customers.find(c => c.id === id);
+    if (!customer) return;
+
+    // Their jobs, so a second system at the same house joins the same job
+    // rather than starting a new one.
+    let jobs = [];
+    try { jobs = await Crm.listJobs({ customerId: customer.id }); } catch (e) { /* new customer */ }
+
+    let job = null;
+    if (jobs.length) {
+      const jid = await pickDialog({
+        title: customer.name + ' — which job?',
+        message: 'A job is one piece of work at one site. Pick the site this design is for.',
+        options: jobs.map(j => ({
+          value: j.id,
+          label: j.siteAddress || j.description || j.id,
+          sub: j.description || '',
+          meta: j.status
+        })).concat([{ value: '__new__', label: 'A new job at a different address',
+                      sub: 'Starts a fresh job for this customer' }])
+      });
+      if (jid === null) return;
+      if (jid !== '__new__') job = jobs.find(j => j.id === jid) || null;
+    }
+
+    this.design.customer = {
+      ...this.design.customer,
+      name: customer.name, email: customer.email, phone: customer.phone,
+      address: job?.siteAddress || customer.address
+    };
+    if (job) {
+      this.design.job = { ...this.design.job, description: job.description || this.design.job?.description };
+      this.design.customerRef = customer.id;
+      this.design.jobRef = job.id;
+    } else {
+      this.design.customerRef = customer.id;
+      this.design.jobRef = null;
+    }
+    this.dirty = true;
+    this.seenCustomerConflicts = new Set();
+    toast(customer.name + (job ? ' — ' + (job.siteAddress || job.description) : '') + ' loaded into this design.');
+    this.update();
+  }
+
   async showDesignList() {
     const list = await Store.listDesigns();
-    const pick = prompt('Recent designs:\n\n' +
-      list.map((d, i) => (i + 1) + '. ' + (d.customer || '—') + '  ' + d.id +
-        '  (' + new Date(d.updatedAt).toLocaleDateString('en-AU') + ')').join('\n') +
-      '\n\nEnter a number to open, or Cancel.');
-    const chosen = list[Number(pick) - 1];
-    if (!chosen) return;
-    const d = await Store.loadDesign(chosen.id);
+    const id = await pickDialog({
+      title: 'Open a design',
+      message: list.length ? 'Most recently updated first.' : null,
+      options: list.map(d => ({
+        value: d.id,
+        label: d.customer || 'No customer name',
+        sub: d.id,
+        meta: d.updatedAt ? new Date(d.updatedAt).toLocaleDateString('en-AU') : ''
+      })),
+      emptyText: 'No saved designs yet. Save one and it will appear here.'
+    });
+    if (!id) return;
+    const d = await Store.loadDesign(id);
     if (!d) return toast('Could not load that design.', 'bad');
     this.design = d;
     this.selectedRoomId = null;
@@ -1313,10 +1609,45 @@ export class DesignerApp {
   async addDesignToQuote() {
     const d = this.design;
     if (!d.warningSummary?.canApprove) {
-      if (!confirm(d.warningSummary.blockReason + '\n\nSend it to a quote anyway?')) return;
+      const crit = (d.warningSummary?.unacknowledgedCritical || []);
+      if (!await confirmDialog({
+        title: 'This design has not been approved',
+        message: d.warningSummary.blockReason,
+        lines: crit.slice(0, 8).map(w => w.message)
+          .concat(crit.length > 8 ? ['…and ' + (crit.length - 8) + ' more'] : []),
+        confirmLabel: 'Quote it anyway', danger: true })) return;
     }
     if (!d.commercials?.sellPriceIncGst) {
       return toast('No sell price. Set the installed price for this model in the existing Price Setup screen.', 'bad');
+    }
+
+    // A line with NO cost makes the sell price short by whatever it is worth.
+    // On job-cost-plus-fee that is money given away, so it stops the quote.
+    if (d.bom?.unpricedCount) {
+      return toast(d.bom.unpricedCount + ' material line(s) have no cost at all, so the price is short by ' +
+        'whatever they are worth: ' + (d.bom.unpricedLabels || []).join(', ') +
+        '. Enter their cost on the Materials tab before quoting.', 'bad');
+    }
+
+    // Placeholder rates are shipped starting values, not NAC prices. On this
+    // basis they go straight through to the customer, so the estimator is shown
+    // exactly which lines are guesses and what they are worth before a quote
+    // exists — never silently.
+    if (d.bom?.placeholderCount) {
+      const detail = (d.bom.placeholderDetail || []).slice(0, 10)
+        .map(l => l.label + '  ' + l.quantity + ' ' + l.unit +
+                  ' @ $' + Number(l.unitCost).toFixed(2) + ' = $' + Number(l.totalCost).toFixed(2));
+      const more = (d.bom.placeholderCount > 10) ? ['…and ' + (d.bom.placeholderCount - 10) + ' more'] : [];
+      const ok = await confirmDialog({
+        title: 'UNCONFIRMED MATERIAL PRICES',
+        message: d.bom.placeholderCount + ' line(s) use shipped placeholder rates, not NAC prices. ' +
+          'They are worth $' + Number(d.bom.placeholderCost).toFixed(2) + ' of the $' +
+          Number(d.commercials.totalJobCost).toFixed(2) + ' job cost, and on the job-cost-plus-fee ' +
+          'basis that goes straight to the customer.',
+        lines: detail.concat(more),
+        cancelLabel: 'Set the real rates first',
+        confirmLabel: 'Quote on these figures', danger: true });
+      if (!ok) return;
     }
     try {
       const r = await Store.pushDesignToQuote(d);
@@ -1324,7 +1655,10 @@ export class DesignerApp {
       this.design.status = 'quoted';
       await this.save('Pushed to quote ' + r.quoteId);
       this.design.quotedRevision = this.design.revisions.length;
-      prompt('Quote created. Send this link to the customer:', r.signUrl);
+      await linkDialog({
+        title: 'Quote ' + r.quoteId + ' created',
+        message: 'Send this link to the customer. It opens their quote and lets them accept and sign it.',
+        url: r.signUrl });
       this.update();
     } catch (e) {
       toast(e.message, 'bad');
@@ -1353,12 +1687,16 @@ export class DesignerApp {
       changes.unshift({ field: 'Quoted total (inc GST)', from: '$' + oldTotal.toFixed(2), to: '$' + newTotal.toFixed(2) });
     }
 
+    const lines = changes.map(c => c.field + ':  ' + (c.from ?? '—') + '  →  ' + (c.to ?? '—'));
     const body = changes.length
-      ? changes.map(c => '  • ' + c.field + ':  ' + (c.from ?? '—') + '  →  ' + (c.to ?? '—')).join('\n')
+      ? 'These are the differences between the quote as it stands and this design.'
       : (quotedRev ? 'Nothing has changed since the quote was created.'
                    : 'No earlier revision to compare against — the quote will be rewritten from the current design.');
 
-    if (!confirm('Update quote ' + d.quoteId + ' from this design?\n\n' + body)) return;
+    if (!await confirmDialog({
+      title: 'Update quote ' + d.quoteId + '?',
+      message: body, lines,
+      confirmLabel: 'Update the quote' })) return;
 
     try {
       await Store.pushDesignToQuote(d, { quoteId: d.quoteId });
@@ -1370,16 +1708,27 @@ export class DesignerApp {
   }
 
   /** Historical designs are never overwritten — an earlier one can be restored. */
-  showRevisions() {
+  async showRevisions() {
     const revs = this.design.revisions || [];
     if (!revs.length) return toast('No saved revisions yet.', 'warn');
-    const pick = prompt('Revisions of ' + this.design.id + ':\n\n' +
-      revs.map(r => '  ' + r.number + '. ' + new Date(r.at).toLocaleString('en-AU') +
-        '  —  ' + (r.reason || 'saved') +
-        (r.snapshot.systemLoad ? '  (' + r.snapshot.systemLoad.designKw + ' kW)' : '')).join('\n') +
-      '\n\nEnter a number to restore it as a NEW revision, or Cancel.');
-    const n = Number(pick);
-    if (!revs.some(r => r.number === n)) return;
+    const n = await pickDialog({
+      title: 'Revisions of ' + this.design.id,
+      message: 'Choosing one restores it as a NEW revision. Nothing is overwritten — ' +
+               'the current design stays in the history.',
+      submitLabel: 'Restore',
+      options: [...revs].reverse().map(r => ({
+        value: r.number,
+        label: 'Revision ' + r.number + ' — ' + (r.reason || 'saved'),
+        sub: new Date(r.at).toLocaleString('en-AU'),
+        meta: r.snapshot?.systemLoad ? r.snapshot.systemLoad.designKw + ' kW' : ''
+      }))
+    });
+    if (n === null || !revs.some(r => r.number === n)) return;
+    if (!await confirmDialog({
+      title: 'Restore revision ' + n + '?',
+      message: 'The design goes back to how it was at revision ' + n +
+               ', saved as revision ' + (revs.length + 1) + '. Nothing is lost.',
+      confirmLabel: 'Restore it' })) return;
     this.design = restoreRevision(this.design, n, 'estimator');
     this.selectedRoomId = null;
     this.loadedPlanUrl = null;
@@ -1394,12 +1743,43 @@ export class DesignerApp {
 
   // ── Reports (PART 26) ─────────────────────────────────────────────────────
 
-  showReportMenu() {
+  async showReportMenu() {
     const snapshot = this.viewer?.snapshot() || null;
     const logo = document.querySelector('.brand img')?.src || null;
-    const which = prompt('Which report?\n\n1. Internal HVAC Design Sheet\n2. Customer HVAC Design Summary', '1');
-    if (which === '1') openReport(internalReportHtml(this.design, { logo, planSnapshot: snapshot }), 'internal sheet');
-    else if (which === '2') openReport(customerReportHtml(this.design, { logo, planSnapshot: snapshot }), 'customer summary');
+    const which = await pickDialog({
+      title: 'Which document?',
+      message: 'Download saves a PDF file. View opens a print page, which is the ' +
+               'way out if a download is blocked.',
+      options: [
+        { value: 'internal-pdf', label: 'DOWNLOAD INTERNAL HVAC DESIGN PDF',
+          sub: 'The full working — supplier costs, margin, every calculation. NAC only.' },
+        { value: 'customer-pdf', label: 'DOWNLOAD CUSTOMER HVAC DESIGN SUMMARY PDF',
+          sub: 'The system and what is included. No supplier costs, no margin, no internal notes.' },
+        { value: 'internal-view', label: 'View the internal sheet',
+          sub: 'Opens a print page. Save as PDF from there.' },
+        { value: 'customer-view', label: 'View the customer summary',
+          sub: 'Opens a print page. Save as PDF from there.' }
+      ]
+    });
+    if (!which) return;
+    const opts = { logo, planSnapshot: snapshot };
+
+    if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
+    if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');
+
+    const kind = which === 'customer-pdf' ? REPORT_KIND.CUSTOMER : REPORT_KIND.INTERNAL;
+    const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
+    const r = downloadReportPdf(this.design, kind, opts);
+    // Never say "downloaded" unless it actually was.
+    if (r.ok) {
+      toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
+    } else {
+      await alertDialog({
+        title: 'The PDF was not saved',
+        message: r.error + '\n\nOpen the print page instead and use Save as PDF.' });
+      openReport(kind === REPORT_KIND.CUSTOMER
+        ? customerReportHtml(this.design, opts) : internalReportHtml(this.design, opts), label);
+    }
   }
 
   // ── NAC Design Assistant (PART 28) ────────────────────────────────────────

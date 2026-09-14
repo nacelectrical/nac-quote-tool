@@ -260,18 +260,30 @@ function go(){
     +'<a href="next.html" style="display:inline-block;margin-top:22px;background:linear-gradient(135deg,#F5C200,#e6a800);color:#0c0c24;text-decoration:none;border-radius:10px;padding:14px 22px;font-size:15px;font-weight:800">See what happens next &rarr;</a></div>';
   fetch(SUPA_URL+'/rest/v1/nac_quotes?id=eq.'+encodeURIComponent(Q.quoteId),{method:'PATCH',headers:{'apikey':SUPA,'Authorization':'Bearer '+SUPA,'Content-Type':'application/json'},
     body:JSON.stringify({accepted:true,accepted_time:new Date().toISOString(),chosen_brand:o.name,total:parseFloat(tot)})}).catch(function(){});
-  // Create the job in ServiceM8 (non-fatal if it fails)
+  // Create the job in ServiceM8. Never fatal for the customer — their
+  // acceptance is already recorded above — but the OUTCOME is not thrown away:
+  // the handler writes it onto the quote row server-side, so NAC can see a
+  // failure instead of it disappearing with this tab. Nothing about ServiceM8
+  // is shown to the customer either way; it is not their problem.
   fetch('/api/create-job',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
+      quoteId:Q.quoteId,
       clientName:Q.clientName||nm,
       address:Q.address||'',
       phone:Q.phone||'',
       email:Q.email||'',
       description:o.name+addonText+' - '+totFmt+' inc GST (Quote '+Q.quoteId+')'
     })
-  }).catch(function(){});
+  }).then(function(r){ return r.json().catch(function(){ return {ok:false,error:'HTTP '+r.status}; }); })
+    .then(function(d){
+      // Left in the console deliberately: if NAC ever watches an acceptance
+      // happen, this says plainly whether the job was really created.
+      if(d && d.created) console.log('ServiceM8 job created:', d.generatedJobId || d.jobUuid);
+      else console.warn('ServiceM8 job NOT created:', (d && d.error) || 'unknown reason');
+    })
+    .catch(function(e){ console.warn('ServiceM8 job NOT created:', e.message); });
 
   if(WEBHOOK_URL){
     var addons=addonList().map(function(it){return it.label+' ('+fmt(it.price)+')';}).join(', ')||'none';

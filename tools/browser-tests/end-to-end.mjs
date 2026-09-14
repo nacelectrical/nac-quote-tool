@@ -1,7 +1,9 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
 const ctx=await b.newContext({viewport:{width:1400,height:1000}});
+await signInContext(ctx);
 const settings=new Map(), designs=new Map(), quotes=new Map();
 let failures=0, step=0;
 const say=(n,c)=>{console.log(`  ${c?'PASS':'FAIL'}  ${n}`); if(!c)failures++;};

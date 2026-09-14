@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAC — Customers &amp; jobs migration</title>
+<style>
+  :root{--bg:#0c0c24;--panel:#16162e;--panel-2:#0f0f26;--line:#252545;--ink:#fff;--ink-2:#8080b0;
+        --ink-3:#5a5a80;--yellow:#F5C200;--blue:#2B6CB8;--ok:#3fbf6f;--warn:#F5C200;--bad:#ff5f5f}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,
+       "Segoe UI",Inter,system-ui,sans-serif;padding:20px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:17px;letter-spacing:.4px;margin:0 0 4px}
+  h1 .mark{display:inline-block;width:22px;height:5px;background:var(--yellow);
+           vertical-align:middle;margin-right:10px;transform:translateY(-4px)}
+  .sub{color:var(--ink-2);font-size:13px;margin:0 0 22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:0 0 16px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--ink-2);margin:0 0 12px}
+  button{min-height:48px;padding:0 20px;border-radius:8px;border:1px solid var(--line);
+         background:#1c1c3a;color:var(--ink);font:600 14px inherit;cursor:pointer;font-family:inherit}
+  button.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
+  button[disabled]{opacity:.5;cursor:default}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--panel-2);border:1px solid var(--line);
+      border-radius:8px;padding:12px;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--ink-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+     padding:6px 8px;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px;border-bottom:1px solid #1e1e3c;vertical-align:top}
+  .tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;
+       background:#22223e;color:var(--ink-2)}
+  .tag.new{background:rgba(63,191,111,.18);color:var(--ok)}
+  .tag.fill{background:rgba(43,108,184,.2);color:#8ab6ee}
+  .tag.warn{background:rgba(245,194,0,.18);color:var(--warn)}
+  .note{font-size:12.5px;color:var(--ink-2);margin:0 0 12px}
+  .bad{color:var(--bad)} .ok{color:var(--ok)} .warn{color:var(--warn)}
+  .scroll{overflow-x:auto}
+  @media (max-width:560px){ body{padding:12px} button{width:100%} }
+  /* The dialog from designer/ui/modal.mjs, which carries no styles of its own. */
+  .dlg-host{position:fixed;inset:0;z-index:1000;background:rgba(6,6,18,.72);display:flex;
+    align-items:center;justify-content:center;padding:16px}
+  .dlg-panel{width:100%;max-width:460px;max-height:calc(100dvh - 32px);display:flex;flex-direction:column;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,.55)}
+  .dlg-panel.wide{max-width:640px}
+  .dlg-head{padding:18px 20px 12px;border-bottom:1px solid var(--line)}
+  .dlg-head h3{margin:0;font-size:15px;font-weight:800}
+  .dlg-sub{margin:5px 0 0;font-size:11.5px;color:var(--ink-2)}
+  .dlg-body{padding:16px 20px;overflow-y:auto}
+  .dlg-text{margin:0 0 12px;font-size:13px;line-height:1.65;white-space:pre-wrap}
+  .dlg-list{margin:0 0 12px;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--ink-2)}
+  .dlg-input{width:100%;min-height:48px;padding:12px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--ink);font-size:16px;font-family:inherit}
+  .dlg-foot{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;padding:14px 20px;
+    border-top:1px solid var(--line);background:var(--panel-2)}
+  .dlg-btn{min-height:48px;padding:0 20px;border-radius:8px;border:1px solid var(--line);
+    background:#1c1c3a;color:var(--ink);font:600 14px inherit;font-family:inherit;cursor:pointer}
+  .dlg-btn.ghost{background:transparent;color:var(--ink-2)}
+  .dlg-btn.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
+  .dlg-btn.danger.primary{background:var(--bad);border-color:var(--bad);color:#fff}
+  @media (max-width:560px){ .dlg-host{padding:0;align-items:flex-end}
+    .dlg-panel,.dlg-panel.wide{max-width:none;border-radius:12px 12px 0 0;max-height:92dvh}
+    .dlg-foot{flex-direction:column-reverse} .dlg-btn{width:100%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="mark"></span>Customers &amp; jobs</h1>
+  <p class="sub">Turns the customer names already on NAC's quotes and designs into real
+     CUSTOMER and JOB records, and links them up:
+     <strong>customer → job → design → quote</strong>.</p>
+
+  <div class="card">
+    <h2>Before you press anything</h2>
+    <p class="note">
+      This reads first and shows you exactly what it would do. <strong>Nothing is written until you
+      press APPLY.</strong> When it does write, it only ever fills in blanks: a value NAC already has
+      is kept, and any disagreement is listed below for you to settle yourself. Existing quotes,
+      designs and the customer signing page are not changed in any way.
+    </p>
+    <p class="note">
+      If the <code>nac_customers</code> and <code>nac_jobs</code> tables do not exist yet, run
+      <code>designer/crm-schema.sql</code> in the Supabase SQL editor first. It is additive —
+      it drops nothing and renames nothing.
+    </p>
+    <div class="btn-row">
+      <button id="dry" class="primary">DRY RUN — show me what it would do</button>
+      <button id="apply" disabled>APPLY</button>
+    </div>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script type="module">
+import { requireSignIn } from '/designer/auth.mjs';
+import { planBackfill, describePlan, planIsEmpty } from '/designer/engines/crm.mjs';
+import { loadMigrationSources, applyPlan, tableAvailable } from '/designer/engines/crm-store.mjs';
+import { confirmDialog } from '/designer/ui/modal.mjs';
+
+await requireSignIn({ pageName: 'The customer and job migration' });
+
+const out = document.getElementById('out');
+const dryBtn = document.getElementById('dry');
+const applyBtn = document.getElementById('apply');
+let plan = null;
+
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const card = (title, body) => '<div class="card"><h2>' + esc(title) + '</h2>' + body + '</div>';
+
+function rows(list, cols) {
+  if (!list.length) return '<p class="note">None.</p>';
+  return '<div class="scroll"><table><thead><tr>' +
+    cols.map(c => '<th>' + esc(c.label) + '</th>').join('') + '</tr></thead><tbody>' +
+    list.map(r => '<tr>' + cols.map(c => '<td>' + (c.html ? c.html(r) : esc(c.get(r))) + '</td>').join('') +
+      '</tr>').join('') + '</tbody></table></div>';
+}
+
+function render() {
+  let html = '';
+
+  html += card('What this would do', '<pre>' + esc(describePlan(plan)) + '</pre>');
+
+  if (planIsEmpty(plan)) {
+    html += card('Nothing to do',
+      '<p class="note ok">Every customer and job already exists. Running this again changes nothing — ' +
+      'which is what it is supposed to do.</p>');
+  }
+
+  html += card('Customers to create', rows(plan.newCustomers, [
+    { label: '', html: () => '<span class="tag new">NEW</span>' },
+    { label: 'Id', get: r => r.id },
+    { label: 'Name', get: r => r.name },
+    { label: 'Phone', get: r => r.phone || '—' },
+    { label: 'Email', get: r => r.email || '—' },
+    { label: 'Address', get: r => r.address || '—' },
+    { label: 'From', get: r => r.from }
+  ]));
+
+  html += card('Customers to fill in', rows(plan.customerUpdates, [
+    { label: '', html: () => '<span class="tag fill">FILL BLANKS</span>' },
+    { label: 'Id', get: r => r.id },
+    { label: 'Name', get: r => r.fields.name },
+    { label: 'Fields being filled', get: r => r.filled.join(', ') },
+    { label: 'Matched on', get: r => r.matchedOn }
+  ]));
+
+  html += card('Jobs to create', rows(plan.newJobs, [
+    { label: '', html: () => '<span class="tag new">NEW</span>' },
+    { label: 'Id', get: r => r.id },
+    { label: 'Customer', get: r => r.customerId },
+    { label: 'Site', get: r => r.siteAddress || '—' },
+    { label: 'Description', get: r => r.description || '—' },
+    { label: 'From', get: r => r.from }
+  ]));
+
+  html += card('Rows to link', rows(plan.links, [
+    { label: 'Table', get: r => r.table },
+    { label: 'Row', get: r => r.id },
+    { label: 'Customer', get: r => r.customerId },
+    { label: 'Job', get: r => r.jobId || '—' }
+  ]));
+
+  html += card('Disagreements — NOTHING here is overwritten',
+    (plan.conflicts.length
+      ? '<p class="note warn">NAC\'s existing value is kept in every case below. These are listed so ' +
+        'you can decide, not so the migration can decide for you.</p>'
+      : '<p class="note ok">None. Nothing NAC already had disagrees with what is on the quotes and designs.</p>') +
+    rows(plan.conflicts.flatMap(c => c.differences.map(d => ({ ...d, ...c }))), [
+      { label: 'Record', get: r => r.kind + ' ' + r.id },
+      { label: 'Field', get: r => r.field },
+      { label: 'Kept (NAC has)', html: r => '<strong>' + esc(r.kept) + '</strong>' },
+      { label: 'Offered (not used)', get: r => r.offered },
+      { label: 'From', get: r => r.from }
+    ]));
+
+  if (plan.skipped.length) {
+    html += card('Left alone', rows(plan.skipped, [
+      { label: 'Row', get: r => r.from }, { label: 'Why', get: r => r.why }
+    ]));
+  }
+
+  out.innerHTML = html;
+}
+
+dryBtn.onclick = async () => {
+  dryBtn.disabled = true; dryBtn.textContent = 'Reading…';
+  out.innerHTML = '';
+  const haveCustomers = await tableAvailable('nac_customers');
+  const haveJobs = await tableAvailable('nac_jobs');
+  const src = await loadMigrationSources();
+
+  let head = '<p class="note">' +
+    'nac_customers table: ' + (haveCustomers ? '<span class="ok">present</span>'
+      : '<span class="warn">not present — the key/value fallback will be used</span>') + '<br>' +
+    'nac_jobs table: ' + (haveJobs ? '<span class="ok">present</span>'
+      : '<span class="warn">not present — the key/value fallback will be used</span>') + '</p>';
+  if (src.errors.length) {
+    head += '<p class="note bad">Could not read: ' + esc(src.errors.join('; ')) +
+      '. The plan below covers only what could be read.</p>';
+  }
+  out.innerHTML = card('Where things stand', head);
+
+  plan = planBackfill(src);
+  const existing = out.innerHTML;
+  render();
+  out.innerHTML = existing + out.innerHTML;
+
+  dryBtn.disabled = false; dryBtn.textContent = 'DRY RUN — show me what it would do';
+  applyBtn.disabled = planIsEmpty(plan) && plan.links.length === 0;
+};
+
+applyBtn.onclick = async () => {
+  if (!plan) return;
+  if (!await confirmApply()) return;
+  applyBtn.disabled = true; dryBtn.disabled = true;
+  const log = document.createElement('div');
+  log.className = 'card';
+  log.innerHTML = '<h2>Applying</h2><pre id="log">starting…</pre>';
+  out.prepend(log);
+  const pre = log.querySelector('#log');
+  const lines = [];
+  const r = await applyPlan(plan, { onProgress: (what, done) => {
+    lines.push(what);
+    pre.textContent = lines.slice(-14).join('\n') +
+      '\n\n' + done.customers + ' customer(s), ' + done.jobs + ' job(s), ' + done.links + ' link(s)';
+  } });
+  pre.textContent = lines.slice(-14).join('\n') + '\n\n' +
+    (r.errors.length
+      ? 'STOPPED. ' + r.errors.join('\n') +
+        '\n\nWhat was written stays written. Fix the problem and press DRY RUN then APPLY again — ' +
+        'the migration only ever does what is still missing.'
+      : 'DONE. ' + r.done.customers + ' customer record(s), ' + r.done.jobs + ' job(s), ' +
+        r.done.links + ' row(s) linked. Press DRY RUN again to confirm there is nothing left.');
+  dryBtn.disabled = false;
+};
+
+function confirmApply() {
+  const s = plan.summary;
+  return confirmDialog({
+    title: 'Write these records?',
+    message: 'Nothing NAC already has is overwritten — only blanks are filled, and every ' +
+             'disagreement stays listed for you to settle.',
+    lines: [
+      s.customersCreated + ' new customer record(s)',
+      s.customersUpdated + ' existing customer(s) with blanks filled in',
+      s.jobsCreated + ' new job(s)',
+      s.linked + ' existing quote/design row(s) linked to a customer and job'
+    ],
+    confirmLabel: 'Write them', cancelLabel: 'Not yet'
+  });
+}
+</script>
+</body>
+</html>

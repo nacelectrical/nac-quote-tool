@@ -1,11 +1,12 @@
 import { chromium } from 'playwright';
+import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 let fail=0; const say=(n,c)=>{console.log(`  ${c?'PASS':'FAIL'}  ${n}`); if(!c)fail++;};
 
 // 1. No API key configured -> the UI must say so, not invent rooms.
 console.log('\n[1] AI not configured');
 {
-  const ctx=await b.newContext(); const p=await ctx.newPage();
+  const ctx=await b.newContext(); await signInContext(ctx); const p=await ctx.newPage();
   await p.route('**/api/plan-read', r=>r.fulfill({status:500,contentType:'application/json',
     body:JSON.stringify({error:'Anthropic API key not configured'})}));
   await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));
@@ -29,7 +30,7 @@ console.log('\n[1] AI not configured');
 // 2. Malformed AI response -> discarded, never used as rooms.
 console.log('\n[2] AI returns rubbish');
 {
-  const ctx=await b.newContext(); const p=await ctx.newPage();
+  const ctx=await b.newContext(); await signInContext(ctx); const p=await ctx.newPage();
   await p.route('**/api/plan-read', r=>r.fulfill({status:200,contentType:'application/json',
     body:JSON.stringify({observations:{detections:[{id:'d1',text:'not-a-number',box:{x:'bad',y:0,w:0,h:0}}],
       roomLabels:[{id:'r1',text:'GHOST ROOM'}]},quality:'poor',notes:['unreadable']})}));
@@ -55,7 +56,7 @@ console.log('\n[2] AI returns rubbish');
 // 3. A real read retains the evidence per room.
 console.log('\n[3] room records keep their evidence');
 {
-  const ctx=await b.newContext(); const p=await ctx.newPage();
+  const ctx=await b.newContext(); await signInContext(ctx); const p=await ctx.newPage();
   await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));
   await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
   await p.locator('button',{hasText:'Load the sample builder plan'}).first().click(); await p.waitForTimeout(2500);
