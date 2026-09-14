@@ -5,6 +5,7 @@
 //
 //   node tools/serve.mjs &   node tools/browser-tests/report-pdf.mjs
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 import { writeFileSync } from 'node:fs';
 
@@ -24,13 +25,13 @@ await p.waitForTimeout(1500);
 // Build a real costed design through the app, exactly as an estimator would.
 await p.locator('button', { hasText: 'Load the sample builder plan' }).first().click();
 await p.waitForTimeout(2500);
-await p.locator('button.tab', { hasText: 'Rooms' }).first().click();
+await ensureAdvanced(p); await p.locator('button.tab', { hasText: 'Rooms' }).first().click();
 await p.waitForTimeout(600);
 const va = p.locator('button', { hasText: 'Verify all' });
 if (await va.count()) await va.last().click();
 await p.waitForTimeout(2200);
 // Open the Plan tab so the viewer canvas is laid out and a real snapshot exists.
-await p.locator('button.tab', { hasText: 'Plan' }).first().click();
+await ensureAdvanced(p); await p.locator('button.tab', { hasText: 'Plan' }).first().click();
 await p.waitForTimeout(1500);
 
 const ready = await p.evaluate(() => {

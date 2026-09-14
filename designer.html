@@ -292,7 +292,65 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .brand .sub{display:none}
   .tab-body{padding:12px}
   .stat-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .qreview{grid-template-columns:1fr}
+  .qreview-plan{min-height:380px}
+  .qreview-plan .plan-host,.qplan-placeholder{min-height:320px}
+  .qcards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+  .qactions{flex-direction:column;align-items:stretch}
 }
+
+/* ── Quick Quote Mode ─────────────────────────────────────────────────── */
+.quick{max-width:1500px}
+.step.on{border-color:var(--yellow);color:var(--yellow)}
+
+/* The one thing the estimator is asked, and how to deal with it. */
+.qint{background:var(--panel);border:1px solid var(--line);border-left-width:3px;
+  border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+.qint.bad{border-left-color:var(--bad)} .qint.warn{border-left-color:var(--warn)}
+.qint-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.qint-title{font-size:13.5px;font-weight:700}
+.qint-detail{font-size:12px;color:var(--ink-2);line-height:1.55}
+.qlist{margin:0;padding-left:18px;font-size:12px;color:var(--ink-2);line-height:1.9}
+
+/* The review screen: plan on the left, the numbers that decide it on the right. */
+.qreview{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,1fr);
+  gap:14px;align-items:start}
+.qreview-plan{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;display:flex;flex-direction:column;min-height:520px}
+.qreview-plan-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:10px 13px;border-bottom:1px solid var(--line)}
+.qreview-plan .plan-host,.qplan-placeholder{flex:1;min-height:460px}
+.qplan-placeholder{display:flex;align-items:center;justify-content:center;
+  color:var(--ink-3);font-size:12px}
+.qreview-side{display:flex;flex-direction:column;gap:12px}
+
+.qcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
+.qcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.qcard-label{font-size:9.5px;font-weight:700;color:var(--ink-3);
+  text-transform:uppercase;letter-spacing:.5px}
+.qcard-value{font-size:17px;font-weight:800;margin-top:3px;line-height:1.25;word-break:break-word}
+.qcard-sub{font-size:10px;color:var(--ink-3);margin-top:3px;line-height:1.4}
+/* Internal money is marked so nobody mistakes this screen for the customer's. */
+.qcard.internal{border-style:dashed}
+.qcard.internal .qcard-value{color:var(--ink-2)}
+.qcard.sell .qcard-value{color:var(--yellow)}
+.qcard.bad{border-color:rgba(255,95,95,.5)} .qcard.bad .qcard-value{color:var(--bad)}
+
+.qattn{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+  display:flex;flex-direction:column;gap:8px}
+.qattn-head{font-size:10px;font-weight:700;color:var(--ink-3);
+  text-transform:uppercase;letter-spacing:.5px}
+.qattn-row{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}
+.qattn-row>span{flex:1}
+
+.qactions{margin-top:14px;gap:10px}
+.qtotal{font-size:13px;color:var(--ink-2);display:flex;justify-content:space-between;
+  padding-top:8px;border-top:1px solid var(--line)}
+.qtotal strong{color:var(--yellow);font-size:16px}
+.qsend-price{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:13px;color:var(--ink-2)}
+.qsend-price strong{font-size:22px;color:var(--yellow)}
+
 @media print{
   .app-head,.steps,.tabs,.assistant,.plan-tools,.btn{display:none!important}
   body{background:#fff;color:#111}

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
@@ -32,7 +33,7 @@ async function page(){
     return r.fulfill({status:200,contentType:'application/json',body:JSON.stringify(row?[row]:[])});});
   return p;
 }
-const tab=async(p,name)=>{await p.locator('button.tab',{hasText:name}).first().click(); await p.waitForTimeout(700);};
+const tab=async(p,name)=>{await ensureAdvanced(p); await p.locator('button.tab',{hasText:name}).first().click(); await p.waitForTimeout(700);};
 const txt=async(p)=>await p.evaluate(()=>document.querySelector('.main')?.innerText||'');
 
 let p=await page();

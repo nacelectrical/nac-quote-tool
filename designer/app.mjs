@@ -29,6 +29,8 @@ import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
 import { routeOverlayFromNetwork, LABEL_DETAIL, DEFAULT_LABEL_DETAIL,
          AUTO_ROUTE_NOTICE } from './engines/router.mjs';
+import { collectInterruptions, FIX_IN } from './engines/interruptions.mjs';
+import { renderQuickMode, QUICK_STEPS, quickStepState } from './ui/quick-mode.mjs';
 import { acknowledge } from './engines/warnings.mjs';
 import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
 import * as Store from './engines/store.mjs';
@@ -70,6 +72,13 @@ export class DesignerApp {
     this.design = createDesign({});
     this.summary = {};
     this.tab = 'plan';
+    // QUICK QUOTE MODE is the default. An estimator quoting a normal house
+    // should never have to walk through thirteen engineering tabs; those stay
+    // one click away under ADVANCED DESIGN for the jobs that need them.
+    this.mode = 'quick';
+    this.quickStep = 'upload';
+    this.interruptions = { blocking: [], confirm: [], notes: [], all: [],
+                           canQuote: false, canAutoProceed: false, summary: '' };
     this.selectedRoomId = null;
     this.settingsSection = null;
     this.specModelKey = '';
@@ -139,6 +148,7 @@ export class DesignerApp {
   // ── Core recompute ────────────────────────────────────────────────────────
 
   recompute() {
+    if (this.mode === 'quick') this.acceptHighConfidenceRooms();
     this.design = runPipeline(this.design, {
       settings: this.settings,
       catalogue: this.catalogue,
@@ -171,6 +181,13 @@ export class DesignerApp {
     this.renderTabs();
     if (this.settingsSection) {
       mount(this.mainEl, renderSettingsScreen(this, this.settingsSection));
+    } else if (this.mode === 'quick') {
+      // One focused screen per step. The engineering still ran — it is just
+      // not something the estimator has to walk through to get a quote out.
+      mount(this.mainEl, h('div', { class: 'tab-body quick' },
+        ...renderQuickMode(this).filter(Boolean)));
+      // The review step shows the plan itself, so the viewer has to follow it.
+      if (this.quickStep === 'design') this.mountQuickPlan();
     } else if (this.tab === 'plan') {
       this.renderPlanTab();
     } else {
@@ -196,6 +213,9 @@ export class DesignerApp {
       h('div', { class: 'head-actions' },
         w ? badge((w.counts.CRITICAL || 0) + ' critical · ' + (w.counts.WARNING || 0) + ' warnings',
           w.counts.CRITICAL ? 'bad' : w.counts.WARNING ? 'warn' : 'ok') : null,
+        this.mode === 'quick'
+          ? button('ADVANCED DESIGN', () => this.enterAdvanced(), 'ghost small')
+          : button('◂ QUICK QUOTE', () => this.enterQuick(), 'ghost small'),
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
         button('Save', () => this.save(), 'small'),
@@ -207,6 +227,16 @@ export class DesignerApp {
   }
 
   renderSteps() {
+    if (this.mode === 'quick') {
+      const done = quickStepState(this.design, this.interruptions);
+      mount(this.stepsEl, QUICK_STEPS.map((st, i) => h('button', {
+        class: 'step' + (done[st.key] ? ' done' : '') + (this.quickStep === st.key ? ' on' : ''),
+        title: st.hint,
+        onclick: () => this.setQuickStep(st.key)
+      }, h('span', { class: 'step-n' }, done[st.key] ? '✓' : String(i + 1)),
+         h('span', {}, st.label))));
+      return;
+    }
     mount(this.stepsEl, STEPS.map((s, i) => {
       const done = s.done(this.design);
       return h('button', {
@@ -218,6 +248,7 @@ export class DesignerApp {
   }
 
   renderTabs() {
+    if (this.mode === 'quick') { clear(this.tabsEl); return; }
     mount(this.tabsEl, TABS.map(([key, label]) => {
       const count = key === 'warnings' && this.design.warnings?.length ? this.design.warnings.length : null;
       return h('button', {
@@ -227,19 +258,197 @@ export class DesignerApp {
     }));
   }
 
-  setTab(tab) { this.tab = tab; this.settingsSection = null; this.render(); }
+  /**
+   * Asking for a named engineering tab IS an advanced action, so it leaves
+   * quick mode. Without this, every "Go to Rooms" button inside quick mode set
+   * a tab that the quick renderer never looks at, and appeared to do nothing.
+   */
+  setTab(tab) {
+    this.tab = tab;
+    this.settingsSection = null;
+    if (this.mode === 'quick') this.mode = 'advanced';
+    this.render();
+  }
+
+  // ── QUICK QUOTE MODE ──────────────────────────────────────────────────────
+
+  setQuickStep(step) { this.quickStep = step; this.settingsSection = null; this.render(); }
+
+  /** The thirteen engineering tabs, for the job that needs them. */
+  enterAdvanced() {
+    this.mode = 'advanced';
+    this.settingsSection = null;
+    // Land somewhere useful rather than wherever they were last time.
+    if (!this.tab || this.tab === 'plan') this.tab = this.design.stage === 'complete' ? 'overview' : 'plan';
+    this.render();
+  }
+
+  enterQuick() {
+    this.mode = 'quick';
+    this.settingsSection = null;
+    this.render();
+  }
+
+  /**
+   * Take the estimator to the thing that needs them, in one click.
+   *
+   * An interruption they cannot act on is just an alarm, so every one of them
+   * carries where it is fixed and this is what honours that.
+   */
+  jumpToFix(interruption) {
+    if (!interruption) return;
+    if (interruption.fixIn === FIX_IN.SETTINGS) return void this.openSettings('materials');
+    if (interruption.fixIn === FIX_IN.PLAN) {
+      this.mode = 'quick'; this.quickStep = 'upload'; return void this.render();
+    }
+    // Everything else lives on an engineering tab. Switching to advanced is the
+    // honest thing to do: that is where the control actually is.
+    this.mode = 'advanced';
+    this.tab = interruption.fixIn || 'warnings';
+    if (interruption.roomId) this.selectedRoomId = interruption.roomId;
+    this.render();
+  }
+
+  /**
+   * A CONFIRM is the estimator taking ownership of something the tool could not
+   * settle. It is recorded against the design with who and when, because "we
+   * confirmed it" with no name on it is worth nothing when a job goes wrong.
+   */
+  async confirmInterruption(interruption) {
+    if (!interruption) return;
+    const by = (typeof window !== 'undefined' && window.nacUser) || 'NAC';
+
+    // A confirmation has to DO the thing, not just note that someone said yes.
+    if (interruption.id === 'ROOMS_UNVERIFIED' && interruption.roomIds?.length) {
+      const ids = new Set(interruption.roomIds);
+      this.design.rooms = (this.design.rooms || [])
+        .map(r => ids.has(r.id) ? verifyRoom(r, by) : r);
+    }
+    if (interruption.id === 'PHASE_UNCONFIRMED') {
+      const unit = this.design.selectedUnit;
+      const ok = await confirmDialog({
+        title: 'Does the site have three-phase supply?',
+        message: (unit ? unit.brandName + ' ' + unit.model + ' is a ' + unit.phase + ' unit. ' : '') +
+          'Say yes only if you have seen the switchboard. A three-phase unit on a single-phase ' +
+          'house is a dead job.',
+        confirmLabel: 'Yes — three phase is there', cancelLabel: 'Not confirmed' });
+      if (!ok) return;
+      this.design.sitePhase = '3Ph';
+    }
+
+    this.design.confirmations = [...(this.design.confirmations || []).filter(c => c.id !== interruption.id),
+      { id: interruption.id, title: interruption.title, by, at: new Date().toISOString() }];
+    toast('Confirmed by ' + by + '.');
+    this.update();
+  }
+
+  /**
+   * Rooms the plan itself answered.
+   *
+   * A HIGH-confidence measurement comes off a dimension chain printed on the
+   * drawing. Making the estimator click each one is the friction QUICK QUOTE
+   * MODE exists to remove — so quick mode accepts them and RECORDS that it did,
+   * by name, the same as any other verification. Nothing is hidden: the Rooms
+   * tab and the internal design sheet both show who verified each room, and
+   * MEDIUM still needs a glance while LOW still blocks.
+   */
+  acceptHighConfidenceRooms() {
+    const rooms = this.design.rooms || [];
+    const toAccept = rooms.filter(r => r.conditioned && r.areaSqM > 0 &&
+      r.confidenceBand === 'HIGH' && r.status !== 'Verified' && r.status !== 'Manual');
+    if (!toAccept.length) return;
+    const ids = new Set(toAccept.map(r => r.id));
+    this.design.rooms = rooms.map(r => ids.has(r.id)
+      ? verifyRoom(r, 'auto — high confidence read from the plan') : r);
+  }
+
+  /**
+   * APPROVE DESIGN. The engineering safeguards are unchanged — a critical
+   * warning still has to be acknowledged by a named person, and quick mode does
+   * not get a quieter version of that.
+   */
+  async approveDesign() {
+    const i = collectInterruptions(this.design);
+    if (!i.canQuote) {
+      return void await alertDialog({
+        title: 'This design cannot be approved yet',
+        message: i.summary,
+        lines: i.blocking.map(x => x.title) });
+    }
+    if (i.confirm.length) {
+      const ok = await confirmDialog({
+        title: 'Approve with ' + i.confirm.length + ' thing(s) unconfirmed?',
+        message: 'These were not settled. Approving means you are taking them on.',
+        lines: i.confirm.map(x => x.title),
+        confirmLabel: 'Approve anyway' });
+      if (!ok) return;
+    }
+    const by = (typeof window !== 'undefined' && window.nacUser) || 'NAC';
+    this.design.approved = { by, at: new Date().toISOString() };
+    this.design.status = 'designed';
+    await this.save('Design approved by ' + by);
+    toast('Design approved.');
+    this.setQuickStep('price');
+  }
+
+  /** The plan itself, inside the review screen. */
+  mountQuickPlan() {
+    const host = this.mainEl.querySelector('.qreview-plan');
+    if (!host) return;
+    this.ensureViewer();
+    const slot = host.querySelector('.qplan-placeholder');
+    if (slot && this.viewer.element) {
+      // The viewer's own wrapper is position:absolute;inset:0, so it needs a
+      // sized, positioned box around it. Dropped in bare it anchors to the page
+      // and covers the whole screen, including the buttons.
+      const box = h('div', { class: 'plan-host' });
+      box.appendChild(this.viewer.element);
+      slot.replaceWith(box);
+      // It has just moved into a different sized box, so it has to re-measure
+      // before it redraws or the plan lands half off the canvas.
+      this.viewer.fit?.();
+      this.viewer.redraw?.();
+    }
+  }
+
+  async showSignLink() {
+    const d = this.design;
+    if (!d.quoteId) return toast('No quote yet.', 'bad');
+    await linkDialog({
+      title: 'Quote ' + d.quoteId,
+      message: 'Send this to the customer. It opens their quote and lets them accept and sign it.',
+      url: location.origin + '/sign.html?q=' + encodeURIComponent(d.quoteId) });
+  }
+
+  downloadCustomerReport() { return this.downloadReport(REPORT_KIND.CUSTOMER); }
+  downloadInternalReport() { return this.downloadReport(REPORT_KIND.INTERNAL); }
+
+  async downloadReport(kind) {
+    const opts = { logo: document.querySelector('.brand img')?.src || null,
+                   planSnapshot: this.viewer?.snapshot() || null };
+    const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
+    const r = downloadReportPdf(this.design, kind, opts);
+    if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
+    await alertDialog({ title: 'The PDF was not saved',
+      message: r.error + '\n\nOpen the print page instead and use Save as PDF.' });
+    openReport(kind === REPORT_KIND.CUSTOMER
+      ? customerReportHtml(this.design, opts) : internalReportHtml(this.design, opts), label);
+  }
 
   // ── Plan tab (PART 2, 6, 7, 17, 18) ───────────────────────────────────────
 
-  renderPlanTab() {
+  /**
+   * The plan viewer, created once and moved between screens.
+   *
+   * It used to be created inside the Plan tab, which meant the review screen in
+   * QUICK QUOTE MODE could only ever show an empty box until someone had opened
+   * that tab. The viewer is one object with one plan image; where it is
+   * displayed is a separate question from whether it exists.
+   */
+  ensureViewer() {
     const d = this.design;
-    const viewerHost = h('div', { class: 'plan-host' });
-    const tools = h('div', { class: 'plan-tools' });
-
-    mount(this.mainEl, h('div', { class: 'plan-layout' }, tools, viewerHost));
-
     if (!this.viewer) {
-      this.viewer = createPlanViewer(viewerHost, {
+      this.viewer = createPlanViewer(h('div', { class: 'plan-host' }), {
         onCalibrationPoints: (pts) => { this.calibPoints = pts; this.render(); },
         onRoomSelect: (id) => { this.selectedRoomId = id; this.render(); },
         onRoomBoundary: (id, box) => this.setRoomBoundary(id, box),
@@ -248,12 +457,8 @@ export class DesignerApp {
         onRouteDraft: () => this.render(),
         onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
       });
-    } else {
-      viewerHost.appendChild(this.viewer.element);
     }
 
-    // The viewer only exists once the Plan tab has been opened, so this is the
-    // single place the plan image is loaded onto it.
     if (d.plan?.dataUrl && this.loadedPlanUrl !== d.plan.dataUrl) {
       const url = d.plan.dataUrl;
       this.loadedPlanUrl = url;
@@ -269,6 +474,18 @@ export class DesignerApp {
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
     this.viewer.setLayout(d.layout || {});
+    this.viewer.redraw();
+    return this.viewer;
+  }
+
+  renderPlanTab() {
+    const viewerHost = h('div', { class: 'plan-host' });
+    const tools = h('div', { class: 'plan-tools' });
+
+    mount(this.mainEl, h('div', { class: 'plan-layout' }, tools, viewerHost));
+    this.ensureViewer();
+    viewerHost.appendChild(this.viewer.element);
+    this.viewer.fit?.();
     this.viewer.redraw();
 
     mount(tools,
@@ -621,6 +838,10 @@ export class DesignerApp {
         pageCount = page.pageCount;
       }
 
+      // QUICK QUOTE MODE uploads a plan before any screen that builds the
+      // viewer has been opened, so it has to exist before the image reaches it.
+      // Without this the first thing an estimator does throws.
+      this.ensureViewer();
       dims = await this.viewer.setImage(imageUrl);
       this.loadedPlanUrl = imageUrl;
       this.design.plan = {

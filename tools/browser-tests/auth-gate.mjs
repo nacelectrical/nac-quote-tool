@@ -103,9 +103,17 @@ console.log('\n[3] Correct password signs in, and the token reaches the database
   await p.fill('#nac-pass','correct-horse');
   await p.click('#nac-go'); await p.waitForTimeout(3000);
   const gone=await p.evaluate(()=>!document.getElementById('nac-signin'));
-  const content=await p.evaluate(()=>(document.body.innerText||'').length);
+  // What "the designer renders" actually means: the shell is up and the
+  // estimator has somewhere to start. A raw character count was a proxy for
+  // that, and QUICK QUOTE MODE's first screen is deliberately short.
+  const shell=await p.evaluate(()=>({
+    brand: !!document.querySelector('.brand h1'),
+    steps: document.querySelectorAll('.steps .step').length,
+    upload: !!document.querySelector('.main input[type=file]')
+  }));
   say('  the gate is removed', gone);
-  say('  the designer renders', content>300, content+' chars');
+  say('  the designer renders', shell.brand && shell.steps>0 && shell.upload,
+    JSON.stringify(shell));
   const withToken=dbAuth.filter(a=>/STAFF-TOKEN-123/.test(a)).length;
   say('  db requests carry the STAFF token, not the anon key', withToken>0 && dbAuth.every(a=>/STAFF-TOKEN-123/.test(a)),
       withToken+'/'+dbAuth.length+' requests');

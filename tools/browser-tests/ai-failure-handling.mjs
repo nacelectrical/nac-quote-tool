@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 let fail=0; const say=(n,c)=>{console.log(`  ${c?'PASS':'FAIL'}  ${n}`); if(!c)fail++;};
@@ -18,6 +19,10 @@ console.log('\n[1] AI not configured');
     const el=document.querySelector('input[type=file]');el.files=dt.files;
     el.dispatchEvent(new Event('change',{bubbles:true}));});
   await p.waitForTimeout(2500);
+  // Plan reading lives on the Plan tab, which is an ADVANCED DESIGN screen.
+  // QUICK QUOTE MODE is the default, so the tab has to be asked for.
+  await ensureAdvanced(p);
+  await p.evaluate(()=>window.nacDesigner?.setTab('plan')); await p.waitForTimeout(600);
   await p.locator('button',{hasText:'Read plan with AI'}).first().click(); await p.waitForTimeout(3000);
   const toast=await p.evaluate(()=>[...document.querySelectorAll('[class*=toast]')].map(e=>e.textContent).join(' | '));
   const rooms=await p.evaluate(()=>{const t=document.querySelector('.plan-tools')?.innerText||'';return /Numbers read from the plan/.test(t);});
@@ -43,8 +48,12 @@ console.log('\n[2] AI returns rubbish');
     const el=document.querySelector('input[type=file]');el.files=dt.files;
     el.dispatchEvent(new Event('change',{bubbles:true}));});
   await p.waitForTimeout(2500);
+  // Plan reading lives on the Plan tab, which is an ADVANCED DESIGN screen.
+  // QUICK QUOTE MODE is the default, so the tab has to be asked for.
+  await ensureAdvanced(p);
+  await p.evaluate(()=>window.nacDesigner?.setTab('plan')); await p.waitForTimeout(600);
   await p.locator('button',{hasText:'Read plan with AI'}).first().click(); await p.waitForTimeout(3000);
-  await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(900);
+  await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(900);
   const rows=await p.evaluate(()=>[...document.querySelectorAll('.main table tbody tr')].map(r=>r.innerText.split('\t')[0]));
   console.log('     room rows:', JSON.stringify(rows));
   const ghost=rows.find(r=>/GHOST/.test(r));
@@ -66,7 +75,7 @@ console.log('\n[3] room records keep their evidence');
     const R=await import('/designer/engines/rooms.mjs');
     return null;
   });
-  await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(900);
+  await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(900);
   const cols=await p.evaluate(()=>[...document.querySelectorAll('.main table thead th')].map(t=>t.innerText.trim()));
   console.log('     room table columns:', JSON.stringify(cols));
   for (const need of ['ROOM','WIDTH','LENGTH','AREA','SOURCE','CONFIDENCE'])

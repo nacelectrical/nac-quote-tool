@@ -1,5 +1,6 @@
 // The real designer buttons, driven the way Nick would, at iPad landscape.
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const b = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
 let fail = 0;
@@ -46,7 +47,7 @@ say('Revisions with none saved says so rather than opening an empty box',
   await p.locator('.dlg-host').count() === 0 && (await p.evaluate(() => document.body.innerText)).includes('No saved revisions'));
 
 // Add a room by hand through the real button, all the way into the design.
-await p.locator('button.tab', { hasText: 'Rooms' }).first().click(); await p.waitForTimeout(500);
+await ensureAdvanced(p); await p.locator('button.tab', { hasText: 'Rooms' }).first().click(); await p.waitForTimeout(500);
 await p.locator('button', { hasText: 'Add room manually' }).first().click(); await p.waitForTimeout(500);
 say('Add room manually opens the form', await p.locator('.dlg-field').count() >= 3);
 await p.fill('#dlgf-label', 'Rumpus'); await p.fill('#dlgf-width', '4.2'); await p.fill('#dlgf-length', '3.6');
