@@ -5,13 +5,16 @@
 // A line needs a price when it has none at all, or when it is still on a
 // shipped placeholder rate. A line is only worth listing when it can actually
 // be SELECTED: a diameter that is not on the duct ladder can never appear on a
-// quote, so asking for its price wastes NAC's time.
+// quote, so asking for its price wastes NAC's time. Lines NAC quotes outside
+// this price book (QUOTED_SEPARATELY — linear bar grilles) are left off for
+// the same reason: their blank cost is the design, not a hole.
 //
 // Nothing here is invented. Every price that exists comes from the MMEM quote
 // or from what NAC has typed in; this reports the holes, it does not fill them.
 
 const R = new URL('../designer/engines/', import.meta.url).href;
-const { MATERIAL_CATALOGUE, resolveCost } = await import(R + 'materials.mjs');
+const { MATERIAL_CATALOGUE, resolveCost, QUOTED_SEPARATELY } =
+  await import(R + 'materials.mjs');
 const { DEFAULT_SETTINGS } = await import(R + 'settings.mjs');
 const { MMEM_ACCESSORIES_META } = await import(R + 'supplier-pricing.mjs');
 const { ZONE_CONTROLLERS } = await import(R + 'catalogue.mjs');
@@ -22,6 +25,8 @@ const OUTLET_SIZES = [...new Set(Object.values(DEFAULT_SETTINGS.outlets.types ||
 
 const rows = [];
 for (const [key, def] of Object.entries(MATERIAL_CATALOGUE)) {
+  // Quoted outside this price book — it has no cost here on purpose.
+  if (QUOTED_SEPARATELY.includes(key)) continue;
   // Every diameter the line COULD be asked for, not just the ones the table
   // happens to hold. A size missing from the table altogether is the worst
   // case — it has no price at all and it blocks a quote — and iterating the
@@ -72,4 +77,11 @@ if (dead.length) {
   console.log('');
   console.log('NOT LISTED — these cannot be selected, so they need no price:');
   for (const r of dead) console.log('   ' + r.label);
+}
+if (QUOTED_SEPARATELY.length) {
+  console.log('');
+  console.log('NOT LISTED — NAC quotes these separately, so they need no price here:');
+  for (const key of QUOTED_SEPARATELY) {
+    console.log('   ' + (MATERIAL_CATALOGUE[key]?.label || key));
+  }
 }

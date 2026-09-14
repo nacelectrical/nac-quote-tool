@@ -235,9 +235,11 @@
           <td><span class="pname">Placeholder material pricing</span>
               <span class="psub">No placeholder may be treated as a verified supplier cost.</span></td>
           <td><span class="pill pass">TESTED — PASS</span></td>
-          <td>52 material lines: <b>27 real, 25 placeholder, 0 unpriced</b>. An unpriced line
-              stops the quote outright; placeholders raise an itemised confirmation naming the
-              count, the dollars and the lines. The 25 rates are yours to set.</td>
+          <td>49 material lines: <b>27 real, 19 placeholder, 3 with no price at all</b>, plus
+              1 line (the linear bar grille) NAC quotes separately and which therefore carries no
+              rate here on purpose. An unpriced line stops the quote outright; placeholders raise
+              an itemised confirmation naming the count, the dollars and the lines. The 22 open
+              rates are yours to set, on the Settings screen.</td>
         </tr>
         <tr data-s="TESTED — PASS">
           <td class="pid">P3</td>
@@ -428,8 +430,9 @@
       sheet. The full list is in <code>docs/static-pressure-audit.txt</code>.</li>
     <li><b>58 of 120 models have no supplier cost</b>, so they cannot be costed or quoted
       without one being entered.</li>
-    <li><b>25 of 52 material lines are shipped placeholder rates</b>, not NAC prices. On
-      cost-plus-fee they go straight through to the customer.</li>
+    <li><b>19 of 49 material lines are shipped placeholder rates</b>, not NAC prices. On
+      cost-plus-fee they go straight through to the customer. A further 3 (the 24 V zone motors)
+      have no price at all and stop a quote until one is entered.</li>
     <li><b>Plan reading by AI was never exercised here</b> — the AI endpoints are unreachable
       from this environment. The deterministic engines behind them were tested instead, which is
       the half that must be right every time.</li>
@@ -483,12 +486,14 @@
       <div class="w">Re-run /setup.html afterwards; the ServiceM8 section turns green.</div>
     </li>
     <li>
-      <div class="t">Send me 28 prices</div>
-      <div class="d">Every price the MMEM quote covers is already loaded. What is left is 28 items
-        that quote does not cover — 23 on shipped placeholder rates and 5 with no price at all.
-        The list is in <code>docs/price-gaps.txt</code> and in the message this audit came with.
-        Send the numbers, or a supplier quote covering them, and I will load them as verified NAC
-        rates the same way the MMEM quote was loaded.</div>
+      <div class="t">Type in 22 rates</div>
+      <div class="d">Every price the MMEM quote covers is already loaded. What is left is 22 items
+        that quote does not cover — 19 on shipped placeholder rates and 3 (the 24 V zone motors)
+        with no price at all. The list is in <code>docs/price-gaps.txt</code>. Settings &rarr;
+        Materials now has a box for every one of them, including each duct diameter, so they can
+        be typed straight in and saved. The items you told me NAC does not use — 4-way, slot and
+        sidewall outlets, and the 450/500 mm ducts — have been removed rather than priced, and the
+        linear bar grille is marked quoted-separately, so none of them appear on this list.</div>
       <div class="w">Nothing was invented. Until these are set, every quote carries a confirmation naming the guessed dollars.</div>
     </li>
   </ol>

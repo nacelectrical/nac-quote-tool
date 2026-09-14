@@ -11,7 +11,6 @@ Insulated flexible duct R1.0 100 mm            m                $11.50         s
 Insulated flexible duct R1.0 125 mm            m                $13.00         shipped placeholder, not a NAC or supplier price
 Insulated flexible duct R1.0 150 mm            m                $15.50         shipped placeholder, not a NAC or supplier price
 Interconnecting cable                          m                $7.20          shipped placeholder, not a NAC or supplier price
-Linear bar grille                              each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 Manual balancing damper                        each             $42.00         shipped placeholder, not a NAC or supplier price
 Outdoor unit mounting feet / slab              set              $95.00         shipped placeholder, not a NAC or supplier price
 Power supply cable                             m                $9.40          shipped placeholder, not a NAC or supplier price
@@ -27,4 +26,7 @@ Zone motor / motorised damper 24 V 100 mm      each             —             
 Zone motor / motorised damper 24 V 125 mm      each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 Zone motor / motorised damper 24 V 150 mm      each             —              NO PRICE AT ALL — a quote is short by whatever this is worth
 --------------------------------------------------------------------------------------------------------------
-23 price(s) to confirm — 4 with no price at all, 19 on placeholder rates.
+22 price(s) to confirm — 3 with no price at all, 19 on placeholder rates.
+
+NOT LISTED — NAC quotes these separately, so they need no price here:
+   Linear bar grille
