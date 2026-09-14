@@ -84,6 +84,74 @@ const up = await main();
 say('the plan loaded and calibrated', /CALIBRATION DISTANCE|CALCULATED SCALE/i.test(up));
 say('the tool shows what it read off the plan', /dimensions read|length\(s\) read/i.test(up));
 
+// ── 2b. THE PLAN IS ON THE SCREEN ───────────────────────────────────────────
+// This is the one that was missed. Quick mode shipped with a CALIBRATE PLAN
+// button and no plan to click two points on, so calibration was impossible for
+// every real uploaded plan. The sample plan self-calibrates, which is exactly
+// why no test caught it.
+STEP('The plan is on screen, and can actually be calibrated and drawn on');
+say('the plan viewer is mounted on the upload step',
+  (await p.locator('.qwork-plan canvas').count()) > 0);
+
+const p2 = await ctx.newPage();
+p2.on('pageerror', e => console.log('   [pageerror]', e.message.slice(0, 160)));
+await p2.route('**/rest/v1/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+await p2.goto('http://127.0.0.1:8777/designer.html', { waitUntil: 'load' });
+await p2.waitForTimeout(1400);
+
+// A REAL uploaded plan, which does not calibrate itself.
+await p2.evaluate(async () => {
+  const c = document.createElement('canvas'); c.width = 1200; c.height = 800;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 1200, 800);
+  x.strokeStyle = '#000'; x.lineWidth = 3; x.strokeRect(100, 100, 900, 600);
+  const bl = await new Promise(r => c.toBlob(r, 'image/png'));
+  const dt = new DataTransfer();
+  dt.items.add(new File([bl], 'plan.png', { type: 'image/png' }));
+  const el = document.querySelector('.main input[type=file]');
+  el.files = dt.files; el.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await p2.waitForTimeout(2600);
+say('an uploaded plan is displayed', await p2.locator('canvas').isVisible());
+say('and it is NOT calibrated yet',
+  !(await p2.evaluate(() => !!window.nacDesigner.design.calibration)));
+
+await p2.locator('button', { hasText: 'CALIBRATE PLAN' }).first().click();
+await p2.waitForTimeout(400);
+const cv = await p2.locator('canvas').boundingBox();
+await p2.mouse.click(cv.x + 250, cv.y + 200);
+await p2.waitForTimeout(220);
+await p2.mouse.click(cv.x + 650, cv.y + 200);
+await p2.waitForTimeout(400);
+say('two calibration points can be placed ON the plan',
+  (await p2.evaluate(() => window.nacDesigner.calibPoints?.length || 0)) === 2);
+
+await p2.locator('.main input[type=number]').first().fill('10000');
+await p2.waitForTimeout(250);
+await p2.locator('.main button', { hasText: 'Apply calibration' }).first().click();
+await p2.waitForTimeout(900);
+const cal = await p2.evaluate(() => window.nacDesigner.design.calibration?.pixelsPerMm || null);
+say('the plan calibrates without leaving quick mode', !!cal,
+  cal ? cal.toFixed(5) + ' px/mm' : 'not calibrated');
+
+// And a room can be drawn and verified, on the same screen.
+await p2.locator('button', { hasText: 'Draw / correct a room' }).first().click();
+await p2.waitForTimeout(300);
+await p2.mouse.move(cv.x + 300, cv.y + 300);
+await p2.mouse.down();
+await p2.mouse.move(cv.x + 500, cv.y + 450, { steps: 8 });
+await p2.mouse.up();
+await p2.waitForTimeout(900);
+const drawn = await p2.evaluate(() =>
+  (window.nacDesigner.design.rooms || []).map(r => ({ a: r.areaSqM, s: r.status })));
+say('a room can be drawn on the plan', drawn.length > 0 && drawn[0].a > 0,
+  JSON.stringify(drawn));
+await p2.locator('button', { hasText: 'Verify all' }).first().click();
+await p2.waitForTimeout(1100);
+const verified = await p2.evaluate(() =>
+  (window.nacDesigner.design.rooms || []).every(r => r.status === 'Verified' || r.status === 'Manual'));
+say('and verified without leaving quick mode', verified);
+await p2.close();
+
 // ── 3. Verify — only what is genuinely uncertain ────────────────────────────
 STEP('VERIFY asks only about what it could not settle');
 await goStep('Verify');

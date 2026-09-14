@@ -293,11 +293,27 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .tab-body{padding:12px}
   .stat-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
   .qreview{grid-template-columns:1fr}
+  .qwork{grid-template-columns:1fr}
+  .qwork-tools{max-height:none;overflow:visible}
+  .qwork-plan{min-height:60vh}
+  .qwork-plan .plan-host,.qwork-plan .qplan-placeholder{min-height:55vh}
   .qreview-plan{min-height:380px}
   .qreview-plan .plan-host,.qplan-placeholder{min-height:320px}
   .qcards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   .qactions{flex-direction:column;align-items:stretch}
 }
+
+/* Quick mode working screens: tools on the left, the plan beside them. The
+   plan is not optional — calibrating and correcting a room both happen ON it. */
+.qwork{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);
+  gap:14px;align-items:start}
+.qwork-tools{display:flex;flex-direction:column;gap:12px;
+  max-height:calc(100vh - 210px);overflow:auto}
+.qwork-plan{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;display:flex;flex-direction:column;min-height:540px}
+.qwork-plan .plan-host,.qwork-plan .qplan-placeholder{flex:1;min-height:500px}
+.qwork-plan .qplan-placeholder{display:flex;align-items:center;justify-content:center;
+  color:var(--ink-3);font-size:12px}
 
 /* Route editing — the help line and the touch targets. */
 .edit-help{background:rgba(245,194,0,.08);border:1px solid rgba(245,194,0,.35);

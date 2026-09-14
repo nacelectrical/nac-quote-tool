@@ -6,7 +6,8 @@
 // This module owns state and wiring only. Every number on screen comes out of
 // the deterministic engines in ./engines; nothing is computed here.
 
-import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
+import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table,
+         confidenceBadge, num } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
 import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
@@ -197,8 +198,9 @@ export class DesignerApp {
       // not something the estimator has to walk through to get a quote out.
       mount(this.mainEl, h('div', { class: 'tab-body quick' },
         ...renderQuickMode(this).filter(Boolean)));
-      // The review step shows the plan itself, so the viewer has to follow it.
-      if (this.quickStep === 'design') this.mountQuickPlan();
+      // Upload, Verify and Design all work ON the plan, so the viewer follows
+      // the estimator through them instead of living on one screen.
+      if (['upload', 'verify', 'design'].includes(this.quickStep)) this.mountQuickPlan();
     } else if (this.tab === 'plan') {
       this.renderPlanTab();
     } else {
@@ -413,10 +415,11 @@ export class DesignerApp {
 
   /** The plan itself, inside the review screen. */
   mountQuickPlan() {
-    const host = this.mainEl.querySelector('.qreview-plan');
-    if (!host) return;
+    // Any quick-mode screen that asks for a plan gets the real viewer, not a
+    // grey box. Calibrating and checking a room both mean working ON the
+    // drawing, so a step without it is a step nobody can finish.
     this.ensureViewer();
-    const slot = host.querySelector('.qplan-placeholder');
+    const slot = this.mainEl.querySelector('.qplan-placeholder');
     if (slot && this.viewer.element) {
       // The viewer's own wrapper is position:absolute;inset:0, so it needs a
       // sized, positioned box around it. Dropped in bare it anchors to the page
@@ -649,9 +652,9 @@ export class DesignerApp {
         : null,
       d.plan ? h('div', { class: 'btn-row' },
         button(this.busy ? 'Reading…' : 'Read plan with AI', () => this.readPlan(), 'primary small'),
-        button('Fit', () => this.viewer.fit(), 'ghost small'),
-        button('+', () => this.viewer.zoomIn(), 'ghost small'),
-        button('−', () => this.viewer.zoomOut(), 'ghost small')) : null,
+        button('Fit', () => this.ensureViewer().fit(), 'ghost small'),
+        button('+', () => this.ensureViewer().zoomIn(), 'ghost small'),
+        button('−', () => this.ensureViewer().zoomOut(), 'ghost small')) : null,
       d.interpretation ? h('div', { class: 'note' },
         // What was obtained comes first; the chain counters are the working.
         d.roomRead ? d.roomRead.sentence + ' ' : '',
@@ -848,6 +851,45 @@ export class DesignerApp {
         : banner('warn', 'Not calibrated. Rooms read from the plan\'s dimension strings are measured ' +
             'from those dimensions and do not need this, but any room you draw by hand cannot be ' +
             'measured until you calibrate.'));
+  }
+
+  /**
+   * The room controls QUICK QUOTE MODE needs.
+   *
+   * Checking a room means looking at it on the drawing and, when it is wrong,
+   * correcting it there. That has to be possible without sending the estimator
+   * into the thirteen-tab view — which is the whole point of quick mode.
+   */
+  renderRoomToolsPanel() {
+    const d = this.design;
+    const mode = this.viewer?.getMode() || MODES.VIEW;
+    const rooms = (d.rooms || []).filter(r => r.conditioned);
+    const unsure = rooms.filter(r => r.confidenceBand === 'LOW' || !r.areaSqM);
+    const set = (m) => { this.ensureViewer().setMode(mode === m ? MODES.VIEW : m); this.render(); };
+
+    return card('Rooms on the plan', rooms.length + ' conditioned room(s) · drag a corner to correct one',
+      h('div', { class: 'btn-row' },
+        button(mode === MODES.ROOM ? 'Done drawing' : 'Draw / correct a room',
+          () => set(MODES.ROOM), mode === MODES.ROOM ? 'primary small' : 'small'),
+        button('Verify all', () => this.verifyAll(), 'small'),
+        button('Re-read the plan', () => this.readPlan(), 'ghost small')),
+      unsure.length
+        ? banner('warn', unsure.length + ' room(s) the tool is not sure about: ' +
+            unsure.map(r => r.label).join(', ') + '. Check them against the plan.')
+        : null,
+      rooms.length
+        ? table([
+            { key: 'label', label: 'Room' },
+            { key: 'areaSqM', label: 'm²', align: 'right', width: '66px',
+              render: (r) => r.areaSqM ? num(r.areaSqM, 1) : '—' },
+            { key: 'confidenceBand', label: 'Read', width: '82px',
+              render: (r) => confidenceBadge(r.confidence, r.confidenceBand) },
+            { key: 'status', label: '', align: 'right', width: '92px',
+              render: (r) => r.status === 'Verified' || r.status === 'Manual'
+                ? badge('OK', 'ok')
+                : button('Verify', () => this.verifyRoom(r.id), 'tiny') }
+          ], rooms, { compact: true })
+        : h('div', { class: 'note' }, 'No rooms read yet. Press "Read plan with AI", or draw them.'));
   }
 
   renderPlanModePanel() {

@@ -63,21 +63,26 @@ function statCard(label, value, sub, kind = '') {
 
 function stepUpload(app) {
   const d = app.design;
-  // The real upload and calibrate panels, not copies of them. One source of
-  // truth means a fix to either reaches both modes.
+  // THE PLAN HAS TO BE ON THE SCREEN. Calibrating means clicking two points on
+  // the drawing, and drawing a room boundary means dragging a box on it — so a
+  // step that shows a CALIBRATE button and no plan is a step nobody can
+  // complete. The viewer is mounted into the placeholder below.
   return [
-    app.renderUploadPanel(),
-
-    // What the reader actually got off the plan. This is the tool showing its
-    // working at the only moment the estimator cares — before they trust it.
-    d.plan ? app.renderNumbersPanel() : null,
-
-    d.plan
-      ? banner('info', 'An uploaded screenshot does not keep its original A3 or A4 scale, so a ' +
-          'printed "1:100" label is a hint only. The two points you set are what every ' +
-          'measurement on this job uses.')
-      : null,
-    d.plan ? app.renderCalibratePanel() : null,
+    h('div', { class: 'qwork' },
+      h('div', { class: 'qwork-tools' },
+        app.renderUploadPanel(),
+        // What the reader got off the plan: the tool showing its working at the
+        // only moment the estimator cares — before they trust it.
+        d.plan ? app.renderNumbersPanel() : null,
+        d.plan
+          ? banner('info', 'An uploaded screenshot does not keep its original A3 or A4 scale, ' +
+              'so a printed "1:100" label is a hint only. The two points you set are what ' +
+              'every measurement on this job uses.')
+          : null,
+        d.plan ? app.renderCalibratePanel() : null,
+        d.plan ? app.renderRoomToolsPanel?.() : null),
+      h('div', { class: 'qwork-plan' },
+        h('div', { class: 'qplan-placeholder' }, 'Plan'))),
 
     d.calibration
       ? banner('ok', 'Plan calibrated. The tool has read the rooms and is sizing the system.',
@@ -110,9 +115,21 @@ function stepVerify(app, interruptions) {
   }
 
   const outstanding = [...interruptions.blocking, ...interruptions.confirm];
+  // Checking a room means LOOKING at it on the plan. A verify step with no
+  // drawing on it asks the estimator to confirm a number they cannot see.
+  const withPlan = (blocks) => [
+    h('div', { class: 'qwork' },
+      h('div', { class: 'qwork-tools' }, ...blocks.filter(Boolean)),
+      h('div', { class: 'qwork-plan' },
+        h('div', { class: 'qreview-plan-head' },
+          h('strong', {}, 'Rooms on the plan'),
+          h('span', { class: 'note' }, 'Tap a room to select it. Drag its corners to correct it.'),
+          button('Room tools', () => app.setTab('rooms'), 'ghost small')),
+        h('div', { class: 'qplan-placeholder' }, 'Plan')))
+  ];
 
   if (!outstanding.length) {
-    return [
+    return withPlan([
       banner('ok', 'Nothing needs you. The tool read the plan, sized the system and priced the job.'),
       card('What the tool did on its own', 'Every one of these ran and raised nothing worth stopping for',
         h('ul', { class: 'qlist' },
@@ -121,10 +138,10 @@ function stepVerify(app, interruptions) {
               'Zoning worked out', 'Static pressure checked', 'Bill of materials built',
               'Job costed and priced'].map(t => h('li', {}, t)))),
       button('Next — Review the design', () => app.setQuickStep('design'), 'primary')
-    ];
+    ]);
   }
 
-  return [
+  return withPlan([
     banner(interruptions.blocking.length ? 'bad' : 'warn', interruptions.summary),
     h('div', { class: 'note' },
       'Everything else was answered from the plan, the job, NAC’s settings and the supplier data. ' +
@@ -133,7 +150,7 @@ function stepVerify(app, interruptions) {
     interruptions.canQuote
       ? button('Next — Review the design', () => app.setQuickStep('design'), 'primary')
       : null
-  ].filter(Boolean);
+  ]);
 }
 
 // ── Step 3: DESIGN — the one powerful review screen ─────────────────────────
