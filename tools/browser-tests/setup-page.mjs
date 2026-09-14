@@ -70,10 +70,18 @@ async function route(p, db) {
     return json(rows);
   });
   // The ServiceM8 self test endpoint, as the deployed function would answer.
-  await p.route('**/api/servicem8-selftest', r => r.fulfill({ status: 200, contentType: 'application/json',
-    body: JSON.stringify({ ready: false, summary: 'NOT READY. 1 check(s) failed.',
-      checks: [{ name: 'SERVICEM8_API_KEY is set on the server', result: 'FAIL',
-                 detail: 'It is not. Accepting a quote cannot create a job until it is set.' }] }) }));
+  await p.route('**/api/servicem8-selftest', r => {
+    // Staff-only, exactly as the deployed function is.
+    const auth = r.request().headers()['authorization'] || '';
+    if (!/^Bearer\s+\S/.test(auth)) {
+      return r.fulfill({ status: 401, contentType: 'application/json',
+        body: JSON.stringify({ error: 'NAC staff sign-in required.' }) });
+    }
+    return r.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ready: false, summary: 'NOT READY. 1 check(s) failed.',
+        checks: [{ name: 'SERVICEM8_API_KEY is set on the server', result: 'FAIL',
+                   detail: 'It is not. Accepting a quote cannot create a job until it is set.' }] }) });
+  });
 }
 
 async function run(mode, { answerMigration = 'confirm' } = {}) {
@@ -143,6 +151,8 @@ console.log('\n[B] The SQL HAS been run — full setup, migration confirmed');
     (/chain resolves on live data[^\n]*/.exec(r.report) || [''])[0].slice(0, 90));
   say('it proves no quote was destroyed', /Every existing quote is still there/.test(r.report));
   say('ServiceM8 is reported as not ready', /SERVICEM8_API_KEY/.test(r.report));
+  say('the ServiceM8 check sent the staff token, not an anonymous request',
+    !/refused the sign-in/.test(r.report));
   say('the report is copyable', r.report.length > 400, r.report.length + ' chars');
 }
 

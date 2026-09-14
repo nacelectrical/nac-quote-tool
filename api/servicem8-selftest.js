@@ -10,6 +10,8 @@
 // and the first thing to run when one does not appear.
 
 const API = 'https://api.servicem8.com/api_1.0/';
+const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
 const TIMEOUT_MS = 12000;
 
 async function call(url, headers) {
@@ -28,15 +30,54 @@ async function call(url, headers) {
   } finally { clearTimeout(timer); }
 }
 
+/**
+ * NAC staff only.
+ *
+ * This reports the state of NAC's integrations — which keys are configured and
+ * what the ServiceM8 account answers. That is not something to leave open to
+ * the internet, so the caller has to present the access token of a signed-in
+ * NAC user and Supabase has to agree it is valid.
+ */
+async function signedInStaff(req) {
+  const auth = req.headers?.authorization || req.headers?.Authorization || '';
+  const token = /^Bearer\s+(.+)$/i.exec(auth)?.[1];
+  if (!token) return false;
+  try {
+    const r = await fetch(SUPA_URL + '/auth/v1/user', {
+      headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + token }
+    });
+    if (!r.ok) return false;
+    const user = await r.json().catch(() => null);
+    return !!user?.id;
+  } catch (e) {
+    return false;
+  }
+}
+
 export default async function handler(req, res) {
+  if (!await signedInStaff(req)) {
+    return res.status(401).json({
+      error: 'NAC staff sign-in required. Open /setup.html and sign in — it calls this for you.'
+    });
+  }
+
   const KEY = process.env.SERVICEM8_API_KEY;
   const checks = [];
   const add = (name, pass, detail) => checks.push({ name, result: pass ? 'PASS' : 'FAIL', detail });
 
   if (!KEY) {
+    // The likeliest cause once someone has "set the key" is that it is set
+    // under a different NAME. Listing the names that ARE present (never the
+    // values) turns a mystery into a rename.
+    const similar = Object.keys(process.env)
+      .filter(k => /SERVICE ?M8|SM8/i.test(k) && k !== 'SERVICEM8_API_KEY');
     add('SERVICEM8_API_KEY is set on the server', false,
-      'It is not. Accepting a quote cannot create a job until it is set in the ' +
-      'Vercel project environment variables.');
+      similar.length
+        ? 'It is not — but these ARE set: ' + similar.join(', ') + '. The application reads ' +
+          'SERVICEM8_API_KEY exactly. Rename it in the Vercel project and redeploy.'
+        : 'It is not. Add SERVICEM8_API_KEY to the Vercel project environment variables ' +
+          '(all environments), then redeploy — a variable added after a deploy does not reach ' +
+          'the running functions until the next one.');
     return res.status(200).json({ ready: false, checks });
   }
   add('SERVICEM8_API_KEY is set on the server', true, 'Present (' + KEY.length + ' characters).');

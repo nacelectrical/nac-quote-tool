@@ -294,8 +294,16 @@ async function checkServiceM8() {
   addGroup('ServiceM8');
   let d = null;
   try {
-    const r = await fetch('/api/servicem8-selftest');
+    // The endpoint is staff-only, so it gets the signed-in token.
+    const r = await fetch('/api/servicem8-selftest', {
+      headers: { Authorization: 'Bearer ' + (currentSession()?.access_token || '') }
+    });
     d = await r.json();
+    if (r.status === 401) {
+      addRow('FAIL', 'The ServiceM8 check refused the sign-in',
+        (d && d.error) || 'HTTP 401 — sign out and back in, then run this again.', null);
+      setStep('sm8', 'bad', 'Sign-in was not accepted'); return;
+    }
   } catch (e) {
     addRow('FAIL', 'The ServiceM8 self test could not be reached', String(e.message || e), null);
     setStep('sm8', 'bad', 'Endpoint unreachable'); return;
