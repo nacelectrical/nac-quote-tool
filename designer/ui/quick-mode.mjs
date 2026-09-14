@@ -29,6 +29,8 @@ import { h, card, badge, banner, button, field, input, select, empty,
 import { collectInterruptions, INTERRUPT } from '../engines/interruptions.mjs';
 import { AUTO_ROUTE_NOTICE } from '../engines/router.mjs';
 import { supplierOrderList, JOB_STATE, READY_TO_ORDER } from '../engines/order.mjs';
+import { CONDITIONING, EXCLUDED_BANNER, classificationSummary,
+         isExcludedRoom, needsClassificationReview } from '../engines/classify.mjs';
 
 export const QUICK_STEPS = [
   { key: 'upload', label: 'Upload', hint: 'The floor plan' },
@@ -41,9 +43,13 @@ export const QUICK_STEPS = [
 /** Which steps are behind us, so the stepper can show progress honestly. */
 export function quickStepState(design, interruptions) {
   const d = design || {};
+  // RULE 4 — a plan whose conditioned rooms all carry printed dimensions is
+  // finished with the upload step. Demanding a calibration it does not need
+  // would leave the estimator stuck on step 1 of a job that is already sized.
+  const scaleSettled = !!d.calibration || d.calibrationRequirement?.required === false;
   return {
-    upload: !!d.plan && !!d.calibration,
-    verify: !!d.plan && !!d.calibration && interruptions.canQuote,
+    upload: !!d.plan && scaleSettled,
+    verify: !!d.plan && scaleSettled && interruptions.canQuote,
     design: d.stage === 'complete' && interruptions.canQuote,
     price:  !!d.commercials?.sellPriceIncGst,
     send:   !!d.quoteId
@@ -63,27 +69,102 @@ function statCard(label, value, sub, kind = '') {
 
 function stepUpload(app) {
   const d = app.design;
-  // The real upload and calibrate panels, not copies of them. One source of
-  // truth means a fix to either reaches both modes.
+  // THE PLAN HAS TO BE ON THE SCREEN. Calibrating means clicking two points on
+  // the drawing, and drawing a room boundary means dragging a box on it — so a
+  // step that shows a CALIBRATE button and no plan is a step nobody can
+  // complete. The viewer is mounted into the placeholder below.
+  const req = d.calibrationRequirement;
+  const scaleSettled = !!d.calibration || req?.required === false;
   return [
-    app.renderUploadPanel(),
+    h('div', { class: 'qwork' },
+      h('div', { class: 'qwork-tools' },
+        app.renderUploadPanel(),
+        // RULE 7 — the headline count, before anything else. The estimator
+        // should not care that the house has two bathrooms, a laundry, a
+        // garage, three robes and an alfresco.
+        d.plan ? classificationPanel(app) : null,
+        // What the reader got off the plan: the tool showing its working at the
+        // only moment the estimator cares — before they trust it.
+        d.plan ? app.renderNumbersPanel() : null,
+        // RULE 4 — calibration is asked for only when a CONDITIONED room needs
+        // a measurement taken off the image.
+        d.plan && !d.calibration && req?.required === false
+          ? banner('ok', 'CALIBRATION NOT REQUIRED — ' + req.reason)
+          : null,
+        d.plan && !d.calibration && req?.required
+          ? banner('warn', 'CALIBRATION REQUIRED — ' + req.reason)
+          : null,
+        d.plan && d.calibration?.source === 'derived_from_dimensioned_rooms'
+          ? banner('info', 'Scale worked out from the plan\u2019s own dimensioned rooms (' +
+              d.calibration.display.calculatedScale + ', ' +
+              d.calibration.agreementSpreadPct + '% spread across ' +
+              (d.calibration.derivedFrom || []).length + ' rooms). Duct lengths are measured ' +
+              'against it. Setting two points by hand overrides it.')
+          : null,
+        d.plan
+          ? banner('info', 'An uploaded screenshot does not keep its original A3 or A4 scale, ' +
+              'so a printed "1:100" label is a hint only. The two points you set are what ' +
+              'every measurement on this job uses.')
+          : null,
+        d.plan ? app.renderCalibratePanel() : null,
+        d.plan ? app.renderRoomToolsPanel?.() : null),
+      h('div', { class: 'qwork-plan' },
+        h('div', { class: 'qplan-placeholder' }, 'Plan'))),
 
-    // What the reader actually got off the plan. This is the tool showing its
-    // working at the only moment the estimator cares — before they trust it.
-    d.plan ? app.renderNumbersPanel() : null,
-
-    d.plan
-      ? banner('info', 'An uploaded screenshot does not keep its original A3 or A4 scale, so a ' +
-          'printed "1:100" label is a hint only. The two points you set are what every ' +
-          'measurement on this job uses.')
-      : null,
-    d.plan ? app.renderCalibratePanel() : null,
-
-    d.calibration
-      ? banner('ok', 'Plan calibrated. The tool has read the rooms and is sizing the system.',
+    d.plan && scaleSettled
+      ? banner('ok', d.calibration
+          ? 'The tool has read the rooms and is sizing the system.'
+          : 'NO DIMENSION INPUT REQUIRED — every conditioned room is measured from the plan.',
           button('Next — Verify', () => app.setQuickStep('verify'), 'small'))
       : null
   ].filter(Boolean);
+}
+
+/**
+ * RULE 1 and RULE 7 — what NAC is conditioning on this job, and what it is
+ * not. The excluded rooms are listed so the estimator can see they were
+ * DETECTED and deliberately dropped, with one press to bring any of them back
+ * in for the job that needs it.
+ */
+function classificationPanel(app) {
+  const rooms = app.design.rooms || [];
+  if (!rooms.length) return null;
+  const c = classificationSummary(rooms);
+
+  const overrideRow = (r, to) => h('div', { class: 'qexc-row' },
+    h('span', { class: 'qexc-name' }, r.label),
+    h('span', { class: 'qexc-why' }, r.conditioningReason || ''),
+    button(to === CONDITIONING.CONDITIONED ? 'Condition it' : 'Exclude it',
+      () => app.setRoomConditioning(r.id, to), 'tiny ghost'));
+
+  return card('What NAC is conditioning',
+    c.conditionedCount + ' CONDITIONED  ·  ' + c.excludedCount + ' EXCLUDED AUTOMATICALLY' +
+    (c.reviewCount ? '  ·  ' + c.reviewCount + ' TO CLASSIFY' : ''),
+    c.reviewCount
+      ? h('div', { class: 'qexc' },
+          h('div', { class: 'qexc-head warn' }, 'NAC\u2019s rules do not settle these'),
+          ...c.review.map(r => h('div', { class: 'qexc-row' },
+            h('span', { class: 'qexc-name' }, r.label),
+            h('span', { class: 'qexc-why' }, r.conditioningReason || ''),
+            button('Condition it', () => app.setRoomConditioning(r.id, CONDITIONING.CONDITIONED), 'tiny'),
+            button('Exclude it', () => app.setRoomConditioning(r.id, CONDITIONING.NON_CONDITIONED), 'tiny ghost'))))
+      : null,
+    c.excludedCount
+      ? h('div', { class: 'qexc' },
+          h('div', { class: 'qexc-head' }, EXCLUDED_BANNER),
+          h('div', { class: 'note' },
+            'Not measured, not loaded, no airflow, no outlets, no duct and no zone. They are still ' +
+            'drawn faintly on the plan so you can see they were found.'),
+          ...c.excluded.map(r => overrideRow(r, CONDITIONING.CONDITIONED)))
+      : null,
+    // Bringing one back in is the override Nick asked for; putting one out
+    // again has to be just as easy, or an estimator who mis-taps is stuck.
+    c.conditioned.some(r => r.conditioningSource === 'estimator')
+      ? h('div', { class: 'qexc' },
+          h('div', { class: 'qexc-head' }, 'Conditioned by your override'),
+          ...c.conditioned.filter(r => r.conditioningSource === 'estimator')
+            .map(r => overrideRow(r, CONDITIONING.NON_CONDITIONED)))
+      : null);
 }
 
 // ── Step 2: VERIFY — only what is genuinely uncertain ───────────────────────
@@ -104,16 +185,34 @@ function interruptionRow(app, i) {
 
 function stepVerify(app, interruptions) {
   const d = app.design;
-  if (!d.plan || !d.calibration) {
-    return [banner('warn', 'Upload and calibrate the plan first.',
+  if (!d.plan) {
+    return [banner('warn', 'Upload the plan first.',
+      button('Back to Upload', () => app.setQuickStep('upload'), 'small'))];
+  }
+  // RULE 4 — only stop here for a scale that a CONDITIONED room actually needs.
+  if (!d.calibration && d.calibrationRequirement?.required) {
+    return [banner('warn', 'CALIBRATION REQUIRED — ' + d.calibrationRequirement.reason,
       button('Back to Upload', () => app.setQuickStep('upload'), 'small'))];
   }
 
   const outstanding = [...interruptions.blocking, ...interruptions.confirm];
+  // Checking a room means LOOKING at it on the plan. A verify step with no
+  // drawing on it asks the estimator to confirm a number they cannot see.
+  const withPlan = (blocks) => [
+    h('div', { class: 'qwork' },
+      h('div', { class: 'qwork-tools' }, ...blocks.filter(Boolean)),
+      h('div', { class: 'qwork-plan' },
+        h('div', { class: 'qreview-plan-head' },
+          h('strong', {}, 'Rooms on the plan'),
+          h('span', { class: 'note' }, 'Tap a room to select it. Drag its corners to correct it.'),
+          button('Room tools', () => app.setTab('rooms'), 'ghost small')),
+        h('div', { class: 'qplan-placeholder' }, 'Plan')))
+  ];
 
   if (!outstanding.length) {
-    return [
+    return withPlan([
       banner('ok', 'Nothing needs you. The tool read the plan, sized the system and priced the job.'),
+      classificationPanel(app),
       card('What the tool did on its own', 'Every one of these ran and raised nothing worth stopping for',
         h('ul', { class: 'qlist' },
           ...['Rooms detected and measured', 'Heat load calculated', 'Equipment selected',
@@ -121,11 +220,15 @@ function stepVerify(app, interruptions) {
               'Zoning worked out', 'Static pressure checked', 'Bill of materials built',
               'Job costed and priced'].map(t => h('li', {}, t)))),
       button('Next — Review the design', () => app.setQuickStep('design'), 'primary')
-    ];
+    ]);
   }
 
-  return [
-    banner(interruptions.blocking.length ? 'bad' : 'warn', interruptions.summary),
+  return withPlan([
+    // RULE 5 — ONE exact reason, naming the room, not "calibration required".
+    interruptions.blockReason
+      ? banner('bad', interruptions.blockReason)
+      : banner('warn', interruptions.summary),
+    classificationPanel(app),
     h('div', { class: 'note' },
       'Everything else was answered from the plan, the job, NAC’s settings and the supplier data. ' +
       'These are the only things the tool could not settle on its own.'),
@@ -133,7 +236,7 @@ function stepVerify(app, interruptions) {
     interruptions.canQuote
       ? button('Next — Review the design', () => app.setQuickStep('design'), 'primary')
       : null
-  ].filter(Boolean);
+  ]);
 }
 
 // ── Step 3: DESIGN — the one powerful review screen ─────────────────────────
@@ -176,14 +279,93 @@ function reviewCards(app, interruptions) {
   return h('div', { class: 'qcards' }, ...cards);
 }
 
+/**
+ * The zone list, beside the plan, with the one correction the drawing cannot
+ * make for itself: taking a room off the shared zone.
+ *
+ * This is on the review screen rather than behind ADVANCED DESIGN because it is
+ * where the estimator can see the rooms on the plan while deciding — and
+ * because eleven zones on a four-bedroom house was the sort of mistake nobody
+ * catches if it is filed three tabs away.
+ */
+function zonePanel(app) {
+  const d = app.design;
+  const zones = d.zones?.zones || [];
+  if (!zones.length) return null;
+  const byId = new Map((d.rooms || []).map(r => [r.id, r]));
+  const sugg = d.openPlanSuggestion;
+  const groupKey = sugg?.groups?.[0]?.key || 'open-plan';
+  const confirmed = !!d.zoneGroupingConfirmed;
+
+  const zoneRow = (z) => h('div', { class: 'qzone' + (z.alwaysOpen ? ' always-open' : '') },
+    h('div', { class: 'qzone-head' },
+      h('strong', {}, z.name),
+      badge(z.alwaysOpen ? 'ALWAYS OPEN' : z.kind.toUpperCase(), z.alwaysOpen ? 'ok' : ''),
+      h('span', { class: 'qzone-flow' }, int(z.airflowLs) + ' L/s · ' + num(z.systemSharePct, 1) + '%')),
+    h('div', { class: 'qzone-rooms' },
+      ...(z.roomIds || []).map(id => {
+        const r = byId.get(id);
+        if (!r) return null;
+        const shared = (z.roomIds || []).length > 1;
+        return h('span', { class: 'qzone-room' },
+          h('span', {}, r.label),
+          shared
+            ? button('split', () => app.splitRoomFromZone(r.id), 'tiny ghost')
+            : (sugg?.openPlanRoomCount
+                ? button('join open plan', () => app.mergeRoomIntoZone(r.id, groupKey), 'tiny ghost')
+                : null));
+      }).filter(Boolean)));
+
+  return card('Zones',
+    zones.length + ' zone' + (zones.length > 1 ? 's' : '') + ' · ' +
+    (d.controller ? d.controller.name : 'no controller selected') +
+    (d.zones.meetsMinimum === false ? ' · MINIMUM AIRFLOW NOT MET' : ''),
+
+    // Rooms open to one another cannot be dampered apart — but on a plan with
+    // no wall data that is a judgement, and it is labelled as one.
+    sugg?.openPlanRoomCount >= 2 && !confirmed
+      ? banner(sugg.confidence === 'HIGH' ? 'info' : 'warn',
+          sugg.confidence === 'HIGH'
+            ? 'Grouped from the walls and openings drawn on the plan.'
+            : 'Grouped by where the rooms sit on the plan — the reader found no walls or ' +
+              'openings. A room behind a door should be split out.',
+          button('Zoning is right', () => app.confirmZoneGrouping(), 'small'))
+      : null,
+    confirmed ? banner('ok', 'Zoning confirmed by the estimator.') : null,
+
+    d.zones.meetsMinimum === false
+      ? banner('bad', 'With every closable zone shut, ' + int(d.zones.minimumOpenAirflowLs || 0) +
+          ' L/s stays open — ' + num(d.zones.minimumOpenFractionPct, 0) + '% of the system against a ' +
+          num(d.zones.requiredMinimumLs, 0) + ' L/s minimum.')
+      : null,
+
+    ...(d.zoneRemedies || []).map(r => h('div', { class: 'qint warn' },
+      h('div', { class: 'qint-title' }, r.title),
+      h('div', { class: 'qint-detail' }, r.detail),
+      r.roomIds?.length
+        ? button('Do it', () => app.groupRoomsOntoZone(r.roomIds, r.groupKey || 'grouped'), 'small')
+        : null)),
+
+    h('div', { class: 'qzones' }, ...zones.map(zoneRow)),
+    h('div', { class: 'note' },
+      'Zone motors and cable are counted off this list, so splitting a room adds a damper to the ' +
+      'order. Rooms sharing a zone are also diversified together in the load.'));
+}
+
 function stepDesign(app, interruptions) {
   const d = app.design;
   if (d.stage !== 'complete') {
-    return [banner('warn', 'The design is not complete yet.',
-      button('Back to Verify', () => app.setQuickStep('verify'), 'small'))];
+    // RULE 5 — name the one thing in the way, not a generic refusal.
+    return [
+      banner('bad', interruptions.blockReason || 'DESIGN BLOCKED — the design could not be produced'),
+      ...interruptions.blocking.map(i => interruptionRow(app, i)),
+      button('Back to Verify', () => app.setQuickStep('verify'), 'small')
+    ];
   }
 
   const attention = [...interruptions.blocking, ...interruptions.confirm];
+  const net = d.network || {};
+  const routed = !!net.routed && !!d.autoRoute?.generated;
 
   return [
     // The safety line is not negotiable and is not tucked away.
@@ -196,11 +378,31 @@ function stepDesign(app, interruptions) {
           h('strong', {}, 'Floor plan'),
           h('span', { class: 'note' }, 'Indoor unit, outlets, ducts, diameters, return and zones'),
           button('Open the plan', () => app.setTab('plan'), 'ghost small')),
-        app.quickPlanHost || h('div', { class: 'qplan-placeholder' }, 'Plan')),
+        app.quickPlanHost || h('div', { class: 'qplan-placeholder' }, 'Plan'),
+        // RULE 5 / the closing line of Nick's brief — the layout is not
+        // "complete" because lines appeared. This says what is actually on the
+        // drawing, so a missing return or a missing zone is visible here
+        // rather than discovered on site.
+        routed
+          ? h('div', { class: 'qlegend' },
+              h('span', { class: 'qlegend-item trunk' }, 'TRUNK'),
+              h('span', { class: 'qlegend-item branch' }, 'BRANCH'),
+              h('span', { class: 'qlegend-item final' }, 'OUTLET RUN'),
+              h('span', { class: 'qlegend-item return' }, 'RETURN'),
+              h('span', { class: 'qlegend-count' },
+                net.sections.length + ' sized runs · ' +
+                (d.outlets?.rows?.length ?? 0) + ' outlets · ' +
+                (d.returnRoutes?.length ?? (d.returnRoute ? 1 : 0)) + ' return · ' +
+                (d.zones?.zoneCount ?? 0) + ' zones · ' +
+                (d.zoneDampers?.length ?? 0) + ' dampers · every run labelled with its diameter'))
+          : banner('warn', 'The duct layout has not been drawn on the plan. ' +
+              'Generate it before this design goes anywhere.',
+              button('Draw the duct layout', () => app.autoRoute(), 'small'))),
 
       // RIGHT — the numbers that decide whether this goes out.
       h('div', { class: 'qreview-side' },
         reviewCards(app, interruptions),
+        zonePanel(app),
         attention.length
           ? h('div', { class: 'qattn' },
               h('div', { class: 'qattn-head' }, 'Needs attention'),

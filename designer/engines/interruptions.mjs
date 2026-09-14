@@ -27,6 +27,7 @@
 // assumes nothing, and invents nothing.
 
 import { SEVERITY } from './warnings.mjs';
+import { isConditionedRoom, needsClassificationReview } from './classify.mjs';
 import { round } from './units.mjs';
 
 export const INTERRUPT = { BLOCKING: 'BLOCKING', CONFIRM: 'CONFIRM', NOTE: 'NOTE' };
@@ -34,7 +35,8 @@ export const INTERRUPT = { BLOCKING: 'BLOCKING', CONFIRM: 'CONFIRM', NOTE: 'NOTE
 /** Where an interruption is fixed, so the review screen can offer one click. */
 export const FIX_IN = {
   ROOMS: 'rooms', EQUIPMENT: 'equipment', DUCTWORK: 'ductwork', PLAN: 'plan',
-  MATERIALS: 'materials', FINANCIALS: 'financials', WARNINGS: 'warnings', SETTINGS: 'settings'
+  MATERIALS: 'materials', FINANCIALS: 'financials', WARNINGS: 'warnings', SETTINGS: 'settings',
+  ZONES: 'zones'
 };
 
 /**
@@ -64,11 +66,17 @@ export function collectInterruptions(design, opts = {}) {
     // Nothing downstream is meaningful yet.
     return finish(out);
   }
-  if (!d.calibration) {
+  // RULE 4 — calibration is asked for only when a CONDITIONED room actually
+  // needs a measurement taken off the image. A plan whose conditioned rooms all
+  // carry printed dimensions does not need it, and a bathroom with no readable
+  // size is never a reason to demand it.
+  const calReq = d.calibrationRequirement;
+  if (!d.calibration && calReq?.required !== false) {
     out.push(item(INTERRUPT.BLOCKING, 'NO_CALIBRATION', 'The plan has not been calibrated',
-      'An uploaded screenshot does not keep its original A3 or A4 scale, so no measurement ' +
-      'on this plan can be trusted until two known points are set. This is the one thing ' +
-      'the tool cannot work out for itself.', FIX_IN.PLAN));
+      (calReq?.reason ? calReq.reason + ' ' : '') +
+      'An uploaded screenshot does not keep its original A3 or A4 scale, so those rooms ' +
+      'cannot be measured until two known points are set.',
+      FIX_IN.PLAN, { covers: ['MISSING_PLAN_CALIBRATION'] }));
   }
 
   // ── Rooms the tool could not measure ──────────────────────────────────────
@@ -78,27 +86,47 @@ export function collectInterruptions(design, opts = {}) {
   // through as merely unverified, which is the opposite of what has to happen.
   const rooms = d.rooms || [];
   const settled = (r) => r.status === 'Verified' || r.status === 'Manual';
-  const unmeasured = rooms.filter(r => r.conditioned && !r.areaSqM);
-  const lowConfidence = rooms.filter(r => r.conditioned && r.areaSqM &&
+  const unmeasured = rooms.filter(r => isConditionedRoom(r) && !r.areaSqM);
+  const lowConfidence = rooms.filter(r => isConditionedRoom(r) && r.areaSqM &&
     r.confidenceBand === 'LOW' && !settled(r));
   // A HIGH-confidence read off a dimension chain printed on the plan IS
   // reliably answered by the plan, so quick mode accepts it and says so on the
   // review screen rather than asking. Only MEDIUM is worth a glance.
-  const unverified = rooms.filter(r => r.conditioned && r.areaSqM && !settled(r) &&
+  const unverified = rooms.filter(r => isConditionedRoom(r) && r.areaSqM && !settled(r) &&
     r.confidenceBand !== 'LOW' && r.confidenceBand !== 'HIGH');
 
+  // RULE 5 — ONE exact reason per room. A room with no readable size raises a
+  // missing-dimension warning AND a low-confidence warning AND a
+  // half-read-rooms warning, and an estimator faced with five red lines about
+  // two rooms cannot see that the job is two numbers away from a design. Each
+  // room speaks once and says which room it is.
   for (const r of unmeasured) {
     out.push(item(INTERRUPT.BLOCKING, 'ROOM_UNMEASURED:' + r.id,
-      r.label + ' dimensions could not be read',
-      'No size could be taken from the plan, so this room is contributing nothing to the ' +
-      'load. Type its size, or draw its boundary.', FIX_IN.ROOMS, { roomId: r.id }));
+      'DESIGN BLOCKED — ' + r.label.toUpperCase() + ' DIMENSIONS REQUIRED',
+      'No size could be taken from the plan for ' + r.label + ', so this room is contributing ' +
+      'nothing to the load. Type its size, or draw its boundary.', FIX_IN.ROOMS,
+      { roomId: r.id,
+        covers: ['ROOM_MISSING_A_DIMENSION', 'LOW_ROOM_MEASUREMENT_CONFIDENCE'] }));
   }
   for (const r of lowConfidence) {
     out.push(item(INTERRUPT.BLOCKING, 'ROOM_LOW_CONFIDENCE:' + r.id,
-      r.label + ' dimensions could not be verified',
+      'DESIGN BLOCKED — ' + r.label.toUpperCase() + ' DIMENSIONS NEED CONFIRMING',
       'Read at LOW confidence (' + round(r.areaSqM, 1) + ' m²). Sizing a system on a number ' +
       'the tool is not sure of is how a job gets undersized. Confirm or correct it.',
-      FIX_IN.ROOMS, { roomId: r.id }));
+      FIX_IN.ROOMS, { roomId: r.id, covers: ['LOW_ROOM_MEASUREMENT_CONFIDENCE'] }));
+  }
+
+  // RULE 1 — a room the tool could not classify is a question about the JOB,
+  // not about a measurement, so it is asked plainly and once. Excluded rooms
+  // never reach here at all.
+  const toClassify = rooms.filter(needsClassificationReview);
+  if (toClassify.length) {
+    out.push(item(INTERRUPT.CONFIRM, 'ROOMS_UNCLASSIFIED',
+      toClassify.length + ' room' + (toClassify.length > 1 ? 's' : '') + ' need a yes or no',
+      toClassify.map(r => r.label).join(', ') + '. NAC\'s rules do not settle ' +
+      (toClassify.length > 1 ? 'these' : 'this one') + '. Say whether the job conditions ' +
+      (toClassify.length > 1 ? 'them' : 'it') + '.',
+      FIX_IN.ROOMS, { roomIds: toClassify.map(r => r.id) }));
   }
   if (unverified.length) {
     // A believable measurement that is not quite certain — one line, not one
@@ -129,6 +157,36 @@ export function collectInterruptions(design, opts = {}) {
     out.push(item(INTERRUPT.CONFIRM, 'PHASE_UNCONFIRMED', 'Electrical phase not confirmed',
       unit.brandName + ' ' + unit.model + ' is a ' + unit.phase + ' unit. Confirm the site ' +
       'actually has three-phase supply before this goes out.', FIX_IN.EQUIPMENT));
+  }
+
+  // ── Which rooms share a zone ──────────────────────────────────────────────
+  // Rooms that are open to one another are one zone whether anyone says so or
+  // not, so the tool groups them rather than asking. But a formal lounge behind
+  // a door and an open meals area look the SAME on a plan whose reader gave no
+  // walls or openings, and getting that wrong costs a zone motor and a damper
+  // in the wrong place. So where the grouping rests on where rooms sit rather
+  // than on a drawn wall, it is put up once for a glance — which is exactly the
+  // kind of question that should survive: it genuinely cannot be answered from
+  // this plan.
+  const grouping = d.openPlanSuggestion;
+  if (grouping?.openPlanRoomCount >= 2 && grouping.confidence !== 'HIGH'
+      && !d.zoneGroupingConfirmed) {
+    const g = grouping.groups[0];
+    out.push(item(INTERRUPT.CONFIRM, 'ZONE_GROUPING_UNCONFIRMED',
+      'Confirm what is one open space',
+      g.rooms.join(' + ') + ' were put on one zone because they sit together on the plan. ' +
+      'Rooms that are open to each other cannot be dampered apart, so this is usually right — ' +
+      'but a room behind a door belongs on its own zone. Split any that should be separate.',
+      FIX_IN.ZONES, { roomIds: g.roomIds, groupKey: g.key }));
+  }
+  // A zoning that cannot work is not a preference — it is a blocker with a
+  // known fix, and the fix is named rather than left to be worked out.
+  for (const r of (d.zoneRemedies || [])) {
+    out.push(item(INTERRUPT.CONFIRM, 'ZONE_REMEDY:' + r.code, r.title, r.detail,
+      FIX_IN.ZONES, { roomIds: r.roomIds || [], zoneId: r.zoneId || null,
+                      covers: r.code === 'NOMINATE_CONSTANT_ZONE'
+                        ? ['MINIMUM_OPEN_AIRFLOW_TOO_LOW', 'CONSTANT_ZONE_RECOMMENDED']
+                        : ['ZONE_COUNT_EXCEEDS_CONTROLLER'] }));
   }
 
   // ── Static pressure ───────────────────────────────────────────────────────
@@ -213,8 +271,28 @@ function finish(out) {
   const blocking = out.filter(x => x.level === INTERRUPT.BLOCKING);
   const confirm = out.filter(x => x.level === INTERRUPT.CONFIRM);
   const notes = out.filter(x => x.level === INTERRUPT.NOTE);
+  // RULE 5 — the ONE line the quick screen shows when the design will not run.
+  // "Calibration required" when the real issue is one bedroom is the wording
+  // that sent an estimator hunting round the whole plan. If a single room is
+  // in the way, the headline names that room.
+  // A room the tool cannot measure outranks everything else in the headline,
+  // including "the plan has not been calibrated" — calibrating is only ONE of
+  // the ways to settle it, and naming it instead sends the estimator off to
+  // fix the whole plan when the real answer is two numbers. If rooms are in
+  // the way, the rooms are the headline.
+  const roomBlocks = blocking.filter(b => b.roomId);
+  const blockReason = blocking.length === 0 ? null
+    : roomBlocks.length
+      ? 'DESIGN BLOCKED — ' +
+        roomBlocks.map(b => b.title.replace(/^DESIGN BLOCKED — /, '')).join('  ·  ')
+      : blocking.length === 1 ? blocking[0].title
+      : blocking[0].title;
+
   return {
     blocking, confirm, notes, all: out,
+    // The single exact reason the design cannot be produced, or null.
+    blockReason,
+    blockCount: blocking.length,
     // Can a quote be produced at all?
     canQuote: blocking.length === 0,
     // Can the tool carry straight on to the review screen without stopping?

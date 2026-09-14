@@ -293,11 +293,27 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .tab-body{padding:12px}
   .stat-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
   .qreview{grid-template-columns:1fr}
+  .qwork{grid-template-columns:1fr}
+  .qwork-tools{max-height:none;overflow:visible}
+  .qwork-plan{min-height:60vh}
+  .qwork-plan .plan-host,.qwork-plan .qplan-placeholder{min-height:55vh}
   .qreview-plan{min-height:380px}
   .qreview-plan .plan-host,.qplan-placeholder{min-height:320px}
   .qcards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   .qactions{flex-direction:column;align-items:stretch}
 }
+
+/* Quick mode working screens: tools on the left, the plan beside them. The
+   plan is not optional — calibrating and correcting a room both happen ON it. */
+.qwork{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);
+  gap:14px;align-items:start}
+.qwork-tools{display:flex;flex-direction:column;gap:12px;
+  max-height:calc(100vh - 210px);overflow:auto}
+.qwork-plan{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;display:flex;flex-direction:column;min-height:540px}
+.qwork-plan .plan-host,.qwork-plan .qplan-placeholder{flex:1;min-height:500px}
+.qwork-plan .qplan-placeholder{display:flex;align-items:center;justify-content:center;
+  color:var(--ink-3);font-size:12px}
 
 /* Route editing — the help line and the touch targets. */
 .edit-help{background:rgba(245,194,0,.08);border:1px solid rgba(245,194,0,.35);
@@ -373,6 +389,44 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .app-head,.steps,.tabs,.assistant,.plan-tools,.btn{display:none!important}
   body{background:#fff;color:#111}
 }
+
+    /* Room classification — the conditioned/excluded cell on the Rooms tab. */
+    .cond-cell { display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; }
+    .cond-why { font-size:10px; letter-spacing:.04em; text-transform:uppercase;
+                color:var(--muted, #8b93a7); white-space:nowrap; }
+    .cond-why.warn { color:#F5C200; }
+    tr.muted-row { opacity:.55; }
+
+    /* Quick mode — room classification and the duct-layout legend. */
+    .qexc { margin-top:10px; border-top:1px solid rgba(255,255,255,.08); padding-top:8px; }
+    .qexc-head { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+                 color:var(--muted, #8b93a7); margin-bottom:6px; }
+    .qexc-head.warn { color:#F5C200; }
+    .qexc-row { display:flex; align-items:center; gap:8px; padding:4px 0; flex-wrap:wrap; }
+    .qexc-name { font-weight:600; min-width:120px; }
+    .qexc-why { flex:1 1 180px; font-size:11px; color:var(--muted, #8b93a7); }
+    .qlegend { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+               padding:8px 10px; border-top:1px solid rgba(255,255,255,.08); font-size:11px; }
+    .qlegend-item { display:inline-flex; align-items:center; gap:5px;
+                    letter-spacing:.06em; color:var(--muted, #8b93a7); }
+    .qlegend-item::before { content:''; width:16px; height:3px; border-radius:2px; background:currentColor; }
+    .qlegend-item.trunk  { color:#2B6CB8; }
+    .qlegend-item.branch { color:#3fbf6f; }
+    .qlegend-item.final  { color:#F5C200; }
+    .qlegend-item.return { color:#c07fd0; }
+    .qlegend-count { flex:1 1 100%; color:var(--muted, #8b93a7); }
+    @media (max-width: 720px) { .qexc-name { min-width:0; } }
+
+    /* Quick mode — the zone list on the review screen. */
+    .qzones { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+    .qzone { border:1px solid rgba(255,255,255,.10); border-radius:6px; padding:8px 10px; }
+    .qzone.always-open { border-color:rgba(63,191,111,.45); }
+    .qzone-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .qzone-flow { margin-left:auto; font-size:11px; color:var(--muted, #8b93a7); white-space:nowrap; }
+    .qzone-rooms { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .qzone-room { display:inline-flex; align-items:center; gap:4px; font-size:11px;
+                  background:rgba(255,255,255,.05); border-radius:4px; padding:2px 4px 2px 8px; }
+    @media (max-width: 720px) { .qzone-flow { margin-left:0; width:100%; } }
 </style>
 </head>
 <body>

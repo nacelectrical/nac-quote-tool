@@ -14,6 +14,8 @@ import { DEFAULT_SETTINGS, confidenceBand } from './settings.mjs';
 import { areaM2, round, mmToM } from './units.mjs';
 import { snapToStation } from './chains.mjs';
 import { pxToMm } from './calibration.mjs';
+import { CONDITIONING, classifyRoomLabel, roomConditioningStatus, isOutdoorArea,
+         isConditionedRoom, isExcludedRoom, needsClassificationReview } from './classify.mjs';
 
 export const MEASUREMENT_SOURCES = [
   'verified_architectural',
@@ -43,63 +45,30 @@ export const SOURCE_PRIORITY = {
 };
 
 // ── Room classification ──────────────────────────────────────────────────────
-// These are NAC's existing rules, lifted out of the intake AI prompt so they are
-// now deterministic code rather than instructions to a language model.
+// There is exactly ONE classification engine and it lives in classify.mjs.
+// These re-exports exist so the many modules that already import from rooms.mjs
+// keep working — they are the same functions, not a second copy of the rules.
 
-const UNCONDITIONED_PATTERNS = [
-  /\bgarage\b/i, /\bcarport\b/i, /\bcar\s*port\b/i,
-  /\blaundry\b/i, /\bl'?dry\b/i,
-  /\bbath(room)?\b/i, /\bensuite\b/i, /\bens\b/i, /\bwc\b/i, /\btoilet\b/i, /\bpowder\b/i,
-  /\bwir\b/i, /\bbir\b/i, /\bwalk[- ]?in[- ]?robe\b/i, /\brobe\b/i, /\bwardrobe\b/i,
-  /\blinen\b/i, /\bpantry\b/i, /\bp'?try\b/i, /\bstore\b/i, /\bstorage\b/i,
-  // Cupboards. Australian plans label them CUP'D, CUPB, CPD or CUPBOARD, and a
-  // dimensioned one would otherwise be read in as conditioned floor area.
-  /\bcup'?d\b/i, /\bcupb(oard)?\b/i, /\bcpd\b/i, /\bbroom\b/i, /\bcloak\b/i,
-  /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
-  /\boutdoor\b/i, /\bbalcony\b/i, /\bcourtyard\b/i, /\bvoid\b/i, /\bportico\b/i
-];
+export {
+  CONDITIONING, CONDITIONING_LABELS, EXCLUDED_BANNER,
+  classifyRoomLabel, roomConditioningStatus, isConditionedRoom, isExcludedRoom,
+  needsClassificationReview, classifyRoom, classificationSummary,
+  normaliseRoomLabel, isConditionedLabel, roomTypeFromLabel, isOutdoorArea
+} from './classify.mjs';
 
-/** Areas a floor-area schedule lists separately from the residence. */
-const OUTDOOR_PATTERNS = [
-  /\balfresco\b/i, /\bpatio\b/i, /\bverandah?\b/i, /\bporch\b/i, /\bdeck\b/i,
-  /\bbalcony\b/i, /\bcourtyard\b/i, /\bportico\b/i, /\bgarage\b/i, /\bcarport\b/i
-];
-
-const ROOM_TYPE_PATTERNS = [
-  [/\bmaster\b|\bbed\s*\d?\b|\bbedroom\b|\bguest\b/i, 'bedroom'],
-  [/\bkitchen\b|\bkitch\b/i, 'kitchen'],
-  [/\bdining\b|\bmeals?\b/i, 'dining'],
-  [/\bliving\b|\bfamily\b|\blounge\b|\brumpus\b/i, 'living'],
-  [/\bmedia\b|\btheatre\b|\btheater\b|\bcinema\b/i, 'media'],
-  [/\bstudy\b|\boffice\b/i, 'study'],
-  [/\bhall\b|\bentry\b|\bfoyer\b|\bpassage\b|\bcorridor\b/i, 'hallway']
-];
-
-/**
- * Australian plans write these rooms as dotted initials as often as not —
- * "W.I.R.", "W.C.", "B.I.R.", "L'DRY". Collapsing the dots between single
- * letters lets one set of patterns match both spellings, instead of a walk-in
- * robe being conditioned on one plan and excluded on the next.
- */
-export function normaliseRoomLabel(label) {
-  return String(label || '')
-    .replace(/\b(?:[A-Za-z]\.){2,}/g, (m) => m.replace(/\./g, ''))   // W.I.R. -> WIR
-    .replace(/\u2019/g, "'")
-    .trim();
+/** Every room NAC is air conditioning on this job. */
+export function conditionedRooms(rooms) {
+  return (rooms || []).filter(isConditionedRoom);
 }
 
-/** Is this room label a conditioned space under NAC's rules? */
-export function isConditionedLabel(label) {
-  const l = normaliseRoomLabel(label);
-  if (!l) return false;
-  for (const p of UNCONDITIONED_PATTERNS) if (p.test(l)) return false;
-  return true;
+/** Detected, drawn faintly, and ignored by every engine. */
+export function excludedRooms(rooms) {
+  return (rooms || []).filter(isExcludedRoom);
 }
 
-export function roomTypeFromLabel(label) {
-  const l = normaliseRoomLabel(label);
-  for (const [p, t] of ROOM_TYPE_PATTERNS) if (p.test(l)) return t;
-  return 'other';
+/** The tool could not tell. Asked once on VERIFY, then never again. */
+export function roomsNeedingClassification(rooms) {
+  return (rooms || []).filter(needsClassificationReview);
 }
 
 // ── Measurement construction ─────────────────────────────────────────────────
@@ -341,26 +310,52 @@ export function buildRoom(input, opts = {}) {
   const measurementRec = input.measurement;
   const conf = scoreMeasurement(measurementRec, { ...opts, settings });
 
-  const conditioned = input.conditioned !== undefined
-    ? !!input.conditioned
-    : isConditionedLabel(label);
+  // CLASSIFY FIRST. Everything below — status, whether a missing dimension
+  // matters, whether this room can block anything — follows from the answer,
+  // and it comes from the one classification engine.
+  const probe = { ...input, label };
+  if (input.conditioned !== undefined && input.conditioningOverride === undefined
+      && input.conditioningStatus === undefined) {
+    // A caller handing in the old boolean is stating an intent, so honour it
+    // as an explicit setting rather than re-deriving from the label.
+    probe.conditioningOverride = input.conditioned
+      ? CONDITIONING.CONDITIONED : CONDITIONING.NON_CONDITIONED;
+  }
+  const conditioningStatus = roomConditioningStatus(probe);
+  const conditioned = conditioningStatus === CONDITIONING.CONDITIONED;
+  const detail = classifyRoomLabel(label);
 
   let status = input.status;
-  // An incomplete measurement always resets the status, even a status carried
-  // over from a previous read — a room cannot stay Verified once a dimension
-  // it was verified on has gone.
-  if (measurementRec?.incomplete) status = 'Needs a dimension';
-  if (!status) {
-    if (!conditioned) status = 'Excluded';
-    else if (measurementRec.source === 'manual') status = 'Manual';
-    else if (conf.band === 'HIGH') status = 'Review';   // still needs a human tick
-    else status = 'Review';
+  // An excluded room is finished being thought about. It does not need a
+  // dimension, cannot be unverified, and must never turn up in a queue asking
+  // the estimator about a bathroom he was never going to condition.
+  if (conditioningStatus === CONDITIONING.NON_CONDITIONED) {
+    status = 'Excluded';
+  } else if (conditioningStatus === CONDITIONING.REVIEW_REQUIRED) {
+    status = 'Classify';
+  } else {
+    // An incomplete measurement always resets the status, even a status carried
+    // over from a previous read — a room cannot stay Verified once a dimension
+    // it was verified on has gone.
+    if (measurementRec?.incomplete) status = 'Needs a dimension';
+    if (!status) {
+      if (measurementRec.source === 'manual') status = 'Manual';
+      else status = 'Review';
+    }
   }
 
   return {
     id: input.id || ('room_' + label.toLowerCase().replace(/[^a-z0-9]+/g, '_')),
     label,
-    roomType: input.roomType || roomTypeFromLabel(label),
+    roomType: input.roomType || detail.roomType,
+    // THE field every downstream engine reads. `conditioned` is derived from it
+    // and is never set on its own.
+    conditioningStatus,
+    conditioningReason: input.conditioningOverride || probe.conditioningOverride
+      ? 'Set by the estimator on this job.' : detail.reason,
+    conditioningSource: (input.conditioningOverride || probe.conditioningOverride) ? 'estimator' : 'auto',
+    conditioningMatched: detail.matched,
+    conditioningOverride: input.conditioningOverride ?? probe.conditioningOverride ?? null,
     conditioned,
     openPlanGroup: input.openPlanGroup || null,
     ceilingHeightMm: input.ceilingHeightMm ?? settings.load.defaultCeilingHeightMm,
@@ -424,8 +419,50 @@ export function applyRoomOverride(room, patch, who = 'estimator') {
 }
 
 export function verifyRoom(room, who = 'estimator') {
-  return { ...room, status: room.conditioned ? 'Verified' : 'Excluded',
+  const st = roomConditioningStatus(room);
+  const status = st === CONDITIONING.NON_CONDITIONED ? 'Excluded'
+    : st === CONDITIONING.REVIEW_REQUIRED ? 'Classify'
+    : 'Verified';
+  return { ...room, status,
            verifiedBy: who, verifiedAt: new Date().toISOString(), requiresVerification: false };
+}
+
+/**
+ * The estimator's call on whether NAC conditions this space — the override
+ * Nick asked for, so a big laundry or a converted garage can be brought into
+ * the design on the one job that needs it.
+ *
+ * It is recorded as an override, not as a re-read of the label, so it survives
+ * every later re-run of the plan reader. It also settles a REVIEW_REQUIRED
+ * room: answering the question is the whole point of being asked.
+ */
+export function setRoomConditioning(room, status, who = 'estimator') {
+  if (status !== CONDITIONING.CONDITIONED && status !== CONDITIONING.NON_CONDITIONED) {
+    throw new Error('setRoomConditioning expects CONDITIONED or NON_CONDITIONED');
+  }
+  const conditioned = status === CONDITIONING.CONDITIONED;
+  const next = {
+    ...room,
+    conditioningOverride: status,
+    conditioningStatus: status,
+    conditioningSource: 'estimator',
+    conditioningReason: conditioned
+      ? 'The estimator set this room to be air conditioned on this job.'
+      : 'The estimator excluded this room from air conditioning on this job.',
+    conditioned,
+    overrides: [...(room.overrides || []),
+      { field: 'conditioningStatus', from: room.conditioningStatus ?? null, to: status,
+        by: who, at: new Date().toISOString() }]
+  };
+  if (!conditioned) {
+    next.status = 'Excluded';
+  } else if (room.status === 'Excluded' || room.status === 'Classify') {
+    // Brought in from the cold: it now has to be measured like any other
+    // conditioned room, so it goes back to needing a look rather than
+    // inheriting a status that meant "ignored".
+    next.status = room.measurement?.incomplete ? 'Needs a dimension' : 'Review';
+  }
+  return next;
 }
 
 /**
@@ -433,19 +470,54 @@ export function verifyRoom(room, who = 'estimator') {
  * Only Verified/Manual conditioned rooms qualify, unless the estimator has
  * explicitly overridden a low-confidence room.
  */
+/**
+ * Sources that can clear a room on their own. Everything except 'estimated',
+ * which by definition is not a measurement at all.
+ */
+const AUTO_CLEAR_SOURCES = new Set([
+  'verified_architectural', 'dimension_chain', 'chain_plus_wall_geometry',
+  'calibrated_geometry', 'manual'
+]);
+
+/**
+ * RULE 5 — a room the tool measured at HIGH confidence off the architect's own
+ * figures does not need a human tick before the design can be produced.
+ *
+ * Making the estimator confirm a number the drawing states, one room at a time,
+ * before anything at all will run is the friction that stopped the job onsite:
+ * eleven confident rooms and the pipeline produced nothing. The confidence
+ * score and the source are still recorded against every one of them, they are
+ * still shown on the review screen, and the estimator can still correct any of
+ * them — what has gone is the requirement to press a button to say "yes, that
+ * is what the plan says" before seeing a design.
+ *
+ * LOW and MEDIUM confidence still require a human. So does anything estimated,
+ * incomplete, or measured at nothing.
+ */
+export function isAutoCleared(room) {
+  return isConditionedRoom(room) &&
+    !room.measurement?.incomplete &&
+    room.areaSqM > 0 &&
+    room.confidenceBand === 'HIGH' &&
+    AUTO_CLEAR_SOURCES.has(room.measurement?.source);
+}
+
 export function sizableRooms(rooms, { allowOverride = false } = {}) {
   return (rooms || []).filter(r =>
-    r.conditioned &&
+    isConditionedRoom(r) &&
     !r.measurement?.incomplete &&
     r.areaSqM > 0 &&
-    (r.status === 'Verified' || r.status === 'Manual' || (allowOverride && r.overrideApproved)));
+    (r.status === 'Verified' || r.status === 'Manual' ||
+     isAutoCleared(r) ||
+     (allowOverride && r.overrideApproved)));
 }
 
 export function blockedRooms(rooms) {
   return (rooms || []).filter(r =>
-    r.conditioned &&
+    isConditionedRoom(r) &&
     (r.measurement?.incomplete ||
-     (r.status !== 'Verified' && r.status !== 'Manual' && !r.overrideApproved)));
+     (r.status !== 'Verified' && r.status !== 'Manual' &&
+      !isAutoCleared(r) && !r.overrideApproved)));
 }
 
 /**
@@ -454,7 +526,7 @@ export function blockedRooms(rooms) {
  * conditioned, and its area is currently counting as nothing.
  */
 export function incompleteRooms(rooms) {
-  return (rooms || []).filter(r => r.conditioned && r.measurement?.incomplete)
+  return (rooms || []).filter(r => isConditionedRoom(r) && r.measurement?.incomplete)
     .map(r => ({ id: r.id, label: r.label,
                  missing: r.measurement.missingDimension,
                  knownMm: r.measurement.widthMm ?? r.measurement.lengthMm ?? null }));
@@ -548,7 +620,7 @@ export function crossCheckFloorArea(rooms, printedResidenceSqM, opts = {}) {
 
   // Everything under the roof, conditioned or not — that is what the schedule
   // measures. Outdoor areas are listed separately on the sheet.
-  const indoor = (rooms || []).filter(r => !OUTDOOR_PATTERNS.some(p => p.test(normaliseRoomLabel(r.label))));
+  const indoor = (rooms || []).filter(r => !isOutdoorArea(r.label));
   const summed = round(indoor.reduce((s, r) => s + (r.areaSqM || 0), 0), 2);
   const deltaSqM = round(summed - printed, 2);
   const deltaPct = round((deltaSqM / printed) * 100, 1);
@@ -576,4 +648,43 @@ export function parseFloorAreaText(text) {
   if (!m) return null;
   const n = Number(m[1].replace(',', '.'));
   return isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Give a dimensioned room a place on the drawing.
+ *
+ * A builder's brochure plan has NO dimension chain — every room states its own
+ * size in text under its name — so the plan reader measures each room perfectly
+ * and places none of them. The load, the equipment, the airflow, the duct sizes
+ * and the price all come out right, and the plan comes out blank: the duct
+ * router has no geometry to route through and draws nothing.
+ *
+ * The label sits inside its room and the architect has printed how big that
+ * room is, so with a scale that is a rectangle — the printed size, at the
+ * drawing scale, centred on the label. Every figure in it comes off the plan;
+ * nothing is invented. It is marked `boundaryDerived` so the drawing can show
+ * it as a placement to check rather than a traced boundary, and an estimator
+ * who drags the box replaces it with a real one.
+ *
+ * Rooms that already have a boundary are left exactly as they are.
+ */
+export function deriveBoundariesFromPrintedSizes(rooms, calibration) {
+  const pxPerMm = calibration?.pixelsPerMm;
+  if (!pxPerMm) return rooms || [];
+  return (rooms || []).map(r => {
+    if (r.boundaryPx) return r;
+    if (!r.labelPx || r.measurement?.incomplete) return r;
+    const w = Number(r.widthMm), l = Number(r.lengthMm);
+    if (!(w > 0) || !(l > 0)) return r;
+    const wPx = w * pxPerMm, hPx = l * pxPerMm;
+    return {
+      ...r,
+      boundaryPx: {
+        x: r.labelPx.x + (r.labelPx.w || 0) / 2 - wPx / 2,
+        y: r.labelPx.y + (r.labelPx.h || 0) / 2 - hPx / 2,
+        w: wPx, h: hPx
+      },
+      boundaryDerived: 'printed_size_at_label'
+    };
+  });
 }

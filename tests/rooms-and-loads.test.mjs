@@ -239,12 +239,28 @@ test('a manual load override is applied and recorded, never silent', () => {
   assert.match(o.overrideNote, /closed/);
 });
 
-test('unverified rooms contribute nothing to the system load', () => {
+test('a room the tool is not confident about contributes nothing to the load', () => {
+  // RULE 5: a confidently measured room no longer needs a human tick before it
+  // can be sized. A room the tool is NOT confident about still does — that is
+  // the protection, and it has not moved.
   const rooms = [verifyRoom(mk('Bed 2', 3200, 3400)), mk('Bed 3', 3200, 3400)];
   rooms[1].status = 'Review';
+  rooms[1].confidenceBand = 'LOW';
+  rooms[1].measurement = { ...rooms[1].measurement, source: 'estimated' };
   const s = systemLoad(rooms);
   assert.equal(s.roomCount, 1);
   assert.equal(s.totalConditionedAreaSqM, 10.88);
+});
+
+test('a HIGH-confidence room is sized without waiting for a tick', () => {
+  // The onsite failure: eleven rooms read straight off the architect's printed
+  // dimensions, and the pipeline produced nothing until each was ticked.
+  const rooms = [mk('Bed 2', 3200, 3400), mk('Bed 3', 3200, 3400)];
+  assert.ok(rooms.every(r => r.status === 'Manual' || r.status === 'Review'),
+    'neither room has been verified by hand');
+  const s = systemLoad(rooms);
+  assert.equal(s.roomCount, 2);
+  assert.equal(s.totalConditionedAreaSqM, 21.76);
 });
 
 test('system diversity and safety margin come from settings', () => {

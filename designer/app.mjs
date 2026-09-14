@@ -6,7 +6,8 @@
 // This module owns state and wiring only. Every number on screen comes out of
 // the deterministic engines in ./engines; nothing is computed here.
 
-import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table } from './ui/dom.mjs';
+import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table,
+         confidenceBadge, num } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
 import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
@@ -22,8 +23,11 @@ import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
 import { parseRoomDimensionPair } from './engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
-         parseFloorAreaText, crossCheckFloorArea,
-         summariseRoomMeasurements } from './engines/rooms.mjs';
+         parseFloorAreaText, crossCheckFloorArea, setRoomConditioning,
+         isAutoCleared, summariseRoomMeasurements } from './engines/rooms.mjs';
+import { CONDITIONING, CONDITIONING_LABELS, EXCLUDED_BANNER, isConditionedRoom,
+         isExcludedRoom, needsClassificationReview,
+         classificationSummary } from './engines/classify.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
@@ -55,7 +59,7 @@ const TABS = [
 const STEPS = [
   { key: 'upload',    label: 'Upload plan',   done: (d) => !!d.plan },
   { key: 'calibrate', label: 'Calibrate',     done: (d) => !!d.calibration },
-  { key: 'rooms',     label: 'Verify rooms',  done: (d) => (d.rooms || []).some(r => r.conditioned && (r.status === 'Verified' || r.status === 'Manual')) },
+  { key: 'rooms',     label: 'Verify rooms',  done: (d) => (d.rooms || []).some(r => isConditionedRoom(r) && (r.status === 'Verified' || r.status === 'Manual' || isAutoCleared(r))) },
   { key: 'size',      label: 'Size system',   done: (d) => !!d.selectedUnit },
   { key: 'airflow',   label: 'Design airflow',done: (d) => !!d.airflow },
   { key: 'ducts',     label: 'Design ducts',  done: (d) => !!d.network && d.network.sections.some(s => s.lengthMm) },
@@ -197,8 +201,9 @@ export class DesignerApp {
       // not something the estimator has to walk through to get a quote out.
       mount(this.mainEl, h('div', { class: 'tab-body quick' },
         ...renderQuickMode(this).filter(Boolean)));
-      // The review step shows the plan itself, so the viewer has to follow it.
-      if (this.quickStep === 'design') this.mountQuickPlan();
+      // Upload, Verify and Design all work ON the plan, so the viewer follows
+      // the estimator through them instead of living on one screen.
+      if (['upload', 'verify', 'design'].includes(this.quickStep)) this.mountQuickPlan();
     } else if (this.tab === 'plan') {
       this.renderPlanTab();
     } else {
@@ -321,6 +326,12 @@ export class DesignerApp {
     if (interruption.fixIn === FIX_IN.PLAN) {
       this.mode = 'quick'; this.quickStep = 'upload'; return void this.render();
     }
+    // Zoning is corrected on the review screen, where the zone list and the
+    // plan are side by side — sending the estimator to an engineering tab to
+    // split one room off would be the opposite of the point.
+    if (interruption.fixIn === FIX_IN.ZONES && this.mode === 'quick') {
+      this.quickStep = 'design'; return void this.render();
+    }
     // Everything else lives on an engineering tab. Switching to advanced is the
     // honest thing to do: that is where the control actually is.
     this.mode = 'advanced';
@@ -374,7 +385,7 @@ export class DesignerApp {
    */
   acceptHighConfidenceRooms() {
     const rooms = this.design.rooms || [];
-    const toAccept = rooms.filter(r => r.conditioned && r.areaSqM > 0 &&
+    const toAccept = rooms.filter(r => isConditionedRoom(r) && r.areaSqM > 0 &&
       r.confidenceBand === 'HIGH' && r.status !== 'Verified' && r.status !== 'Manual');
     if (!toAccept.length) return;
     const ids = new Set(toAccept.map(r => r.id));
@@ -413,10 +424,11 @@ export class DesignerApp {
 
   /** The plan itself, inside the review screen. */
   mountQuickPlan() {
-    const host = this.mainEl.querySelector('.qreview-plan');
-    if (!host) return;
+    // Any quick-mode screen that asks for a plan gets the real viewer, not a
+    // grey box. Calibrating and checking a room both mean working ON the
+    // drawing, so a step without it is a step nobody can finish.
     this.ensureViewer();
-    const slot = host.querySelector('.qplan-placeholder');
+    const slot = this.mainEl.querySelector('.qplan-placeholder');
     if (slot && this.viewer.element) {
       // The viewer's own wrapper is position:absolute;inset:0, so it needs a
       // sized, positioned box around it. Dropped in bare it anchors to the page
@@ -649,9 +661,9 @@ export class DesignerApp {
         : null,
       d.plan ? h('div', { class: 'btn-row' },
         button(this.busy ? 'Reading…' : 'Read plan with AI', () => this.readPlan(), 'primary small'),
-        button('Fit', () => this.viewer.fit(), 'ghost small'),
-        button('+', () => this.viewer.zoomIn(), 'ghost small'),
-        button('−', () => this.viewer.zoomOut(), 'ghost small')) : null,
+        button('Fit', () => this.ensureViewer().fit(), 'ghost small'),
+        button('+', () => this.ensureViewer().zoomIn(), 'ghost small'),
+        button('−', () => this.ensureViewer().zoomOut(), 'ghost small')) : null,
       d.interpretation ? h('div', { class: 'note' },
         // What was obtained comes first; the chain counters are the working.
         d.roomRead ? d.roomRead.sentence + ' ' : '',
@@ -788,7 +800,12 @@ export class DesignerApp {
         const next = byLabel.get(r.label.toLowerCase());
         // A room the estimator has typed or verified is never overwritten.
         if (!next || r.measurement?.source === 'manual' || r.status === 'verified') return r;
-        return { ...next, id: r.id, conditioned: r.conditioned, roomType: r.roomType,
+        return { ...next, id: r.id, roomType: r.roomType,
+                 conditioningStatus: r.conditioningStatus,
+                 conditioningOverride: r.conditioningOverride ?? null,
+                 conditioningReason: r.conditioningReason,
+                 conditioningSource: r.conditioningSource,
+                 conditioned: isConditionedRoom(r),
                  ceilingHeightMm: r.ceilingHeightMm };
       });
     }
@@ -848,6 +865,49 @@ export class DesignerApp {
         : banner('warn', 'Not calibrated. Rooms read from the plan\'s dimension strings are measured ' +
             'from those dimensions and do not need this, but any room you draw by hand cannot be ' +
             'measured until you calibrate.'));
+  }
+
+  /**
+   * The room controls QUICK QUOTE MODE needs.
+   *
+   * Checking a room means looking at it on the drawing and, when it is wrong,
+   * correcting it there. That has to be possible without sending the estimator
+   * into the thirteen-tab view — which is the whole point of quick mode.
+   */
+  renderRoomToolsPanel() {
+    const d = this.design;
+    const mode = this.viewer?.getMode() || MODES.VIEW;
+    const rooms = (d.rooms || []).filter(isConditionedRoom);
+    const unsure = rooms.filter(r => r.confidenceBand === 'LOW' || !r.areaSqM);
+    const set = (m) => { this.ensureViewer().setMode(mode === m ? MODES.VIEW : m); this.render(); };
+
+    return card('Rooms on the plan', rooms.length + ' conditioned room(s) · drag a corner to correct one',
+      h('div', { class: 'btn-row' },
+        button(mode === MODES.ROOM ? 'Done drawing' : 'Draw / correct a room',
+          () => set(MODES.ROOM), mode === MODES.ROOM ? 'primary small' : 'small'),
+        button('Verify all', () => this.verifyAll(), 'small'),
+        button('Re-read the plan', () => this.readPlan(), 'ghost small')),
+      unsure.length
+        ? banner('warn', unsure.length + ' room(s) the tool is not sure about: ' +
+            unsure.map(r => r.label).join(', ') + '. Check them against the plan.')
+        : banner('ok', 'Every conditioned room is measured. Nothing here needs you.'),
+      rooms.length
+        ? table([
+            { key: 'label', label: 'Room' },
+            { key: 'areaSqM', label: 'm²', align: 'right', width: '66px',
+              render: (r) => r.areaSqM ? num(r.areaSqM, 1) : '—' },
+            { key: 'confidenceBand', label: 'Read', width: '82px',
+              render: (r) => confidenceBadge(r.confidence, r.confidenceBand) },
+            { key: 'status', label: '', align: 'right', width: '92px',
+              // RULE 5 — a room measured off the architect's own figures at HIGH
+              // confidence is already cleared; it does not need a tick before
+              // the design will run, and offering one implies otherwise.
+              render: (r) => r.status === 'Verified' || r.status === 'Manual'
+                ? badge('OK', 'ok')
+                : isAutoCleared(r) ? badge('MEASURED', 'ok')
+                : button('Verify', () => this.verifyRoom(r.id), 'tiny') }
+          ], rooms, { compact: true })
+        : h('div', { class: 'note' }, 'No rooms read yet. Press "Read plan with AI", or draw them.'));
   }
 
   renderPlanModePanel() {
@@ -1453,7 +1513,7 @@ export class DesignerApp {
       const [remeasured] = measureRooms([{ ...r, boundaryPx: r.boundaryPx }],
         { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
       return { ...remeasured, id: r.id, status: r.status === 'Verified' ? 'Review' : remeasured.status,
-               conditioned: r.conditioned, ceilingHeightMm: r.ceilingHeightMm };
+               conditioned: isConditionedRoom(r), ceilingHeightMm: r.ceilingHeightMm };
     });
   }
 
@@ -1642,9 +1702,16 @@ export class DesignerApp {
       const [m] = measureRooms([{ ...r, boundaryPx: box, widthMm: undefined, lengthMm: undefined,
                                   hStations: undefined, vStations: undefined }],
         { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
-      return { ...m, id: r.id, label: r.label, conditioned: r.conditioned,
+      // Re-measuring a room never re-opens the question of whether NAC
+      // conditions it — the classification, and any override on it, carries.
+      return { ...m, id: r.id, label: r.label,
+               conditioningStatus: r.conditioningStatus,
+               conditioningOverride: r.conditioningOverride ?? null,
+               conditioningReason: r.conditioningReason,
+               conditioningSource: r.conditioningSource,
+               conditioned: isConditionedRoom(r),
                ceilingHeightMm: r.ceilingHeightMm, boundaryPx: box,
-               status: r.conditioned ? 'Review' : 'Excluded' };
+               status: isConditionedRoom(r) ? 'Review' : 'Excluded' };
     });
     this.update();
   }
@@ -1745,9 +1812,79 @@ export class DesignerApp {
   selectRoom(id) { this.selectedRoomId = id; this.viewer?.selectRoom(id); this.render(); }
 
   editRoom(id, patch) {
-    this.design.rooms = (this.design.rooms || []).map(r =>
-      r.id === id ? applyRoomOverride(r, patch, 'estimator') : r);
+    // A change of conditioning is not an ordinary field edit — it has to go
+    // through the classification engine so the override is recorded and every
+    // downstream engine sees the same answer. Setting the bare boolean here is
+    // how a room ends up excluded from the load but still in the router.
+    const { conditioned, ...rest } = patch;
+    this.design.rooms = (this.design.rooms || []).map(r => {
+      if (r.id !== id) return r;
+      let next = r;
+      if (conditioned !== undefined) {
+        next = setRoomConditioning(next,
+          conditioned ? CONDITIONING.CONDITIONED : CONDITIONING.NON_CONDITIONED, 'estimator');
+      }
+      return Object.keys(rest).length ? applyRoomOverride(next, rest, 'estimator') : next;
+    });
     this.update();
+  }
+
+  /**
+   * Take a room off the shared open-plan zone and give it its own.
+   *
+   * This is the correction for the one thing the drawing cannot settle: a
+   * formal lounge behind a door looks exactly like an open meals area when the
+   * plan reader returned no walls. Marked as the estimator's call so no later
+   * re-run of the grouping puts it back.
+   */
+  splitRoomFromZone(roomId) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === roomId ? { ...r, openPlanGroup: null, zoneGroupSource: 'estimator' } : r);
+    const room = (this.design.rooms || []).find(r => r.id === roomId);
+    this.update();
+    if (room) toast(room.label + ' is on its own zone.', 'good');
+  }
+
+  /** Put a room back onto a shared zone — the other half of the same control. */
+  mergeRoomIntoZone(roomId, groupKey) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === roomId ? { ...r, openPlanGroup: groupKey || 'open-plan', zoneGroupSource: 'estimator' } : r);
+    const room = (this.design.rooms || []).find(r => r.id === roomId);
+    this.update();
+    if (room) toast(room.label + ' shares a zone.', 'good');
+  }
+
+  /** Group several rooms onto one zone — what a zone remedy proposes. */
+  groupRoomsOntoZone(roomIds, groupKey) {
+    const ids = new Set(roomIds || []);
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      ids.has(r.id) ? { ...r, openPlanGroup: groupKey, zoneGroupSource: 'estimator' } : r);
+    this.update();
+    toast(ids.size + ' rooms now share a zone.', 'good');
+  }
+
+  /** The estimator has looked at the zone list and it is right. */
+  confirmZoneGrouping() {
+    this.design.zoneGroupingConfirmed = {
+      by: 'estimator', at: new Date().toISOString(),
+      rooms: (this.design.rooms || []).filter(r => r.openPlanGroup).map(r => r.label)
+    };
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.openPlanGroup ? { ...r, zoneGroupSource: 'estimator' } : r);
+    this.update();
+    toast('Zoning confirmed.', 'good');
+  }
+
+  /** RULE 1 — the estimator's override: condition this room after all, or not. */
+  setRoomConditioning(id, status) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === id ? setRoomConditioning(r, status, 'estimator') : r);
+    this.update();
+    const room = (this.design.rooms || []).find(r => r.id === id);
+    if (room) {
+      toast(room.label + ' — ' + (status === CONDITIONING.CONDITIONED
+        ? 'now air conditioned on this job' : EXCLUDED_BANNER.toLowerCase()), 'good');
+    }
   }
 
   verifyRoom(id) {
@@ -1757,19 +1894,19 @@ export class DesignerApp {
 
   verifyAllHigh() {
     this.design.rooms = (this.design.rooms || []).map(r =>
-      r.conditioned && r.confidenceBand === 'HIGH' ? verifyRoom(r, 'estimator') : r);
+      isConditionedRoom(r) && r.confidenceBand === 'HIGH' ? verifyRoom(r, 'estimator') : r);
     this.update();
   }
 
   async verifyAll() {
-    const low = (this.design.rooms || []).filter(r => r.conditioned && r.confidenceBand === 'LOW');
+    const low = (this.design.rooms || []).filter(r => isConditionedRoom(r) && r.confidenceBand === 'LOW');
     if (low.length && !await confirmDialog({
         title: 'Verify rooms that are LOW confidence?',
         message: low.length + ' room(s) were measured with low confidence. Check their dimensions ' +
                  'against the plan before you verify them — verifying is what lets them into the sizing.',
         lines: low.map(r => r.label + ' — ' + Math.round(r.confidence) + '% confidence'),
         confirmLabel: 'Verify all anyway', danger: true })) return;
-    this.design.rooms = (this.design.rooms || []).map(r => r.conditioned ? verifyRoom(r, 'estimator') : r);
+    this.design.rooms = (this.design.rooms || []).map(r => isConditionedRoom(r) ? verifyRoom(r, 'estimator') : r);
     this.update();
   }
 
@@ -1866,7 +2003,8 @@ export class DesignerApp {
     const added = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: newArea,
       source: 'manual', sourceLabel: 'Manual entry',
       evidence: ['Split from ' + sel.label + ' by the estimator.'], areaOnly: true },
-      ceilingHeightMm: sel.ceilingHeightMm, conditioned: sel.conditioned }, { settings: this.settings });
+      ceilingHeightMm: sel.ceilingHeightMm, conditioningStatus: sel.conditioningStatus,
+      conditioningOverride: sel.conditioningOverride ?? null }, { settings: this.settings });
     this.design.rooms = (this.design.rooms || []).map(r => r.id === sel.id ? kept : r).concat([added]);
     this.update();
   }
@@ -2711,7 +2849,7 @@ export class DesignerApp {
     d.chains = interp.chains;
     d.rooms = rooms;
     d.mainRoute = { lengthMm: 4200, lengthM: 4.2, source: 'manual', note: 'Sample project.' };
-    d.ductRoutes = Object.fromEntries(rooms.filter(r => r.conditioned)
+    d.ductRoutes = Object.fromEntries(rooms.filter(isConditionedRoom)
       .map((r, i) => [r.id, { lengthMm: 5000 + i * 900, lengthM: (5000 + i * 900) / 1000,
                               source: 'manual', note: 'Sample project.' }]));
     d.returnDuctLengthMm = 2500;

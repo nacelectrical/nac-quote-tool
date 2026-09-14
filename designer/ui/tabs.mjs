@@ -4,7 +4,9 @@
 
 import { h, card, table, badge, confidenceBadge, severityBadge, field, input, select,
          checkbox, button, expandable, banner, empty, money, num, int, mount } from './dom.mjs';
-import { SOURCE_LABELS } from '../engines/rooms.mjs';
+import { SOURCE_LABELS, isAutoCleared } from '../engines/rooms.mjs';
+import { CONDITIONING, isConditionedRoom, isExcludedRoom, needsClassificationReview,
+         classificationSummary } from '../engines/classify.mjs';
 import { PRESSURE_DISCLAIMER } from '../engines/pressure.mjs';
 import { SPEC_REQUIRED } from '../engines/catalogue.mjs';
 
@@ -47,7 +49,7 @@ export function renderOverview(app) {
 
   blocks.push(h('div', { class: 'stat-grid' },
     stat('Conditioned area', num(s.totalConditionedAreaSqM, 2) + ' m²',
-      (d.rooms || []).filter(r => r.conditioned).length + ' conditioned rooms'),
+      (d.rooms || []).filter(isConditionedRoom).length + ' conditioned rooms'),
     stat('Total cooling load', num(s.totalCoolingLoadKw, 2) + ' kW',
       load ? 'NAC 145 W/m² rule: ' + load.legacy.kw + ' kW' : null),
     stat('Total heating load', num(s.totalHeatingLoadKw, 2) + ' kW',
@@ -115,7 +117,22 @@ export function renderRooms(app) {
   }
 
   const blocks = [];
-  const blocked = rooms.filter(r => r.conditioned && r.status !== 'Verified' && r.status !== 'Manual');
+  const cls = classificationSummary(rooms);
+  // RULE 7 — the count first, so the estimator can see at a glance how much of
+  // this plan is actually his problem.
+  blocks.push(banner('info',
+    cls.conditionedCount + ' CONDITIONED  ·  ' + cls.excludedCount + ' EXCLUDED AUTOMATICALLY' +
+    (cls.reviewCount ? '  ·  ' + cls.reviewCount + ' TO CLASSIFY' : ''),
+    cls.excludedCount
+      ? h('div', { class: 'muted small' },
+          Object.entries(cls.excludedByKind).map(([k, n]) => n + ' × ' + k).join(', ') +
+          ' — not measured, not loaded, not ducted.')
+      : null));
+
+  // Only rooms that can actually block the job are counted here. An excluded
+  // room is never "not verified yet" — it is finished.
+  const blocked = rooms.filter(r => isConditionedRoom(r) && r.status !== 'Verified' &&
+                                    r.status !== 'Manual' && !isAutoCleared(r));
   if (blocked.length) {
     blocks.push(banner('warn',
       blocked.length + ' conditioned room(s) are not verified yet and are excluded from sizing.',
@@ -147,15 +164,23 @@ export function renderRooms(app) {
           r.measurement?.sourceLabel || SOURCE_LABELS.estimated) },
       { key: 'confidence', label: 'Confidence', align: 'center', width: '110px',
         render: (r) => confidenceBadge(r.confidence, r.confidenceBand) },
-      { key: 'conditioned', label: 'Conditioned', align: 'center', width: '90px',
-        render: (r) => h('input', { type: 'checkbox', checked: r.conditioned,
-          onchange: (e) => app.editRoom(r.id, { conditioned: e.target.checked }),
-          onclick: (e) => e.stopPropagation() }) },
+      { key: 'conditioned', label: 'Conditioned', align: 'center', width: '120px',
+        render: (r) => h('label', { class: 'cond-cell', title: r.conditioningReason || '',
+            onclick: (e) => e.stopPropagation() },
+          h('input', { type: 'checkbox', checked: isConditionedRoom(r),
+            onchange: (e) => app.setRoomConditioning(r.id,
+              e.target.checked ? CONDITIONING.CONDITIONED : CONDITIONING.NON_CONDITIONED) }),
+          isExcludedRoom(r) ? h('span', { class: 'cond-why' }, r.conditioningMatched || 'Excluded')
+            : needsClassificationReview(r) ? h('span', { class: 'cond-why warn' }, 'Confirm?')
+            : r.conditioningSource === 'estimator' ? h('span', { class: 'cond-why' }, 'Your call')
+            : null) },
       { key: 'status', label: 'Status', align: 'center', width: '150px',
         render: (r) => h('div', { class: 'status-cell' },
-          badge(r.status, r.status === 'Verified' ? 'ok' : r.status === 'Manual' ? 'ok'
-            : r.status === 'Excluded' ? 'muted' : 'warn'),
-          r.conditioned && r.status !== 'Verified'
+          badge(isAutoCleared(r) && r.status === 'Review' ? 'Measured' : r.status,
+            r.status === 'Verified' || r.status === 'Manual' ? 'ok'
+            : r.status === 'Excluded' ? 'muted'
+            : isAutoCleared(r) ? 'ok' : 'warn'),
+          isConditionedRoom(r) && r.status !== 'Verified' && r.status !== 'Manual'
             ? button('✓ Verify', (e) => { e.stopPropagation(); app.verifyRoom(r.id); }, 'tiny')
             : null) },
       { key: 'actions', label: '', align: 'right', width: '40px',
@@ -163,7 +188,7 @@ export function renderRooms(app) {
     ], rooms, {
       selectedId: app.selectedRoomId,
       onRowClick: (r) => app.selectRoom(r.id),
-      rowClass: (r) => r.conditioned ? '' : 'muted-row'
+      rowClass: (r) => isConditionedRoom(r) ? '' : 'muted-row'
     }),
     h('div', { class: 'btn-row' },
       button('+ Add room manually', () => app.addManualRoom(), 'ghost'),
