@@ -42,8 +42,16 @@ function fromAccessory(code, label) {
   return entry;
 }
 
-/** Per-diameter rates from an MMEM group, with placeholders filling the gaps. */
-function diameterRates(group, placeholders) {
+/**
+ * Per-diameter rates from an MMEM group, with placeholders filling the gaps.
+ *
+ * `soldInLengthsOfM` is how the item reaches NAC. Flex duct comes in 6 m
+ * lengths, so every diameter carries that pack shape — including the sizes
+ * MMEM have not quoted. Without it, a rate NAC types for a 150 would be costed
+ * per metre while a 300 was costed by the length, and the same job would be
+ * priced two different ways depending on which size a run happened to need.
+ */
+function diameterRates(group, placeholders, soldInLengthsOfM = null) {
   const quoted = accessoriesByDiameter(group);
   const byDiameter = {};
   const packs = {};
@@ -54,19 +62,37 @@ function diameterRates(group, placeholders) {
     codes[d] = a.code;
   }
   for (const [d, cost] of Object.entries(placeholders || {})) {
-    if (byDiameter[d] === undefined) byDiameter[d] = cost;
+    if (byDiameter[d] !== undefined) continue;
+    if (soldInLengthsOfM) {
+      // The placeholder is quoted here as the price of one length, because that
+      // is the only number NAC can check against an invoice. It is still a
+      // placeholder and is still reported as one.
+      byDiameter[d] = Math.round((cost / soldInLengthsOfM) * 100) / 100;
+      packs[d] = { lengthM: soldInLengthsOfM, cost, code: null };
+    } else {
+      byDiameter[d] = cost;
+    }
   }
-  return { byDiameter, packs, codes, quotedDiameters: Object.keys(quoted).map(Number) };
+  return { byDiameter, packs, codes, soldInLengthsOfM,
+           quotedDiameters: Object.keys(quoted).map(Number) };
 }
 
+// Flex duct is sold to NAC in 6 m LENGTHS, so every price below — quoted,
+// placeholder or typed into Settings — is the price of one length. A 7 m run
+// costs two lengths.
+//
+// MMEM quoted 200 to 400. The three below they have not, so these are still
+// placeholders and are still reported as such; they are stated per 6 m length
+// so the number NAC checks is the number on the invoice.
+//
+// 450 and 500 are deliberately absent: NAC never run them — two 350/400s
+// instead, and 400 only on a return. They are not on the duct ladder in
+// settings.mjs either, so a priced row here could never be selected and only
+// inflated the count of prices still to be confirmed.
+const FLEX_LENGTH_M = 6;
 const FLEX = diameterRates('flex', {
-  // MMEM have not quoted these sizes — still placeholders.
-  // 450 and 500 are deliberately absent: NAC never run them — two 350/400s
-  // instead, and 400 only on a return. They are not on the duct ladder in
-  // settings.mjs either, so a priced row here could never be selected and
-  // only inflated the count of prices still to be confirmed.
-  100: 11.50, 125: 13.00, 150: 15.50
-});
+  100: 11.50 * FLEX_LENGTH_M, 125: 13.00 * FLEX_LENGTH_M, 150: 15.50 * FLEX_LENGTH_M
+}, FLEX_LENGTH_M);
 const ZONE_MOTORS = diameterRates('zone_motor', {});
 const DIFFUSERS = diameterRates('diffuser', {
   100: 18.00, 125: 19.00, 150: 20.00, 200: 22.00, 350: 30.00, 400: 34.00
@@ -98,7 +124,10 @@ export const MATERIAL_CATALOGUE = {
   // ── Quoted by MMEM (447-321514-000) ───────────────────────────────────────
   flex_duct: {
     label: 'Insulated flexible duct R1.0',
-    unit: 'm',
+    // The unit NAC BUY in. A rate typed into Settings is the price of one
+    // length, not a price per metre.
+    unit: FLEX_LENGTH_M + ' m length',
+    soldInLengthsOfM: FLEX_LENGTH_M,
     byDiameter: FLEX.byDiameter,
     packByDiameter: FLEX.packs,
     codeByDiameter: FLEX.codes,
@@ -189,7 +218,17 @@ export function resolveCost(key, { diameterMm = null, nacRates = null } = {}) {
     // the pack price.
     const nacByDia = nac && typeof nac === 'object' ? nac[String(diameterMm)] : nac;
     if (nacByDia !== undefined && nacByDia !== null && nacByDia !== '') {
-      return { cost: Number(nacByDia), source: PRICE_SOURCE.NAC, label, unit: def.unit,
+      const entered = Number(nacByDia);
+      // On a line sold by the length, what NAC typed is the price of ONE
+      // LENGTH. Returning it as a per-metre rate would under-price every run by
+      // the length of the pack, which on a 20 m job is most of the ductwork.
+      if (def.soldInLengthsOfM) {
+        return { cost: Math.round((entered / def.soldInLengthsOfM) * 100) / 100,
+                 source: PRICE_SOURCE.NAC, label, unit: def.unit,
+                 pack: { lengthM: def.soldInLengthsOfM, cost: entered, code: null },
+                 supplierCode: null };
+      }
+      return { cost: entered, source: PRICE_SOURCE.NAC, label, unit: def.unit,
                pack: null, supplierCode: null };
     }
     const d = def.byDiameter[diameterMm];
