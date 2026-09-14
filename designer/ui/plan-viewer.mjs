@@ -41,6 +41,7 @@ export function createPlanViewer(container, opts = {}) {
     rooms: [],
     selectedRoomId: null,
     routes: {},            // key -> { points: [{x,y}], label }
+    markers: [],           // junctions, reducers and zone dampers, drawn as symbols
     activeRouteKey: null,
     draftRoute: [],
     layout: {},            // key -> { x, y, label, type }
@@ -128,7 +129,7 @@ export function createPlanViewer(container, opts = {}) {
     ctx.restore();
 
     if (state.showRooms) drawRooms();
-    if (state.showRoutes) drawRoutes();
+    if (state.showRoutes) { drawRoutes(); drawMarkers(); }
     if (state.showLayout) drawLayout();
     drawCalibration();
   }
@@ -267,6 +268,43 @@ export function createPlanViewer(container, opts = {}) {
         ctx.fillStyle = '#F5C200';
         ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI * 2); ctx.fill();
       });
+    }
+  }
+
+  /**
+   * Junctions, reducers and zone dampers.
+   *
+   * Each of these is something somebody buys and fits — a Y piece nobody drew
+   * is a Y piece nobody ordered — so they are drawn as symbols rather than left
+   * implied by two lines meeting.
+   */
+  function drawMarkers() {
+    for (const m of state.markers) {
+      const s = toScreen(m);
+      ctx.save();
+      if (m.type === 'junction') {
+        ctx.fillStyle = '#F5C200'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (m.type === 'reducer') {
+        // A bow-tie, the way a reducer is drawn on a real duct layout.
+        ctx.fillStyle = '#ffb03a'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(s.x - 6, s.y - 5); ctx.lineTo(s.x + 6, s.y + 5);
+        ctx.lineTo(s.x + 6, s.y - 5); ctx.lineTo(s.x - 6, s.y + 5);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if (m.type === 'damper') {
+        ctx.fillStyle = '#3fbf6f'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.rect(s.x - 6, s.y - 6, 12, 12);
+        ctx.fill(); ctx.stroke();
+      }
+      if (m.label) {
+        ctx.fillStyle = '#0c0c24';
+        ctx.font = '700 8px -apple-system, system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(m.label).slice(0, 4), s.x, s.y + 0.5);
+      }
+      ctx.restore();
     }
   }
 
@@ -584,6 +622,7 @@ export function createPlanViewer(container, opts = {}) {
     setRooms(rooms) { state.rooms = rooms || []; draw(); },
     selectRoom(id) { state.selectedRoomId = id; draw(); },
     setRoutes(routes) { state.routes = routes || {}; draw(); },
+    setMarkers(markers) { state.markers = markers || []; draw(); },
     setActiveRoute(key) { state.activeRouteKey = key; state.draftRoute = []; draw(); },
     clearDraftRoute() { state.draftRoute = []; draw(); },
     undoDraftPoint() { state.draftRoute.pop(); draw(); return state.draftRoute.slice(); },

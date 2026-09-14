@@ -15,6 +15,8 @@ import { selectEquipment, selectZoneController } from './equipment.mjs';
 import { calculateAirflow } from './airflow.mjs';
 import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
+import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
+         ROUTING_MODE } from './router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
 import { estimateStaticPressure } from './pressure.mjs';
@@ -111,15 +113,48 @@ export function runPipeline(design, ctx = {}) {
     settings, overridesByRoomId: d.outletOverrides || {}
   });
 
-  // ── 6. Ducts (PART 16/17) ─────────────────────────────────────────────────
+  // ── 6. Ducts (PART 16/17) + AUTO ROUTING ──────────────────────────────────
+  //
+  // In AUTO the tool lays the system out itself: a trunk from the plenum,
+  // junctions along it, branches to groups of rooms, and the trunk stepping
+  // down after each take-off. The routed drawing then becomes the source of
+  // every length, because that is the duct somebody actually buys and hangs.
+  //
+  // Geometry the estimator has LOCKED is preserved — re-routing must never
+  // throw away a run they positioned around a truss they have seen.
+  const mode = d.routingMode || ROUTING_MODE.AUTO;
+  if (mode === ROUTING_MODE.AUTO && !d.routingSuspended) {
+    const tree = measureTree(buildDuctTree({
+      rooms: included, airflow: d.airflow, outlets: d.outlets,
+      layout: d.layout || {}, zones: d.zonesDraft || d.zones
+    }, { settings }), d.calibration, { settings });
+    d.autoRoute = applyLockedGeometry(tree, d, settings);
+  } else if (mode !== ROUTING_MODE.AUTO && d.autoRoute?.generated) {
+    // Kept as it was: switching to MANUAL does not delete the estimator's work.
+    d.autoRoute = { ...d.autoRoute, stale: true };
+  }
+
   d.network = buildDuctNetwork({
     airflow: d.airflow,
     outlets: d.outlets,
     routesByRoomId: d.ductRoutes || {},
     mainRoute: d.mainRoute,
     diameterOverrides: d.ductDiameterOverrides || {},
-    extraFittingsByRoomId: d.extraFittings || {}
+    extraFittingsByRoomId: d.extraFittings || {},
+    topology: d.autoRoute?.generated && !d.autoRoute.stale ? d.autoRoute : null
   }, { settings });
+
+  // How good is the routed layout, and how much of it rests on something
+  // solid? Never 'install-ready' — the best it can say is that the geometry it
+  // was handed was good.
+  if (d.network?.routed && d.autoRoute?.generated) {
+    d.routeScore = scoreRoute(d.network, d.autoRoute, { settings });
+    d.autoRoute = { ...d.autoRoute,
+      confidence: routeConfidence({ design: d, tree: d.autoRoute, score: d.routeScore }).band,
+      confidenceDetail: routeConfidence({ design: d, tree: d.autoRoute, score: d.routeScore }) };
+  } else {
+    d.routeScore = null;
+  }
 
   // ── 7. Zoning (PART 20) ───────────────────────────────────────────────────
   d.zones = d.zoneDefinitions && d.zoneDefinitions.length
@@ -213,6 +248,26 @@ export function runPipeline(design, ctx = {}) {
   d.stage = 'complete';
   d.settingsSnapshot = { version: settings.version };
   return d;
+}
+
+/**
+ * Put back any segment the estimator locked, and any they hand-edited.
+ *
+ * PART 9/10: RE-ROUTE UNLOCKED recalculates only what is not locked. A locked
+ * run is geometry somebody has stood in a roof space and decided on, and it
+ * outranks anything this tool works out from a drawing.
+ */
+function applyLockedGeometry(tree, design, settings) {
+  const locked = design.lockedRoutes || {};
+  if (!tree?.segments?.length || !Object.keys(locked).length) return tree;
+  const segments = tree.segments.map(seg => {
+    const keep = locked[seg.id];
+    if (!keep?.points || keep.points.length < 2) return seg;
+    return { ...seg, points: keep.points, locked: true, lockedBy: keep.by || null,
+             lockedAt: keep.at || null };
+  });
+  // Anything locked has to be re-measured on its own geometry.
+  return measureTree({ ...tree, segments }, design.calibration, { settings });
 }
 
 /** PART 25 — the Overview tab. */

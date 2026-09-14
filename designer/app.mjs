@@ -27,7 +27,8 @@ import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
-import { routeOverlayFromNetwork, LABEL_DETAIL, DEFAULT_LABEL_DETAIL,
+import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
+         LABEL_DETAIL, DEFAULT_LABEL_DETAIL, ROUTING_MODE,
          AUTO_ROUTE_NOTICE } from './engines/router.mjs';
 import { collectInterruptions, FIX_IN } from './engines/interruptions.mjs';
 import { renderQuickMode, QUICK_STEPS, quickStepState } from './ui/quick-mode.mjs';
@@ -473,6 +474,8 @@ export class DesignerApp {
     this.viewer.selectRoom(this.selectedRoomId);
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
+    this.viewer.setMarkers(d.network?.routed
+      ? routedMarkers(d.network, d.autoRoute) : []);
     this.viewer.setLayout(d.layout || {});
     this.viewer.redraw();
     return this.viewer;
@@ -751,8 +754,29 @@ export class DesignerApp {
     const d = this.design;
     const mode = this.viewer?.getMode() || MODES.VIEW;
     const rooms = (d.airflow?.rows || []).map(r => ({ value: r.roomId, label: r.label }));
+    const routing = d.routingMode || ROUTING_MODE.AUTO;
+    const routed = !!d.network?.routed;
 
     return card('4. Duct routes', 'Click along the route, double-click to finish. Length is measured through the calibration.',
+      // PART 18 — how the ductwork gets laid out. AUTO is the default: the tool
+      // does it and the estimator drags it into shape.
+      field('Duct routing', select(routing, [
+        { value: ROUTING_MODE.AUTO, label: 'AUTO — the tool lays out the whole system' },
+        { value: ROUTING_MODE.ASSISTED, label: 'ASSISTED — suggest, I approve each one' },
+        { value: ROUTING_MODE.MANUAL, label: 'MANUAL — I trace every route myself' }
+      ], v => { this.design.routingMode = v; this.design.routingSuspended = false; this.update(); })),
+
+      routed ? banner('warn', AUTO_ROUTE_NOTICE) : null,
+      routed ? this.routedSummary() : null,
+      routing === ROUTING_MODE.AUTO
+        ? h('div', { class: 'btn-row' },
+            button('AUTO ROUTE', () => this.autoRoute(), 'primary small'),
+            button('RE-ROUTE UNLOCKED', () => this.rerouteUnlocked(), 'small'),
+            button(Object.keys(d.lockedRoutes || {}).length
+              ? 'Unlock all (' + Object.keys(d.lockedRoutes).length + ')' : 'Nothing locked',
+              () => this.unlockAllRoutes(),
+              Object.keys(d.lockedRoutes || {}).length ? 'ghost small' : 'ghost small disabled'))
+        : null,
       !d.calibration ? banner('warn', 'Calibrate the plan first — routes cannot be measured without it.') : null,
       h('div', { class: 'grid-2' },
         field('Route for', select(this.routeTargetRoomId || '',
@@ -775,8 +799,91 @@ export class DesignerApp {
       this.routeSummaryTable());
   }
 
+  /** What the auto route produced, and how much of it rests on something solid. */
+  routedSummary() {
+    const d = this.design;
+    const c = d.autoRoute?.confidenceDetail;
+    const sc = d.routeScore;
+    const locked = Object.keys(d.lockedRoutes || {}).length;
+    return h('div', { class: 'note' },
+      h('div', {},
+        h('strong', {}, 'Auto route confidence: ' + (c?.band || '—')),
+        ' · ' + (d.network.junctionCount || 0) + ' junction(s)' +
+        ' · ' + (d.network.reducerCount || 0) + ' reducer(s)' +
+        ' · ' + (sc?.totalDuctM ?? '—') + ' m of duct' +
+        (locked ? ' · ' + locked + ' locked' : '')),
+      c?.reasons?.length
+        ? h('div', { class: 'note-sub' }, 'Confidence is limited by: ' + c.reasons.join(' '))
+        : null);
+  }
+
+  /** PART 10 — AUTO ROUTE. Lays out the whole system from scratch. */
+  async autoRoute() {
+    const d = this.design;
+    const locked = Object.keys(d.lockedRoutes || {}).length;
+    if (locked) {
+      const ok = await confirmDialog({
+        title: 'Re-route everything, including the ' + locked + ' locked run(s)?',
+        message: 'AUTO ROUTE lays out the whole system again. Anything you locked was geometry ' +
+                 'you decided on, and this throws it away. RE-ROUTE UNLOCKED keeps it.',
+        confirmLabel: 'Re-route everything', cancelLabel: 'Keep my locked runs', danger: true });
+      if (!ok) return;
+      this.design.lockedRoutes = {};
+    }
+    this.design.routingMode = ROUTING_MODE.AUTO;
+    this.design.routingSuspended = false;
+    this.update();
+    const n = (this.design.network?.sections || []).filter(s => s.points).length;
+    toast(n ? 'Routed ' + n + ' duct run(s). Check them against the roof space.'
+            : 'Nothing could be routed — draw the room boundaries first.', n ? '' : 'bad');
+  }
+
+  /** PART 10 — recalculates only what the estimator has not locked. */
+  rerouteUnlocked() {
+    this.design.routingMode = ROUTING_MODE.AUTO;
+    this.design.routingSuspended = false;
+    this.update();
+    const locked = Object.keys(this.design.lockedRoutes || {}).length;
+    toast('Re-routed. ' + (locked ? locked + ' locked run(s) kept as they were.' : 'Nothing was locked.'));
+  }
+
+  /**
+   * PART 9 — lock a run.
+   *
+   * The estimator has stood in the roof space and decided where this one goes.
+   * That outranks anything the tool works out from a drawing, so a re-route
+   * leaves it alone.
+   */
+  toggleRouteLock(sectionId) {
+    const d = this.design;
+    const locked = { ...(d.lockedRoutes || {}) };
+    if (locked[sectionId]) {
+      delete locked[sectionId];
+      toast('Unlocked — the next re-route will lay this one out again.');
+    } else {
+      const seg = (d.network?.sections || []).find(s => s.id === sectionId);
+      if (!seg?.points) return toast('That run has no drawn geometry to lock.', 'bad');
+      locked[sectionId] = { points: seg.points,
+        by: (typeof window !== 'undefined' && window.nacUser) || 'NAC',
+        at: new Date().toISOString() };
+      toast('Locked. Re-routing will leave this run exactly where it is.');
+    }
+    d.lockedRoutes = locked;
+    this.update();
+  }
+
+  unlockAllRoutes() {
+    if (!Object.keys(this.design.lockedRoutes || {}).length) return;
+    this.design.lockedRoutes = {};
+    toast('All runs unlocked.');
+    this.update();
+  }
+
   routeSummaryTable() {
     const d = this.design;
+    // A routed design lists what the tool laid out, with the controls that
+    // matter on each run: its size, and whether a re-route may touch it.
+    if (d.network?.routed) return this.routedRunTable();
     const rows = [];
     if (d.mainRoute) rows.push({ id: 'main', label: 'Main duct', lengthM: d.mainRoute.lengthM,
                                  source: d.mainRoute.source, note: d.mainRoute.note });
@@ -793,6 +900,44 @@ export class DesignerApp {
       { key: 'clear', label: '', align: 'right', width: '40px',
         render: (r) => button('✕', () => this.clearRoute(r.id), 'tiny ghost') }
     ], rows, { compact: true });
+  }
+
+  /** Every routed run, with the two controls that matter on each one. */
+  routedRunTable() {
+    const d = this.design;
+    const locked = d.lockedRoutes || {};
+    const rows = (d.network.sections || []).filter(s => s.points?.length).map(s => ({
+      id: s.id, role: s.role, destination: s.destination,
+      diameterMm: s.diameterMm, airflowLs: s.airflowLs, lengthM: s.lengthM,
+      zone: s.zone, locked: !!locked[s.id]
+    }));
+    if (!rows.length) return h('div', { class: 'note' }, 'Nothing routed yet.');
+
+    const ladder = (this.settings.duct.availableDiametersMm || []).map(v => ({ value: String(v), label: v + 'Ø' }));
+    return table([
+      { key: 'destination', label: 'Run',
+        render: (r) => h('span', {}, h('span', { class: 'role-dot ' + r.role }), ' ' + r.destination) },
+      { key: 'airflowLs', label: 'L/s', align: 'right', width: '64px' },
+      { key: 'diameterMm', label: 'Size', align: 'right', width: '96px',
+        render: (r) => select(String(r.diameterMm || ''),
+          [{ value: '', label: 'Auto' }, ...ladder],
+          v => this.setSegmentDiameter(r.id, v)) },
+      { key: 'lengthM', label: 'Length', align: 'right', width: '76px',
+        render: (r) => r.lengthM != null ? r.lengthM + ' m' : '—' },
+      { key: 'zone', label: 'Zone', width: '70px' },
+      { key: 'locked', label: '', align: 'right', width: '54px',
+        render: (r) => button(r.locked ? '🔒' : '🔓', () => this.toggleRouteLock(r.id),
+          r.locked ? 'tiny' : 'tiny ghost') }
+    ], rows, { compact: true });
+  }
+
+  /** A size the estimator sets by hand outranks the calculated one. */
+  setSegmentDiameter(sectionId, value) {
+    const o = { ...(this.design.ductDiameterOverrides || {}) };
+    if (value === '' || value === null) delete o[sectionId];
+    else o[sectionId] = Number(value);
+    this.design.ductDiameterOverrides = o;
+    this.update();
   }
 
   renderLayoutPanel() {
@@ -1139,6 +1284,18 @@ export class DesignerApp {
    * section, so a route can never show a size the design does not carry.
    */
   routeOverlay() {
+    // A routed design draws itself from the sized sections, which carry their
+    // own geometry. Only a design that has never been routed falls back to the
+    // routes the estimator traced by hand.
+    if (this.design.network?.routed) {
+      return routedOverlay({
+        network: this.design.network,
+        labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL,
+        returnRoute: this.design.returnRoute,
+        returnDesign: this.design.returnDesign,
+        activeId: this.activeSegmentId || null
+      });
+    }
     return routeOverlayFromNetwork({
       network: this.design.network,
       mainRoute: this.design.mainRoute,
