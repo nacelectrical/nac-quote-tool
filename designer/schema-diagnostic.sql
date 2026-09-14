@@ -20,6 +20,7 @@ create temp table _nac_diag (ord int, section text, item text, detail text);
 
 do $diag$
 declare
+  r           record;
   t           text;
   c           text;
   n           bigint;
@@ -28,6 +29,12 @@ declare
   ord         int := 0;
   wanted      text[] := array['nac_quotes', 'nac_settings', 'nac_designs',
                               'nac_customers', 'nac_jobs'];
+  -- The policies designer/production-setup.sql writes. Anything else on those
+  -- tables is somebody else's and will be removed by it.
+  ours        text[] := array['nac_settings_staff_all', 'nac_designs_staff_all',
+                              'nac_customers_staff_all', 'nac_jobs_staff_all',
+                              'nac_quotes_staff_all', 'nac_quotes_customer_read',
+                              'nac_quotes_customer_accept'];
   needed_cols text[];
 begin
   -- ── 1. What the application expects, and whether it is there ─────────────
@@ -133,14 +140,44 @@ begin
       'could not be counted — the table or its key column is MISSING');
   end if;
 
-  -- ── 6. Policies that exist today ─────────────────────────────────────────
+  -- ── 6. Policies that exist today, and what production-setup.sql does to them
+  -- Policies are PERMISSIVE: they are OR'd together, so one policy granting
+  -- everyone access defeats every tight policy added beside it. Anything listed
+  -- here on one of the five app tables is REMOVED by production-setup.sql and
+  -- replaced by the policies written in that file. Read this section before
+  -- running it — this is the part that takes access away.
   ord := 0;
-  for t, c in
-    select tablename, policyname from pg_policies
-     where schemaname = 'public' order by tablename, policyname
+  for r in
+    select tablename, policyname, roles, cmd, coalesce(qual, 'true') as qual
+      from pg_policies where schemaname = 'public'
+     order by tablename, policyname
   loop
     ord := ord + 1;
-    insert into _nac_diag values (600 + ord, 'EXISTING POLICY', t, c);
+    insert into _nac_diag values (600 + ord, 'EXISTING POLICY',
+      r.tablename || ' -> ' || r.policyname,
+      'applies to ' || array_to_string(r.roles, ', ') || ' for ' || r.cmd || ' · ' ||
+      case
+        -- Written by production-setup.sql on an earlier run. Re-running rewrites
+        -- it identically, so there is nothing to warn about.
+        when r.policyname = any (ours)
+          then 'written by production-setup.sql — already applied'
+        when r.tablename <> all (wanted)
+          then 'not an app table — production-setup.sql leaves it alone'
+        else 'NOT written by production-setup.sql — it WILL BE REMOVED and the access it grants will be gone'
+      end ||
+      case
+        -- The one deliberate open door: a customer with no account has to be
+        -- able to read their quote. Say what it really costs rather than
+        -- flagging it as a mistake.
+        when r.policyname = 'nac_quotes_customer_read'
+          then ' · this one is deliberate: it is how a customer opens sign.html with no account. '
+               || 'It also means the public key can LIST every quote — see the note above it in production-setup.sql'
+        when r.policyname <> all (ours) and r.qual = 'true'
+             and ('public' = any (r.roles::text[]) or 'anon' = any (r.roles::text[]))
+          then ' · WARNING: this grants access to everybody. While it exists, NOTHING on this table is secured, '
+               || 'no matter what other policies are added beside it'
+        else ''
+      end);
   end loop;
   if ord = 0 then
     insert into _nac_diag values (601, 'EXISTING POLICY', '(none)',

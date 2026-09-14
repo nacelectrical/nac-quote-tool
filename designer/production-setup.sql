@@ -28,8 +28,12 @@
 --   4. COPIES designs already saved in the nac_settings fallback into
 --      nac_designs, so none of them drop off the saved-designs list. The
 --      nac_settings rows are left in place — nothing is moved or deleted.
---   5. Replaces the row-level-security policies, so the public key in the page
---      source stops being able to read NAC's cost prices, designs and customers.
+--   5. REMOVES EVERY EXISTING POLICY on those five tables — including the two
+--      named "Allow all" that NAC's project carries today — and replaces them
+--      with the ones in PART 4, so the public key in the page source stops
+--      being able to read NAC's cost prices, designs and customers. This is the
+--      only step that takes access away, it is the whole point of the exercise,
+--      and the undo block at the foot puts "Allow all" back if you want it.
 --
 -- WHAT IT NEVER DOES
 --
@@ -193,6 +197,31 @@ create table if not exists public.nac_jobs (
 create index if not exists nac_jobs_customer_idx on public.nac_jobs (customer_id);
 create index if not exists nac_jobs_status_idx   on public.nac_jobs (status);
 
+-- ── Table privileges for the three new tables ──────────────────────────────
+-- Supabase normally grants these automatically through default privileges, but
+-- relying on that is how a signed-in estimator meets "permission denied for
+-- table nac_customers" and cannot save a customer. Granting explicitly costs
+-- nothing and removes the whole question.
+--
+-- Granting to `anon` is deliberate and is NOT a hole: a GRANT is permission to
+-- address the table, row level security decides which rows come back, and with
+-- RLS on and no anon policy that is none of them. Verified below in PART 4.
+do $grants$
+declare
+  role_name text;
+begin
+  foreach role_name in array array['anon', 'authenticated', 'service_role'] loop
+    if exists (select 1 from pg_roles where rolname = role_name) then
+      execute format('grant usage on schema public to %I', role_name);
+      execute format('grant all on public.nac_designs, public.nac_customers, public.nac_jobs to %I',
+                     role_name);
+    else
+      raise notice 'Role % does not exist in this project — skipped. This is not a Supabase default.', role_name;
+    end if;
+  end loop;
+end
+$grants$;
+
 
 -- ═════ PART 2 — COLUMNS.  EVERY TABLE BELOW NOW DEFINITELY EXISTS. ═════
 -- All nullable, so every existing row stays valid and every existing query
@@ -319,9 +348,70 @@ $backfill$;
 -- treated as NAC staff; there is no second tier, because NAC is one team and
 -- inventing roles nobody asked for would be guesswork.
 
+-- ── THIS IS THE STEP THAT ACTUALLY SECURES THE DATABASE ────────────────────
+--
+-- PostgreSQL policies are PERMISSIVE: they are OR'd together. One policy saying
+-- `using (true)` for everybody grants access no matter what else is added
+-- alongside it, so adding a tight staff-only policy next to a wide-open one
+-- secures NOTHING. This was verified: on a copy of NAC's live schema, after the
+-- previous version of this script ran "successfully", the anon key could still
+-- read the cost prices AND overwrite them.
+--
+-- NAC's project carries a policy named "Allow all" on nac_quotes and on
+-- nac_settings. Dropping policies by their expected names could never remove
+-- those, so this removes EVERY policy on the five tables and then creates the
+-- ones below, and names each one it removed as it goes. After this, the
+-- policies on these tables are exactly the ones written in this file and
+-- nothing else.
+--
+-- THIS IS THE ONE PART THAT TAKES ACCESS AWAY. It is reversible: the undo block
+-- at the foot of this file puts "Allow all" back exactly as it was. Run
+-- designer/schema-diagnostic.sql first and read its EXISTING POLICY lines —
+-- those are the policies this will remove.
+
+do $sweep$
+declare
+  r      record;
+  ours   text[] := array['nac_settings_staff_all', 'nac_designs_staff_all',
+                         'nac_customers_staff_all', 'nac_jobs_staff_all',
+                         'nac_quotes_staff_all', 'nac_quotes_customer_read',
+                         'nac_quotes_customer_accept'];
+  taken  int := 0;   -- policies that were not this file's: real access removed
+  reused int := 0;   -- this file's own, from a previous run: rewritten identically
+begin
+  for r in select tablename, policyname from pg_policies
+            where schemaname = 'public'
+              and tablename in ('nac_quotes', 'nac_settings', 'nac_designs',
+                                'nac_customers', 'nac_jobs')
+            order by tablename, policyname
+  loop
+    execute format('drop policy %I on public.%I', r.policyname, r.tablename);
+    if r.policyname = any (ours) then
+      -- This file wrote it on an earlier run. Dropping and recreating it leaves
+      -- exactly the same policy, so nothing changes and nothing is lost.
+      reused := reused + 1;
+    else
+      taken := taken + 1;
+      raise notice 'REMOVED policy "%" on % — it was not written by this file, and the access it granted is now gone.',
+        r.policyname, r.tablename;
+    end if;
+  end loop;
+
+  if taken = 0 and reused = 0 then
+    raise notice 'No existing policies on these tables. Nothing was taken away.';
+  elsif taken = 0 then
+    raise notice 'Nothing was taken away — the % policy/policies found were this file''s own, from a previous run, and are rewritten identically.', reused;
+  else
+    raise notice '% policy/policies REMOVED (plus % of this file''s own, rewritten identically). The undo block at the foot of this file puts the removed ones back.', taken, reused;
+  end if;
+end
+$sweep$;
+
 -- ── nac_settings: prices and settings. Staff only. ─────────────────────────
 alter table public.nac_settings enable row level security;
 
+-- (The sweep above already removed every policy here. These are kept so the
+-- file still works if someone runs the sections out of order.)
 drop policy if exists nac_settings_anon_all  on public.nac_settings;
 drop policy if exists nac_settings_staff_all on public.nac_settings;
 
@@ -455,6 +545,11 @@ commit;
 --   alter table public.nac_quotes   disable row level security;
 --   alter table public.nac_customers disable row level security;
 --   alter table public.nac_jobs      disable row level security;
+--
+-- and to put NAC's original wide-open policies back exactly as they were:
+--
+--   create policy "Allow all" on public.nac_quotes   for all using (true) with check (true);
+--   create policy "Allow all" on public.nac_settings for all using (true) with check (true);
 --
 -- The added columns and tables can stay — nothing reads them unless it finds
 -- them. To remove them as well:
