@@ -35,7 +35,8 @@ export const INTERRUPT = { BLOCKING: 'BLOCKING', CONFIRM: 'CONFIRM', NOTE: 'NOTE
 /** Where an interruption is fixed, so the review screen can offer one click. */
 export const FIX_IN = {
   ROOMS: 'rooms', EQUIPMENT: 'equipment', DUCTWORK: 'ductwork', PLAN: 'plan',
-  MATERIALS: 'materials', FINANCIALS: 'financials', WARNINGS: 'warnings', SETTINGS: 'settings'
+  MATERIALS: 'materials', FINANCIALS: 'financials', WARNINGS: 'warnings', SETTINGS: 'settings',
+  ZONES: 'zones'
 };
 
 /**
@@ -156,6 +157,36 @@ export function collectInterruptions(design, opts = {}) {
     out.push(item(INTERRUPT.CONFIRM, 'PHASE_UNCONFIRMED', 'Electrical phase not confirmed',
       unit.brandName + ' ' + unit.model + ' is a ' + unit.phase + ' unit. Confirm the site ' +
       'actually has three-phase supply before this goes out.', FIX_IN.EQUIPMENT));
+  }
+
+  // ── Which rooms share a zone ──────────────────────────────────────────────
+  // Rooms that are open to one another are one zone whether anyone says so or
+  // not, so the tool groups them rather than asking. But a formal lounge behind
+  // a door and an open meals area look the SAME on a plan whose reader gave no
+  // walls or openings, and getting that wrong costs a zone motor and a damper
+  // in the wrong place. So where the grouping rests on where rooms sit rather
+  // than on a drawn wall, it is put up once for a glance — which is exactly the
+  // kind of question that should survive: it genuinely cannot be answered from
+  // this plan.
+  const grouping = d.openPlanSuggestion;
+  if (grouping?.openPlanRoomCount >= 2 && grouping.confidence !== 'HIGH'
+      && !d.zoneGroupingConfirmed) {
+    const g = grouping.groups[0];
+    out.push(item(INTERRUPT.CONFIRM, 'ZONE_GROUPING_UNCONFIRMED',
+      'Confirm what is one open space',
+      g.rooms.join(' + ') + ' were put on one zone because they sit together on the plan. ' +
+      'Rooms that are open to each other cannot be dampered apart, so this is usually right — ' +
+      'but a room behind a door belongs on its own zone. Split any that should be separate.',
+      FIX_IN.ZONES, { roomIds: g.roomIds, groupKey: g.key }));
+  }
+  // A zoning that cannot work is not a preference — it is a blocker with a
+  // known fix, and the fix is named rather than left to be worked out.
+  for (const r of (d.zoneRemedies || [])) {
+    out.push(item(INTERRUPT.CONFIRM, 'ZONE_REMEDY:' + r.code, r.title, r.detail,
+      FIX_IN.ZONES, { roomIds: r.roomIds || [], zoneId: r.zoneId || null,
+                      covers: r.code === 'NOMINATE_CONSTANT_ZONE'
+                        ? ['MINIMUM_OPEN_AIRFLOW_TOO_LOW', 'CONSTANT_ZONE_RECOMMENDED']
+                        : ['ZONE_COUNT_EXCEEDS_CONTROLLER'] }));
   }
 
   // ── Static pressure ───────────────────────────────────────────────────────

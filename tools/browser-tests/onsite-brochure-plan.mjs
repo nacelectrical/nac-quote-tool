@@ -363,7 +363,83 @@ say('duct is ordered in 6 m lengths', bom.duct.length > 0, bom.duct.join(', '));
 say('ADVANCED DESIGN was still never opened',
   await p.evaluate(() => window.nacDesigner.mode === 'quick'));
 
-// ── 10. THE ESTIMATOR'S OVERRIDE ────────────────────────────────────────────
+// ── 10. ZONING ──────────────────────────────────────────────────────────────
+STEP('ZONING — rooms open to one another share a zone');
+const z = await p.evaluate(() => {
+  const d = window.nacDesigner.design;
+  return {
+    count: d.zones?.zoneCount,
+    zones: (d.zones?.zones || []).map(x => ({ name: x.name, kind: x.kind,
+      rooms: x.rooms, ls: x.airflowLs, pct: x.systemSharePct, open: x.alwaysOpen })),
+    meets: d.zones?.meetsMinimum,
+    minOpenPct: d.zones?.minimumOpenFractionPct,
+    grouping: { method: d.openPlanSuggestion?.method,
+                confidence: d.openPlanSuggestion?.confidence,
+                grouped: d.openPlanSuggestion?.openPlanRoomCount,
+                rooms: d.openPlanSuggestion?.groups?.[0]?.rooms || [] },
+    controller: d.controller?.name, controllerCost: d.controller?.cost,
+    motors: (d.bom?.items || []).filter(i => /zone_motor/.test(i.key))
+      .reduce((s2, i) => s2 + i.quantity, 0),
+    sell: d.commercials?.sellPriceIncGst
+  };
+});
+for (const x of z.zones) {
+  console.log('      ' + String(x.kind).padEnd(11) + String(x.ls).padStart(5) + ' L/s ' +
+    String(x.pct).padStart(5) + '%  ' + (x.rooms || []).join(' + '));
+}
+console.log('      grouping: ' + JSON.stringify(z.grouping));
+
+say('the house is not one zone per room', z.count < 11, z.count + ' zones, not 11');
+say('the open-plan living area is one zone', z.grouping.grouped >= 3,
+  z.grouping.rooms.join(' + '));
+say('the minimum open airflow rule is met', z.meets === true, z.minOpenPct + '% stays open');
+say('the controller in the box is enough', z.controllerCost === 0, z.controller);
+// A constant zone is by definition a zone with NO damper — it is the path the
+// air always has. So it is one motor per CLOSABLE zone, never one per room.
+const closable = z.zones.filter(x => !x.open).length;
+say('one zone motor per closable zone, not one per room',
+  z.motors === closable && z.motors < 11,
+  z.motors + ' motors for ' + z.count + ' zones (' + closable + ' closable, ' +
+  (z.count - closable) + ' always open)');
+
+// Without wall data the grouping is a proposal, and it says so and asks.
+say('a grouping made from room positions is not claimed as fact',
+  z.grouping.confidence !== 'HIGH', z.grouping.confidence + ' via ' + z.grouping.method);
+const zoneAsk = await p.evaluate(async () => {
+  const { collectInterruptions } = await import('/designer/engines/interruptions.mjs');
+  return collectInterruptions(window.nacDesigner.design).all
+    .filter(i => /ZONE/.test(i.id)).map(i => ({ id: i.id, level: i.level, title: i.title }));
+});
+say('the estimator is asked to confirm it, once',
+  zoneAsk.some(i => i.id === 'ZONE_GROUPING_UNCONFIRMED'),
+  zoneAsk.map(i => i.title).join(' | ') || 'nothing asked');
+say('and it is a CONFIRM, not a blocker',
+  zoneAsk.every(i => i.level === 'CONFIRM'));
+
+// The one correction the drawing cannot make for itself: a formal lounge
+// behind a door, grouped because the reader gave no walls.
+STEP('The estimator splits the formal LOUNGE onto its own zone');
+const split = await p.evaluate(() => {
+  const app = window.nacDesigner;
+  const lounge = app.design.rooms.find(r => r.label === 'LOUNGE');
+  app.splitRoomFromZone(lounge.id);
+  const d = app.design;
+  return { count: d.zones.zoneCount, meets: d.zones.meetsMinimum,
+           loungeAlone: (d.zones.zones.find(x => (x.rooms || []).includes('LOUNGE')) || {}).rooms,
+           source: d.rooms.find(r => r.label === 'LOUNGE').zoneGroupSource,
+           motors: (d.bom?.items || []).filter(i => /zone_motor/.test(i.key))
+             .reduce((s2, i) => s2 + i.quantity, 0) };
+});
+say('LOUNGE is on its own zone', split.loungeAlone?.length === 1 &&
+  split.loungeAlone[0] === 'LOUNGE', JSON.stringify(split.loungeAlone));
+say('it is recorded as the estimator\u2019s call so a re-run will not undo it',
+  split.source === 'estimator');
+say('splitting a room added a damper to the order',
+  split.motors === split.count - 1 && split.motors === z.motors + 1,
+  split.count + ' zones, ' + split.motors + ' motors (was ' + z.motors + ')');
+say('the airflow rule still holds', split.meets === true);
+
+// ── 11. THE ESTIMATOR'S OVERRIDE ────────────────────────────────────────────
 STEP('The estimator can condition an excluded room on the job that needs it');
 const before = await p.evaluate(() => window.nacDesigner.design.systemLoad.totalConditionedAreaSqM);
 await p.evaluate(async () => {

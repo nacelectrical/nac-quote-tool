@@ -326,6 +326,12 @@ export class DesignerApp {
     if (interruption.fixIn === FIX_IN.PLAN) {
       this.mode = 'quick'; this.quickStep = 'upload'; return void this.render();
     }
+    // Zoning is corrected on the review screen, where the zone list and the
+    // plan are side by side — sending the estimator to an engineering tab to
+    // split one room off would be the opposite of the point.
+    if (interruption.fixIn === FIX_IN.ZONES && this.mode === 'quick') {
+      this.quickStep = 'design'; return void this.render();
+    }
     // Everything else lives on an engineering tab. Switching to advanced is the
     // honest thing to do: that is where the control actually is.
     this.mode = 'advanced';
@@ -1821,6 +1827,52 @@ export class DesignerApp {
       return Object.keys(rest).length ? applyRoomOverride(next, rest, 'estimator') : next;
     });
     this.update();
+  }
+
+  /**
+   * Take a room off the shared open-plan zone and give it its own.
+   *
+   * This is the correction for the one thing the drawing cannot settle: a
+   * formal lounge behind a door looks exactly like an open meals area when the
+   * plan reader returned no walls. Marked as the estimator's call so no later
+   * re-run of the grouping puts it back.
+   */
+  splitRoomFromZone(roomId) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === roomId ? { ...r, openPlanGroup: null, zoneGroupSource: 'estimator' } : r);
+    const room = (this.design.rooms || []).find(r => r.id === roomId);
+    this.update();
+    if (room) toast(room.label + ' is on its own zone.', 'good');
+  }
+
+  /** Put a room back onto a shared zone — the other half of the same control. */
+  mergeRoomIntoZone(roomId, groupKey) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === roomId ? { ...r, openPlanGroup: groupKey || 'open-plan', zoneGroupSource: 'estimator' } : r);
+    const room = (this.design.rooms || []).find(r => r.id === roomId);
+    this.update();
+    if (room) toast(room.label + ' shares a zone.', 'good');
+  }
+
+  /** Group several rooms onto one zone — what a zone remedy proposes. */
+  groupRoomsOntoZone(roomIds, groupKey) {
+    const ids = new Set(roomIds || []);
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      ids.has(r.id) ? { ...r, openPlanGroup: groupKey, zoneGroupSource: 'estimator' } : r);
+    this.update();
+    toast(ids.size + ' rooms now share a zone.', 'good');
+  }
+
+  /** The estimator has looked at the zone list and it is right. */
+  confirmZoneGrouping() {
+    this.design.zoneGroupingConfirmed = {
+      by: 'estimator', at: new Date().toISOString(),
+      rooms: (this.design.rooms || []).filter(r => r.openPlanGroup).map(r => r.label)
+    };
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.openPlanGroup ? { ...r, zoneGroupSource: 'estimator' } : r);
+    this.update();
+    toast('Zoning confirmed.', 'good');
   }
 
   /** RULE 1 — the estimator's override: condition this room after all, or not. */

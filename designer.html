@@ -416,6 +416,17 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
     .qlegend-item.return { color:#c07fd0; }
     .qlegend-count { flex:1 1 100%; color:var(--muted, #8b93a7); }
     @media (max-width: 720px) { .qexc-name { min-width:0; } }
+
+    /* Quick mode — the zone list on the review screen. */
+    .qzones { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+    .qzone { border:1px solid rgba(255,255,255,.10); border-radius:6px; padding:8px 10px; }
+    .qzone.always-open { border-color:rgba(63,191,111,.45); }
+    .qzone-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .qzone-flow { margin-left:auto; font-size:11px; color:var(--muted, #8b93a7); white-space:nowrap; }
+    .qzone-rooms { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .qzone-room { display:inline-flex; align-items:center; gap:4px; font-size:11px;
+                  background:rgba(255,255,255,.05); border-radius:4px; padding:2px 4px 2px 8px; }
+    @media (max-width: 720px) { .qzone-flow { margin-left:0; width:100%; } }
 </style>
 </head>
 <body>

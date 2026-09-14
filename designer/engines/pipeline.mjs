@@ -22,6 +22,8 @@ import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
+import { suggestOpenPlanGroups, applyOpenPlanGroups, zoneRemedies,
+         zoningAlreadySet } from './zoning-groups.mjs';
 import { estimateStaticPressure } from './pressure.mjs';
 import { buildBillOfMaterials, applyBomEdits } from './bom.mjs';
 import { calculateLabour, calculateCommercials, toQuoteLineItems } from './costing.mjs';
@@ -68,6 +70,24 @@ export function runPipeline(design, ctx = {}) {
   // scale exists, so the DESIGN step draws a layout instead of a blank plan.
   if (d.calibration?.pixelsPerMm) {
     d.rooms = deriveBoundariesFromPrintedSizes(d.rooms, d.calibration);
+  }
+
+  // ── 0b. Which rooms share an air space (PART 20) ──────────────────────────
+  // Rooms that are open to one another cannot be dampered apart, so they are
+  // one zone whether anyone says so or not. Nothing on a real plan ever set
+  // this, which is how a four-bedroom house came out with eleven zones, an
+  // unnecessary controller kit and a failed minimum-airflow check.
+  //
+  // It runs HERE, before the load, because grouping applies open-plan
+  // diversity — so it has to be settled before a single watt is worked out.
+  if (d.rooms?.length && !zoningAlreadySet(d.rooms)) {
+    d.openPlanSuggestion = suggestOpenPlanGroups(d.rooms, {
+      settings, calibration: d.calibration, walls: d.walls, openings: d.openings });
+    d.rooms = applyOpenPlanGroups(d.rooms, d.openPlanSuggestion);
+  } else if (d.rooms?.length) {
+    d.openPlanSuggestion = { groups: [], assignments: {}, confidence: 'HIGH',
+      method: 'already_set', openPlanRoomCount: 0,
+      notes: ['The zoning on this job was already set, so it was left alone.'], warnings: [] };
   }
 
   // ── 1. Rooms cleared for sizing (PART 9) ──────────────────────────────────
@@ -198,6 +218,11 @@ export function runPipeline(design, ctx = {}) {
   d.zones = d.zoneDefinitions && d.zoneDefinitions.length
     ? analyseZones(d.zoneDefinitions, d.airflow, { settings })
     : suggestZones(included, d.airflow, { settings });
+
+  // When the zoning does not work, name the merge that would fix it rather than
+  // leaving the estimator with a percentage and no next step.
+  d.zoneRemedies = zoneRemedies(d.zones, d.rooms, {
+    settings, controllerMaxZones: d.controller?.maxZones ?? settings.zoning.maxZones });
 
   const controllers = ctx.controllers || ZONE_CONTROLLERS;
   d.controllerSelection = selectZoneController(controllers, {

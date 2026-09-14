@@ -279,6 +279,79 @@ function reviewCards(app, interruptions) {
   return h('div', { class: 'qcards' }, ...cards);
 }
 
+/**
+ * The zone list, beside the plan, with the one correction the drawing cannot
+ * make for itself: taking a room off the shared zone.
+ *
+ * This is on the review screen rather than behind ADVANCED DESIGN because it is
+ * where the estimator can see the rooms on the plan while deciding — and
+ * because eleven zones on a four-bedroom house was the sort of mistake nobody
+ * catches if it is filed three tabs away.
+ */
+function zonePanel(app) {
+  const d = app.design;
+  const zones = d.zones?.zones || [];
+  if (!zones.length) return null;
+  const byId = new Map((d.rooms || []).map(r => [r.id, r]));
+  const sugg = d.openPlanSuggestion;
+  const groupKey = sugg?.groups?.[0]?.key || 'open-plan';
+  const confirmed = !!d.zoneGroupingConfirmed;
+
+  const zoneRow = (z) => h('div', { class: 'qzone' + (z.alwaysOpen ? ' always-open' : '') },
+    h('div', { class: 'qzone-head' },
+      h('strong', {}, z.name),
+      badge(z.alwaysOpen ? 'ALWAYS OPEN' : z.kind.toUpperCase(), z.alwaysOpen ? 'ok' : ''),
+      h('span', { class: 'qzone-flow' }, int(z.airflowLs) + ' L/s · ' + num(z.systemSharePct, 1) + '%')),
+    h('div', { class: 'qzone-rooms' },
+      ...(z.roomIds || []).map(id => {
+        const r = byId.get(id);
+        if (!r) return null;
+        const shared = (z.roomIds || []).length > 1;
+        return h('span', { class: 'qzone-room' },
+          h('span', {}, r.label),
+          shared
+            ? button('split', () => app.splitRoomFromZone(r.id), 'tiny ghost')
+            : (sugg?.openPlanRoomCount
+                ? button('join open plan', () => app.mergeRoomIntoZone(r.id, groupKey), 'tiny ghost')
+                : null));
+      }).filter(Boolean)));
+
+  return card('Zones',
+    zones.length + ' zone' + (zones.length > 1 ? 's' : '') + ' · ' +
+    (d.controller ? d.controller.name : 'no controller selected') +
+    (d.zones.meetsMinimum === false ? ' · MINIMUM AIRFLOW NOT MET' : ''),
+
+    // Rooms open to one another cannot be dampered apart — but on a plan with
+    // no wall data that is a judgement, and it is labelled as one.
+    sugg?.openPlanRoomCount >= 2 && !confirmed
+      ? banner(sugg.confidence === 'HIGH' ? 'info' : 'warn',
+          sugg.confidence === 'HIGH'
+            ? 'Grouped from the walls and openings drawn on the plan.'
+            : 'Grouped by where the rooms sit on the plan — the reader found no walls or ' +
+              'openings. A room behind a door should be split out.',
+          button('Zoning is right', () => app.confirmZoneGrouping(), 'small'))
+      : null,
+    confirmed ? banner('ok', 'Zoning confirmed by the estimator.') : null,
+
+    d.zones.meetsMinimum === false
+      ? banner('bad', 'With every closable zone shut, ' + int(d.zones.minimumOpenAirflowLs || 0) +
+          ' L/s stays open — ' + num(d.zones.minimumOpenFractionPct, 0) + '% of the system against a ' +
+          num(d.zones.requiredMinimumLs, 0) + ' L/s minimum.')
+      : null,
+
+    ...(d.zoneRemedies || []).map(r => h('div', { class: 'qint warn' },
+      h('div', { class: 'qint-title' }, r.title),
+      h('div', { class: 'qint-detail' }, r.detail),
+      r.roomIds?.length
+        ? button('Do it', () => app.groupRoomsOntoZone(r.roomIds, r.groupKey || 'grouped'), 'small')
+        : null)),
+
+    h('div', { class: 'qzones' }, ...zones.map(zoneRow)),
+    h('div', { class: 'note' },
+      'Zone motors and cable are counted off this list, so splitting a room adds a damper to the ' +
+      'order. Rooms sharing a zone are also diversified together in the load.'));
+}
+
 function stepDesign(app, interruptions) {
   const d = app.design;
   if (d.stage !== 'complete') {
@@ -329,6 +402,7 @@ function stepDesign(app, interruptions) {
       // RIGHT — the numbers that decide whether this goes out.
       h('div', { class: 'qreview-side' },
         reviewCards(app, interruptions),
+        zonePanel(app),
         attention.length
           ? h('div', { class: 'qattn' },
               h('div', { class: 'qattn-head' }, 'Needs attention'),
