@@ -23,8 +23,11 @@ import { interpretPlan, measureRooms } from './engines/interpret.mjs';
 import { chainMmAtPx, chainPxAtMm } from './engines/chains.mjs';
 import { parseRoomDimensionPair } from './engines/dimensions.mjs';
 import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
-         parseFloorAreaText, crossCheckFloorArea,
-         summariseRoomMeasurements } from './engines/rooms.mjs';
+         parseFloorAreaText, crossCheckFloorArea, setRoomConditioning,
+         isAutoCleared, summariseRoomMeasurements } from './engines/rooms.mjs';
+import { CONDITIONING, CONDITIONING_LABELS, EXCLUDED_BANNER, isConditionedRoom,
+         isExcludedRoom, needsClassificationReview,
+         classificationSummary } from './engines/classify.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
@@ -56,7 +59,7 @@ const TABS = [
 const STEPS = [
   { key: 'upload',    label: 'Upload plan',   done: (d) => !!d.plan },
   { key: 'calibrate', label: 'Calibrate',     done: (d) => !!d.calibration },
-  { key: 'rooms',     label: 'Verify rooms',  done: (d) => (d.rooms || []).some(r => r.conditioned && (r.status === 'Verified' || r.status === 'Manual')) },
+  { key: 'rooms',     label: 'Verify rooms',  done: (d) => (d.rooms || []).some(r => isConditionedRoom(r) && (r.status === 'Verified' || r.status === 'Manual' || isAutoCleared(r))) },
   { key: 'size',      label: 'Size system',   done: (d) => !!d.selectedUnit },
   { key: 'airflow',   label: 'Design airflow',done: (d) => !!d.airflow },
   { key: 'ducts',     label: 'Design ducts',  done: (d) => !!d.network && d.network.sections.some(s => s.lengthMm) },
@@ -376,7 +379,7 @@ export class DesignerApp {
    */
   acceptHighConfidenceRooms() {
     const rooms = this.design.rooms || [];
-    const toAccept = rooms.filter(r => r.conditioned && r.areaSqM > 0 &&
+    const toAccept = rooms.filter(r => isConditionedRoom(r) && r.areaSqM > 0 &&
       r.confidenceBand === 'HIGH' && r.status !== 'Verified' && r.status !== 'Manual');
     if (!toAccept.length) return;
     const ids = new Set(toAccept.map(r => r.id));
@@ -791,7 +794,12 @@ export class DesignerApp {
         const next = byLabel.get(r.label.toLowerCase());
         // A room the estimator has typed or verified is never overwritten.
         if (!next || r.measurement?.source === 'manual' || r.status === 'verified') return r;
-        return { ...next, id: r.id, conditioned: r.conditioned, roomType: r.roomType,
+        return { ...next, id: r.id, roomType: r.roomType,
+                 conditioningStatus: r.conditioningStatus,
+                 conditioningOverride: r.conditioningOverride ?? null,
+                 conditioningReason: r.conditioningReason,
+                 conditioningSource: r.conditioningSource,
+                 conditioned: isConditionedRoom(r),
                  ceilingHeightMm: r.ceilingHeightMm };
       });
     }
@@ -863,7 +871,7 @@ export class DesignerApp {
   renderRoomToolsPanel() {
     const d = this.design;
     const mode = this.viewer?.getMode() || MODES.VIEW;
-    const rooms = (d.rooms || []).filter(r => r.conditioned);
+    const rooms = (d.rooms || []).filter(isConditionedRoom);
     const unsure = rooms.filter(r => r.confidenceBand === 'LOW' || !r.areaSqM);
     const set = (m) => { this.ensureViewer().setMode(mode === m ? MODES.VIEW : m); this.render(); };
 
@@ -876,7 +884,7 @@ export class DesignerApp {
       unsure.length
         ? banner('warn', unsure.length + ' room(s) the tool is not sure about: ' +
             unsure.map(r => r.label).join(', ') + '. Check them against the plan.')
-        : null,
+        : banner('ok', 'Every conditioned room is measured. Nothing here needs you.'),
       rooms.length
         ? table([
             { key: 'label', label: 'Room' },
@@ -885,8 +893,12 @@ export class DesignerApp {
             { key: 'confidenceBand', label: 'Read', width: '82px',
               render: (r) => confidenceBadge(r.confidence, r.confidenceBand) },
             { key: 'status', label: '', align: 'right', width: '92px',
+              // RULE 5 — a room measured off the architect's own figures at HIGH
+              // confidence is already cleared; it does not need a tick before
+              // the design will run, and offering one implies otherwise.
               render: (r) => r.status === 'Verified' || r.status === 'Manual'
                 ? badge('OK', 'ok')
+                : isAutoCleared(r) ? badge('MEASURED', 'ok')
                 : button('Verify', () => this.verifyRoom(r.id), 'tiny') }
           ], rooms, { compact: true })
         : h('div', { class: 'note' }, 'No rooms read yet. Press "Read plan with AI", or draw them.'));
@@ -1495,7 +1507,7 @@ export class DesignerApp {
       const [remeasured] = measureRooms([{ ...r, boundaryPx: r.boundaryPx }],
         { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
       return { ...remeasured, id: r.id, status: r.status === 'Verified' ? 'Review' : remeasured.status,
-               conditioned: r.conditioned, ceilingHeightMm: r.ceilingHeightMm };
+               conditioned: isConditionedRoom(r), ceilingHeightMm: r.ceilingHeightMm };
     });
   }
 
@@ -1684,9 +1696,16 @@ export class DesignerApp {
       const [m] = measureRooms([{ ...r, boundaryPx: box, widthMm: undefined, lengthMm: undefined,
                                   hStations: undefined, vStations: undefined }],
         { calibration: cal }, { settings: this.settings, imageQuality: this.imageQuality });
-      return { ...m, id: r.id, label: r.label, conditioned: r.conditioned,
+      // Re-measuring a room never re-opens the question of whether NAC
+      // conditions it — the classification, and any override on it, carries.
+      return { ...m, id: r.id, label: r.label,
+               conditioningStatus: r.conditioningStatus,
+               conditioningOverride: r.conditioningOverride ?? null,
+               conditioningReason: r.conditioningReason,
+               conditioningSource: r.conditioningSource,
+               conditioned: isConditionedRoom(r),
                ceilingHeightMm: r.ceilingHeightMm, boundaryPx: box,
-               status: r.conditioned ? 'Review' : 'Excluded' };
+               status: isConditionedRoom(r) ? 'Review' : 'Excluded' };
     });
     this.update();
   }
@@ -1787,9 +1806,33 @@ export class DesignerApp {
   selectRoom(id) { this.selectedRoomId = id; this.viewer?.selectRoom(id); this.render(); }
 
   editRoom(id, patch) {
-    this.design.rooms = (this.design.rooms || []).map(r =>
-      r.id === id ? applyRoomOverride(r, patch, 'estimator') : r);
+    // A change of conditioning is not an ordinary field edit — it has to go
+    // through the classification engine so the override is recorded and every
+    // downstream engine sees the same answer. Setting the bare boolean here is
+    // how a room ends up excluded from the load but still in the router.
+    const { conditioned, ...rest } = patch;
+    this.design.rooms = (this.design.rooms || []).map(r => {
+      if (r.id !== id) return r;
+      let next = r;
+      if (conditioned !== undefined) {
+        next = setRoomConditioning(next,
+          conditioned ? CONDITIONING.CONDITIONED : CONDITIONING.NON_CONDITIONED, 'estimator');
+      }
+      return Object.keys(rest).length ? applyRoomOverride(next, rest, 'estimator') : next;
+    });
     this.update();
+  }
+
+  /** RULE 1 — the estimator's override: condition this room after all, or not. */
+  setRoomConditioning(id, status) {
+    this.design.rooms = (this.design.rooms || []).map(r =>
+      r.id === id ? setRoomConditioning(r, status, 'estimator') : r);
+    this.update();
+    const room = (this.design.rooms || []).find(r => r.id === id);
+    if (room) {
+      toast(room.label + ' — ' + (status === CONDITIONING.CONDITIONED
+        ? 'now air conditioned on this job' : EXCLUDED_BANNER.toLowerCase()), 'good');
+    }
   }
 
   verifyRoom(id) {
@@ -1799,19 +1842,19 @@ export class DesignerApp {
 
   verifyAllHigh() {
     this.design.rooms = (this.design.rooms || []).map(r =>
-      r.conditioned && r.confidenceBand === 'HIGH' ? verifyRoom(r, 'estimator') : r);
+      isConditionedRoom(r) && r.confidenceBand === 'HIGH' ? verifyRoom(r, 'estimator') : r);
     this.update();
   }
 
   async verifyAll() {
-    const low = (this.design.rooms || []).filter(r => r.conditioned && r.confidenceBand === 'LOW');
+    const low = (this.design.rooms || []).filter(r => isConditionedRoom(r) && r.confidenceBand === 'LOW');
     if (low.length && !await confirmDialog({
         title: 'Verify rooms that are LOW confidence?',
         message: low.length + ' room(s) were measured with low confidence. Check their dimensions ' +
                  'against the plan before you verify them — verifying is what lets them into the sizing.',
         lines: low.map(r => r.label + ' — ' + Math.round(r.confidence) + '% confidence'),
         confirmLabel: 'Verify all anyway', danger: true })) return;
-    this.design.rooms = (this.design.rooms || []).map(r => r.conditioned ? verifyRoom(r, 'estimator') : r);
+    this.design.rooms = (this.design.rooms || []).map(r => isConditionedRoom(r) ? verifyRoom(r, 'estimator') : r);
     this.update();
   }
 
@@ -1908,7 +1951,8 @@ export class DesignerApp {
     const added = buildRoom({ label, measurement: { widthMm: null, lengthMm: null, areaSqM: newArea,
       source: 'manual', sourceLabel: 'Manual entry',
       evidence: ['Split from ' + sel.label + ' by the estimator.'], areaOnly: true },
-      ceilingHeightMm: sel.ceilingHeightMm, conditioned: sel.conditioned }, { settings: this.settings });
+      ceilingHeightMm: sel.ceilingHeightMm, conditioningStatus: sel.conditioningStatus,
+      conditioningOverride: sel.conditioningOverride ?? null }, { settings: this.settings });
     this.design.rooms = (this.design.rooms || []).map(r => r.id === sel.id ? kept : r).concat([added]);
     this.update();
   }
@@ -2753,7 +2797,7 @@ export class DesignerApp {
     d.chains = interp.chains;
     d.rooms = rooms;
     d.mainRoute = { lengthMm: 4200, lengthM: 4.2, source: 'manual', note: 'Sample project.' };
-    d.ductRoutes = Object.fromEntries(rooms.filter(r => r.conditioned)
+    d.ductRoutes = Object.fromEntries(rooms.filter(isConditionedRoom)
       .map((r, i) => [r.id, { lengthMm: 5000 + i * 900, lengthM: (5000 + i * 900) / 1000,
                               source: 'manual', note: 'Sample project.' }]));
     d.returnDuctLengthMm = 2500;

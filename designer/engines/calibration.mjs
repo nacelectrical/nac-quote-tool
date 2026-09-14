@@ -107,3 +107,145 @@ export function crossCheckScaleLabel(calibration, scaleLabelText, assumedSheetDp
     note: 'Advisory only — the manual calibration always wins.'
   };
 }
+
+// ── Is calibration actually required? ────────────────────────────────────────
+// RULE 4. Calibration is a means to an end, not a ritual. It exists so that
+// lengths can be taken off the image. If every conditioned room already carries
+// the architect's own printed dimensions, there is nothing left for it to
+// measure and demanding it is pure friction — and demanding it because a
+// BATHROOM has no readable size is worse than friction, it is wrong.
+//
+// Note the two separate questions, because they have different answers:
+//
+//   ROOM AREAS  — satisfied by printed dimensions or a dimension chain alone.
+//   DUCT LENGTHS — measured off the drawing, so they DO need a scale.
+//
+// The second is why a scale is still derived below rather than skipped.
+
+/** Measurement sources that stand on their own without a scale. */
+const SOURCES_WITHOUT_SCALE = new Set(['verified_architectural', 'dimension_chain', 'manual']);
+
+/**
+ * Does this design need the estimator to calibrate the plan by hand?
+ *
+ * @returns {{required: boolean, reason: string, roomsNeedingScale: Array,
+ *            statusLabel: string}}
+ */
+export function calibrationRequirement(rooms, { calibration = null } = {}) {
+  const conditioned = (rooms || []).filter(r => r.conditioned);
+  if (calibration?.pixelsPerMm) {
+    return { required: false, roomsNeedingScale: [],
+             statusLabel: 'CALIBRATED',
+             reason: 'The plan is calibrated at ' + round(calibration.pixelsPerMm, 5) + ' px/mm.' };
+  }
+  if (!conditioned.length) {
+    return { required: false, roomsNeedingScale: [], statusLabel: 'NO CONDITIONED ROOMS YET',
+             reason: 'No conditioned room has been detected yet.' };
+  }
+  // Only conditioned rooms are assessed. An excluded room with no readable
+  // size is not a reason to calibrate anything.
+  const needScale = conditioned.filter(r =>
+    r.measurement?.incomplete || !SOURCES_WITHOUT_SCALE.has(r.measurement?.source));
+
+  if (!needScale.length) {
+    return {
+      required: false, roomsNeedingScale: [], statusLabel: 'CALIBRATION NOT REQUIRED',
+      reason: 'All ' + conditioned.length + ' conditioned rooms carry their own printed or ' +
+              'chain dimensions, so no measurement is being taken off the image.'
+    };
+  }
+  return {
+    required: true, roomsNeedingScale: needScale.map(r => ({ id: r.id, label: r.label })),
+    statusLabel: 'CALIBRATION REQUIRED',
+    reason: needScale.length + ' conditioned room' + (needScale.length > 1 ? 's have' : ' has') +
+            ' no printed dimensions and must be measured off the image: ' +
+            needScale.map(r => r.label).join(', ') + '.'
+  };
+}
+
+/**
+ * Work the scale out from the rooms themselves.
+ *
+ * A room that carries BOTH the architect's printed size AND a boundary drawn
+ * on the image states the scale directly: so many pixels across, so many
+ * millimetres across. Every such room is one reading; the median is taken and
+ * the spread between readings is reported, because readings that disagree mean
+ * a boundary is wrong and the estimator needs to know rather than be handed a
+ * confident average.
+ *
+ * This is derived from the plan's own figures — nothing is invented, and the
+ * evidence for every reading is returned with it. It exists so that DUCT
+ * LENGTHS can be measured on a plan whose rooms are already fully dimensioned,
+ * without making the estimator click two points for a scale the drawing has
+ * already told us.
+ */
+export function deriveCalibrationFromRooms(rooms, { imageWidthPx = null, imageHeightPx = null,
+                                                    maxSpreadPct = 12 } = {}) {
+  const readings = [];
+  for (const r of rooms || []) {
+    const b = r.boundaryPx;
+    const m = r.measurement;
+    if (!b || !m || m.incomplete) continue;
+    if (!SOURCES_WITHOUT_SCALE.has(m.source)) continue;   // else it is circular
+    const w = Number(b.w), h = Number(b.h);
+    if (!(w > 0) || !(h > 0)) continue;
+    // The drawn box and the printed pair are the same rectangle, but which way
+    // round is not guaranteed, so take the orientation that agrees with itself.
+    const direct = [w / m.widthMm, h / m.lengthMm];
+    const swapped = [w / m.lengthMm, h / m.widthMm];
+    const spread = (p) => Math.abs(p[0] - p[1]) / ((p[0] + p[1]) / 2);
+    const pair = spread(direct) <= spread(swapped) ? direct : swapped;
+    const pxPerMm = (pair[0] + pair[1]) / 2;
+    if (!(pxPerMm > 0) || !isFinite(pxPerMm)) continue;
+    readings.push({ roomId: r.id, label: r.label, pixelsPerMm: pxPerMm,
+                    evidence: r.label + ': ' + round(w, 0) + ' x ' + round(h, 0) + ' px drawn against ' +
+                              m.widthMm + ' x ' + m.lengthMm + ' mm printed' });
+  }
+
+  if (readings.length < 2) {
+    return { ok: false, readings,
+             reason: readings.length
+               ? 'Only one room has both a printed size and a drawn boundary — not enough to ' +
+                 'confirm a scale against a second reading.'
+               : 'No room has both a printed size and a drawn boundary on the image.' };
+  }
+
+  const sorted = readings.map(r => r.pixelsPerMm).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const pixelsPerMm = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  const spreadPct = ((sorted[sorted.length - 1] - sorted[0]) / pixelsPerMm) * 100;
+
+  if (spreadPct > maxSpreadPct) {
+    return {
+      ok: false, readings, pixelsPerMm, spreadPct: round(spreadPct, 1),
+      reason: 'The rooms disagree about the scale by ' + round(spreadPct, 1) + '% (' +
+              round(sorted[0], 5) + ' to ' + round(sorted[sorted.length - 1], 5) + ' px/mm). ' +
+              'One of the drawn boundaries does not match its printed size — calibrate by hand.'
+    };
+  }
+
+  return {
+    ok: true,
+    readings,
+    spreadPct: round(spreadPct, 1),
+    calibration: {
+      pointA: null, pointB: null,
+      knownDistance: null, unit: 'mm',
+      calibrationDistanceMm: null,
+      pixelDistance: null,
+      pixelsPerMm,
+      mmPerPixel: 1 / pixelsPerMm,
+      source: 'derived_from_dimensioned_rooms',
+      derivedFrom: readings.map(r => r.evidence),
+      agreementSpreadPct: round(spreadPct, 1),
+      display: {
+        calibrationDistance: 'Derived from ' + readings.length + ' dimensioned rooms',
+        pixelDistance: readings.length + ' readings, ' + round(spreadPct, 1) + '% spread',
+        calculatedScale: round(pixelsPerMm, 5) + ' px/mm  ·  ' + round(1 / pixelsPerMm, 4) + ' mm/px'
+      },
+      imageWidthPx, imageHeightPx,
+      scaleLabel: null,
+      calibratedAt: new Date().toISOString()
+    }
+  };
+}

@@ -158,28 +158,48 @@ export function createPlanViewer(container, opts = {}) {
       const hh = room.boundaryPx.h * state.scale;
       const selected = room.id === state.selectedRoomId;
       const band = room.confidenceBand;
-      const stroke = !room.conditioned ? '#555577'
+      // RULE 1 — a room NAC does not condition is still DRAWN, so the estimator
+      // can see it was detected and not silently dropped. It is drawn faintly,
+      // dashed and unlabelled by confidence, because its dimensions do not
+      // matter and a coloured confidence border would invite a second look at
+      // something already settled.
+      const excluded = room.conditioningStatus === 'NON_CONDITIONED' ||
+                       (room.conditioningStatus === undefined && room.conditioned === false);
+      const review = room.conditioningStatus === 'REVIEW_REQUIRED';
+      const stroke = excluded ? '#555577'
+        : review ? '#9a7fd0'
         : band === 'HIGH' ? '#3fbf6f' : band === 'MEDIUM' ? '#F5C200' : '#ff5f5f';
 
       ctx.save();
-      ctx.lineWidth = selected ? 3 : 2;
+      ctx.globalAlpha = excluded && !selected ? 0.45 : 1;
+      ctx.lineWidth = selected ? 3 : excluded ? 1 : 2;
       ctx.strokeStyle = stroke;
       ctx.fillStyle = selected ? 'rgba(245,194,0,0.16)'
-        : room.conditioned ? 'rgba(43,108,184,0.10)' : 'rgba(85,85,119,0.10)';
-      ctx.setLineDash(room.conditioned ? [] : [6, 4]);
+        : excluded ? 'rgba(85,85,119,0.10)'
+        : review ? 'rgba(154,127,208,0.12)' : 'rgba(43,108,184,0.10)';
+      ctx.setLineDash(excluded ? [6, 4] : review ? [3, 3] : []);
       ctx.fillRect(p.x, p.y, w, hh);
       ctx.strokeRect(p.x, p.y, w, hh);
       ctx.setLineDash([]);
 
       if (w > 54 && hh > 26) {
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = excluded ? 'rgba(255,255,255,0.62)' : '#ffffff';
         ctx.font = '600 11px -apple-system, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(room.label, p.x + w / 2, p.y + hh / 2 - 3);
-        ctx.fillStyle = 'rgba(255,255,255,0.72)';
         ctx.font = '10px -apple-system, system-ui, sans-serif';
-        const sub = room.areaSqM ? room.areaSqM.toFixed(2) + ' m²' : 'no dimension';
-        ctx.fillText(sub, p.x + w / 2, p.y + hh / 2 + 11);
+        if (excluded) {
+          // Nick's wording, on the drawing, so there is never any doubt about
+          // why a room has no outlet and no duct going to it.
+          ctx.fillStyle = 'rgba(255,255,255,0.58)';
+          ctx.fillText(w > 150 ? 'EXCLUDED FROM AIR CONDITIONING' : 'EXCLUDED',
+            p.x + w / 2, p.y + hh / 2 + 11);
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.72)';
+          const sub = review ? 'CONDITIONED?'
+            : room.areaSqM ? room.areaSqM.toFixed(2) + ' m²' : 'no dimension';
+          ctx.fillText(sub, p.x + w / 2, p.y + hh / 2 + 11);
+        }
       }
 
       if (selected) {

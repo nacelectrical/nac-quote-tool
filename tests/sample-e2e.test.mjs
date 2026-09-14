@@ -154,12 +154,33 @@ test('sample plan: detailed load stays close to the existing 145 W/m² NAC rule'
     design.systemLoad.legacy.kw + ' kW vs ' + design.systemLoad.designKw + ' kW)');
 });
 
-test('sample plan: nothing is sized until rooms are verified', () => {
+test('sample plan: confidently measured rooms are sized without a tick', () => {
+  // RULE 5. The sample plan's rooms come off a printed dimension chain at HIGH
+  // confidence, so the design runs on upload. Requiring a tick per room before
+  // anything at all would run is what stopped the job onsite.
   const { design } = buildSampleDesign({ verifyAll: false });
-  assert.equal(design.stage, 'awaiting_room_verification');
-  assert.equal(design.systemLoad.totalConditionedAreaSqM, 0);
-  assert.equal(design.selectedUnit, null);
-  assert.ok(design.warnings.some(w => w.code === 'UNVERIFIED_ROOM'));
+  assert.equal(design.stage, 'complete');
+  assert.ok(design.systemLoad.totalConditionedAreaSqM > 0);
+  assert.ok(design.selectedUnit, 'a unit is selected without any room being ticked');
+  // Every room that was sized still carries its source and confidence.
+  for (const r of design.systemLoad.rooms) {
+    const room = design.rooms.find(x => x.id === r.roomId);
+    assert.ok(room.measurement.source, room.label + ' has no measurement source');
+    assert.equal(room.confidenceBand, 'HIGH', room.label + ' was sized below HIGH confidence');
+  }
+});
+
+test('sample plan: a room below HIGH confidence still blocks its own sizing', () => {
+  const { design } = buildSampleDesign({ verifyAll: false });
+  const target = design.rooms.find(r => r.conditioned);
+  const nobbled = design.rooms.map(r => r.id === target.id
+    ? { ...r, confidenceBand: 'LOW', status: 'Review',
+        measurement: { ...r.measurement, source: 'estimated' } }
+    : r);
+  const out = runPipeline({ ...design, rooms: nobbled }, { catalogue: buildCatalogue({}) });
+  assert.ok(!out.systemLoad.rooms.some(r => r.roomId === target.id),
+    target.label + ' was sized despite LOW confidence');
+  assert.ok(out.warnings.some(w => w.code === 'UNVERIFIED_ROOM'));
 });
 
 test('sample plan: revisions are appended, never overwritten', () => {

@@ -10,6 +10,7 @@
 // producing a load figure.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { isConditionedRoom, roomConditioningStatus } from './classify.mjs';
 import { round, volumeM3 } from './units.mjs';
 import { sizableRooms } from './rooms.mjs';
 
@@ -121,7 +122,8 @@ export function roomLoad(room, opts = {}) {
   return {
     roomId: room.id,
     label: room.label,
-    conditioned: room.conditioned,
+    conditioned: isConditionedRoom(room),
+    conditioningStatus: roomConditioningStatus(room),
     areaSqM: round(area, 2),
     coolingW: round(coolingW, 0),
     heatingW: round(heatingW, 0),

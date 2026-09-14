@@ -43,6 +43,11 @@ const snap = () => p.evaluate(() => {
       .reduce((s, i) => s + (i.metresRequired || 0), 0),
     ductBomCost: (d.bom?.items || []).filter(i => i.key === 'flex_duct')
       .reduce((s, i) => s + (i.totalCost || 0), 0),
+    // The return is now routed on the plan too, so its real drawn length is
+    // what the BOM adds on top of the supply network — not a fixed allowance.
+    returnDuctM: d.returnDesign?.duct?.lengthM
+      ?? (d.returnRoute?.lengthM ?? ((d.returnDesign?.duct?.lengthMm ?? 0) / 1000)),
+    returnRouted: !!d.returnRoute?.points?.length,
     pressurePa: d.pressure?.estimatedRequirementPa ?? null,
     outletCount: d.outlets?.totals?.total ?? 0,
     branchRooms: routed.filter(s => s.role === 'branch').map(s => s.roomId).sort()
@@ -121,10 +126,14 @@ STEP('The routed lengths reach the BOM and the pressure calculation');
 say('the BOM bought duct for the routed metres', a.ductBomM > 0,
   a.ductBomM + ' m, $' + a.ductBomCost.toFixed(2));
 // The BOM tallies the RETURN duct with the supply flex on purpose, so off-cuts
-// are not double-counted. It is therefore the supply network plus the return.
-say('BOM metres cover the routed design and no more than the return on top',
-  a.ductBomM >= a.totalDuctM - 0.5 && a.ductBomM <= a.totalDuctM + 12,
-  'bom ' + a.ductBomM + ' vs supply network ' + a.totalDuctM);
+// are not double-counted. It is therefore the supply network plus the return,
+// and the return is measured off its own routed line rather than assumed.
+say('the return is routed on the plan, not assumed', a.returnRouted,
+  a.returnDuctM.toFixed(2) + ' m drawn');
+say('BOM metres are the supply network plus the routed return, and nothing else',
+  a.ductBomM >= a.totalDuctM - 0.5 &&
+  a.ductBomM <= a.totalDuctM + a.returnDuctM + 0.5,
+  'bom ' + a.ductBomM + ' vs supply ' + a.totalDuctM + ' + return ' + a.returnDuctM.toFixed(2));
 say('a pressure figure exists off the real lengths', a.pressurePa > 0, a.pressurePa + ' Pa');
 
 // ── 6. Editing recalculates everything downstream ───────────────────────────

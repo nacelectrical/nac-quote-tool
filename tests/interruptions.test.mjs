@@ -68,7 +68,7 @@ test('"Study dimensions could not be verified"', () => {
   }));
   const i = find(r, 'ROOM_LOW_CONFIDENCE');
   assert.ok(i, 'a LOW confidence room must interrupt');
-  assert.match(i.title, /STUDY dimensions could not be verified/);
+  assert.match(i.title, /DESIGN BLOCKED — STUDY DIMENSIONS NEED CONFIRMING/);
   assert.equal(i.level, INTERRUPT.BLOCKING);
   assert.equal(i.fixIn, FIX_IN.ROOMS);
   assert.equal(i.roomId, 'r1', 'the estimator must be taken to the right room');

@@ -6,6 +6,7 @@
 // explicitly acknowledged by a named estimator.
 
 import { crossCheckFloorArea, incompleteRooms } from './rooms.mjs';
+import { isConditionedRoom } from './classify.mjs';
 
 export const SEVERITY = { INFO: 'INFO', CHECK: 'CHECK', WARNING: 'WARNING', CRITICAL: 'CRITICAL' };
 export const SEVERITY_ORDER = { CRITICAL: 0, WARNING: 1, CHECK: 2, INFO: 3 };
@@ -36,9 +37,23 @@ export function collectWarnings(design, opts = {}) {
   const push = (list, area) => (list || []).forEach(w => out.push(normalise(w, area)));
 
   // ── Plan & measurement ─────────────────────────────────────────────────────
+  // RULE 4 — only a conditioned room that must be measured off the image makes
+  // calibration a problem worth raising. Warning about it when every
+  // conditioned room already carries its printed dimensions is noise, and
+  // warning about it because an EXCLUDED room has no size is simply wrong.
   if (!design.calibration || !design.calibration.pixelsPerMm) {
-    out.push(normalise({ code: 'MISSING_PLAN_CALIBRATION', severity: SEVERITY.WARNING,
-      message: 'The plan has not been calibrated. Any measurement taken from the image is unreliable until you run CALIBRATE PLAN.' }, 'plan'));
+    const req = design.calibrationRequirement;
+    if (!req || req.required !== false) {
+      out.push(normalise({ code: 'MISSING_PLAN_CALIBRATION', severity: SEVERITY.WARNING,
+        message: (req?.reason ? req.reason + ' ' : '') +
+          'The plan has not been calibrated. Any measurement taken from the image is unreliable until you run CALIBRATE PLAN.' }, 'plan'));
+    }
+  } else if (design.calibration.source === 'derived_from_dimensioned_rooms') {
+    out.push(normalise({ code: 'CALIBRATION_DERIVED', severity: SEVERITY.INFO,
+      message: 'The drawing scale was worked out from ' + (design.calibration.derivedFrom || []).length +
+        ' rooms whose printed sizes and drawn boundaries agree to within ' +
+        design.calibration.agreementSpreadPct + '%. Duct lengths are measured against it. ' +
+        'Calibrating two known points by hand will override it.' }, 'plan'));
   }
   for (const chain of (design.chains || [])) {
     if (chain.closure && chain.closure.closes === false) {
@@ -69,7 +84,7 @@ export function collectWarnings(design, opts = {}) {
   }
 
   for (const r of rooms) {
-    if (!r.conditioned) continue;
+    if (!isConditionedRoom(r)) continue;
     if (r.confidenceBand === 'LOW') {
       out.push(normalise({ code: 'LOW_ROOM_MEASUREMENT_CONFIDENCE', severity: SEVERITY.CRITICAL,
         message: r.label + ' measurement confidence is ' + r.confidence + '% (' + r.confidenceBand +

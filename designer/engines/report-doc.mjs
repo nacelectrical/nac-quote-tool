@@ -16,6 +16,7 @@
 // dollar figure, margin, supplier or cost wording and fails if one appears.
 
 import { AUTO_ROUTE_NOTICE } from './router.mjs';
+import { isConditionedRoom } from './classify.mjs';
 
 export const REPORT_KIND = { INTERNAL: 'internal', CUSTOMER: 'customer' };
 
@@ -120,7 +121,7 @@ export function internalReportDoc(design, { planSnapshot = null } = {}) {
     d.rooms || [],
     r => [r.label, r.widthMm ? (r.widthMm / 1000).toFixed(2) : '—',
           r.lengthMm ? (r.lengthMm / 1000).toFixed(2) : '—', nn(r.areaSqM, 2),
-          (r.ceilingHeightMm / 1000).toFixed(2), r.conditioned ? 'Yes' : 'No',
+          (r.ceilingHeightMm / 1000).toFixed(2), isConditionedRoom(r) ? 'Yes' : 'No',
           r.measurement?.sourceLabel || '—', Math.round(r.confidence) + '% ' + r.confidenceBand, r.status]));
 
   if (load) {

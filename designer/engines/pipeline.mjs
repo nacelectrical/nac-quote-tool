@@ -9,7 +9,10 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
-import { sizableRooms, blockedRooms, totalConditionedArea } from './rooms.mjs';
+import { sizableRooms, blockedRooms, totalConditionedArea,
+         deriveBoundariesFromPrintedSizes } from './rooms.mjs';
+import { calibrationRequirement, deriveCalibrationFromRooms } from './calibration.mjs';
+import { classificationSummary, isConditionedRoom } from './classify.mjs';
 import { roomLoad, systemLoad, describeAssumptions } from './loads.mjs';
 import { selectEquipment, selectZoneController } from './equipment.mjs';
 import { calculateAirflow } from './airflow.mjs';
@@ -37,6 +40,35 @@ import { ZONE_CONTROLLERS } from './catalogue.mjs';
 export function runPipeline(design, ctx = {}) {
   const settings = ctx.settings || DEFAULT_SETTINGS;
   const d = { ...design };
+
+  // ── 0. Classification, then scale (RULES 1, 4 and 6) ──────────────────────
+  // Who is being air conditioned is settled before anything else is asked, so
+  // that nothing downstream — not the verification queue, not the calibration
+  // test — ever considers a room NAC was never going to condition.
+  d.classification = classificationSummary(d.rooms);
+
+  // Whether the estimator has to calibrate by hand is judged on CONDITIONED
+  // rooms only. A bathroom with no readable size is not a reason to calibrate.
+  d.calibrationRequirement = calibrationRequirement(d.rooms, { calibration: d.calibration });
+
+  // Duct lengths are measured off the drawing, so a scale is still wanted even
+  // when the room areas did not need one. If the plan's own dimensioned rooms
+  // state the scale, take it from them rather than stopping to ask.
+  if (!d.calibration?.pixelsPerMm) {
+    const derived = deriveCalibrationFromRooms(d.rooms, {
+      imageWidthPx: d.plan?.widthPx ?? null, imageHeightPx: d.plan?.heightPx ?? null });
+    d.derivedCalibration = derived;
+    if (derived.ok) d.calibration = derived.calibration;
+  } else {
+    d.derivedCalibration = null;
+  }
+
+  // A room measured off its printed size but never placed on the drawing has
+  // nothing for the duct router to route to. Give it its rectangle now that a
+  // scale exists, so the DESIGN step draws a layout instead of a blank plan.
+  if (d.calibration?.pixelsPerMm) {
+    d.rooms = deriveBoundariesFromPrintedSizes(d.rooms, d.calibration);
+  }
 
   // ── 1. Rooms cleared for sizing (PART 9) ──────────────────────────────────
   const included = sizableRooms(d.rooms, { allowOverride: !!ctx.allowLowConfidence });
@@ -194,7 +226,15 @@ export function runPipeline(design, ctx = {}) {
   // The return is a different system and is drawn as one. Both are only routed
   // once the supply has been, so they follow the same AUTO / MANUAL choice.
   if (mode === ROUTING_MODE.AUTO && !d.routingSuspended) {
-    const ret = buildReturnRoutes({ layout: d.layout || {}, returnDesign: d.returnDesign,
+    // The auto router has already decided where the plenum sits. The return
+    // comes back to that same point, so it is handed over — without it the
+    // return silently fails to route on every auto-designed job and the
+    // estimator has to place the indoor unit by hand before seeing a return.
+    const retLayout = { ...(d.layout || {}) };
+    if (!retLayout.indoorUnit && !retLayout.plenum && d.autoRoute?.plenum) {
+      retLayout.plenum = d.autoRoute.plenum;
+    }
+    const ret = buildReturnRoutes({ layout: retLayout, returnDesign: d.returnDesign,
                                     rooms: included });
     if (ret.generated) {
       const measured = measureTree({ segments: ret.routes.map(r => ({ ...r, role: 'return' })) },

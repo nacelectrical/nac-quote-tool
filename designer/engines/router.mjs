@@ -22,6 +22,7 @@
 // way an estimator can trust what changed when they move something.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { isConditionedRoom } from './classify.mjs';
 import { round } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
@@ -708,7 +709,7 @@ export function routeConfidence({ design, tree, score } = {}) {
 
   if (design?.calibration) { points += 2; } else reasons.push('The plan is not calibrated.');
 
-  const rooms = (design?.rooms || []).filter(r => r.conditioned);
+  const rooms = (design?.rooms || []).filter(isConditionedRoom);
   const withBoundary = rooms.filter(r => r.boundaryPx).length;
   if (rooms.length && withBoundary === rooms.length) points += 2;
   else if (withBoundary >= rooms.length * 0.7) { points += 1; reasons.push('Some rooms have no boundary drawn.'); }
@@ -764,7 +765,7 @@ export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = []
       // The first return falls back to the middle of the biggest room, which is
       // where a return usually goes — and it says that it assumed it.
       if (i === 0) {
-        const biggest = [...(rooms || [])].filter(r => r.conditioned && r.boundaryPx)
+        const biggest = [...(rooms || [])].filter(r => isConditionedRoom(r) && r.boundaryPx)
           .sort((a, b) => (b.boundaryPx.w * b.boundaryPx.h) - (a.boundaryPx.w * a.boundaryPx.h))[0];
         if (!biggest) continue;
         const c = roomCentre(biggest);
