@@ -30,6 +30,8 @@ import { routeLength } from './engines/ducts.mjs';
 import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
          LABEL_DETAIL, DEFAULT_LABEL_DETAIL, ROUTING_MODE,
          AUTO_ROUTE_NOTICE } from './engines/router.mjs';
+import { supplierOrderList, installerSheet, jobState, JOB_STATE,
+         READY_TO_ORDER } from './engines/order.mjs';
 import { collectInterruptions, FIX_IN } from './engines/interruptions.mjs';
 import { renderQuickMode, QUICK_STEPS, quickStepState } from './ui/quick-mode.mjs';
 import { acknowledge } from './engines/warnings.mjs';
@@ -273,7 +275,16 @@ export class DesignerApp {
 
   // ── QUICK QUOTE MODE ──────────────────────────────────────────────────────
 
-  setQuickStep(step) { this.quickStep = step; this.settingsSection = null; this.render(); }
+  setQuickStep(step) {
+    this.quickStep = step;
+    this.settingsSection = null;
+    this.render();
+    // Opening SEND is the moment the estimator wants to know whether the
+    // customer has signed, so ask then rather than making them press a button.
+    if (step === 'send' && this.design.quoteId) {
+      this.refreshAcceptance().catch(() => { /* offline is not an error here */ });
+    }
+  }
 
   /** The thirteen engineering tabs, for the job that needs them. */
   enterAdvanced() {
@@ -412,6 +423,94 @@ export class DesignerApp {
     }
   }
 
+  /**
+   * READY TO ORDER.
+   *
+   * Acceptance lives on the QUOTE, because that is what the customer signs, so
+   * this asks the database rather than trusting a flag on the design.
+   */
+  async refreshAcceptance() {
+    const d = this.design;
+    if (!d.quoteId) return null;
+    const row = await Store.fetchQuote(d.quoteId);
+    const state = jobState(d, row);
+    const was = d.jobState;
+    d.jobState = state;
+    d.acceptedAt = row?.accepted_time || null;
+    d.chosenBrand = row?.chosen_brand || null;
+    d.servicem8JobId = row?.servicem8_job_id || row?.servicem8_job_uuid || d.servicem8JobId || null;
+    d.servicem8Status = row?.servicem8_status || null;
+    if (state === JOB_STATE.READY_TO_ORDER && was !== state) {
+      d.status = 'accepted';
+      await this.save('Customer accepted — ' + READY_TO_ORDER);
+    }
+    this.render();
+    return state;
+  }
+
+  /** What to buy, in the units NAC buys it in. */
+  async showOrderList() {
+    const order = supplierOrderList(this.design);
+    if (!order.ready) {
+      return void await alertDialog({ title: 'Nothing to order',
+        message: order.warnings.map(w => w.message).join('\n') });
+    }
+    const lines = [];
+    for (const g of order.groups) {
+      lines.push('— ' + g.name.toUpperCase() + ' —');
+      for (const i of g.items) {
+        lines.push(i.quantity + ' × ' + i.unit + '  ' + i.label +
+          (i.supplierCode ? '  [' + i.supplierCode + ']' : '  [no code]') +
+          (i.metresRequired ? '  (' + i.metresRequired + ' m needed' +
+            (i.offcutM ? ', ' + i.offcutM + ' m off-cut' : '') + ')' : '') +
+          (i.quotedSeparately ? '  — QUOTED SEPARATELY' : i.priced ? '' : '  — NO CONFIRMED PRICE'));
+      }
+      lines.push('');
+    }
+    await alertDialog({
+      title: 'Supplier order — ' + (order.customer || order.designId),
+      message: order.lineCount + ' line(s) for ' + (order.site || 'this job') + '.' +
+        (order.unpricedCount ? '\n\n' + order.unpricedCount +
+          ' line(s) have no confirmed price. They are on the list — check them before ordering.' : ''),
+      lines
+    });
+  }
+
+  /** The sheet that goes to site. No money on it anywhere. */
+  async showInstallerSheet() {
+    const sheet = installerSheet(this.design);
+    const lines = [
+      'SYSTEM: ' + (sheet.system || '—'),
+      'CONTROLLER: ' + (sheet.controller || '—'),
+      'TOTAL AIRFLOW: ' + (sheet.totalAirflowLs ?? '—') + ' L/s',
+      'RETURN: ' + (sheet.returnDesign
+        ? sheet.returnDesign.count + ' × ' + (sheet.returnDesign.grille || '') +
+          ', ' + (sheet.returnDesign.duct || '—') + 'Ø' : '—'),
+      '',
+      '— DUCT SCHEDULE —',
+      ...sheet.ducts.map(d => (d.serves || d.id) + '  ' + (d.diameterMm || '—') + 'Ø  ' +
+        (d.lengthM != null ? d.lengthM + ' m' : 'length not measured') +
+        (d.zone ? '  [' + d.zone + ']' : '') +
+        (d.reducer ? '  reducer ' + d.reducer : '') +
+        (d.locked ? '  (position fixed by NAC)' : '')),
+      '',
+      '— OUTLETS —',
+      ...sheet.outlets.map(o => o.room + ': ' + o.quantity + ' × ' + o.type +
+        ' @ ' + o.perOutletLs + ' L/s')
+    ];
+    if (sheet.zones.length) {
+      lines.push('', '— ZONES —', ...sheet.zones.map(z => z.name + ': ' + z.rooms));
+    }
+    if (sheet.toVerify.length) {
+      lines.push('', '— VERIFY ON SITE BEFORE INSTALLING —', ...sheet.toVerify);
+    }
+    await alertDialog({
+      title: 'Installer design sheet — ' + (sheet.customer || sheet.designId),
+      message: sheet.site || '',
+      lines
+    });
+  }
+
   async showSignLink() {
     const d = this.design;
     if (!d.quoteId) return toast('No quote yet.', 'bad');
@@ -475,7 +574,10 @@ export class DesignerApp {
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
     this.viewer.setMarkers(d.network?.routed
-      ? routedMarkers(d.network, d.autoRoute) : []);
+      ? [...routedMarkers(d.network, d.autoRoute),
+         ...(d.zoneDampers || []).map(z => ({ type: 'damper', x: z.x, y: z.y,
+           label: z.zone, title: 'Zone damper — ' + z.zone }))]
+      : []);
     this.viewer.setLayout(d.layout || {});
     this.viewer.redraw();
     return this.viewer;
@@ -1288,13 +1390,19 @@ export class DesignerApp {
     // own geometry. Only a design that has never been routed falls back to the
     // routes the estimator traced by hand.
     if (this.design.network?.routed) {
-      return routedOverlay({
+      const overlay = routedOverlay({
         network: this.design.network,
         labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL,
         returnRoute: this.design.returnRoute,
         returnDesign: this.design.returnDesign,
         activeId: this.activeSegmentId || null
       });
+      // A second return is a second duct to buy and draw.
+      for (const r of (this.design.returnRoutes || []).slice(1)) {
+        if (!r.points) continue;
+        overlay[r.id] = { ...overlay.return, points: r.points, label: 'RETURN 2' };
+      }
+      return overlay;
     }
     return routeOverlayFromNetwork({
       network: this.design.network,

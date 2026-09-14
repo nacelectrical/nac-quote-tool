@@ -733,3 +733,87 @@ export function routeConfidence({ design, tree, score } = {}) {
     statement: AUTO_ROUTE_NOTICE
   };
 }
+
+// ── PART 11: return air ─────────────────────────────────────────────────────
+
+/**
+ * Route the return air duct: return grille → the unit's return connection.
+ *
+ * The return is a different system from the supply and is drawn as one. It is
+ * sized by the return design (from the unit's required return size), never by
+ * anything worked out here, and where there are two returns both are routed.
+ */
+export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = [] } = {}) {
+  const unit = (layout.indoorUnit?.x !== undefined) ? layout.indoorUnit
+             : (layout.plenum?.x !== undefined ? layout.plenum : null);
+  if (!unit) {
+    return { generated: false, routes: [],
+      warnings: [{ code: 'RETURN_NOT_ROUTED', severity: 'CHECK',
+        message: 'The indoor unit has not been placed, so the return duct could not be routed. ' +
+                 'Its length has to be entered by hand.' }] };
+  }
+
+  const count = returnDesign?.returnCount || 1;
+  const routes = [];
+  const warnings = [];
+
+  for (let i = 0; i < count; i++) {
+    const key = i === 0 ? 'returnGrille' : 'returnGrille_' + (i + 1);
+    const grille = layout[key];
+    if (!grille || grille.x === undefined) {
+      // The first return falls back to the middle of the biggest room, which is
+      // where a return usually goes — and it says that it assumed it.
+      if (i === 0) {
+        const biggest = [...(rooms || [])].filter(r => r.conditioned && r.boundaryPx)
+          .sort((a, b) => (b.boundaryPx.w * b.boundaryPx.h) - (a.boundaryPx.w * a.boundaryPx.h))[0];
+        if (!biggest) continue;
+        const c = roomCentre(biggest);
+        warnings.push({ code: 'RETURN_POSITION_ASSUMED', severity: 'CHECK',
+          message: 'No return grille has been placed, so the return was routed from ' +
+                   biggest.label + '. Place the grille and re-route for a real length.' });
+        routes.push({ id: 'return', points: orthogonal(c, unit), assumed: true,
+                      from: biggest.label });
+        continue;
+      }
+      warnings.push({ code: 'RETURN_NOT_PLACED', severity: 'CHECK',
+        message: 'Return ' + (i + 1) + ' has not been placed on the plan.' });
+      continue;
+    }
+    routes.push({ id: i === 0 ? 'return' : 'return_' + (i + 1),
+                  points: orthogonal({ x: grille.x, y: grille.y }, unit), assumed: false });
+  }
+
+  return { generated: routes.length > 0, routes, warnings, notice: AUTO_ROUTE_NOTICE };
+}
+
+/** Two legs, square — the way duct actually runs. */
+function orthogonal(from, to) {
+  return dedupePoints([from, { x: to.x, y: from.y }, { x: to.x, y: to.y }]);
+}
+
+// ── PART 12: zone dampers ───────────────────────────────────────────────────
+
+/**
+ * Where each zone's damper goes: on the branch, before the run splits.
+ *
+ * A damper is a motor somebody buys, wires and commissions, so it is placed on
+ * the drawing rather than left implied. The position stays editable — this is a
+ * starting point, like everything else the router produces.
+ */
+export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
+  const out = [];
+  for (const s of (network?.sections || [])) {
+    if (s.role !== 'branch' || !s.zone || !s.points || s.points.length < 2) continue;
+    const override = zoneOverrides[s.id];
+    if (override?.x !== undefined) {
+      out.push({ id: 'damper_' + s.id, sectionId: s.id, zone: s.zone,
+                 roomId: s.roomId, x: override.x, y: override.y, moved: true });
+      continue;
+    }
+    // Just off the take-off, on the first leg, which is where it is reachable.
+    const a = s.points[0], b = s.points[1];
+    out.push({ id: 'damper_' + s.id, sectionId: s.id, zone: s.zone, roomId: s.roomId,
+               x: a.x + (b.x - a.x) * 0.35, y: a.y + (b.y - a.y) * 0.35, moved: false });
+  }
+  return out;
+}

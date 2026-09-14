@@ -15,6 +15,8 @@
 // (tests/report-doc.test.mjs) that scans the finished customer document for any
 // dollar figure, margin, supplier or cost wording and fails if one appears.
 
+import { AUTO_ROUTE_NOTICE } from './router.mjs';
+
 export const REPORT_KIND = { INTERNAL: 'internal', CUSTOMER: 'customer' };
 
 const money = (n) => n === null || n === undefined || !isFinite(n) ? '—'
@@ -97,6 +99,17 @@ export function internalReportDoc(design, { planSnapshot = null } = {}) {
     b.push(h2('Floor plan overlay'));
     b.push(image(planSnapshot,
       'Rooms, duct routes and equipment positions as marked up in NAC AI HVAC Designer.'));
+    // A duct drawing nobody can read the lines on is decoration.
+    b.push(note('LEGEND — heavy yellow: main trunk · blue: branch · pale blue: final ' +
+      'connection · orange: return air. Line weight follows duct diameter. Yellow dot: ' +
+      'take-off or Y piece. Bow-tie: reducer. Green square: zone damper.'));
+    if (d.autoRoute?.generated) {
+      b.push(note(AUTO_ROUTE_NOTICE));
+      b.push(note('This layout was generated automatically at ' +
+        (d.autoRoute.confidence || 'unknown') + ' confidence. A floor plan does not show ' +
+        'trusses, bulkheads, beams, inaccessible roof zones or existing services. Route ' +
+        'positions are a first-pass design suggestion and must be confirmed on site.'));
+    }
   }
 
   b.push(h2('Room schedule'));
@@ -143,12 +156,20 @@ export function internalReportDoc(design, { planSnapshot = null } = {}) {
   if (d.network) {
     b.push(h2('Ductwork'));
     b.push(table(
-      [{ label: 'Branch' }, { label: 'Destination', w: 2 }, { label: 'Role' },
+      [{ label: 'Run' }, { label: 'Serves', w: 2 }, { label: 'Role' }, { label: 'Feeds from' },
        { label: 'Airflow (L/s)', r: true }, { label: 'Diameter (mm)', r: true },
-       { label: 'Velocity (m/s)', r: true }, { label: 'Length (m)', r: true }, { label: 'Δp (Pa)', r: true }],
+       { label: 'Velocity (m/s)', r: true }, { label: 'Length (m)', r: true },
+       { label: 'Δp (Pa)', r: true }, { label: 'Reducer' }],
       d.network.sections,
-      r => [r.id, r.destination, r.role, r.airflowLs, r.diameterMm, r.velocityMs, r.lengthM || '—',
-            r.pressureDropPa]));
+      r => [r.id, r.destination, r.role, r.parentId || '—', r.airflowLs, r.diameterMm,
+            r.velocityMs, r.lengthM || '—', r.pressureDropPa,
+            r.reducerFrom ? r.reducerFrom + '→' + r.reducerTo : '—']));
+    if (d.network.routed) {
+      b.push(note('Lengths are measured from the routed layout on the calibrated plan, not ' +
+        'estimated — that is the duct that has to be bought, hung and pushed air through. ' +
+        (d.network.junctionCount || 0) + ' junction(s) and ' + (d.network.reducerCount || 0) +
+        ' reducer(s) are in this system.'));
+    }
   }
 
   if (d.returnDesign) {

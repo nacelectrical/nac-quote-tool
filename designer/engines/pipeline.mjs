@@ -16,7 +16,7 @@ import { calculateAirflow } from './airflow.mjs';
 import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
-         ROUTING_MODE } from './router.mjs';
+         buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
 import { estimateStaticPressure } from './pressure.mjs';
@@ -124,9 +124,15 @@ export function runPipeline(design, ctx = {}) {
   // throw away a run they positioned around a truss they have seen.
   const mode = d.routingMode || ROUTING_MODE.AUTO;
   if (mode === ROUTING_MODE.AUTO && !d.routingSuspended) {
+    // Zoning is worked out below, but a branch has to know its zone at the
+    // moment it is created or the damper has nothing to sit on. Working it out
+    // here costs one call and keeps the drawing and the zone plan in step.
+    const zonesForRouting = d.zoneDefinitions && d.zoneDefinitions.length
+      ? analyseZones(d.zoneDefinitions, d.airflow, { settings })
+      : suggestZones(included, d.airflow, { settings });
     const tree = measureTree(buildDuctTree({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
-      layout: d.layout || {}, zones: d.zonesDraft || d.zones
+      layout: d.layout || {}, zones: zonesForRouting
     }, { settings }), d.calibration, { settings });
     d.autoRoute = applyLockedGeometry(tree, d, settings);
   } else if (mode !== ROUTING_MODE.AUTO && d.autoRoute?.generated) {
@@ -183,6 +189,36 @@ export function runPipeline(design, ctx = {}) {
     ductLengthMm: d.returnDuctLengthMm ?? null,
     diameterOverrideMm: d.returnDuctDiameterOverride || null
   }, { settings });
+
+  // ── 8b. Return air routing (PART 11) and zone dampers (PART 12) ───────────
+  // The return is a different system and is drawn as one. Both are only routed
+  // once the supply has been, so they follow the same AUTO / MANUAL choice.
+  if (mode === ROUTING_MODE.AUTO && !d.routingSuspended) {
+    const ret = buildReturnRoutes({ layout: d.layout || {}, returnDesign: d.returnDesign,
+                                    rooms: included });
+    if (ret.generated) {
+      const measured = measureTree({ segments: ret.routes.map(r => ({ ...r, role: 'return' })) },
+                                   d.calibration, { settings });
+      d.returnRoutes = measured.segments;
+      d.returnRoute = measured.segments[0] || null;
+      // The routed return length replaces the assumption, same rule as supply.
+      if (d.returnRoute?.lengthMm) {
+        d.returnDesign = designReturnAir({
+          totalAirflowLs: d.airflow.allocatedAirflowLs,
+          returnCount: d.returnCount || 1,
+          grilleSizesMm: d.returnGrilleOverrides || null,
+          filterSizeMm: d.returnFilterOverride || null,
+          ductLengthMm: d.returnRoute.lengthMm,
+          diameterOverrideMm: d.returnDuctDiameterOverride || null
+        }, { settings });
+      }
+    }
+    d.returnRouteWarnings = ret.warnings || [];
+  }
+
+  d.zoneDampers = d.network?.routed
+    ? placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {} })
+    : [];
 
   // ── 9. Static pressure (PART 21) ──────────────────────────────────────────
   d.pressure = estimateStaticPressure({

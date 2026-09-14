@@ -28,6 +28,7 @@ import { h, card, badge, banner, button, field, input, select, empty,
          money, num, int, table } from './dom.mjs';
 import { collectInterruptions, INTERRUPT } from '../engines/interruptions.mjs';
 import { AUTO_ROUTE_NOTICE } from '../engines/router.mjs';
+import { supplierOrderList, JOB_STATE, READY_TO_ORDER } from '../engines/order.mjs';
 
 export const QUICK_STEPS = [
   { key: 'upload', label: 'Upload', hint: 'The floor plan' },
@@ -271,7 +272,10 @@ function stepPrice(app, interruptions) {
 function stepSend(app, interruptions) {
   const d = app.design;
 
-  if (!interruptions.canQuote) {
+  // A quote that EXISTS outranks the pre-quote gate. Once the job is sold,
+  // telling the estimator they cannot quote it is nonsense — what they need is
+  // the quote, and anything still outstanding listed underneath it.
+  if (!d.quoteId && !interruptions.canQuote) {
     return [
       banner('bad', interruptions.summary),
       ...interruptions.blocking.map(i => interruptionRow(app, i))
@@ -280,20 +284,28 @@ function stepSend(app, interruptions) {
 
   if (d.quoteId) {
     return [
-      banner('ok', 'Quote ' + d.quoteId + ' exists for this design.'),
+      d.jobState === JOB_STATE.READY_TO_ORDER
+        ? banner('ok', 'Quote ' + d.quoteId + ' was ACCEPTED. This job is ' + READY_TO_ORDER + '.')
+        : banner('ok', 'Quote ' + d.quoteId + ' exists for this design.'),
+      // Outstanding items do not disappear because a quote went out — they
+      // follow the job onto site.
+      interruptions.blocking.length
+        ? banner('warn', interruptions.blocking.length + ' thing(s) on this design were never ' +
+            'resolved: ' + interruptions.blocking.map(i => i.title).join('; '))
+        : null,
       card('The customer’s quote', 'What they see, and nothing else',
         h('div', { class: 'btn-row' },
           button('Open the signing link', () => app.showSignLink(), 'primary small'),
           button('Customer PDF', () => app.downloadCustomerReport(), 'small'),
           button('Internal design PDF', () => app.downloadInternalReport(), 'ghost small'),
           button('Update the quote from this design', () => app.updateQuoteFromDesign(), 'ghost small'))),
-      d.status === 'accepted' || d.readyToOrder
-        ? card('READY TO ORDER', 'The customer accepted. This is what the job needs.',
-            h('div', { class: 'btn-row' },
-              button('Supplier order list', () => app.showOrderList(), 'primary small'),
-              button('Installer design sheet', () => app.downloadInternalReport(), 'small')),
-            d.servicem8JobId ? h('div', { class: 'note' }, 'ServiceM8 job ' + d.servicem8JobId) : null)
-        : h('div', { class: 'note' }, 'Once the customer accepts, this job moves to READY TO ORDER and the supplier order list appears here.')
+      d.jobState === JOB_STATE.READY_TO_ORDER
+        ? readyToOrderCard(app)
+        : h('div', { class: 'btn-row' },
+            h('span', { class: 'note' },
+              'Once the customer accepts, this job moves to ' + READY_TO_ORDER +
+              ' and the supplier order list appears here.'),
+            button('Check for acceptance', () => app.refreshAcceptance(), 'ghost small'))
     ];
   }
 
@@ -309,6 +321,48 @@ function stepSend(app, interruptions) {
         h('strong', {}, money(d.commercials?.sellPriceIncGst))),
       button('SEND QUOTE', () => app.addDesignToQuote(), 'primary'))
   ].filter(Boolean);
+}
+
+/**
+ * AFTER CUSTOMER ACCEPTANCE.
+ *
+ * The question stops being "what does this cost?" and becomes "what do I buy
+ * and what does the installer need?". Those are two different documents, and
+ * the installer's has no money on it at all.
+ */
+function readyToOrderCard(app) {
+  const d = app.design;
+  const order = supplierOrderList(d);
+  const unpriced = order.ready ? order.unpricedCount : 0;
+
+  return card(READY_TO_ORDER, 'The customer accepted' +
+      (d.acceptedAt ? ' on ' + new Date(d.acceptedAt).toLocaleDateString('en-AU') : '') +
+      (d.chosenBrand ? ' — ' + d.chosenBrand : ''),
+
+    order.ready
+      ? h('div', { class: 'qcards' },
+          statCard('Order lines', order.lineCount,
+            order.groups.map(g => g.lineCount + ' ' + g.name.toLowerCase()).join(' · ')),
+          statCard('Materials to buy', money(order.totalCost), 'at the prices on file', 'internal'),
+          statCard('System', d.selectedUnit
+            ? d.selectedUnit.brandName + ' ' + d.selectedUnit.model : '—',
+            d.selectedUnit ? d.selectedUnit.capacityKw + ' kW' : null),
+          statCard('ServiceM8', d.servicem8JobId || 'not created',
+            d.servicem8Status || null, d.servicem8JobId ? '' : 'bad'))
+      : banner('bad', 'There is no bill of materials to order from.'),
+
+    unpriced
+      ? banner('warn', unpriced + ' line(s) on this order have no confirmed price. They are ' +
+          'on the list — check what they cost before the order goes in.',
+          button('Set the rates', () => app.openSettings('materials'), 'small'))
+      : null,
+
+    h('div', { class: 'btn-row' },
+      button('SUPPLIER ORDER LIST', () => app.showOrderList(), 'primary small'),
+      button('INSTALLER DESIGN SHEET', () => app.showInstallerSheet(), 'small'),
+      button('Design PDF', () => app.downloadInternalReport(), 'ghost small'),
+      button('Customer PDF', () => app.downloadCustomerReport(), 'ghost small'),
+      button('Re-check', () => app.refreshAcceptance(), 'ghost small')));
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
