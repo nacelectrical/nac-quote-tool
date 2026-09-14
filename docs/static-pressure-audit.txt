@@ -76,12 +76,6 @@ Gree                 GUD100PHS1/C-S / GUD100W1/NhC-S     10 kW   NO             
 Gree                 GUD125PHS1/C-S / GUD125W1/NhC-S     12 kW   NO                 none on file                             Enter available ESP from the Gree GUD125PHS1/C-S / GUD125W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
 Gree                 GUD140PHS1/C-S / GUD140W1/NhC-S     14 kW   NO                 none on file                             Enter available ESP from the Gree GUD140PHS1/C-S / GUD140W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
 Gree                 GUD160PHS1/C-S / GUD160W1/NhC-S     16 kW   NO                 none on file                             Enter available ESP from the Gree GUD160PHS1/C-S / GUD160W1/NhC-S data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI70IB / UCMI70OB        7.1 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI70IB / UCMI70OB data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI105IHB / UCMI105OB      10 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI105IHB / UCMI105OB data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI90IB / UCMI90OB       10.5 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI90IB / UCMI90OB data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI125IHB / UCMI125OB      12 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI125IHB / UCMI125OB data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI140IHB / UCMI140OB      14 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI140IHB / UCMI140OB data sheet in HVAC Design Settings → Equipment specifications
-Midea                DUCMI170IHB / UCMI170OB      17 kW   NO                 none on file                             Enter available ESP from the Midea DUCMI170IHB / UCMI170OB data sheet in HVAC Design Settings → Equipment specifications
 Mitsubishi Electric  PEAD-M50JAA — Low Profile      5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M50JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
 Mitsubishi Electric  PEAD-M71JAA — Low Profile    7.1 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEAD-M71JAA — Low Profile data sheet in HVAC Design Settings → Equipment specifications
 Mitsubishi Electric  PEA-M100GAA                  10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M100GAA data sheet in HVAC Design Settings → Equipment specifications
@@ -97,16 +91,6 @@ Mitsubishi Electric  PEA-M160GAA                  16 kW   NO                 non
 Mitsubishi Electric  PEA-M160HAA / PUZ-ZM160VKA-A.TH     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M160HAA / PUZ-ZM160VKA-A.TH data sheet in HVAC Design Settings → Equipment specifications
 Mitsubishi Electric  PEA-M180LAA                  18 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M180LAA data sheet in HVAC Design Settings → Equipment specifications
 Mitsubishi Electric  PEA-M200LAA                  20 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Electric PEA-M200LAA data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDU71AVNXWVH — Slimline     7.1 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU71AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDU100AVNXWVH — Slimline     10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU100AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA100AVNAWVH — High Static     10 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA100AVNAWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDU125AVNXWVH — Slimline   12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU125AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA125AVNXWVH — High Static   12.5 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA125AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDU140AVNXWVH — Slimline     14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDU140AVNXWVH — Slimline data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA140AVNXWVH — High Static     14 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA140AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA160AVNXWVH — High Static     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA160AVNXWVH — High Static data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA160AVSAWVH — High Static 3Ph     16 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA160AVSAWVH — High Static 3Ph data sheet in HVAC Design Settings → Equipment specifications
-Mitsubishi Heavy     FDUA200AVSAWVH — High Static 3Ph     20 kW   NO                 none on file                             Enter available ESP from the Mitsubishi Heavy FDUA200AVSAWVH — High Static 3Ph data sheet in HVAC Design Settings → Equipment specifications
 Panasonic            S-60PE3R / U-60PZ3R5          6 kW   YES — 60 Pa        MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
 Panasonic            S-71PE3R / U-71PZ3R5          7 kW   YES — 71 Pa        MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
 Panasonic            S-100PE3R / U-100PZ3R5       10 kW   YES — 100 Pa       MM Electrical — NEW STOCK UPDATE, TECH DATA SHEETS none
@@ -124,15 +108,13 @@ Samsung              AC140TNHDKG — Duct S2        14 kW   NO                 n
 Samsung              AC140TNHPKG — Duct S2+       14 kW   NO                 none on file                             Enter available ESP from the Samsung AC140TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
 Samsung              AC160TNHPKG — Duct S2+       16 kW   NO                 none on file                             Enter available ESP from the Samsung AC160TNHPKG — Duct S2+ data sheet in HVAC Design Settings → Equipment specifications
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-TOTAL 120 selectable indoor models: 35 with static pressure on file, 85 without.
+TOTAL 104 selectable indoor models: 35 with static pressure on file, 69 without.
 
   Braemar                   0 / 13   no static pressure data at all for this brand
   Daikin                   22 / 37
   Fujitsu                   7 / 17
   Gree                       0 / 6   no static pressure data at all for this brand
-  Midea                      0 / 6   no static pressure data at all for this brand
   Mitsubishi Electric       0 / 15   no static pressure data at all for this brand
-  Mitsubishi Heavy          0 / 10   no static pressure data at all for this brand
   Panasonic                  6 / 7
   Samsung                    0 / 9   no static pressure data at all for this brand
 

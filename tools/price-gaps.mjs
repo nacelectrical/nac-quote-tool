@@ -38,11 +38,16 @@ for (const [key, def] of Object.entries(MATERIAL_CATALOGUE)) {
     const r = resolveCost(key, d ? { diameterMm: d } : {});
     const needs = r.cost === null || r.source === 'default_placeholder';
     if (!needs) continue;
+    // A line sold by the length is confirmed as the price of ONE LENGTH,
+    // because that is the number on NAC's invoice. Reporting a derived
+    // per-metre figure would be asking for a price that does not exist.
+    const shipped = r.pack ? r.pack.cost : r.cost;
     // Can this line ever be chosen?
     const reachable = d === null ? true
       : LADDER.includes(d) || OUTLET_SIZES.includes(d);
     rows.push({ key, label: r.label, unit: r.unit, diameterMm: d,
-                current: r.cost, missing: r.cost === null, reachable });
+                current: shipped, missing: shipped === null || shipped === undefined,
+                reachable });
   }
 }
 

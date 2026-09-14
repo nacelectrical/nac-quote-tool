@@ -193,9 +193,18 @@ export function manualLength(lengthM) {
  *                                            has more than one outlet.
  */
 export function buildDuctNetwork({ airflow, outlets, routesByRoomId = {}, mainRoute = null,
-                                   diameterOverrides = {}, extraFittingsByRoomId = {} }, opts = {}) {
+                                   diameterOverrides = {}, extraFittingsByRoomId = {},
+                                   topology = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const outletsByRoom = new Map((outlets?.rows || []).map(o => [o.roomId, o]));
+
+  // A routed tree replaces the flat assumption entirely: real trunk segments
+  // carrying summed downstream airflow, junctions, and branches hung off them.
+  // Without one, the original shape stands — every branch straight off the
+  // plenum — so a design that has never been routed behaves exactly as before.
+  if (topology?.generated && topology.segments?.length) {
+    return sizeTopology(topology, { diameterOverrides, extraFittingsByRoomId }, opts);
+  }
 
   const sections = [];
 
@@ -260,8 +269,131 @@ export function buildDuctNetwork({ airflow, outlets, routesByRoomId = {}, mainRo
   };
 }
 
+/**
+ * Walk the real parent chain from every terminal back to the plenum and keep
+ * the worst path. This is the run the fan has to satisfy.
+ */
+function indexRunThroughTree(network) {
+  const byId = new Map(network.sections.map(s => [s.id, s]));
+  // A terminal is anything nothing else hangs off.
+  const hasChild = new Set(network.sections.map(s => s.parentId).filter(Boolean));
+  const terminals = network.sections.filter(s => !hasChild.has(s.id));
+  if (!terminals.length) return null;
+
+  let worst = null;
+  for (const t of terminals) {
+    const path = [];
+    let cur = t;
+    const guard = new Set();
+    while (cur && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      path.unshift(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : null;
+    }
+    const totalPa = round(path.reduce((s, x) => s + (x.pressureDropPa || 0), 0), 1);
+    if (!worst || totalPa > worst.totalPa) {
+      worst = {
+        totalPa,
+        destination: t.destination,
+        path: path.map(s => ({
+          id: s.id, role: s.role, destination: s.destination,
+          diameterMm: s.diameterMm, lengthM: s.lengthM,
+          effectiveLengthM: s.effectiveLengthM, pressureDropPa: s.pressureDropPa
+        }))
+      };
+    }
+  }
+  return worst;
+}
+
+/**
+ * Size a routed tree.
+ *
+ * Each segment already carries the airflow it has to move — summed from the
+ * leaves back up by the router, so a trunk steps down after every take-off.
+ * Sizing is the SAME sizeSection used by the flat path; what changed is that
+ * the airflow handed to it is now the real downstream total rather than one
+ * room's share.
+ *
+ * A REDUCER is recorded wherever a trunk meets a smaller trunk, because that is
+ * a fitting somebody has to buy and fit, and it is only knowable once the tree
+ * exists.
+ */
+function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId = {} }, opts = {}) {
+  const settings = opts.settings || DEFAULT_SETTINGS;
+  const sections = [];
+
+  for (const seg of topology.segments) {
+    const extra = seg.roomId ? (extraFittingsByRoomId[seg.roomId] || []) : [];
+    const sized = sizeSection({
+      id: seg.id,
+      role: seg.role === 'trunk' ? 'main' : seg.role,   // a trunk is velocity-banded as a main
+      destination: seg.destination,
+      airflowLs: seg.airflowLs,
+      lengthMm: seg.lengthMm ?? null,
+      diameterMm: diameterOverrides[seg.id],
+      rigid: !!seg.rigid,
+      fittings: [...(seg.fittings || []), ...extra]
+    }, opts);
+
+    sections.push({
+      ...sized,
+      // The geometry is part of the section, not a parallel drawing model.
+      role: seg.role,
+      parentId: seg.parentId ?? null,
+      junctionId: seg.junctionId ?? null,
+      roomId: seg.roomId ?? null,
+      zone: seg.zone ?? null,
+      points: seg.points || null,
+      auto: true,
+      // A lock is the estimator's decision about a real roof space. It has to
+      // survive sizing, or the run redraws as unlocked and the next re-route
+      // quietly overwrites it.
+      locked: !!seg.locked,
+      lockedBy: seg.lockedBy || null,
+      lockedAt: seg.lockedAt || null
+    });
+  }
+
+  // Reducers: a size change between a segment and its parent.
+  const byId = new Map(sections.map(s => [s.id, s]));
+  for (const s of sections) {
+    if (!s.parentId) continue;
+    const parent = byId.get(s.parentId);
+    if (!parent || s.role === 'branch' || s.role === 'final') continue;
+    if (parent.diameterMm && s.diameterMm && parent.diameterMm !== s.diameterMm) {
+      s.reducerFrom = parent.diameterMm;
+      s.reducerTo = s.diameterMm;
+    }
+  }
+
+  const totalsByDiameter = {};
+  for (const s of sections) {
+    totalsByDiameter[s.diameterMm] = round((totalsByDiameter[s.diameterMm] || 0) + (s.lengthM || 0), 2);
+  }
+
+  return {
+    sections,
+    routed: true,
+    topology: { nodes: topology.nodes, footprint: topology.footprint, spine: topology.spine,
+                plenum: topology.plenum, junctionCount: topology.junctionCount },
+    reducerCount: sections.filter(s => s.reducerFrom).length,
+    junctionCount: topology.junctionCount || 0,
+    totalDuctLengthM: round(sections.reduce((s, x) => s + (x.lengthM || 0), 0), 2),
+    totalsByDiameter,
+    warnings: sections.flatMap(s => s.warnings).concat(topology.warnings || []),
+    settingsVelocity: settings.duct.velocity
+  };
+}
+
 /** The index run — the highest-pressure path from the unit to a diffuser. */
 export function indexRun(network) {
+  // A ROUTED design is a real tree, so the index run has to be walked through
+  // it. The flat shape below only ever looked at main + branch + final, which
+  // on a routed system silently ignores every intermediate trunk run and
+  // UNDERSTATES the pressure the fan has to make.
+  if (network?.routed) return indexRunThroughTree(network);
+
   const main = network.sections.find(s => s.role === 'main');
   const branches = network.sections.filter(s => s.role === 'branch');
   if (!branches.length) return null;

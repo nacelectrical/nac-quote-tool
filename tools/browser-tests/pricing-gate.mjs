@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 let fail=0; const say=(n,c)=>{console.log(`  ${c?'PASS':'FAIL'}  ${n}`); if(!c)fail++;};
@@ -43,13 +44,13 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
 
   await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
   await p.locator('button',{hasText:'Load the sample builder plan'}).first().click(); await p.waitForTimeout(2500);
-  await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(600);
+  await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(600);
   const va=p.locator('button',{hasText:'Verify all'}); if(await va.count()) await va.last().click();
   await p.waitForTimeout(1800);
 
   if (priceTheGaps){
     // What the estimator would do: give the lines with no cost a real cost.
-    await p.locator('button.tab',{hasText:'Materials'}).first().click(); await p.waitForTimeout(900);
+    await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Materials'}).first().click(); await p.waitForTimeout(900);
     // One at a time, as a person would — the app re-renders after each edit.
     let n=0;
     for(let pass=0; pass<6; pass++){
@@ -72,7 +73,7 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
     console.log('   priced', n, 'previously-unpriced line(s) at $48');
   }
 
-  await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(900);
+  await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(900);
   await p.locator('button',{hasText:'ADD DESIGN TO QUOTE'}).first().click(); await p.waitForTimeout(600);
   await answerDialogs();
   await p.waitForTimeout(1800);

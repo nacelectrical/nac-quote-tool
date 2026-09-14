@@ -27,6 +27,13 @@ import { buildRoom, manualMeasurement, applyRoomOverride, verifyRoom,
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
+import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
+         LABEL_DETAIL, DEFAULT_LABEL_DETAIL, ROUTING_MODE,
+         AUTO_ROUTE_NOTICE } from './engines/router.mjs';
+import { supplierOrderList, installerSheet, jobState, JOB_STATE,
+         READY_TO_ORDER } from './engines/order.mjs';
+import { collectInterruptions, FIX_IN } from './engines/interruptions.mjs';
+import { renderQuickMode, QUICK_STEPS, quickStepState } from './ui/quick-mode.mjs';
 import { acknowledge } from './engines/warnings.mjs';
 import { createDesign, addRevision, diffDesigns, restoreRevision } from './engines/model.mjs';
 import * as Store from './engines/store.mjs';
@@ -68,6 +75,13 @@ export class DesignerApp {
     this.design = createDesign({});
     this.summary = {};
     this.tab = 'plan';
+    // QUICK QUOTE MODE is the default. An estimator quoting a normal house
+    // should never have to walk through thirteen engineering tabs; those stay
+    // one click away under ADVANCED DESIGN for the jobs that need them.
+    this.mode = 'quick';
+    this.quickStep = 'upload';
+    this.interruptions = { blocking: [], confirm: [], notes: [], all: [],
+                           canQuote: false, canAutoProceed: false, summary: '' };
     this.selectedRoomId = null;
     this.settingsSection = null;
     this.specModelKey = '';
@@ -137,6 +151,7 @@ export class DesignerApp {
   // ── Core recompute ────────────────────────────────────────────────────────
 
   recompute() {
+    if (this.mode === 'quick') this.acceptHighConfidenceRooms();
     this.design = runPipeline(this.design, {
       settings: this.settings,
       catalogue: this.catalogue,
@@ -169,6 +184,13 @@ export class DesignerApp {
     this.renderTabs();
     if (this.settingsSection) {
       mount(this.mainEl, renderSettingsScreen(this, this.settingsSection));
+    } else if (this.mode === 'quick') {
+      // One focused screen per step. The engineering still ran — it is just
+      // not something the estimator has to walk through to get a quote out.
+      mount(this.mainEl, h('div', { class: 'tab-body quick' },
+        ...renderQuickMode(this).filter(Boolean)));
+      // The review step shows the plan itself, so the viewer has to follow it.
+      if (this.quickStep === 'design') this.mountQuickPlan();
     } else if (this.tab === 'plan') {
       this.renderPlanTab();
     } else {
@@ -194,6 +216,9 @@ export class DesignerApp {
       h('div', { class: 'head-actions' },
         w ? badge((w.counts.CRITICAL || 0) + ' critical · ' + (w.counts.WARNING || 0) + ' warnings',
           w.counts.CRITICAL ? 'bad' : w.counts.WARNING ? 'warn' : 'ok') : null,
+        this.mode === 'quick'
+          ? button('ADVANCED DESIGN', () => this.enterAdvanced(), 'ghost small')
+          : button('◂ QUICK QUOTE', () => this.enterQuick(), 'ghost small'),
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
         button('Save', () => this.save(), 'small'),
@@ -205,6 +230,16 @@ export class DesignerApp {
   }
 
   renderSteps() {
+    if (this.mode === 'quick') {
+      const done = quickStepState(this.design, this.interruptions);
+      mount(this.stepsEl, QUICK_STEPS.map((st, i) => h('button', {
+        class: 'step' + (done[st.key] ? ' done' : '') + (this.quickStep === st.key ? ' on' : ''),
+        title: st.hint,
+        onclick: () => this.setQuickStep(st.key)
+      }, h('span', { class: 'step-n' }, done[st.key] ? '✓' : String(i + 1)),
+         h('span', {}, st.label))));
+      return;
+    }
     mount(this.stepsEl, STEPS.map((s, i) => {
       const done = s.done(this.design);
       return h('button', {
@@ -216,6 +251,7 @@ export class DesignerApp {
   }
 
   renderTabs() {
+    if (this.mode === 'quick') { clear(this.tabsEl); return; }
     mount(this.tabsEl, TABS.map(([key, label]) => {
       const count = key === 'warnings' && this.design.warnings?.length ? this.design.warnings.length : null;
       return h('button', {
@@ -225,19 +261,294 @@ export class DesignerApp {
     }));
   }
 
-  setTab(tab) { this.tab = tab; this.settingsSection = null; this.render(); }
+  /**
+   * Asking for a named engineering tab IS an advanced action, so it leaves
+   * quick mode. Without this, every "Go to Rooms" button inside quick mode set
+   * a tab that the quick renderer never looks at, and appeared to do nothing.
+   */
+  setTab(tab) {
+    this.tab = tab;
+    this.settingsSection = null;
+    if (this.mode === 'quick') this.mode = 'advanced';
+    this.render();
+  }
+
+  // ── QUICK QUOTE MODE ──────────────────────────────────────────────────────
+
+  setQuickStep(step) {
+    this.quickStep = step;
+    this.settingsSection = null;
+    this.render();
+    // Opening SEND is the moment the estimator wants to know whether the
+    // customer has signed, so ask then rather than making them press a button.
+    if (step === 'send' && this.design.quoteId) {
+      this.refreshAcceptance().catch(() => { /* offline is not an error here */ });
+    }
+  }
+
+  /** The thirteen engineering tabs, for the job that needs them. */
+  enterAdvanced() {
+    this.mode = 'advanced';
+    this.settingsSection = null;
+    // Land somewhere useful rather than wherever they were last time.
+    if (!this.tab || this.tab === 'plan') this.tab = this.design.stage === 'complete' ? 'overview' : 'plan';
+    this.render();
+  }
+
+  enterQuick() {
+    this.mode = 'quick';
+    this.settingsSection = null;
+    this.render();
+  }
+
+  /**
+   * Take the estimator to the thing that needs them, in one click.
+   *
+   * An interruption they cannot act on is just an alarm, so every one of them
+   * carries where it is fixed and this is what honours that.
+   */
+  jumpToFix(interruption) {
+    if (!interruption) return;
+    if (interruption.fixIn === FIX_IN.SETTINGS) return void this.openSettings('materials');
+    if (interruption.fixIn === FIX_IN.PLAN) {
+      this.mode = 'quick'; this.quickStep = 'upload'; return void this.render();
+    }
+    // Everything else lives on an engineering tab. Switching to advanced is the
+    // honest thing to do: that is where the control actually is.
+    this.mode = 'advanced';
+    this.tab = interruption.fixIn || 'warnings';
+    if (interruption.roomId) this.selectedRoomId = interruption.roomId;
+    this.render();
+  }
+
+  /**
+   * A CONFIRM is the estimator taking ownership of something the tool could not
+   * settle. It is recorded against the design with who and when, because "we
+   * confirmed it" with no name on it is worth nothing when a job goes wrong.
+   */
+  async confirmInterruption(interruption) {
+    if (!interruption) return;
+    const by = (typeof window !== 'undefined' && window.nacUser) || 'NAC';
+
+    // A confirmation has to DO the thing, not just note that someone said yes.
+    if (interruption.id === 'ROOMS_UNVERIFIED' && interruption.roomIds?.length) {
+      const ids = new Set(interruption.roomIds);
+      this.design.rooms = (this.design.rooms || [])
+        .map(r => ids.has(r.id) ? verifyRoom(r, by) : r);
+    }
+    if (interruption.id === 'PHASE_UNCONFIRMED') {
+      const unit = this.design.selectedUnit;
+      const ok = await confirmDialog({
+        title: 'Does the site have three-phase supply?',
+        message: (unit ? unit.brandName + ' ' + unit.model + ' is a ' + unit.phase + ' unit. ' : '') +
+          'Say yes only if you have seen the switchboard. A three-phase unit on a single-phase ' +
+          'house is a dead job.',
+        confirmLabel: 'Yes — three phase is there', cancelLabel: 'Not confirmed' });
+      if (!ok) return;
+      this.design.sitePhase = '3Ph';
+    }
+
+    this.design.confirmations = [...(this.design.confirmations || []).filter(c => c.id !== interruption.id),
+      { id: interruption.id, title: interruption.title, by, at: new Date().toISOString() }];
+    toast('Confirmed by ' + by + '.');
+    this.update();
+  }
+
+  /**
+   * Rooms the plan itself answered.
+   *
+   * A HIGH-confidence measurement comes off a dimension chain printed on the
+   * drawing. Making the estimator click each one is the friction QUICK QUOTE
+   * MODE exists to remove — so quick mode accepts them and RECORDS that it did,
+   * by name, the same as any other verification. Nothing is hidden: the Rooms
+   * tab and the internal design sheet both show who verified each room, and
+   * MEDIUM still needs a glance while LOW still blocks.
+   */
+  acceptHighConfidenceRooms() {
+    const rooms = this.design.rooms || [];
+    const toAccept = rooms.filter(r => r.conditioned && r.areaSqM > 0 &&
+      r.confidenceBand === 'HIGH' && r.status !== 'Verified' && r.status !== 'Manual');
+    if (!toAccept.length) return;
+    const ids = new Set(toAccept.map(r => r.id));
+    this.design.rooms = rooms.map(r => ids.has(r.id)
+      ? verifyRoom(r, 'auto — high confidence read from the plan') : r);
+  }
+
+  /**
+   * APPROVE DESIGN. The engineering safeguards are unchanged — a critical
+   * warning still has to be acknowledged by a named person, and quick mode does
+   * not get a quieter version of that.
+   */
+  async approveDesign() {
+    const i = collectInterruptions(this.design);
+    if (!i.canQuote) {
+      return void await alertDialog({
+        title: 'This design cannot be approved yet',
+        message: i.summary,
+        lines: i.blocking.map(x => x.title) });
+    }
+    if (i.confirm.length) {
+      const ok = await confirmDialog({
+        title: 'Approve with ' + i.confirm.length + ' thing(s) unconfirmed?',
+        message: 'These were not settled. Approving means you are taking them on.',
+        lines: i.confirm.map(x => x.title),
+        confirmLabel: 'Approve anyway' });
+      if (!ok) return;
+    }
+    const by = (typeof window !== 'undefined' && window.nacUser) || 'NAC';
+    this.design.approved = { by, at: new Date().toISOString() };
+    this.design.status = 'designed';
+    await this.save('Design approved by ' + by);
+    toast('Design approved.');
+    this.setQuickStep('price');
+  }
+
+  /** The plan itself, inside the review screen. */
+  mountQuickPlan() {
+    const host = this.mainEl.querySelector('.qreview-plan');
+    if (!host) return;
+    this.ensureViewer();
+    const slot = host.querySelector('.qplan-placeholder');
+    if (slot && this.viewer.element) {
+      // The viewer's own wrapper is position:absolute;inset:0, so it needs a
+      // sized, positioned box around it. Dropped in bare it anchors to the page
+      // and covers the whole screen, including the buttons.
+      const box = h('div', { class: 'plan-host' });
+      box.appendChild(this.viewer.element);
+      slot.replaceWith(box);
+      // It has just moved into a different sized box, so it has to re-measure
+      // before it redraws or the plan lands half off the canvas.
+      this.viewer.fit?.();
+      this.viewer.redraw?.();
+    }
+  }
+
+  /**
+   * READY TO ORDER.
+   *
+   * Acceptance lives on the QUOTE, because that is what the customer signs, so
+   * this asks the database rather than trusting a flag on the design.
+   */
+  async refreshAcceptance() {
+    const d = this.design;
+    if (!d.quoteId) return null;
+    const row = await Store.fetchQuote(d.quoteId);
+    const state = jobState(d, row);
+    const was = d.jobState;
+    d.jobState = state;
+    d.acceptedAt = row?.accepted_time || null;
+    d.chosenBrand = row?.chosen_brand || null;
+    d.servicem8JobId = row?.servicem8_job_id || row?.servicem8_job_uuid || d.servicem8JobId || null;
+    d.servicem8Status = row?.servicem8_status || null;
+    if (state === JOB_STATE.READY_TO_ORDER && was !== state) {
+      d.status = 'accepted';
+      await this.save('Customer accepted — ' + READY_TO_ORDER);
+    }
+    this.render();
+    return state;
+  }
+
+  /** What to buy, in the units NAC buys it in. */
+  async showOrderList() {
+    const order = supplierOrderList(this.design);
+    if (!order.ready) {
+      return void await alertDialog({ title: 'Nothing to order',
+        message: order.warnings.map(w => w.message).join('\n') });
+    }
+    const lines = [];
+    for (const g of order.groups) {
+      lines.push('— ' + g.name.toUpperCase() + ' —');
+      for (const i of g.items) {
+        lines.push(i.quantity + ' × ' + i.unit + '  ' + i.label +
+          (i.supplierCode ? '  [' + i.supplierCode + ']' : '  [no code]') +
+          (i.metresRequired ? '  (' + i.metresRequired + ' m needed' +
+            (i.offcutM ? ', ' + i.offcutM + ' m off-cut' : '') + ')' : '') +
+          (i.quotedSeparately ? '  — QUOTED SEPARATELY' : i.priced ? '' : '  — NO CONFIRMED PRICE'));
+      }
+      lines.push('');
+    }
+    await alertDialog({
+      title: 'Supplier order — ' + (order.customer || order.designId),
+      message: order.lineCount + ' line(s) for ' + (order.site || 'this job') + '.' +
+        (order.unpricedCount ? '\n\n' + order.unpricedCount +
+          ' line(s) have no confirmed price. They are on the list — check them before ordering.' : ''),
+      lines
+    });
+  }
+
+  /** The sheet that goes to site. No money on it anywhere. */
+  async showInstallerSheet() {
+    const sheet = installerSheet(this.design);
+    const lines = [
+      'SYSTEM: ' + (sheet.system || '—'),
+      'CONTROLLER: ' + (sheet.controller || '—'),
+      'TOTAL AIRFLOW: ' + (sheet.totalAirflowLs ?? '—') + ' L/s',
+      'RETURN: ' + (sheet.returnDesign
+        ? sheet.returnDesign.count + ' × ' + (sheet.returnDesign.grille || '') +
+          ', ' + (sheet.returnDesign.duct || '—') + 'Ø' : '—'),
+      '',
+      '— DUCT SCHEDULE —',
+      ...sheet.ducts.map(d => (d.serves || d.id) + '  ' + (d.diameterMm || '—') + 'Ø  ' +
+        (d.lengthM != null ? d.lengthM + ' m' : 'length not measured') +
+        (d.zone ? '  [' + d.zone + ']' : '') +
+        (d.reducer ? '  reducer ' + d.reducer : '') +
+        (d.locked ? '  (position fixed by NAC)' : '')),
+      '',
+      '— OUTLETS —',
+      ...sheet.outlets.map(o => o.room + ': ' + o.quantity + ' × ' + o.type +
+        ' @ ' + o.perOutletLs + ' L/s')
+    ];
+    if (sheet.zones.length) {
+      lines.push('', '— ZONES —', ...sheet.zones.map(z => z.name + ': ' + z.rooms));
+    }
+    if (sheet.toVerify.length) {
+      lines.push('', '— VERIFY ON SITE BEFORE INSTALLING —', ...sheet.toVerify);
+    }
+    await alertDialog({
+      title: 'Installer design sheet — ' + (sheet.customer || sheet.designId),
+      message: sheet.site || '',
+      lines
+    });
+  }
+
+  async showSignLink() {
+    const d = this.design;
+    if (!d.quoteId) return toast('No quote yet.', 'bad');
+    await linkDialog({
+      title: 'Quote ' + d.quoteId,
+      message: 'Send this to the customer. It opens their quote and lets them accept and sign it.',
+      url: location.origin + '/sign.html?q=' + encodeURIComponent(d.quoteId) });
+  }
+
+  downloadCustomerReport() { return this.downloadReport(REPORT_KIND.CUSTOMER); }
+  downloadInternalReport() { return this.downloadReport(REPORT_KIND.INTERNAL); }
+
+  async downloadReport(kind) {
+    const opts = { logo: document.querySelector('.brand img')?.src || null,
+                   planSnapshot: this.viewer?.snapshot() || null };
+    const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
+    const r = downloadReportPdf(this.design, kind, opts);
+    if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
+    await alertDialog({ title: 'The PDF was not saved',
+      message: r.error + '\n\nOpen the print page instead and use Save as PDF.' });
+    openReport(kind === REPORT_KIND.CUSTOMER
+      ? customerReportHtml(this.design, opts) : internalReportHtml(this.design, opts), label);
+  }
 
   // ── Plan tab (PART 2, 6, 7, 17, 18) ───────────────────────────────────────
 
-  renderPlanTab() {
+  /**
+   * The plan viewer, created once and moved between screens.
+   *
+   * It used to be created inside the Plan tab, which meant the review screen in
+   * QUICK QUOTE MODE could only ever show an empty box until someone had opened
+   * that tab. The viewer is one object with one plan image; where it is
+   * displayed is a separate question from whether it exists.
+   */
+  ensureViewer() {
     const d = this.design;
-    const viewerHost = h('div', { class: 'plan-host' });
-    const tools = h('div', { class: 'plan-tools' });
-
-    mount(this.mainEl, h('div', { class: 'plan-layout' }, tools, viewerHost));
-
     if (!this.viewer) {
-      this.viewer = createPlanViewer(viewerHost, {
+      this.viewer = createPlanViewer(h('div', { class: 'plan-host' }), {
         onCalibrationPoints: (pts) => { this.calibPoints = pts; this.render(); },
         onRoomSelect: (id) => { this.selectedRoomId = id; this.render(); },
         onRoomBoundary: (id, box) => this.setRoomBoundary(id, box),
@@ -246,12 +557,8 @@ export class DesignerApp {
         onRouteDraft: () => this.render(),
         onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
       });
-    } else {
-      viewerHost.appendChild(this.viewer.element);
     }
 
-    // The viewer only exists once the Plan tab has been opened, so this is the
-    // single place the plan image is loaded onto it.
     if (d.plan?.dataUrl && this.loadedPlanUrl !== d.plan.dataUrl) {
       const url = d.plan.dataUrl;
       this.loadedPlanUrl = url;
@@ -266,7 +573,24 @@ export class DesignerApp {
     this.viewer.selectRoom(this.selectedRoomId);
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
+    this.viewer.setMarkers(d.network?.routed
+      ? [...routedMarkers(d.network, d.autoRoute),
+         ...(d.zoneDampers || []).map(z => ({ type: 'damper', x: z.x, y: z.y,
+           label: z.zone, title: 'Zone damper — ' + z.zone }))]
+      : []);
     this.viewer.setLayout(d.layout || {});
+    this.viewer.redraw();
+    return this.viewer;
+  }
+
+  renderPlanTab() {
+    const viewerHost = h('div', { class: 'plan-host' });
+    const tools = h('div', { class: 'plan-tools' });
+
+    mount(this.mainEl, h('div', { class: 'plan-layout' }, tools, viewerHost));
+    this.ensureViewer();
+    viewerHost.appendChild(this.viewer.element);
+    this.viewer.fit?.();
     this.viewer.redraw();
 
     mount(tools,
@@ -532,8 +856,29 @@ export class DesignerApp {
     const d = this.design;
     const mode = this.viewer?.getMode() || MODES.VIEW;
     const rooms = (d.airflow?.rows || []).map(r => ({ value: r.roomId, label: r.label }));
+    const routing = d.routingMode || ROUTING_MODE.AUTO;
+    const routed = !!d.network?.routed;
 
     return card('4. Duct routes', 'Click along the route, double-click to finish. Length is measured through the calibration.',
+      // PART 18 — how the ductwork gets laid out. AUTO is the default: the tool
+      // does it and the estimator drags it into shape.
+      field('Duct routing', select(routing, [
+        { value: ROUTING_MODE.AUTO, label: 'AUTO — the tool lays out the whole system' },
+        { value: ROUTING_MODE.ASSISTED, label: 'ASSISTED — suggest, I approve each one' },
+        { value: ROUTING_MODE.MANUAL, label: 'MANUAL — I trace every route myself' }
+      ], v => { this.design.routingMode = v; this.design.routingSuspended = false; this.update(); })),
+
+      routed ? banner('warn', AUTO_ROUTE_NOTICE) : null,
+      routed ? this.routedSummary() : null,
+      routing === ROUTING_MODE.AUTO
+        ? h('div', { class: 'btn-row' },
+            button('AUTO ROUTE', () => this.autoRoute(), 'primary small'),
+            button('RE-ROUTE UNLOCKED', () => this.rerouteUnlocked(), 'small'),
+            button(Object.keys(d.lockedRoutes || {}).length
+              ? 'Unlock all (' + Object.keys(d.lockedRoutes).length + ')' : 'Nothing locked',
+              () => this.unlockAllRoutes(),
+              Object.keys(d.lockedRoutes || {}).length ? 'ghost small' : 'ghost small disabled'))
+        : null,
       !d.calibration ? banner('warn', 'Calibrate the plan first — routes cannot be measured without it.') : null,
       h('div', { class: 'grid-2' },
         field('Route for', select(this.routeTargetRoomId || '',
@@ -545,11 +890,102 @@ export class DesignerApp {
             mode === MODES.ROUTE ? 'primary small' : 'small'),
           button('Undo point', () => { this.viewer.undoDraftPoint(); this.render(); }, 'ghost small'),
           button('Clear', () => { this.viewer.clearDraftRoute(); this.render(); }, 'ghost small')))),
+      // What each duct line says about itself. The estimator's default shows
+      // the diameter, because a duct drawing without a size on it is decoration.
+      field('Labels on the plan', select(this.labelDetail || DEFAULT_LABEL_DETAIL, [
+        { value: LABEL_DETAIL.DIAMETER, label: 'Diameter only' },
+        { value: LABEL_DETAIL.DIAMETER_FLOW, label: 'Diameter + airflow' },
+        { value: LABEL_DETAIL.FULL, label: 'Full detail (room, size, airflow, length)' },
+        { value: LABEL_DETAIL.HIDE, label: 'Hide labels' }
+      ], v => { this.labelDetail = v; this.render(); })),
       this.routeSummaryTable());
+  }
+
+  /** What the auto route produced, and how much of it rests on something solid. */
+  routedSummary() {
+    const d = this.design;
+    const c = d.autoRoute?.confidenceDetail;
+    const sc = d.routeScore;
+    const locked = Object.keys(d.lockedRoutes || {}).length;
+    return h('div', { class: 'note' },
+      h('div', {},
+        h('strong', {}, 'Auto route confidence: ' + (c?.band || '—')),
+        ' · ' + (d.network.junctionCount || 0) + ' junction(s)' +
+        ' · ' + (d.network.reducerCount || 0) + ' reducer(s)' +
+        ' · ' + (sc?.totalDuctM ?? '—') + ' m of duct' +
+        (locked ? ' · ' + locked + ' locked' : '')),
+      c?.reasons?.length
+        ? h('div', { class: 'note-sub' }, 'Confidence is limited by: ' + c.reasons.join(' '))
+        : null);
+  }
+
+  /** PART 10 — AUTO ROUTE. Lays out the whole system from scratch. */
+  async autoRoute() {
+    const d = this.design;
+    const locked = Object.keys(d.lockedRoutes || {}).length;
+    if (locked) {
+      const ok = await confirmDialog({
+        title: 'Re-route everything, including the ' + locked + ' locked run(s)?',
+        message: 'AUTO ROUTE lays out the whole system again. Anything you locked was geometry ' +
+                 'you decided on, and this throws it away. RE-ROUTE UNLOCKED keeps it.',
+        confirmLabel: 'Re-route everything', cancelLabel: 'Keep my locked runs', danger: true });
+      if (!ok) return;
+      this.design.lockedRoutes = {};
+    }
+    this.design.routingMode = ROUTING_MODE.AUTO;
+    this.design.routingSuspended = false;
+    this.update();
+    const n = (this.design.network?.sections || []).filter(s => s.points).length;
+    toast(n ? 'Routed ' + n + ' duct run(s). Check them against the roof space.'
+            : 'Nothing could be routed — draw the room boundaries first.', n ? '' : 'bad');
+  }
+
+  /** PART 10 — recalculates only what the estimator has not locked. */
+  rerouteUnlocked() {
+    this.design.routingMode = ROUTING_MODE.AUTO;
+    this.design.routingSuspended = false;
+    this.update();
+    const locked = Object.keys(this.design.lockedRoutes || {}).length;
+    toast('Re-routed. ' + (locked ? locked + ' locked run(s) kept as they were.' : 'Nothing was locked.'));
+  }
+
+  /**
+   * PART 9 — lock a run.
+   *
+   * The estimator has stood in the roof space and decided where this one goes.
+   * That outranks anything the tool works out from a drawing, so a re-route
+   * leaves it alone.
+   */
+  toggleRouteLock(sectionId) {
+    const d = this.design;
+    const locked = { ...(d.lockedRoutes || {}) };
+    if (locked[sectionId]) {
+      delete locked[sectionId];
+      toast('Unlocked — the next re-route will lay this one out again.');
+    } else {
+      const seg = (d.network?.sections || []).find(s => s.id === sectionId);
+      if (!seg?.points) return toast('That run has no drawn geometry to lock.', 'bad');
+      locked[sectionId] = { points: seg.points,
+        by: (typeof window !== 'undefined' && window.nacUser) || 'NAC',
+        at: new Date().toISOString() };
+      toast('Locked. Re-routing will leave this run exactly where it is.');
+    }
+    d.lockedRoutes = locked;
+    this.update();
+  }
+
+  unlockAllRoutes() {
+    if (!Object.keys(this.design.lockedRoutes || {}).length) return;
+    this.design.lockedRoutes = {};
+    toast('All runs unlocked.');
+    this.update();
   }
 
   routeSummaryTable() {
     const d = this.design;
+    // A routed design lists what the tool laid out, with the controls that
+    // matter on each run: its size, and whether a re-route may touch it.
+    if (d.network?.routed) return this.routedRunTable();
     const rows = [];
     if (d.mainRoute) rows.push({ id: 'main', label: 'Main duct', lengthM: d.mainRoute.lengthM,
                                  source: d.mainRoute.source, note: d.mainRoute.note });
@@ -566,6 +1002,44 @@ export class DesignerApp {
       { key: 'clear', label: '', align: 'right', width: '40px',
         render: (r) => button('✕', () => this.clearRoute(r.id), 'tiny ghost') }
     ], rows, { compact: true });
+  }
+
+  /** Every routed run, with the two controls that matter on each one. */
+  routedRunTable() {
+    const d = this.design;
+    const locked = d.lockedRoutes || {};
+    const rows = (d.network.sections || []).filter(s => s.points?.length).map(s => ({
+      id: s.id, role: s.role, destination: s.destination,
+      diameterMm: s.diameterMm, airflowLs: s.airflowLs, lengthM: s.lengthM,
+      zone: s.zone, locked: !!locked[s.id]
+    }));
+    if (!rows.length) return h('div', { class: 'note' }, 'Nothing routed yet.');
+
+    const ladder = (this.settings.duct.availableDiametersMm || []).map(v => ({ value: String(v), label: v + 'Ø' }));
+    return table([
+      { key: 'destination', label: 'Run',
+        render: (r) => h('span', {}, h('span', { class: 'role-dot ' + r.role }), ' ' + r.destination) },
+      { key: 'airflowLs', label: 'L/s', align: 'right', width: '64px' },
+      { key: 'diameterMm', label: 'Size', align: 'right', width: '96px',
+        render: (r) => select(String(r.diameterMm || ''),
+          [{ value: '', label: 'Auto' }, ...ladder],
+          v => this.setSegmentDiameter(r.id, v)) },
+      { key: 'lengthM', label: 'Length', align: 'right', width: '76px',
+        render: (r) => r.lengthM != null ? r.lengthM + ' m' : '—' },
+      { key: 'zone', label: 'Zone', width: '70px' },
+      { key: 'locked', label: '', align: 'right', width: '54px',
+        render: (r) => button(r.locked ? '🔒' : '🔓', () => this.toggleRouteLock(r.id),
+          r.locked ? 'tiny' : 'tiny ghost') }
+    ], rows, { compact: true });
+  }
+
+  /** A size the estimator sets by hand outranks the calculated one. */
+  setSegmentDiameter(sectionId, value) {
+    const o = { ...(this.design.ductDiameterOverrides || {}) };
+    if (value === '' || value === null) delete o[sectionId];
+    else o[sectionId] = Number(value);
+    this.design.ductDiameterOverrides = o;
+    this.update();
   }
 
   renderLayoutPanel() {
@@ -611,6 +1085,10 @@ export class DesignerApp {
         pageCount = page.pageCount;
       }
 
+      // QUICK QUOTE MODE uploads a plan before any screen that builds the
+      // viewer has been opened, so it has to exist before the image reaches it.
+      // Without this the first thing an estimator does throws.
+      this.ensureViewer();
       dims = await this.viewer.setImage(imageUrl);
       this.loadedPlanUrl = imageUrl;
       this.design.plan = {
@@ -902,15 +1380,39 @@ export class DesignerApp {
     this.update();
   }
 
+  /**
+   * What the plan viewer draws: the estimator's geometry carrying the ENGINE's
+   * numbers. The diameter, airflow and length on every line come from the sized
+   * section, so a route can never show a size the design does not carry.
+   */
   routeOverlay() {
-    const out = {};
-    if (this.design.mainRoute?.points) out.main = { points: this.design.mainRoute.points, label: 'Main duct' };
-    for (const [roomId, r] of Object.entries(this.design.ductRoutes || {})) {
-      if (!r.points) continue;
-      const room = (this.design.rooms || []).find(x => x.id === roomId);
-      out[roomId] = { points: r.points, label: room?.label || roomId };
+    // A routed design draws itself from the sized sections, which carry their
+    // own geometry. Only a design that has never been routed falls back to the
+    // routes the estimator traced by hand.
+    if (this.design.network?.routed) {
+      const overlay = routedOverlay({
+        network: this.design.network,
+        labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL,
+        returnRoute: this.design.returnRoute,
+        returnDesign: this.design.returnDesign,
+        activeId: this.activeSegmentId || null
+      });
+      // A second return is a second duct to buy and draw.
+      for (const r of (this.design.returnRoutes || []).slice(1)) {
+        if (!r.points) continue;
+        overlay[r.id] = { ...overlay.return, points: r.points, label: 'RETURN 2' };
+      }
+      return overlay;
     }
-    return out;
+    return routeOverlayFromNetwork({
+      network: this.design.network,
+      mainRoute: this.design.mainRoute,
+      ductRoutes: this.design.ductRoutes || {},
+      rooms: this.design.rooms || [],
+      returnRoute: this.design.returnRoute,
+      returnDesign: this.design.returnDesign,
+      labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL
+    });
   }
 
   completeRoute(points) {

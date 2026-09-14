@@ -5,6 +5,7 @@
 // reports 100% of buttons dead. Exits non-zero if any button does nothing.
 
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 const ctx=await b.newContext({viewport:{width:1400,height:1000}});
@@ -14,12 +15,12 @@ const cdp=await ctx.newCDPSession(p);
 await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));
 await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
 await p.locator('button',{hasText:'Load the sample builder plan'}).first().click(); await p.waitForTimeout(2500);
-await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(600);
+await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(600);
 const va=p.locator('button',{hasText:'Verify all'}); if(await va.count()) await va.last().click();
 await p.waitForTimeout(1800);
 
 async function auditTab(name){
-  await p.locator('button.tab',{hasText:name}).first().click(); await p.waitForTimeout(500);
+  await ensureAdvanced(p); await p.locator('button.tab',{hasText:name}).first().click(); await p.waitForTimeout(500);
   const {result}=await cdp.send('Runtime.evaluate',{
     expression:`Array.from(document.querySelectorAll('.main button, .plan-tools button'))`,
     returnByValue:false});

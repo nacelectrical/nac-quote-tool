@@ -39,7 +39,11 @@ function materialRateCards(app) {
           id: key + '.' + dia,
           label: def.label + ' ' + dia + ' mm',
           unit: def.unit,
-          shipped: r.cost,
+          // On a line sold by the length, the box takes the price of ONE
+          // LENGTH, so the shipped figure beside it has to be the same thing.
+          // Showing the per-metre figure next to a per-length box is how a
+          // rate gets typed in six times too small.
+          shipped: r.pack ? r.pack.cost : r.cost,
           origin: r.cost === null ? 'NO PRICE AT ALL'
             : r.source === 'default_placeholder' ? 'PLACEHOLDER'
             : (r.supplierCode || MMEM_ACCESSORIES_META.quoteNo)
@@ -48,7 +52,8 @@ function materialRateCards(app) {
     } else {
       const r = resolveCost(key, {});
       rows.push({
-        id: key, label: def.label, unit: def.unit, shipped: r.cost,
+        id: key, label: def.label, unit: def.unit,
+        shipped: r.pack ? r.pack.cost : r.cost,
         origin: r.cost === null ? 'NO PRICE AT ALL'
           : r.source === 'default_placeholder' ? 'PLACEHOLDER'
           : (def.supplierCode || MMEM_ACCESSORIES_META.quoteNo)
@@ -62,7 +67,7 @@ function materialRateCards(app) {
 
   const cols = [
     { key: 'label', label: 'Item' },
-    { key: 'unit', label: 'Unit', width: '78px' },
+    { key: 'unit', label: 'Unit', width: '104px' },
     { key: 'shipped', label: 'Shipped rate', align: 'right',
       format: v => v === undefined || v === null ? 'NONE' : '$' + Number(v).toFixed(2) },
     { key: 'origin', label: 'Source' },

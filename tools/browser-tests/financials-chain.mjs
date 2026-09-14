@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { ensureAdvanced } from './advanced.mjs';
 import { signInContext } from './signin.mjs';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 const ctx=await b.newContext(); const p=await ctx.newPage();
@@ -8,7 +9,7 @@ await p.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application
 await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
 await p.locator('button',{hasText:'Load the sample builder plan'}).first().click();
 await p.waitForTimeout(2500);
-await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(1000);
+await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(1000);
 
 const read = async () => await p.evaluate(()=>{
   const stats={};
@@ -20,10 +21,10 @@ const read = async () => await p.evaluate(()=>{
 });
 console.log('TAB TEXT:', (await p.evaluate(()=>document.querySelector('.main')?.innerText||'')).slice(0,400));
 // Verify the rooms first — the tab is gated on that.
-await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(700);
+await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Rooms'}).first().click(); await p.waitForTimeout(700);
 const va=p.locator('button',{hasText:'Verify all'}); if(await va.count()) await va.last().click();
 await p.waitForTimeout(1800);
-await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(1200);
+await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Financials'}).first().click(); await p.waitForTimeout(1200);
 const before = await read();
 console.log('BEFORE:', JSON.stringify(before, null, 1).slice(0,700));
 

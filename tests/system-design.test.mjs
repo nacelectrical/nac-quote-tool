@@ -568,10 +568,13 @@ test("NAC's own material rates take over from the placeholders", () => {
   }
   const flex200 = bom.items.find(i => i.key === 'flex_duct' && i.diameterMm === 200);
   if (flex200) {
-    // A NAC rate is per metre, so it replaces the whole-length pack price.
+    // A NAC duct rate replaces the MMEM length price with NAC's own, and it is
+    // still the price of ONE 6 m LENGTH, because that is how NAC buy it.
     assert.equal(flex200.unitCost, 24.5);
     assert.equal(flex200.priceSource, 'nac');
-    assert.equal(flex200.unit, 'm');
+    assert.equal(flex200.unit, '6 m length');
+    assert.equal(flex200.quantity, Math.ceil(flex200.metresRequired / 6));
+    assert.equal(flex200.totalCost, Math.round(24.5 * flex200.quantity * 100) / 100);
   }
 });
 
@@ -859,12 +862,25 @@ test('models the supplier no longer lists are kept, with no invented cost', () =
   const cat = buildCatalogue({});
   const missing = modelsWithoutSupplierCost(cat);
   assert.ok(missing.length > 0);
-  // Mitsubishi Heavy and Midea are not on the MMEM account at all.
-  assert.ok(missing.some(m => m.brand === 'Mitsubishi Heavy'));
-  assert.ok(missing.some(m => m.brand === 'Midea'));
+  // Some Daikin, Fujitsu, Braemar and Mitsubishi Electric models are not on the
+  // MMEM account. They stay selectable and stay uncosted — the quote refuses
+  // rather than inventing a price.
+  assert.ok(missing.some(m => m.brand === 'Daikin'));
+  assert.ok(missing.some(m => m.brand === 'Braemar'));
   for (const m of allModels(cat)) {
     if (m.supplierCost === null) assert.equal(m.supplierCode, null);
   }
+});
+
+test('Mitsubishi Heavy and Midea are gone — NAC do not sell them', () => {
+  // Every model of both was uncostable, so leaving them selectable only offered
+  // the estimator a brand that could never produce a quote.
+  const cat = buildCatalogue({});
+  for (const brand of ['Mitsubishi Heavy', 'Midea']) {
+    assert.equal(cat.find(b => b.name === brand), undefined, brand + ' must not be selectable');
+  }
+  assert.equal(allModels(cat).some(m => /FDU|DUCMI/.test(m.name)), false,
+    'no Mitsubishi Heavy or Midea model codes survive anywhere in the catalogue');
 });
 
 test('brands only on the supplier list are added to the catalogue', () => {

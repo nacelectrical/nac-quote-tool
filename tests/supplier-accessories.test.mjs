@@ -78,10 +78,15 @@ test('quoted diameters are supplier-priced and the rest stay placeholders', () =
     assert.equal(r.pack.lengthM, 6);
     assert.match(r.note, /447-321514-000/);
   }
+  // MMEM have not quoted these three, so they stay placeholders — but NAC buy
+  // ALL flex in 6 m lengths, so they carry the same pack shape. Without it the
+  // same job would cost a 150 run by the metre and a 300 run by the length.
   for (const d of [100, 125, 150]) {
     const r = resolveCost('flex_duct', { diameterMm: d });
     assert.equal(r.source, 'default_placeholder', d + ' mm is not on the quote');
-    assert.equal(r.pack, null);
+    assert.equal(r.pack.lengthM, 6, d + ' mm is still bought in 6 m lengths');
+    assert.equal(r.pack.code, null, 'no MMEM code, because MMEM did not quote it');
+    assert.equal(r.pack.cost, Math.round(r.cost * 6 * 100) / 100);
   }
   // 450 and 500 carry no rate at all, because NAC never run them — two 350/400s
   // instead, and 400 only on a return. They are off the duct ladder too, so a
@@ -191,16 +196,24 @@ test('a size that is not on the quote is called out', () => {
   assert.match(w.message, /150 mm/);
 });
 
-test('a NAC rate still overrides a quoted supplier rate', () => {
+test('a NAC duct rate is the price of one 6 m LENGTH, not a price per metre', () => {
   const bom = bomFor({}, {});
+  // NAC buy flex in 6 m lengths, so this is what one length costs. Reading it
+  // as a per-metre rate would under-price a 7 m run by a factor of six, which
+  // on a whole-house job is most of the ductwork.
   const withNac = buildBillOfMaterials({
     network: { sections: [{ id: 'branch_bed1', role: 'branch', diameterMm: 250, lengthM: 7, fittings: [] }],
                totalDuctLengthM: 7 }
-  }, { nacRates: { flex_duct: { 250: 9.90 } } });
+  }, { nacRates: { flex_duct: { 250: 36.00 } } });
   const f = withNac.items.find(i => i.key === 'flex_duct');
   assert.equal(f.priceSource, 'nac');
-  assert.equal(f.unitCost, 9.90);
-  assert.equal(f.unit, 'm');                   // a NAC rate is per metre
-  assert.equal(f.totalCost, 69.3);
+  assert.equal(f.unit, '6 m length');
+  assert.equal(f.unitCost, 36.00, 'the rate NAC typed is the price of one length');
+  assert.equal(f.quantity, 2, '7 m needs two lengths');
+  assert.equal(f.metresRequired, 7);
+  assert.equal(f.metresBought, 12);
+  assert.equal(f.offcutM, 5, 'the off-cut is reported, not hidden');
+  assert.equal(f.totalCost, 72.00);
+  assert.equal(f.ratePerM, 6.00, 'the per-metre figure is derived, for reference only');
   assert.ok(bom.totalCost > 0);
 });
