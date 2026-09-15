@@ -89,10 +89,15 @@ console.log('     ', JSON.stringify(a));
 say('the design is routed', a.routed);
 say('every conditioned room is reached by a final flex', a.roomRuns.length > 0,
   a.roomRuns.length + ' finals, ' + a.majorBranches + ' major branches');
+// A take-off onto a MAJOR BRANCH is a take-off too — the bedroom wing comes
+// off the main through one — so the count to match is one per outlet PLUS one
+// per major branch, not one per outlet flat.
 say('it is mains-and-take-offs, not a star',
   a.mainSupplyCount >= 2 && a.mainSupplyCount <= 3 &&
-  a.runsOffPlenum === a.mainSupplyCount && a.btoCount === a.roomRuns.length,
-  a.mainSupplyCount + ' mains off the plenum, ' + a.btoCount + ' take-offs, ' +
+  a.runsOffPlenum === a.mainSupplyCount &&
+  a.btoCount === a.roomRuns.length + a.majorBranches,
+  a.mainSupplyCount + ' mains off the plenum, ' + a.btoCount + ' take-offs for ' +
+  a.roomRuns.length + ' outlets and ' + a.majorBranches + ' major branches, ' +
   a.runsOffPlenum + ' runs leave the plenum');
 
 // ── 3. The trunk behaves like a trunk ───────────────────────────────────────

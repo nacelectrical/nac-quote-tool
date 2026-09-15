@@ -879,12 +879,11 @@ export function routedMarkers(network, tree) {
                      label: s.reducerFrom + '→' + s.reducerTo,
                      title: 'Reducer ' + s.reducerFrom + ' to ' + s.reducerTo + ' mm' });
     }
-    // A zone damper sits on the branch, before the run splits.
-    if (s.role === 'branch' && s.zone && s.points?.length >= 2) {
-      const a = s.points[0], b = s.points[1];
-      markers.push({ type: 'damper', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
-                     label: s.zone, title: 'Zone damper — ' + s.zone + ' (' + s.destination + ')' });
-    }
+    // NO DAMPER IS PLACED HERE. placeZoneDampers() is the one that decides
+    // where the motors go, and it is the one the BOM counts. Putting a second
+    // damper on every zoned branch from here drew SEVEN dampers on an order
+    // that buys six, and stacked two of them on one branch — a fitting on the
+    // drawing that nobody installs.
   }
 
   // Several finals leaving the same take-off point are ONE place on the ceiling
@@ -1120,16 +1119,63 @@ export function placeZoneDampers(network, { zoneOverrides = {}, zones = null } =
                  x: override.x, y: override.y, moved: true });
       continue;
     }
-    // Just off the take-off, on the first leg, which is where it is reachable.
-    // The ANGLE of that leg travels with it so the drawing can sit the damper
-    // ACROSS the duct — a damper drawn along the duct is a decoration.
-    const a = s.points[0], b = s.points[1];
+    // A SHORT WAY INTO THE RUN, not on the collar. A run is a swept polyline of
+    // a dozen samples, so a fraction of the FIRST LEG is three per cent of the
+    // duct: the three bedroom dampers all landed on the same take-off and the
+    // drawing showed one damper with two hidden underneath it. A fraction of
+    // the WHOLE run puts each one in its own branch, which is also where it is
+    // fitted — far enough in to be reachable, before the duct turns away.
+    //
+    // The ANGLE of the leg it lands on travels with it so the drawing can sit
+    // the damper ACROSS the duct — a damper drawn along the duct is a
+    // decoration.
+    const at = pointAlong(s.points, DAMPER_ALONG_RUN);
     out.push({ id: 'damper_' + s.id, sectionId: s.id, zone, roomId: s.roomId ?? null,
-               x: a.x + (b.x - a.x) * 0.35, y: a.y + (b.y - a.y) * 0.35,
-               angle: Math.atan2(b.y - a.y, b.x - a.x),
+               x: at.x, y: at.y, angle: at.angle,
                diameterMm: s.diameterMm ?? null, moved: false });
   }
+  // Two dampers on two different branches can still land within a few
+  // millimetres of one another where the branches leave the same point. Slide
+  // the later one further along its own run until it is clear — its own run,
+  // so it never ends up drawn on a duct it does not control.
+  const MIN_APART_PX = 22;
+  for (let i = 1; i < out.length; i++) {
+    const sec = byId.get(out[i].sectionId);
+    if (!sec?.points || out[i].moved) continue;
+    for (let tries = 0; tries < 5; tries++) {
+      const clash = out.slice(0, i).some(o =>
+        Math.hypot(o.x - out[i].x, o.y - out[i].y) < MIN_APART_PX);
+      if (!clash) break;
+      const at = pointAlong(sec.points, Math.min(0.85, DAMPER_ALONG_RUN + 0.16 * (tries + 1)));
+      out[i].x = at.x; out[i].y = at.y; out[i].angle = at.angle;
+    }
+  }
   return out;
+}
+
+/** How far into the branch a zone damper is fitted, as a fraction of the run. */
+const DAMPER_ALONG_RUN = 0.3;
+
+/** The point, and the direction of travel, a fraction of the way along a run. */
+function pointAlong(pts, fraction) {
+  let total = 0;
+  const segs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    segs.push(d); total += d;
+  }
+  if (!total) return { x: pts[0].x, y: pts[0].y, angle: 0 };
+  let want = total * Math.min(1, Math.max(0, fraction));
+  for (let i = 0; i < segs.length; i++) {
+    if (want <= segs[i] || i === segs.length - 1) {
+      const t = segs[i] ? want / segs[i] : 0;
+      const a = pts[i], b = pts[i + 1];
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+               angle: Math.atan2(b.y - a.y, b.x - a.x) };
+    }
+    want -= segs[i];
+  }
+  return { x: pts[0].x, y: pts[0].y, angle: 0 };
 }
 
 // ── PART 8: EDITING THE ROUTE ───────────────────────────────────────────────

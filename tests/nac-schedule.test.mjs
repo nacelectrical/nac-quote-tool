@@ -769,9 +769,46 @@ test('every damper sits on a real duct and knows which way it runs', () => {
     assert.ok(run, d.zone + ' damper is on no section');
     assert.ok(Number.isFinite(d.angle), d.zone + ' damper has no duct angle');
     assert.ok(Number.isFinite(d.x) && Number.isFinite(d.y));
-    // And it is on that run's own first leg, not floating.
-    const a = run.points[0], b = run.points[1];
-    const expected = Math.atan2(b.y - a.y, b.x - a.x);
-    assert.ok(Math.abs(d.angle - expected) < 1e-9, d.zone + ' damper is turned the wrong way');
+    // And it sits ON that run — a short way in, where a motor is fitted and
+    // reachable — turned the way THAT leg of the duct runs, not floating beside
+    // it and not stacked on the collar with the two dampers next to it.
+    let onRun = false;
+    for (let i = 1; i < run.points.length; i++) {
+      const a = run.points[i - 1], b = run.points[i];
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const len2 = vx * vx + vy * vy;
+      if (!len2) continue;
+      const t = Math.max(0, Math.min(1, ((d.x - a.x) * vx + (d.y - a.y) * vy) / len2));
+      const off = Math.hypot(d.x - (a.x + vx * t), d.y - (a.y + vy * t));
+      if (off > 0.001) continue;
+      onRun = true;
+      const expected = Math.atan2(vy, vx);
+      assert.ok(Math.abs(d.angle - expected) < 1e-9,
+        d.zone + ' damper is turned the wrong way for the leg it sits on');
+      break;
+    }
+    assert.ok(onRun, d.zone + ' damper is not on its own duct');
   }
+});
+
+test('no two zone dampers are drawn on top of one another', () => {
+  // Three bedrooms off one major branch put three dampers on the same collar:
+  // the drawing showed one, with two hidden underneath it, and an installer
+  // counting motors off the sheet would have found one.
+  const ds = design.zoneDampers;
+  for (let i = 0; i < ds.length; i++) {
+    for (let j = i + 1; j < ds.length; j++) {
+      const apart = Math.hypot(ds[i].x - ds[j].x, ds[i].y - ds[j].y);
+      assert.ok(apart >= 20,
+        ds[i].zone + ' and ' + ds[j].zone + ' dampers are ' +
+        Math.round(apart) + ' px apart');
+    }
+  }
+});
+
+test('one damper is drawn for every motor the order buys, and no more', () => {
+  const closable = design.zones.zones.filter(z => !z.alwaysOpen).length;
+  assert.equal(design.zoneDampers.length, closable);
+  const zones = new Set(design.zoneDampers.map(d => d.zone));
+  assert.equal(zones.size, design.zoneDampers.length, 'a zone has two dampers');
 });

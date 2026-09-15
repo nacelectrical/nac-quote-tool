@@ -260,12 +260,16 @@ say('and the system static pressure moved with it', after7.pressurePa !== before
 
 // ── 9 ──────────────────────────────────────────────────────────────────────
 ITEM(9, 'BOM changes if length changes enough to affect pack quantity');
-// Push a branch a long way so the metres must cross a 6 m boundary.
+// Push a branch a long way so the metres must cross a 6 m boundary. The
+// LONGEST movable run, and far: picking whichever happened to be first in the
+// list meant the test passed or failed on which run the router emitted first.
 const before9 = await snap(p);
 await p.evaluate(() => {
   const app = window.nacDesigner;
-  const s = app.design.network.sections.find(x => (x.role === 'final' || x.role === 'branch') && !x.locked && x.points?.length);
-  app.moveWholeBranch(s.id, { x: 260, y: 210 });
+  const movable = app.design.network.sections
+    .filter(x => (x.role === 'final' || x.role === 'branch') && !x.locked && x.points?.length)
+    .sort((a, b) => (b.lengthM || 0) - (a.lengthM || 0));
+  app.moveWholeBranch(movable[0].id, { x: 430, y: 350 });
 });
 await p.waitForTimeout(1100);
 const after9 = await snap(p);

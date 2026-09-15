@@ -55,18 +55,22 @@ export function sizeKey(routes) {
     .map(([mm, colour]) => ({ diameterMm: mm, colour }));
 }
 
-/** Screen width of a duct, from its real diameter. */
+/**
+ * The WEIGHT of a duct on the drawing.
+ *
+ * Not its diameter at scale. Drawing a 400 main thirty pixels wide was true to
+ * the roof and useless on paper: the house disappeared under its own ductwork
+ * and every run read as a swollen tube.
+ *
+ * Nick's hierarchy is: size from COLOUR, hierarchy from LINE WEIGHT. So the
+ * weight says what a run IS — main, branch, final, return — with a small nudge
+ * for size so a 400 main still sits a touch heavier than a 300 one.
+ */
 export function tubeWidthPx(diameterMm, pxPerMm, opts = {}) {
-  const min = opts.minPx ?? 3.5;
-  const max = opts.maxPx ?? 26;
-  if (!diameterMm) return min;
-  // True to scale where the scale allows it, so a 400 reads as twice a 200.
-  const real = pxPerMm ? diameterMm * pxPerMm : 0;
-  if (real >= min && real <= max) return real;
-  // Zoomed too far out (or in) for true scale: keep the RATIO between sizes
-  // rather than collapsing every duct to the same stroke.
-  const t = Math.min(1, Math.max(0, (diameterMm - 150) / (450 - 150)));
-  return min + t * (max - min);
+  const role = opts.role || 'final';
+  const base = DRAWING.lineWeightPx[role] ?? DRAWING.lineWeightPx.final;
+  const t = Math.min(1, Math.max(0, ((diameterMm || 200) - 200) / 200));
+  return base + t * DRAWING.lineWeightSizeNudgePx;
 }
 
 /** A soft, readable version of a colour for the tube's core highlight. */
@@ -132,24 +136,20 @@ export function drawTube(ctx, screenPts, { colour, widthPx, isReturn = false }) 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  ctx.strokeStyle = 'rgba(12,12,30,0.30)';
-  ctx.lineWidth = widthPx + 3.5;
+  // A soft white halo, not a black casing. It lifts the run off the printed
+  // floor plan without adding a second heavy line beside every duct.
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = widthPx + 2.6;
   tracePath(ctx, screenPts);
   ctx.stroke();
 
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = widthPx;
-  tracePath(ctx, screenPts);
-  ctx.stroke();
-
-  // A RETURN IS STILL A DUCT. Dashing the whole tube turned it into a row of
-  // grey blobs lying across the house. It keeps the tube and takes a broken
-  // centreline instead — the convention for "this one goes the other way" —
-  // and still reads as something somebody pulls through a roof.
+  // THE RETURN IS SECONDARY. It was the fattest, greyest thing on the sheet,
+  // lying across the middle of the house. It is now a light dashed line that
+  // reads as "the air comes back this way" and then gets out of the way.
   if (isReturn) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = Math.max(1.4, widthPx * 0.2);
-    ctx.setLineDash([widthPx * 0.85, widthPx * 0.7]);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = widthPx;
+    ctx.setLineDash([9, 6]);
     tracePath(ctx, screenPts);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -157,14 +157,10 @@ export function drawTube(ctx, screenPts, { colour, widthPx, isReturn = false }) 
     return;
   }
 
-  // The core highlight is what makes it read as a tube rather than a fat line.
-  if (widthPx >= 7) {
-    ctx.strokeStyle = lighten(colour, 0.5);
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = Math.max(1.2, widthPx * 0.26);
-    tracePath(ctx, screenPts);
-    ctx.stroke();
-  }
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = widthPx;
+  tracePath(ctx, screenPts);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -233,14 +229,15 @@ export function drawTakeOff(ctx, at, { colour = '#0c0c1e', r = 4 } = {}) {
  * Turned to sit across the duct, because a damper lying along the duct is not
  * a damper, it is a decoration.
  */
-export function drawDamper(ctx, at, angle = 0, { colour = '#1d7a48' } = {}) {
+export function drawDamper(ctx, at, angle = 0, { colour = '#1d7a48', label = null } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
+  ctx.save();
   ctx.rotate(angle);
-  const w = 7, h = 11;   // w along the duct, h across it
+  const w = 6, h = 12;   // w along the duct, h across it
   ctx.fillStyle = '#ffffff';
   ctx.strokeStyle = colour;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
   ctx.rect(-w / 2, -h / 2, w, h);
   ctx.fill();
@@ -249,13 +246,32 @@ export function drawDamper(ctx, at, angle = 0, { colour = '#1d7a48' } = {}) {
   ctx.beginPath();
   ctx.moveTo(-w / 2 + 1, h / 2 - 1.5);
   ctx.lineTo(w / 2 - 1, -h / 2 + 1.5);
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.6;
   ctx.stroke();
+  ctx.restore();
+
+  // WHICH ZONE THIS DAMPER IS. Nick: zoning is not shown by colouring the duct
+  // network — it is shown by the damper and its label. An unlabelled damper
+  // says a motor goes here; a labelled one says which zone it closes, which is
+  // the thing an installer and an estimator both need.
+  if (label) {
+    ctx.font = '800 9px -apple-system, system-ui, sans-serif';
+    const tw = ctx.measureText(label).width;
+    const bw = tw + 8, bh = 13;
+    const bx = 8, by = -bh / 2;
+    ctx.fillStyle = colour;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill(); }
+    else ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, bx + bw / 2, by + bh / 2 + 0.5);
+  }
   ctx.restore();
 }
 
 /** The fan coil and its supply plenum, as one object. */
-export function drawUnit(ctx, at, { w = 34, h = 24 } = {}) {
+export function drawUnit(ctx, at, { w = 28, h = 19 } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
   ctx.fillStyle = 'rgba(38,42,58,0.95)';
@@ -298,24 +314,35 @@ export function drawFlexDesign(ctx, view) {
   const { routes, outlets, markers, plenum, zoneFillByRoomId, rooms, dampers,
           toScreen, pxPerMm, labelDetail } = view;
 
-  // ── 1. Zone wash ────────────────────────────────────────────────────────
-  for (const room of (rooms || [])) {
-    if (!room.boundaryPx) continue;
-    const z = zoneFillByRoomId?.[room.id];
-    if (!z) continue;
-    const p = toScreen(room.boundaryPx);
-    ctx.save();
-    ctx.globalAlpha = room.boundaryDerived ? 0.42 : 0.7;
-    ctx.fillStyle = z.fill;
-    ctx.fillRect(p.x, p.y, room.boundaryPx.w * view.scale, room.boundaryPx.h * view.scale);
-    ctx.restore();
+  // ── 1. NO ZONE WASH ─────────────────────────────────────────────────────
+  //
+  // Nick's drawing rule: "ZONES MUST NOT BE SHOWN BY COLOURING THE ENTIRE DUCT
+  // NETWORK. Instead, show ZONING by zone dampers clearly shown on the drawing,
+  // each damper labelled with its zone." Colouring the ROOMS instead was the
+  // same idea wearing a different coat, and it was worse: these boundaries are
+  // rectangles derived from a printed room size, so on a brochure plan the
+  // colour sat NEXT TO the rooms rather than on them. Pastel blocks that do not
+  // line up with any wall is the opposite of a professional sheet.
+  //
+  // Zoning is on the drawing, on the dampers, where the motor goes.
+  if (view.zoneWash && rooms) {
+    for (const room of rooms) {
+      const z = room.boundaryPx && zoneFillByRoomId?.[room.id];
+      if (!z) continue;
+      const p = toScreen(room.boundaryPx);
+      ctx.save();
+      ctx.globalAlpha = 0.34;
+      ctx.fillStyle = z.fill;
+      ctx.fillRect(p.x, p.y, room.boundaryPx.w * view.scale, room.boundaryPx.h * view.scale);
+      ctx.restore();
+    }
   }
 
   // ── 2. The ducts ────────────────────────────────────────────────────────
   const runs = Object.values(routes || {})
     .filter(r => r.points && r.points.length >= 2)
     .map(r => ({ ...r, screen: r.points.map(toScreen),
-                 widthPx: tubeWidthPx(r.diameterMm, pxPerMm) }))
+                 widthPx: tubeWidthPx(r.diameterMm, pxPerMm, { role: r.role }) }))
     .sort((a, b) => b.widthPx - a.widthPx);
 
   for (const run of runs) {
@@ -339,7 +366,10 @@ export function drawFlexDesign(ctx, view) {
   // ZONE DAMPERS, in the ductwork. One per closable zone, on the run that feeds
   // that zone and nothing else — a motor somebody buys, fits and wires, so it
   // belongs on the drawing at the place they fit it.
-  for (const d of (dampers || [])) drawDamper(ctx, toScreen(d), d.angle ?? 0);
+  for (const d of (dampers || [])) {
+    drawDamper(ctx, toScreen(d), d.angle ?? 0,
+      { colour: d.colour || '#1d7a48', label: d.zoneLabel || d.label || null });
+  }
   if (plenum && plenum.x !== undefined) drawUnit(ctx, toScreen(plenum));
 
   // ── 4. Sizes, written on the ducts ──────────────────────────────────────
@@ -359,7 +389,7 @@ export function drawFlexDesign(ctx, view) {
     for (const m of (markers || [])) {
       if (m.type === 'bto' || (m.type === 'junction' && m.bto)) reserve(m, 12, 12);
     }
-    for (const d of (dampers || [])) reserve(d, 16, 16);
+    for (const d of (dampers || [])) reserve(d, (d.zoneLabel || d.label) ? 62 : 18, 18);
     if (plenum && plenum.x !== undefined) reserve(plenum, 40, 30);
 
     const clear = (x, y, w, h) => {
@@ -391,11 +421,32 @@ export function drawFlexDesign(ctx, view) {
       }
       // Try a few points along the run before giving up: a size dropped because
       // one spot was busy is a size nobody can read anywhere.
-      const width = ((isReturn ? 'RETURN 2 × ø000' : 'ø' + run.diameterMm).length) * 7 + 6;
+      const width = ((isReturn ? 'RETURN 2 × ø000' : 'ø' + run.diameterMm).length) * 6 + 4;
       let at = null;
-      for (const f of (isMain ? [0.55, 0.38, 0.72, 0.25, 0.85] : [0.6, 0.42, 0.78])) {
-        const p = alongPath(run.screen, f);
-        if (p && clear(p.x, p.y, width, 15)) { at = p; break; }
+      // Try harder before giving up. A size dropped because one spot was busy
+      // is a size nobody can read anywhere, and half the runs on this drawing
+      // came out unlabelled for the sake of one collision.
+      //
+      // First along the duct, where a size belongs. Then, only if every point
+      // along it is taken, STEPPED OFF the duct — the way a draughtsman moves a
+      // dimension clear rather than dropping it. The size still sits against
+      // its own run, just beside it instead of on it.
+      const offsets = [0, run.widthPx / 2 + 8, -(run.widthPx / 2 + 8),
+                       run.widthPx / 2 + 16, -(run.widthPx / 2 + 16)];
+      const spots = isMain ? [0.55, 0.38, 0.72, 0.25, 0.85, 0.48, 0.65, 0.3]
+                           : [0.6, 0.42, 0.78, 0.5, 0.68, 0.34, 0.88];
+      for (const off of offsets) {
+        for (const f of spots) {
+          const p = alongPath(run.screen, f);
+          if (!p) continue;
+          const nx = -Math.sin(p.angle) * off;
+          const ny = Math.cos(p.angle) * off;
+          if (clear(p.x + nx, p.y + ny, width, 12)) {
+            at = { ...p, x: p.x + nx, y: p.y + ny };
+            break;
+          }
+        }
+        if (at) break;
       }
       if (!at) continue;
       // Too short to write on without the text overhanging both ends.
@@ -403,8 +454,8 @@ export function drawFlexDesign(ctx, view) {
         ? 'RETURN ' + (returns.length > 1 ? returns.length + ' × ' : '') +
           'ø' + run.diameterMm
         : 'ø' + run.diameterMm;
-      if (at.totalPx < width * 0.8) continue;
-      drawDuctLabel(ctx, text, at, { angle: at.angle, size: isMain ? 12 : 10.5 });
+      if (at.totalPx < width * 0.7) continue;
+      drawDuctLabel(ctx, text, at, { angle: at.angle, size: isMain ? 10.5 : 9 });
     }
   }
 }

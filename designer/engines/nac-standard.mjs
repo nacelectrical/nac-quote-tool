@@ -758,6 +758,28 @@ export const DRAWING = Object.freeze({
   returnColour: '#8A8FA3',
 
   /**
+   * LINE WEIGHT IS HIERARCHY. COLOUR IS SIZE.
+   *
+   * Nick's presentation standard, in order: duct size from colour, zoning from
+   * the damper and its label, which outlet is served from the branch route,
+   * and main/branch hierarchy from LINE WEIGHT. So weight is not the diameter
+   * again in another form — it says what the run IS.
+   *
+   * Drawing every duct to true scale made a 400 main thirty pixels wide and
+   * buried the house under its own ductwork. These are drawing weights: thin,
+   * clean, and different enough to read a main from a final at a glance.
+   */
+  lineWeightPx: Object.freeze({
+    main: 5,
+    trunk: 4.2,
+    branch: 3.2,
+    final: 2.2,
+    return: 2.4
+  }),
+  /** How much the size may nudge the weight, so a 400 still looks heavier. */
+  lineWeightSizeNudgePx: 1.2,
+
+  /**
    * COLOUR MEANS SIZE.
    *
    * On the drawing a duct's colour is its DIAMETER, not its zone. An installer

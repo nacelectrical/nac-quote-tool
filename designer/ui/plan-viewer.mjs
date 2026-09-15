@@ -113,7 +113,7 @@ export function createPlanViewer(container, opts = {}) {
   }
 
   /** How much of the canvas the zone schedule needs down the left. */
-  const SCHEDULE_GUTTER_PX = 232;
+  const SCHEDULE_GUTTER_PX = 178;
 
   function scheduleGutter(r) {
     // A drawing sheet sizes the drawing to fit BESIDE its title block. Centring
@@ -192,8 +192,21 @@ export function createPlanViewer(container, opts = {}) {
         plenum: state.plenum,
         zoneFillByRoomId: state.zoneFillByRoomId,
         rooms: state.rooms,
-        // Zone dampers are drawn IN the ductwork, across the run they control.
-        dampers: (state.markers || []).filter(m => m.type === 'damper'),
+        // Zone dampers are drawn IN the ductwork, across the run they control,
+        // AND LABELLED WITH THEIR ZONE. Nick: zoning is not shown by colouring
+        // the duct network — the network's colour is its size — it is shown by
+        // the damper and its label. The tag carries the zone's number and its
+        // colour, which is the same number and colour as its row in the
+        // schedule, so a damper on the plan and a line in the table are
+        // obviously the same thing.
+        dampers: (state.markers || []).filter(m => m.type === 'damper')
+          .map(m => {
+            const chip = state.zoneChips.find(c =>
+              c.fullName === m.label || c.title === m.label || c.zoneId === m.label);
+            return { ...m,
+                     zoneLabel: chip?.index ? 'Z' + chip.index : (m.label || null),
+                     colour: chip?.colour || '#1d7a48' };
+          }),
         toScreen,
         scale: state.scale,
         pxPerMm: state.pxPerMm || null,
@@ -281,7 +294,7 @@ export function createPlanViewer(container, opts = {}) {
       for (const chip of state.zoneChips) {
         if (!chip.anchorPx) continue;
         const b = chip.anchorPx;
-        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 18, 18, 'badge');
+        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 18, 18, 'badge');   // eslint-disable-line
       }
     }
   }
@@ -303,22 +316,24 @@ export function createPlanViewer(container, opts = {}) {
     if (!chips.length) return;
     const r = wrap.getBoundingClientRect();
 
-    const titleFont = '800 11px -apple-system, system-ui, sans-serif';
-    const headFont = '700 8.5px -apple-system, system-ui, sans-serif';
-    const rowFont = '600 10px -apple-system, system-ui, sans-serif';
-    const numFont = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    // SECONDARY. Nick: "zone info neat and secondary". A title block twice the
+    // height of a bedroom is not secondary, it is the first thing you read.
+    const titleFont = '800 9px -apple-system, system-ui, sans-serif';
+    const headFont = '700 7px -apple-system, system-ui, sans-serif';
+    const rowFont = '600 8.5px -apple-system, system-ui, sans-serif';
+    const numFont = '600 8.5px ui-monospace, SFMono-Regular, Menlo, monospace';
 
     ctx.save();
     ctx.font = rowFont;
-    const nameW = Math.min(108, Math.max(58,
+    const nameW = Math.min(92, Math.max(50,
       Math.ceil(Math.max(...chips.map(c => ctx.measureText(zoneShortName(c)).width))) + 4));
-    const pad = 9, rowH = 15, headH = 30;
+    const pad = 7, rowH = 12, headH = 24;
     // Columns are measured from where the NAME starts (past the swatch), not
     // from the panel edge — measuring from the edge is what let a long room
     // name run straight through the kW figure beside it.
-    const nameX = pad + 16;
-    const colKw = nameX + nameW + 12, colLs = colKw + 44, colM2 = colLs + 44;
-    const w = colM2 + 46 + pad;
+    const nameX = pad + 14;
+    const colKw = nameX + nameW + 10, colLs = colKw + 34, colM2 = colLs + 34;
+    const w = colM2 + 36 + pad;
     const h = headH + chips.length * rowH + pad;
 
     // fit() reserves the gutter, so the schedule has a home rather than hunting
@@ -344,15 +359,15 @@ export function createPlanViewer(container, opts = {}) {
     ctx.textBaseline = 'top';
     ctx.font = titleFont;
     ctx.fillStyle = '#16162e';
-    ctx.fillText('ZONE SCHEDULE', box.x + pad, box.y + 8);
+    ctx.fillText('ZONE SCHEDULE', box.x + pad, box.y + 6);
 
     ctx.font = headFont;
     ctx.fillStyle = '#7b8398';
-    ctx.fillText('ZONE', box.x + nameX, box.y + 22);
+    ctx.fillText('ZONE', box.x + nameX, box.y + 17);
     ctx.textAlign = 'right';
-    ctx.fillText('kW', box.x + colKw + 22, box.y + 22);
-    ctx.fillText('L/s', box.x + colLs + 22, box.y + 22);
-    ctx.fillText('m\u00b2', box.x + colM2 + 22, box.y + 22);
+    ctx.fillText('kW', box.x + colKw + 18, box.y + 17);
+    ctx.fillText('L/s', box.x + colLs + 18, box.y + 17);
+    ctx.fillText('m\u00b2', box.x + colM2 + 18, box.y + 17);
 
     chips.forEach((c, i) => {
       const y = box.y + headH + i * rowH;
@@ -360,13 +375,16 @@ export function createPlanViewer(container, opts = {}) {
       // rooms and the same number is on the badge in them.
       ctx.fillStyle = c.colour;
       ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(box.x + pad, y + 2, 11, 11, 2);
-      else ctx.rect(box.x + pad, y + 2, 11, 11);
+      if (ctx.roundRect) ctx.roundRect(box.x + pad, y + 1.5, 10, 9.5, 2);
+      else ctx.rect(box.x + pad, y + 1.5, 10, 9.5);
       ctx.fill();
-      ctx.font = '800 8px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = '#0a0a1c';
+      // The tag is the SAME tag as the one on the damper out on the plan —
+      // Z3 here is Z3 there — which is how a schedule row and a motor in a
+      // roof become obviously the same thing.
+      ctx.font = '800 6.5px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
-      ctx.fillText(String(c.index ?? i + 1), box.x + pad + 5.5, y + 4);
+      ctx.fillText('Z' + String(c.index ?? i + 1), box.x + pad + 5, y + 3.5);
 
       ctx.textAlign = 'left';
       ctx.font = rowFont;
@@ -375,15 +393,15 @@ export function createPlanViewer(container, opts = {}) {
       // beside it is how a schedule stops being a schedule.
       ctx.save();
       ctx.beginPath(); ctx.rect(box.x + nameX, y, nameW, rowH); ctx.clip();
-      ctx.fillText(zoneShortName(c), box.x + nameX, y + 3);
+      ctx.fillText(zoneShortName(c), box.x + nameX, y + 2);
       ctx.restore();
 
       ctx.textAlign = 'right';
       ctx.font = numFont;
       ctx.fillStyle = '#4a5268';
-      ctx.fillText((c.kw ?? 0).toFixed(2), box.x + colKw + 22, y + 3);
-      ctx.fillText(String(Math.round(c.airflowLs || 0)), box.x + colLs + 22, y + 3);
-      ctx.fillText((c.areaSqM ?? 0).toFixed(1), box.x + colM2 + 22, y + 3);
+      ctx.fillText((c.kw ?? 0).toFixed(2), box.x + colKw + 18, y + 2);
+      ctx.fillText(String(Math.round(c.airflowLs || 0)), box.x + colLs + 18, y + 2);
+      ctx.fillText((c.areaSqM ?? 0).toFixed(1), box.x + colM2 + 18, y + 2);
     });
     ctx.restore();
     state.labelBoxes.push({ x: box.x, y: box.y, w, h, kind: 'schedule' });
@@ -417,8 +435,19 @@ export function createPlanViewer(container, opts = {}) {
    * else — the figures are in the schedule.
    */
   function drawZoneBadges() {
+    // ZONING IS SHOWN BY THE DAMPER, NOT BY A BADGE IN EVERY ROOM. Nick's
+    // hierarchy puts zoning on the damper and its label, so a zone that HAS a
+    // damper out on the plan already says so and a second numbered disc in the
+    // middle of the room is clutter sitting on top of the diffusers.
+    //
+    // The zone with no damper is the one that never closes — the open plan —
+    // and that one still needs saying, because nothing else on the drawing
+    // does.
+    const damperZones = new Set((state.markers || [])
+      .filter(m => m.type === 'damper' && m.label).map(m => m.label));
     for (const chip of state.zoneChips) {
       if (!chip.anchorPx) continue;
+      if (damperZones.has(chip.fullName) || damperZones.has(chip.title)) continue;
       const b = chip.anchorPx;
       const c = toScreen({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
       // Small and quiet. Seven saturated discs the size of the diffusers were
