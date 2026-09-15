@@ -299,7 +299,12 @@ const drawn = await p.evaluate(() => {
     ret: routes.filter(r => r.role === 'return').length,
     markers: (v?.state?.markers || []).length,
     markerTypes: [...new Set((v?.state?.markers || []).map(m => m.type))].sort(),
-    diameters: [...new Set(routes.map(r => (r.label || '').match(/\u00f8(\d+)/)?.[1]).filter(Boolean))]
+    diameters: [...new Set(routes.map(r => (r.label || '').match(/\u00f8(\d+)/)?.[1]).filter(Boolean))],
+    // SUPPLY and RETURN have different size ladders, so they are counted apart.
+    supplyDiameters: [...new Set(routes.filter(r => r.role !== 'return')
+      .map(r => r.diameterMm).filter(Boolean))],
+    returnDiameters: [...new Set(routes.filter(r => r.role === 'return')
+      .map(r => r.diameterMm).filter(Boolean))]
   };
 });
 console.log('      ' + JSON.stringify(drawn));
@@ -321,14 +326,20 @@ say('the RETURN is drawn', drawn.ret > 0, drawn.ret + ' return run');
 say('zone dampers and take-offs are drawn',
   drawn.markerTypes.includes('bto') && drawn.markerTypes.includes('damper'),
   drawn.markerTypes.join(','));
-say('no 450 or 500 duct is anywhere on it',
-  !drawn.diameters.includes('450') && !drawn.diameters.includes('500'),
-  drawn.diameters.sort((a, c) => a - c).join('/') + ' mm');
+// "NAC never fit a 450 or a 500" is a rule about SUPPLY. On the return a 450 is
+// what goes on a big unit — the whole system comes back through one or two
+// ducts and a 400 runs them too fast.
+say('no 450 or 500 on the SUPPLY side',
+  !drawn.supplyDiameters.some(mm => mm >= 450),
+  drawn.supplyDiameters.sort((a, c) => a - c).join('/') + ' mm');
+say('the return is a size NAC fits',
+  drawn.returnDiameters.every(mm => [350, 400, 450].includes(mm)),
+  drawn.returnDiameters.join('/') + ' mm');
 // NAC's install rules, enforced by the sizing engine and therefore visible on
 // the drawing: nothing below 200, and nothing above 300 on an outlet run.
 say('no 150 or smaller anywhere in the auto design',
-  !drawn.diameters.some(x => Number(x) < 200),
-  drawn.diameters.filter(x => Number(x) < 200).join('/') || 'smallest is 200');
+  !drawn.supplyDiameters.some(mm => mm < 200),
+  drawn.supplyDiameters.filter(mm => mm < 200).join('/') || 'smallest is 200');
 
 const designText = await main();
 say('AUTO ROUTE — VERIFY SITE CONDITIONS is on screen',
