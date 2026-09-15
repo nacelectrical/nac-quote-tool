@@ -219,19 +219,21 @@ test('5. every final branch is BTO then correctly sized flex then an outlet', as
     assert.equal(bto.reducer, false, bto.id + ' is modelled as a reducer');
   }
 
-  // Every room reaches an outlet through a take-off, and the flex that reaches
-  // it is a legal NAC final size.
+  // MAIN FLEX -> BTO -> ONE continuous final flex -> OUTLET. Every outlet is
+  // reached by exactly one final run, and that run comes off a take-off.
   const byId = new Map(sections(d).map(s => [s.id, s]));
   for (const row of (d.outlets?.rows || [])) {
-    const branch = byId.get('branch_' + row.roomId);
-    assert.ok(branch, row.label + ' has no branch');
-    assert.ok(branch.btoRecord, row.label + ' is not fed through a take-off');
-    // The run that actually reaches each diffuser.
-    const reaching = sections(d).filter(s => s.roomId === row.roomId &&
-      (s.role === 'final' || s.id === 'branch_' + row.roomId));
-    for (const s of reaching.filter(x => x.role === 'final')) {
-      assert.ok(isLegalAutoFinal(s.diameterMm),
-        row.label + ' final is ' + s.diameterMm + ' mm');
+    const roomFinals = finals(d).filter(s => s.roomId === row.roomId);
+    assert.equal(roomFinals.length, row.quantity,
+      row.label + ' has ' + roomFinals.length + ' final run(s) for ' + row.quantity + ' outlet(s)');
+    for (const f of roomFinals) {
+      assert.ok(f.bto, row.label + ' final does not come off a BTO');
+      assert.ok(isLegalAutoFinal(f.diameterMm), row.label + ' final is ' + f.diameterMm + ' mm');
+      assert.ok(!f.reducerFrom, row.label + ' final carries a reducer');
+      // Straight off its parent — no chain of contrived segments in between.
+      const parent = byId.get(f.parentId);
+      assert.ok(parent, row.label + ' final hangs off nothing');
+      assert.ok(parent.role !== 'final', row.label + ' final is fed by another final');
     }
   }
 });
@@ -253,12 +255,15 @@ test('6. a reducer exists only where a main genuinely steps down', async () => {
       s.id + ' has a reducer but is the same size as its parent');
   }
 
-  // A branch smaller than the main it comes off must NOT produce a reducer.
-  const shrinking = branches(d).filter(b => {
+  // A take-off smaller than the main it comes off must NOT produce a reducer —
+  // the BTO is what takes it down to final size.
+  const takeoffs = [...finals(d), ...branches(d)];
+  const shrinking = takeoffs.filter(b => {
     const p = byId.get(b.parentId);
     return p && p.diameterMm > b.diameterMm;
   });
-  assert.ok(shrinking.length > 0, 'sanity: some branch is smaller than its parent');
+  assert.ok(shrinking.length > 0,
+    'sanity: on this house some take-off is smaller than the main feeding it');
   for (const b of shrinking) {
     assert.ok(!b.reducerFrom, b.id + ' got a reducer just to reach outlet size');
     assert.equal(reducerRequired(byId.get(b.parentId), b), false);

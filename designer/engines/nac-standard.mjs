@@ -256,6 +256,20 @@ export function allowedDiametersFor(role) {
   };
 }
 
+/**
+ * The final flex size NAC fits for this much air through one outlet.
+ *
+ * The same bands the outlet neck uses, because the final duct and the neck it
+ * connects to ARE the same size — a "250 diffuser" is a 250 neck on a 250 run.
+ * Sizing the duct from velocity and the neck from practice was how the two
+ * came out different on the same outlet.
+ */
+export function finalSizeForAirflow(perOutletLs) {
+  const flow = Number(perOutletLs) || 0;
+  const band = FINAL_SIZE_BY_AIRFLOW.find(b => flow <= b.upToLs);
+  return band ? band.sizeMm : FINAL_FLEX.maxMm;
+}
+
 /** Is this a size AUTO DESIGN is allowed to put on a final? */
 export function isLegalAutoFinal(diameterMm) {
   return FINAL_FLEX.autoSizesMm.includes(Number(diameterMm));
@@ -335,6 +349,25 @@ export function reducerRequired(parentSection, childSection) {
 // on TWO OR THREE mains, each serving a group of the house — the bedroom wing,
 // the living/family/meals area, the master and study. One single trunk leaving
 // the unit is not how NAC installs and it is not what gets drawn.
+
+/**
+ * How often a main is allowed to reduce along its length.
+ *
+ * A main carrying 700 L/s down to 70 will technically pass through every size
+ * on the ladder, and stepping it at each one puts five reducers on one run.
+ * Nobody fits that: reducers cost money, take time and add resistance, so a
+ * main is reduced once or twice where the drop is worth it and run slightly
+ * oversized in between.
+ *
+ * It also bounds the topology — a main with five reductions is five segments,
+ * and a final reached through five contrived segments is the artificial-segment
+ * failure the NAC rules name.
+ */
+export const MAIN_REDUCTIONS = Object.freeze({
+  maxPerMain: 2,
+  /** Ignore a step smaller than this — not worth a fitting. */
+  minStepMm: 50
+});
 
 export const SUPPLY_PLENUM = Object.freeze({
   minMains: 2,
@@ -557,6 +590,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   finalSizeByAirflow: FINAL_SIZE_BY_AIRFLOW,
   bto: BTO,
   supplyPlenum: SUPPLY_PLENUM,
+  mainReductions: MAIN_REDUCTIONS,
   returnAir: RETURN_AIR,
   outlets: OUTLET_RULES,
   zoning: ZONING,

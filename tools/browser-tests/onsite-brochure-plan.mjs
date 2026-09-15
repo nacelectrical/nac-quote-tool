@@ -310,10 +310,17 @@ say('duct runs are drawn on it', drawn.routes > 0, drawn.routes + ' polylines');
 say('the sizes are on the drawing, without labelling the same duct twice',
   drawn.labelled > 0 && drawn.labelled <= drawn.routes,
   drawn.labelled + ' labels on ' + drawn.routes + ' runs');
-say('TRUNK is drawn', drawn.trunk > 0, drawn.trunk + ' trunk runs');
-say('BRANCHES are drawn', drawn.branch > 0, drawn.branch + ' branches');
+say('the SUPPLY MAINS are drawn', drawn.trunk > 0, drawn.trunk + ' main/trunk runs');
+// Under the NAC flex model every outlet is fed by ONE continuous final flex off
+// a take-off. A major branch only exists where several outlets sit well off the
+// main and share one run out to them, so zero of them on this plan is the model
+// working, not a gap: what must never be zero is the finals.
+say('a FINAL FLEX is drawn to every outlet',
+  drawn.final === 15 && drawn.branch >= 0, drawn.final + ' finals, ' + drawn.branch + ' major branches');
 say('the RETURN is drawn', drawn.ret > 0, drawn.ret + ' return run');
-say('zone dampers and fittings are drawn', drawn.markers > 0, drawn.markerTypes.join(','));
+say('zone dampers and take-offs are drawn',
+  drawn.markerTypes.includes('bto') && drawn.markerTypes.includes('damper'),
+  drawn.markerTypes.join(','));
 say('no 450 or 500 duct is anywhere on it',
   !drawn.diameters.includes('450') && !drawn.diameters.includes('500'),
   drawn.diameters.sort((a, c) => a - c).join('/') + ' mm');

@@ -858,12 +858,17 @@ export function routedMarkers(network, tree) {
   const sections = network?.sections || [];
 
   for (const n of (tree?.nodes || [])) {
-    if (n.type === 'junction') {
-      markers.push({ type: 'junction', x: n.x, y: n.y, label: n.label,
+    // The NAC topology generator emits its take-offs as nodes of type 'bto';
+    // the older tree called the same thing a junction. Both are the fitting an
+    // installer sets on the main, so both get drawn.
+    if (n.type === 'junction' || n.type === 'bto') {
+      markers.push({ type: n.type === 'bto' || n.bto ? 'bto' : 'junction',
+                     x: n.x, y: n.y, label: n.label,
                      // A BTO is a fitting an installer sets; a plain junction
                      // where the trunk meets a branch is just a meeting point.
-                     bto: !!n.bto,
-                     title: 'Take-off / Y piece — serves ' + (n.serves || []).join(', ') });
+                     bto: n.type === 'bto' || !!n.bto,
+                     serves: n.serves || [],
+                     title: 'Branch take-off \u2014 serves ' + (n.serves || []).join(', ') });
     }
   }
 
@@ -881,7 +886,22 @@ export function routedMarkers(network, tree) {
                      label: s.zone, title: 'Zone damper — ' + s.zone + ' (' + s.destination + ')' });
     }
   }
-  return markers;
+
+  // Several finals leaving the same take-off point are ONE place on the ceiling
+  // where the installer works, not three. Stacking three identical symbols on
+  // the same pixel is the clutter this drawing is meant to be free of, so they
+  // merge into a single mark that names everything it serves.
+  const merged = [];
+  const seen = new Map();
+  for (const m of markers) {
+    if (m.type !== 'bto' && m.type !== 'junction') { merged.push(m); continue; }
+    const key = m.type + ':' + Math.round(m.x / 6) + ':' + Math.round(m.y / 6);
+    const at = seen.get(key);
+    if (!at) { seen.set(key, m); merged.push(m); continue; }
+    at.serves = [...new Set([...(at.serves || []), ...(m.serves || [])])];
+    at.title = 'Branch take-off \u2014 serves ' + (at.serves || []).join(', ');
+  }
+  return merged;
 }
 
 // ── PART 4 & 16: is this layout any good, and is it safe to trust? ──────────

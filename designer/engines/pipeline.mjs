@@ -20,6 +20,7 @@ import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
+import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
 import { suggestOpenPlanGroups, applyOpenPlanGroups, zoneRemedies,
@@ -183,10 +184,14 @@ export function runPipeline(design, ctx = {}) {
     const zonesForRouting = d.zoneDefinitions && d.zoneDefinitions.length
       ? analyseZones(d.zoneDefinitions, d.airflow, { settings })
       : suggestZones(included, d.airflow, { settings });
-    const tree = measureTree(buildDuctTree({
+    // THE NAC FLEX DUCT ROUTING MODEL. Not the old trunk-and-spine router:
+    // PLENUM -> 2 or 3 MAINS -> BTOs -> one continuous final flex -> OUTLET,
+    // with the geometry swept the way flex actually lies in a roof space.
+    const tree = measureTree(buildNacTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
-      layout: d.layout || {}, zones: zonesForRouting
-    }, { settings }), d.calibration, { settings });
+      layout: d.layout || {}, zones: zonesForRouting,
+      returnDesign: d.returnDesign || null
+    }, { settings, returnCount: d.returnCount ?? undefined }), d.calibration, { settings });
     d.autoRoute = applyLockedGeometry(tree, d, settings);
   } else if (mode !== ROUTING_MODE.AUTO && d.autoRoute?.generated) {
     // Kept as it was: switching to MANUAL does not delete the estimator's work.
@@ -258,12 +263,18 @@ export function runPipeline(design, ctx = {}) {
     // comes back to that same point, so it is handed over — without it the
     // return silently fails to route on every auto-designed job and the
     // estimator has to place the indoor unit by hand before seeing a return.
-    const retLayout = { ...(d.layout || {}) };
-    if (!retLayout.indoorUnit && !retLayout.plenum && d.autoRoute?.plenum) {
-      retLayout.plenum = d.autoRoute.plenum;
-    }
-    const ret = buildReturnRoutes({ layout: retLayout, returnDesign: d.returnDesign,
-                                    rooms: included });
+    // The returns come from the SAME topology model as the supply, so what is
+    // drawn, what is measured and what is bought cannot disagree.
+    const ret = d.autoRoute?.returnRuns?.length
+      ? { generated: true, routes: d.autoRoute.returnRuns, warnings: [] }
+      : (() => {
+          const retLayout = { ...(d.layout || {}) };
+          if (!retLayout.indoorUnit && !retLayout.plenum && d.autoRoute?.plenum) {
+            retLayout.plenum = d.autoRoute.plenum;
+          }
+          return buildReturnRoutes({ layout: retLayout, returnDesign: d.returnDesign,
+                                     rooms: included });
+        })();
     if (ret.generated) {
       const measured = measureTree({ segments: ret.routes.map(r => ({ ...r, role: 'return' })) },
                                    d.calibration, { settings });
@@ -282,6 +293,22 @@ export function runPipeline(design, ctx = {}) {
       }
     }
     d.returnRouteWarnings = ret.warnings || [];
+  }
+
+  // HARD NAC RULE 9 — the topology is checked against every hard rule before it
+  // is drawn, priced or sent. Run here, after the return is designed, so the
+  // return count is a real number and not an unchecked null.
+  d.topologyCheck = d.network?.routed
+    ? validateNacTopology(d.network, { returnCount: d.returnDesign?.returnCount ?? null })
+    : null;
+  if (d.topologyCheck && !d.topologyCheck.ok) {
+    d.routeWarnings = [
+      ...(d.routeWarnings || []),
+      ...d.topologyCheck.failures.map(f => ({
+        code: 'NAC_TOPOLOGY_' + f.code, severity: 'CRITICAL',
+        message: f.message + (f.detail ? ' (' + f.detail + ')' : '')
+      }))
+    ];
   }
 
   d.zoneDampers = d.network?.routed

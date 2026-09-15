@@ -394,16 +394,24 @@ function stepDesign(app, interruptions) {
         // rather than discovered on site.
         routed
           ? h('div', { class: 'qlegend' },
-              h('span', { class: 'qlegend-item trunk' }, 'TRUNK'),
-              h('span', { class: 'qlegend-item branch' }, 'BRANCH'),
-              h('span', { class: 'qlegend-item final' }, 'OUTLET RUN'),
+              // The NAC names for the four things on the drawing, in the
+              // colours the plan viewer actually draws them in.
+              h('span', { class: 'qlegend-item trunk' }, 'SUPPLY MAIN'),
+              h('span', { class: 'qlegend-item branch' }, 'MAJOR BRANCH'),
+              h('span', { class: 'qlegend-item final' }, 'FINAL FLEX — ZONE COLOUR'),
               h('span', { class: 'qlegend-item return' }, 'RETURN'),
+              h('span', { class: 'qlegend-sym bto' }, h('i', {}, '\u25C6'), 'TAKE-OFF'),
+              h('span', { class: 'qlegend-sym damper' }, h('i', {}, '\u25A0'), 'ZONE DAMPER'),
+              h('span', { class: 'qlegend-sym outlet' }, h('i', {}, '\u2295'), 'OUTLET'),
               h('span', { class: 'qlegend-count' },
-                net.sections.length + ' sized runs · ' +
-                (d.outlets?.rows?.length ?? 0) + ' outlets · ' +
+                (d.network?.mainSupplyCount ?? 0) + ' supply mains · ' +
+                (d.network?.btoCount ?? 0) + ' take-offs · ' +
+                // Outlets, not outlet ROWS: a room with two diffusers is two
+                // things to install, and the drawing shows two.
+                (d.outlets?.rows || []).reduce((n, r) => n + (r.quantity ?? 1), 0) + ' outlets · ' +
                 (d.returnRoutes?.length ?? (d.returnRoute ? 1 : 0)) + ' return · ' +
                 (d.zones?.zoneCount ?? 0) + ' zones · ' +
-                (d.zoneDampers?.length ?? 0) + ' dampers · every run labelled with its diameter'))
+                (d.zoneDampers?.length ?? 0) + ' dampers'))
           : banner('warn', 'The duct layout has not been drawn on the plan. ' +
               'Generate it before this design goes anywhere.',
               button('Draw the duct layout', () => app.autoRoute(), 'small'))),

@@ -71,7 +71,7 @@ export function createPlanViewer(container, opts = {}) {
     // being reviewed, so it is off in design view behind a toggle.
     showAnalysis: true,
     designView: false,
-    zoneChips: [],           // { title, kw, airflowLs, areaSqM, colour, anchorPx }
+    zoneChips: [],           // { index, title, rooms, kw, airflowLs, areaSqM, colour, anchorPx }
     zoneFillByRoomId: {},    // roomId -> { colour, fill, shortName }
     outlets: [],             // { x, y, roomId, neckMm, index }
     labelBoxes: [],          // collision bookkeeping, rebuilt every frame
@@ -164,12 +164,21 @@ export function createPlanViewer(container, opts = {}) {
     // tell you how the air gets there.
     if (state.designView) drawZoneFills();
     if (state.showRooms && (!state.designView || state.showAnalysis)) drawRooms();
+    // The zone schedule is claimed BEFORE any duct label, not after. A drawing
+    // whose legend has been shoved into the middle of the house by the labels
+    // is the wrong way round: the schedule has a home, the labels move.
+    if (state.designView) { drawZoneSchedule(); }
+    // Every SYMBOL on the drawing — diffuser, take-off, damper, the unit itself
+    // and the zone badges — books its patch of plan BEFORE a single duct label
+    // is placed. Labels were landing on top of outlets and on the fan coil
+    // because only other labels were being avoided.
+    if (state.showRoutes) reserveSymbolBoxes();
     if (state.showRoutes) { drawRoutes(); drawMarkers(); drawOutlets(); }
     drawUnit();
+    if (state.designView) drawZoneBadges();
     if (state.showLayout && (!state.designView || state.showAnalysis)) drawLayout();
     if (state.mode === MODES.EDIT_ROUTE) drawHandles();
     if (!state.designView || state.showAnalysis) drawCalibration();
-    if (state.designView) drawZoneChips();
   }
 
   /**
@@ -205,92 +214,176 @@ export function createPlanViewer(container, opts = {}) {
   }
 
   /**
-   * The block of figures beside each zone:
+   * Book the space every symbol occupies, before any label is placed.
    *
-   *   Zone 4
-   *   6.23 kW
-   *   374 L/s
-   *   41.5 m²
-   *
-   * Small, tinted with the zone's own colour, and placed inside the zone's
-   * biggest room so it reads as belonging to that space.
+   * A size printed on top of a diffuser is a size nobody can read, and that is
+   * exactly what was happening: the label placer only knew about other labels.
    */
-  function drawZoneChips() {
-    for (const chip of state.zoneChips) {
-      if (!chip.anchorPx) continue;
-      // Anchored on the middle of the zone's biggest room, so the block sits
-      // in the space it describes rather than off in a corner of it.
-      const lines = [
-        chip.title,
-        (chip.kw ?? 0).toFixed(2) + ' kW',
-        Math.round(chip.airflowLs || 0) + ' L/s',
-        (chip.areaSqM ?? 0).toFixed(1) + ' m\u00b2'
-      ];
-      // Try the corners of the zone before the middle. A room name and its size
-      // are printed across the centre of the room on the builder's own drawing,
-      // and the tool cannot see that text to avoid it — but it can stay out of
-      // the middle, which is where it always is.
-      const b = chip.anchorPx;
-      const corners = [
-        { x: b.x, y: b.y },
-        { x: b.x + b.w, y: b.y },
-        { x: b.x, y: b.y + b.h },
-        { x: b.x + b.w, y: b.y + b.h },
-        { x: b.x + b.w / 2, y: b.y + b.h / 2 }
-      ].map(toScreen);
-      for (const c of corners) {
-        if (placeChip(lines, { x: c.x + 4, y: c.y + 4 }, chip.colour, chip.fill, { spread: 1 })) break;
+  function reserveSymbolBoxes() {
+    const put = (pt, w, h, kind) => {
+      const s2 = toScreen(pt);
+      state.labelBoxes.push({ x: s2.x - w / 2, y: s2.y - h / 2, w, h, kind });
+    };
+    for (const o of state.outlets) put(o, 16, 16, 'outlet');
+    for (const m of state.markers) {
+      if (state.designView && m.type === 'reducer') continue;
+      if (state.designView && m.type === 'junction' && !m.bto) continue;
+      put(m, 15, 15, 'fitting');
+    }
+    if (state.plenum && state.plenum.x !== undefined) put(state.plenum, 38, 28, 'unit');
+    if (state.designView) {
+      for (const chip of state.zoneChips) {
+        if (!chip.anchorPx) continue;
+        const b = chip.anchorPx;
+        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 22, 22, 'badge');
       }
     }
   }
 
   /**
-   * Draw a small stacked label, nudged until it is not sitting on another one.
+   * THE ZONE SCHEDULE.
    *
-   * Overlapping text is the single thing that makes a duct drawing unusable —
-   * two sizes on top of each other is worse than no size at all — so every
-   * label goes through here and every label is remembered for the rest of the
-   * frame.
+   * A real design sheet does not write four lines of figures across the middle
+   * of every room — it carries one schedule off to the side and a numbered
+   * badge in each space. That is what this is. Six blocks of text sitting on
+   * the rooms was the single biggest thing making this drawing unreadable.
+   *
+   * It is drawn into the margin beside the plan when there is one, and into the
+   * top corner of the plan when there is not, so it works zoomed in as well as
+   * fitted.
    */
-  function placeChip(lines, at, colour, fillStyle, opts = {}) {
-    const titleFont = '700 10px -apple-system, system-ui, sans-serif';
-    const bodyFont = '600 9.5px -apple-system, system-ui, sans-serif';
-    const pad = 5, lh = 11.5, spine = 3;
+  function drawZoneSchedule() {
+    const chips = state.zoneChips;
+    if (!chips.length) return;
+    const r = wrap.getBoundingClientRect();
+
+    const titleFont = '800 11px -apple-system, system-ui, sans-serif';
+    const headFont = '700 8.5px -apple-system, system-ui, sans-serif';
+    const rowFont = '600 10px -apple-system, system-ui, sans-serif';
+    const numFont = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+
     ctx.save();
-    // Measure each line in the font it is actually drawn in, or a long title
-    // overflows a box sized from the shorter body lines.
-    let w = 0;
-    lines.forEach((l, i) => {
-      ctx.font = i === 0 ? titleFont : bodyFont;
-      w = Math.max(w, ctx.measureText(l).width);
-    });
-    w = Math.ceil(w) + pad * 2 + spine;
-    const h = Math.ceil(lines.length * lh) + pad * 2;
+    ctx.font = rowFont;
+    const nameW = Math.min(108, Math.max(58,
+      Math.ceil(Math.max(...chips.map(c => ctx.measureText(zoneShortName(c)).width))) + 4));
+    const pad = 9, rowH = 15, headH = 30;
+    // Columns are measured from where the NAME starts (past the swatch), not
+    // from the panel edge — measuring from the edge is what let a long room
+    // name run straight through the kW figure beside it.
+    const nameX = pad + 16;
+    const colKw = nameX + nameW + 12, colLs = colKw + 44, colM2 = colLs + 44;
+    const w = colM2 + 46 + pad;
+    const h = headH + chips.length * rowH + pad;
 
-    const box = findFreeSpot(at.x, at.y, w, h, opts.spread ?? 1);
-    if (!box) { ctx.restore(); return null; }
+    // The margin left of the image is the natural home for it. Failing that,
+    // the margin on the right; failing both, the top-left of the plan itself.
+    const imgL = state.offsetX, imgR = state.offsetX + state.image.width * state.scale;
+    const box = imgL > w + 24 ? { x: imgL - w - 12, y: 12 }
+      : (r.width - imgR) > w + 24 ? { x: imgR + 12, y: 12 }
+      : { x: 12, y: 12 };
+    box.x = Math.max(6, Math.min(box.x, r.width - w - 6));
+    box.y = Math.max(6, Math.min(box.y, r.height - h - 6));
 
-    ctx.fillStyle = fillStyle || 'rgba(12,12,28,0.88)';
-    ctx.strokeStyle = colour;
+    ctx.fillStyle = 'rgba(10,10,28,0.92)';
+    ctx.strokeStyle = 'rgba(160,172,210,0.45)';
     ctx.lineWidth = 1;
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(box.x, box.y, w, h, 3); ctx.fill(); ctx.stroke(); }
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(box.x, box.y, w, h, 5); ctx.fill(); ctx.stroke(); }
     else { ctx.fillRect(box.x, box.y, w, h); ctx.strokeRect(box.x, box.y, w, h); }
-
-    // A coloured spine down the left edge, so the chip is tied to its zone even
-    // in a photocopy.
-    ctx.fillStyle = colour;
-    ctx.fillRect(box.x, box.y, spine, h);
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    lines.forEach((l, i) => {
-      ctx.font = i === 0 ? titleFont : bodyFont;
-      ctx.fillStyle = i === 0 ? colour : '#e9ecf7';
-      ctx.fillText(l, box.x + spine + pad, box.y + pad + i * lh);
+    ctx.font = titleFont;
+    ctx.fillStyle = '#F5C200';
+    ctx.fillText('ZONE SCHEDULE', box.x + pad, box.y + 8);
+
+    ctx.font = headFont;
+    ctx.fillStyle = '#8f98b5';
+    ctx.fillText('ZONE', box.x + nameX, box.y + 22);
+    ctx.textAlign = 'right';
+    ctx.fillText('kW', box.x + colKw + 22, box.y + 22);
+    ctx.fillText('L/s', box.x + colLs + 22, box.y + 22);
+    ctx.fillText('m\u00b2', box.x + colM2 + 22, box.y + 22);
+
+    chips.forEach((c, i) => {
+      const y = box.y + headH + i * rowH;
+      // The swatch is the link back to the plan: the same colour fills the
+      // rooms and the same number is on the badge in them.
+      ctx.fillStyle = c.colour;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(box.x + pad, y + 2, 11, 11, 2);
+      else ctx.rect(box.x + pad, y + 2, 11, 11);
+      ctx.fill();
+      ctx.font = '800 8px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = '#0a0a1c';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(c.index ?? i + 1), box.x + pad + 5.5, y + 4);
+
+      ctx.textAlign = 'left';
+      ctx.font = rowFont;
+      ctx.fillStyle = '#e9ecf7';
+      // Clipped to its own column. A room name running through the kW figure
+      // beside it is how a schedule stops being a schedule.
+      ctx.save();
+      ctx.beginPath(); ctx.rect(box.x + nameX, y, nameW, rowH); ctx.clip();
+      ctx.fillText(zoneShortName(c), box.x + nameX, y + 3);
+      ctx.restore();
+
+      ctx.textAlign = 'right';
+      ctx.font = numFont;
+      ctx.fillStyle = '#cfd6e8';
+      ctx.fillText((c.kw ?? 0).toFixed(2), box.x + colKw + 22, y + 3);
+      ctx.fillText(String(Math.round(c.airflowLs || 0)), box.x + colLs + 22, y + 3);
+      ctx.fillText((c.areaSqM ?? 0).toFixed(1), box.x + colM2 + 22, y + 3);
     });
     ctx.restore();
-    state.labelBoxes.push({ x: box.x, y: box.y, w, h });
-    return box;
+    state.labelBoxes.push({ x: box.x, y: box.y, w, h, kind: 'schedule' });
+  }
+
+  // A zone's name on the schedule is the room it covers when it covers one, and
+  // what the zone IS when it covers several. "Zone 3" alone tells an installer
+  // nothing; "BED 2" tells them which door to walk through, and "OPEN PLAN x6"
+  // tells them the living area moves together.
+  //
+  // Names are abbreviated the way a schedule abbreviates them, so the column
+  // holds a real room name instead of clipping it.
+  function zoneShortName(chip) {
+    const rooms = chip.rooms || [];
+    if (!rooms.length) return abbreviateRoom(chip.fullName || chip.title);
+    if (rooms.length === 1) return abbreviateRoom(rooms[0]);
+    return abbreviateRoom(chip.fullName || chip.title) + ' \u00d7' + rooms.length;
+  }
+
+  function abbreviateRoom(name) {
+    return String(name || '').toUpperCase()
+      .replace(/MASTER BEDROOM/, 'MASTER BED')
+      .replace(/BEDROOM/, 'BED')
+      .replace(/^OPEN.PLAN.*/, 'OPEN PLAN');
+  }
+
+  /**
+   * The numbered badge that ties a room on the plan back to the schedule.
+   *
+   * One small disc, in the zone's colour, in the middle of the zone. Nothing
+   * else — the figures are in the schedule.
+   */
+  function drawZoneBadges() {
+    for (const chip of state.zoneChips) {
+      if (!chip.anchorPx) continue;
+      const b = chip.anchorPx;
+      const c = toScreen({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+      ctx.save();
+      ctx.beginPath(); ctx.arc(c.x, c.y, 9, 0, Math.PI * 2);
+      ctx.fillStyle = chip.colour;
+      ctx.globalAlpha = 0.95;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(10,10,28,0.7)'; ctx.stroke();
+      ctx.font = '800 11px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = '#0a0a1c';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(chip.index ?? ''), c.x, c.y + 0.5);
+      ctx.restore();
+    }
   }
 
   const boxesOverlap = (a, b) =>
@@ -486,7 +579,7 @@ export function createPlanViewer(container, opts = {}) {
     ctx.fillStyle = '#eef1ff';
     lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad + i * lh));
     ctx.restore();
-    state.labelBoxes.push({ x, y, w, h });
+    state.labelBoxes.push({ x, y, w, h, kind: 'label' });
   }
 
   /**
@@ -516,6 +609,8 @@ export function createPlanViewer(container, opts = {}) {
   }
 
   function drawRoutes() {
+    // Sizes go on LAST, once every run is drawn. See pendingLabels below.
+    const pendingLabels = [];
     // Heaviest ducts first, so a 400 trunk never paints over the 150 branch
     // that has to be read beside it.
     const entries = Object.entries(state.routes)
@@ -561,7 +656,10 @@ export function createPlanViewer(container, opts = {}) {
         const mid = route.points[Math.floor((route.points.length - 1) / 2)];
         const next = route.points[Math.floor((route.points.length - 1) / 2) + 1] || mid;
         const at = toScreen({ x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 });
-        drawRouteLabel(route.label, at, colour);
+        // Held back until every run is on the plan. A label drawn inside this
+        // loop gets painted over by the next duct — which is how "RETURN ø350"
+        // ended up with a duct through the middle of it.
+        pendingLabels.push({ text: route.label, at, colour });
       }
       // A dashed auto route is drawn without a casing, so it still reads as
       // provisional rather than as something already installed.
@@ -574,6 +672,7 @@ export function createPlanViewer(container, opts = {}) {
         ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI * 2); ctx.fill();
       });
     }
+    for (const l of pendingLabels) drawRouteLabel(l.text, l.at, l.colour);
   }
 
   /**
@@ -597,6 +696,8 @@ export function createPlanViewer(container, opts = {}) {
       // and the zone damper are, and they are the only marks an installer needs
       // on the drawing.
       if (state.designView && marker.type === 'junction' && !marker.bto) continue;
+      // A BTO in design view is the symbol only. "BTO 7" beside every take-off
+      // is a debug label — the installer reads the size off the duct it feeds.
       const m = state.designView ? { ...marker, label: null } : marker;
       const s = toScreen(m);
       ctx.save();
@@ -609,6 +710,18 @@ export function createPlanViewer(container, opts = {}) {
         ctx.beginPath();
         ctx.moveTo(s.x - 6, s.y - 5); ctx.lineTo(s.x + 6, s.y + 5);
         ctx.lineTo(s.x + 6, s.y - 5); ctx.lineTo(s.x - 6, s.y + 5);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if (m.type === 'bto') {
+        // A BRANCH TAKE-OFF, drawn the way one appears on a duct layout: a
+        // small solid collar on the main with the branch leaving it. Small
+        // enough that fifteen of them do not swamp the plan, dark enough that
+        // an installer can count them at a glance.
+        ctx.fillStyle = '#F5C200'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y - 5);
+        ctx.lineTo(s.x + 5, s.y);
+        ctx.lineTo(s.x, s.y + 5);
+        ctx.lineTo(s.x - 5, s.y);
         ctx.closePath(); ctx.fill(); ctx.stroke();
       } else if (m.type === 'damper') {
         ctx.fillStyle = '#3fbf6f'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.2;

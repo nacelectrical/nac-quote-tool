@@ -50,7 +50,16 @@ const snap = () => p.evaluate(() => {
     returnRouted: !!d.returnRoute?.points?.length,
     pressurePa: d.pressure?.estimatedRequirementPa ?? null,
     outletCount: d.outlets?.totals?.total ?? 0,
-    branchRooms: routed.filter(s => s.role === 'branch').map(s => s.roomId).sort()
+    // Under the NAC flex model the run that reaches a room is its FINAL FLEX,
+    // off a take-off on a main. 'branch' now means only a MAJOR branch shared
+    // by a cluster of rooms, and a house can legitimately have none.
+    roomRuns: routed.filter(s => s.role === 'final').map(s => s.roomId).sort(),
+    majorBranches: routed.filter(s => s.role === 'branch').length,
+    mainSupplyCount: d.network?.mainSupplyCount ?? 0,
+    btoCount: d.network?.btoCount ?? 0,
+    // A STAR is every run leaving the plenum on its own. Under the NAC model
+    // nothing but a main may have the plenum as its parent.
+    runsOffPlenum: routed.filter(s => !s.parentId).length
   };
 });
 
@@ -78,10 +87,13 @@ STEP('AUTO is the default — the system is laid out without being asked');
 const a = await snap();
 console.log('     ', JSON.stringify(a));
 say('the design is routed', a.routed);
-say('every conditioned room got a branch', a.branchRooms.length > 0,
-  a.branchRooms.length + ' branches');
-say('it is trunk-and-branch, not a star', a.trunkRuns >= 2 && a.junctions < a.branchRooms.length,
-  a.trunkRuns + ' trunk runs / ' + a.junctions + ' junctions');
+say('every conditioned room is reached by a final flex', a.roomRuns.length > 0,
+  a.roomRuns.length + ' finals, ' + a.majorBranches + ' major branches');
+say('it is mains-and-take-offs, not a star',
+  a.mainSupplyCount >= 2 && a.mainSupplyCount <= 3 &&
+  a.runsOffPlenum === a.mainSupplyCount && a.btoCount === a.roomRuns.length,
+  a.mainSupplyCount + ' mains off the plenum, ' + a.btoCount + ' take-offs, ' +
+  a.runsOffPlenum + ' runs leave the plenum');
 
 // ── 3. The trunk behaves like a trunk ───────────────────────────────────────
 STEP('Trunk airflow and size step DOWN after each take-off');
@@ -93,7 +105,7 @@ const chain = await p.evaluate(() => {
   return secs.filter(s => s.role === 'main' || s.role === 'trunk')
     .map(s => {
       const parent = s.parentId ? byId.get(s.parentId) : null;
-      return { id: s.id, arm: s.arm || null, ls: s.airflowLs, mm: s.diameterMm,
+      return { id: s.id, arm: s.mainKey || s.arm || null, ls: s.airflowLs, mm: s.diameterMm,
                parent: parent ? { id: parent.id, ls: parent.airflowLs, mm: parent.diameterMm } : null };
     });
 });
@@ -105,13 +117,12 @@ say('airflow falls along every trunk arm', gainers.length === 0,
 say('no trunk run is bigger than the one feeding it', growers.length === 0,
   growers.map(c => c.id + ' ' + c.mm + ' after ' + c.parent.mm).join(', ') ||
   chain.map(c => c.mm).join(' / '));
-// Arms are square directions out of the plenum, so a house whose rooms all sit
-// one side of the fan coil legitimately gets one. What must never happen is a
-// run per room.
+// The plenum feeds two or three MAINS — never one run per room. Each main is
+// cut into stretches only where its size actually changes.
 const armSet = new Set(chain.map(c => c.arm));
-say('the trunk leaves the plenum as arms, not as one run per room',
-  armSet.size >= 1 && armSet.size <= 4 && chain.length < a.segments,
-  armSet.size + ' arm(s): ' + [...armSet].join(', ') + ', ' + chain.length + ' trunk runs');
+say('the plenum feeds mains, not one run per room',
+  armSet.size >= 2 && armSet.size <= 3 && chain.length < a.segments,
+  armSet.size + ' main(s): ' + [...armSet].join(', ') + ', ' + chain.length + ' main/trunk runs');
 say('the trunk actually reduces across the house',
   a.trunkSizes[a.trunkSizes.length - 1] < a.trunkSizes[0],
   a.trunkSizes[0] + ' → ' + a.trunkSizes[a.trunkSizes.length - 1]);
@@ -193,7 +204,9 @@ say('the pressure figure moved with it', after.pressurePa !== before.pressurePa,
 STEP('A locked run is not thrown away by RE-ROUTE UNLOCKED');
 const lockInfo = await p.evaluate(() => {
   const app = window.nacDesigner;
-  const branch = app.design.network.sections.find(s => s.role === 'branch');
+  // The run into a room: a final flex under the NAC model, a major branch on a
+  // layout that has one.
+  const branch = app.design.network.sections.find(s => s.role === 'final' || s.role === 'branch');
   // Move it somewhere the router would never put it, then lock it.
   const moved = branch.points.map(pt => ({ x: pt.x + 37, y: pt.y + 23 }));
   app.design.lockedRoutes = { ...(app.design.lockedRoutes || {}),

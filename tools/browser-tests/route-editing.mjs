@@ -117,8 +117,11 @@ await prepare(p);
 ITEM(1, 'auto route generates');
 const s0 = await snap(p);
 say('the design is routed', s0.routed);
-say('it has trunk and branch runs', s0.sections.some(x => x.role === 'trunk') &&
-  s0.sections.some(x => x.role === 'branch'), s0.sections.length + ' runs');
+// The NAC flex model is MAINS and FINAL FLEX runs. 'branch' is now reserved for
+// a MAJOR branch shared by a cluster of outlets, which a house need not have.
+say('it has supply mains and final flex runs',
+  s0.sections.some(x => x.role === 'main' || x.role === 'trunk') &&
+  s0.sections.some(x => x.role === 'final'), s0.sections.length + ' runs');
 
 // Turn editing on so handles exist.
 await p.evaluate(() => {
@@ -196,7 +199,7 @@ say('the junction did not come apart', stillJoined);
 ITEM(5, 'locked segment is preserved');
 const lockTarget = await p.evaluate(() => {
   const app = window.nacDesigner;
-  const s = app.design.network.sections.find(x => x.role === 'branch' && x.points?.length);
+  const s = app.design.network.sections.find(x => (x.role === 'final' || x.role === 'branch') && x.points?.length);
   app.onHandleDrop(app.currentHandles().find(h => h.sectionIds.includes(s.id) && h.kind !== 'junction'),
     { x: s.points[s.points.length - 1].x + 55, y: s.points[s.points.length - 1].y + 35 });
   return s.id;
@@ -230,7 +233,7 @@ const moved7 = await p.evaluate(async () => {
   const { indexRun } = await import('/designer/engines/ducts.mjs');
   const run = indexRun(app.design.network);
   const tail = [...run.path].reverse()
-    .find(s => s.role === 'branch' &&
+    .find(s => (s.role === 'final' || s.role === 'branch') &&
       !app.design.network.sections.find(x => x.id === s.id)?.locked);
   const sec = app.design.network.sections.find(x => x.id === tail.id);
   const was = { len: sec.lengthM, pa: sec.pressureDropPa };
@@ -261,7 +264,7 @@ ITEM(9, 'BOM changes if length changes enough to affect pack quantity');
 const before9 = await snap(p);
 await p.evaluate(() => {
   const app = window.nacDesigner;
-  const s = app.design.network.sections.find(x => x.role === 'branch' && !x.locked && x.points?.length);
+  const s = app.design.network.sections.find(x => (x.role === 'final' || x.role === 'branch') && !x.locked && x.points?.length);
   app.moveWholeBranch(s.id, { x: 260, y: 210 });
 });
 await p.waitForTimeout(1100);
@@ -348,7 +351,7 @@ ITEM(14, 'undo/redo works');
 const u0 = await snap(p);
 await p.evaluate(() => {
   const app = window.nacDesigner;
-  const s = app.design.network.sections.find(x => x.role === 'branch' && !x.locked && x.points?.length);
+  const s = app.design.network.sections.find(x => (x.role === 'final' || x.role === 'branch') && !x.locked && x.points?.length);
   app.moveWholeBranch(s.id, { x: 70, y: 0 });
 });
 await p.waitForTimeout(900);
@@ -368,7 +371,7 @@ say('REDO puts it back again', u3.totalDuctM === u1.totalDuctM,
 // A diameter change and a lock must be undoable too.
 await p.evaluate(() => {
   const app = window.nacDesigner;
-  const s = app.design.network.sections.find(x => x.role === 'branch' && !x.locked);
+  const s = app.design.network.sections.find(x => (x.role === 'final' || x.role === 'branch') && !x.locked);
   app.setSegmentDiameter(s.id, 400);
 });
 await p.waitForTimeout(800);
@@ -413,7 +416,7 @@ say('running on a real touch device', touchInfo.touch,
 
 // Drag a node with genuine touch events.
 const tBranch = await t.evaluate(() =>
-  window.nacDesigner.design.network.sections.find(s => s.role === 'branch' && s.points?.length)?.id);
+  window.nacDesigner.design.network.sections.find(s => (s.role === 'final' || s.role === 'branch') && s.points?.length)?.id);
 const tBefore = await geom(t, tBranch);
 const tPos = await t.evaluate(({ id, idx }) => {
   const v = window.nacDesigner.viewer;

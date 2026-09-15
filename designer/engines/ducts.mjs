@@ -6,7 +6,8 @@
 // entry — never from an assumption the estimator cannot see.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
-import { allowedDiametersFor, reducerRequired, capBranchToParent } from './nac-standard.mjs';
+import { allowedDiametersFor, reducerRequired, capBranchToParent,
+         finalSizeForAirflow } from './nac-standard.mjs';
 import { round, mmToM } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
@@ -95,6 +96,34 @@ export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
   // bedroom ended up on a 150.
   const { ladder, min, max, rule } = autoLadderFor(role, settings);
   const usable = ladder.length ? ladder : D.availableDiametersMm;
+
+  // A FINAL follows NAC's airflow bands, not the velocity band alone: NAC fits
+  // a size up from what the maths allows, and the final duct is the same size
+  // as the neck it connects to. The velocity check can still raise it where a
+  // lot of air goes through one outlet, but never lower it.
+  if (role === 'final') {
+    const byPractice = finalSizeForAirflow(flow);
+    const byVelocity = usable.find(d => velocity(d, flow) <= band.max) ?? Math.max(...usable);
+    const chosenMm = Math.min(Math.max(byPractice, byVelocity), Math.max(...usable));
+    const v = velocity(chosenMm, flow);
+    return {
+      diameterMm: chosenMm,
+      velocityMs: round(v, 2),
+      withinMax: v <= band.max,
+      withinPreferred: v >= band.preferredMin && v <= band.preferred,
+      role, band, ladder: usable, ladderRule: rule,
+      atLadderMinimum: chosenMm === min,
+      atLadderMaximum: chosenMm === max,
+      overCapacity: v > band.max,
+      carryLimitLs: round(ductAreaM2(chosenMm) * band.max * 1000, 0),
+      idealDiameterMm: round(idealDiameterMm(flow, band.preferred), 0),
+      reason: 'NAC fits a ' + chosenMm + ' mm final at ' + round(flow, 0) + ' L/s per outlet' +
+        (byVelocity > byPractice ? ', raised by the velocity check' : '') + '. ' + rule,
+      considered: usable.map(d => ({ diameterMm: d, velocityMs: round(velocity(d, flow), 2),
+        withinMax: velocity(d, flow) <= band.max,
+        withinPreferred: velocity(d, flow) >= band.preferredMin && velocity(d, flow) <= band.preferred }))
+    };
+  }
 
   const considered = usable.map(d => {
     const v = velocity(d, flow);
@@ -415,6 +444,14 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       major: !!seg.major,
       serves: seg.serves ?? null,
       plenumOutlet: !!seg.plenumOutlet,
+      // The NAC topology model's own fields. Without these the drawing, the
+      // topology table and the validator all lose track of which main a run
+      // belongs to and whether it comes off a BTO.
+      nacRole: seg.nacRole ?? null,
+      mainKey: seg.mainKey ?? null,
+      btoNumber: seg.btoNumber ?? null,
+      outletId: seg.outletId ?? null,
+      flex: seg.flex !== false,
       // THE NAC BTO RULE: every take-off records the parent duct size, its own
       // size, the air it carries and what it serves. Filled in below once the
       // parent's diameter is known.

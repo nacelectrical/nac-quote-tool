@@ -410,10 +410,20 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
     .qlegend-item { display:inline-flex; align-items:center; gap:5px;
                     letter-spacing:.06em; color:var(--muted, #8b93a7); }
     .qlegend-item::before { content:''; width:16px; height:3px; border-radius:2px; background:currentColor; }
-    .qlegend-item.trunk  { color:#2B6CB8; }
-    .qlegend-item.branch { color:#3fbf6f; }
-    .qlegend-item.final  { color:#F5C200; }
-    .qlegend-item.return { color:#c07fd0; }
+    /* These are the colours the plan viewer actually draws with — they come
+       from NAC_DUCT_DESIGN_STANDARD.drawing. A legend that disagrees with the
+       drawing beside it is worse than no legend. */
+    .qlegend-item.trunk  { color:#B061C6; }
+    .qlegend-item.branch { color:#5fa8ff; }
+    .qlegend-item.final  { color:#E8A33D; }
+    .qlegend-item.return { color:#8A8FA3; }
+    /* The three symbols on the drawing, drawn as symbols rather than bars. */
+    .qlegend-sym { display:inline-flex; align-items:center; gap:5px;
+                   font:700 10px/1 -apple-system, system-ui, sans-serif; letter-spacing:.06em; }
+    .qlegend-sym i { font-style:normal; font-size:12px; line-height:1; }
+    .qlegend-sym.bto i { color:#F5C200; }
+    .qlegend-sym.damper i { color:#3fbf6f; }
+    .qlegend-sym.outlet i { color:#E8A33D; }
     .qlegend-count { flex:1 1 100%; color:var(--muted, #8b93a7); }
     @media (max-width: 720px) { .qexc-name { min-width:0; } }
 
