@@ -12,8 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseRoomDimensionPair } from '../designer/engines/dimensions.mjs';
-import { buildRoom, architecturalMeasurement, deriveBoundariesFromPrintedSizes }
-  from '../designer/engines/rooms.mjs';
+import { buildRoom, architecturalMeasurement, deriveBoundariesFromPrintedSizes,
+         applyRoomOverride } from '../designer/engines/rooms.mjs';
 import { createDesign } from '../designer/engines/model.mjs';
 import { runPipeline } from '../designer/engines/pipeline.mjs';
 import { buildCatalogue } from '../designer/engines/catalogue.mjs';
@@ -25,11 +25,17 @@ import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFin
 import { balanceGroups } from '../designer/engines/nac-router.mjs';
 
 // The real sheet: every label at the pixel it is printed, with the size text
-// printed under it. Transcribed off the plan, not invented.
+// printed under it. Transcribed off the plan, NOT INVENTED.
+//
+// MEALS and STUDY carry no printed size. They are null here because that is
+// what the sheet says, and the tool blocks on them until somebody measures
+// them — which is the whole point of the rule. An earlier version of this
+// fixture filled them in with plausible numbers and the resulting 22.54 kW
+// load quietly included 19.5 m2 of floor that nothing had ever measured.
 const SHEET = [
   ['LIVING', 297, 155, '4.3 x 7.1m'], ['KITCHEN', 203, 382, '3.7 x 4.2m'],
-  ['MEALS', 398, 436, '3.6 x 3.4m'], ['LOUNGE', 578, 334, '4.0 x 4.9m'],
-  ['FAMILY', 238, 633, '5.8 x 3.9m'], ['STUDY', 378, 600, '2.8 x 2.6m'],
+  ['MEALS', 398, 436, null], ['LOUNGE', 578, 334, '4.0 x 4.9m'],
+  ['FAMILY', 238, 633, '5.8 x 3.9m'], ['STUDY', 378, 600, null],
   ['FOYER', 548, 663, '3.0 x 3.9m'], ['MASTER BEDROOM', 790, 560, '2.7 x 4.0m'],
   ['BEDROOM 4', 430, 772, '3.0 x 3.4m'], ['BEDROOM 2', 196, 1068, '3.0 x 3.2m'],
   ['BEDROOM 3', 415, 1068, '3.0 x 3.2m'],
@@ -43,7 +49,17 @@ const PPM = 340 / 6000;   // calibrated off the garage: 6.0 m across 340 px
 const CAL = { pixelsPerMm: PPM, mmPerPixel: 1 / PPM,
               imageWidthPx: 1179, imageHeightPx: 1262, display: {} };
 
-async function realPlanDesign() {
+// What the ESTIMATOR measured on site for the two rooms the sheet does not
+// print. These are input, not plan data, and they are kept apart from SHEET so
+// that nothing can ever again present a typed number as something the drawing
+// stated. The real workflow is identical: the tool blocks, names both rooms,
+// and the estimator types these in.
+const MEASURED_ON_SITE = {
+  MEALS: { widthMm: 3600, lengthMm: 3400 },
+  STUDY: { widthMm: 2800, lengthMm: 2600 }
+};
+
+async function realPlanDesign({ measured = MEASURED_ON_SITE } = {}) {
   const rooms = SHEET.map(([label, x, y, printed]) => {
     const dd = printed ? parseRoomDimensionPair(printed) : null;
     return buildRoom({
@@ -53,6 +69,16 @@ async function realPlanDesign() {
       labelPx: { x: x - label.length * 4, y: y - 9, w: label.length * 8, h: 18 }
     });
   });
+  // The estimator's site measurements, applied through the SAME path the app
+  // uses when they type them on the room verification screen. That path records
+  // them as 'manual', so nothing downstream can mistake a typed number for one
+  // the drawing printed.
+  for (const [label, dims] of Object.entries(measured || {})) {
+    const i = rooms.findIndex(r => r.label === label);
+    if (i < 0) continue;
+    rooms[i] = applyRoomOverride(rooms[i], dims, 'estimator');
+  }
+
   const d = createDesign();
   d.rooms = deriveBoundariesFromPrintedSizes(rooms, CAL,
     { imageWidthPx: 1179, imageHeightPx: 1262 });
@@ -198,6 +224,24 @@ test('no main reduces more than NAC fits', () => {
   for (const m of S.mainRuns) {
     assert.ok(m.reductions <= MAIN_REDUCTIONS.maxPerMain,
       m.name + ' reduces ' + m.reductions + ' times');
+  }
+});
+
+test('a main is always a size above the largest final coming off it', () => {
+  // Level with it is a FULL-BORE take-off. Rejected at 250; the same fault
+  // reappeared at 300 the moment a 300 final existed, which is how you can
+  // tell it was never about the number.
+  assert.equal(mainFloorForFinals(200, [250]), 300);
+  assert.equal(mainFloorForFinals(200, [300]), 350);
+  assert.equal(mainFloorForFinals(400, [250]), 400);   // already bigger, left alone
+  // And MIN_MAIN_DIAMETER_MM falls out of it: 250 finals are the common case.
+  assert.equal(mainFloorForFinals(0, [250]), MIN_MAIN_DIAMETER_MM);
+
+  for (const b of S.btos) {
+    if (b.parentRole !== 'main') continue;
+    assert.ok(b.branchDiameterMm < b.parentDiameterMm,
+      'BTO ' + b.number + ' takes ' + b.branchDiameterMm + ' off a ' +
+      b.parentDiameterMm + ' main — full bore');
   }
 });
 
@@ -427,8 +471,8 @@ test('a reducer only ever steps a size a main is actually stocked in', () => {
 // ── The rule that fixed the LOUNGE ──────────────────────────────────────────
 
 test('a main is never reduced past a final still to come off it', () => {
-  // The rule itself.
-  assert.equal(mainFloorForFinals(200, [250, 250]), 250);
+  // The rule itself — a SIZE ABOVE the largest final, never level with it.
+  assert.equal(mainFloorForFinals(200, [250, 250]), 300);
   assert.equal(mainFloorForFinals(300, [250]), 300);
   assert.equal(mainFloorForFinals(200, [], 250), 250);
 
@@ -519,4 +563,44 @@ test('the load the tool reports is the load it calculated', () => {
     Math.round(summed) + ' x ' + L.systemDiversity + ' x ' + L.safetyMargin);
   assert.equal(L.designCoolingKw, Math.round(L.designCoolingW / 10) / 100);
   assert.equal(L.roomCount, design.roomLoads.length);
+});
+
+// ── Never present a typed number as something the plan stated ───────────────
+
+test('the sheet claims a size only where the plan actually prints one', () => {
+  // The brochure prints a size under every room name EXCEPT these two. If this
+  // list ever shrinks, somebody has filled a dimension in and called it plan
+  // data — which is how a 22.54 kW load came to include 19.5 m² nothing had
+  // measured.
+  const noPrintedSize = SHEET.filter(([, , , size]) => size === null).map(([l]) => l);
+  for (const label of ['MEALS', 'STUDY']) {
+    assert.ok(noPrintedSize.includes(label),
+      label + ' has been given a printed size the brochure does not show');
+  }
+});
+
+test('a room measured on site is recorded as measured, not as read off the plan', () => {
+  for (const label of Object.keys(MEASURED_ON_SITE)) {
+    const room = design.rooms.find(r => r.label === label);
+    assert.ok(room, label + ' is missing');
+    assert.ok(room.areaSqM > 0, label + ' has no area');
+    assert.notEqual(room.measurement?.source, 'verified_architectural',
+      label + ' claims it was read off the plan');
+  }
+});
+
+test('with no site measurements the design blocks and names both rooms', async () => {
+  const blocked = await realPlanDesign({ measured: null });
+  const { collectInterruptions } = await import('../designer/engines/interruptions.mjs');
+  const i = collectInterruptions(blocked);
+
+  assert.equal(i.canQuote, false, 'a design missing two rooms was quotable');
+  assert.match(i.blockReason, /MEALS/);
+  assert.match(i.blockReason, /STUDY/);
+  // And the load it does report covers only the rooms it actually measured.
+  assert.equal(blocked.systemLoad.roomCount, 9);
+  assert.ok(!blocked.roomLoads.some(r => /MEALS|STUDY/.test(r.label)),
+    'an unmeasured room carried load');
+  assert.ok(blocked.systemLoad.totalConditionedAreaSqM < design.systemLoad.totalConditionedAreaSqM,
+    'dropping two rooms did not reduce the conditioned area');
 });

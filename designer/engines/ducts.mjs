@@ -501,7 +501,12 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       const children = kids.get(m.id) || [];
       // What each final coming off this stretch ASKS FOR from its airflow,
       // before any capping — capping to a too-small main is the bug.
-      const finalWants = children.filter(c => c.role === 'final' || c.role === 'branch')
+      // FINALS ONLY. The rule is about the run into an OUTLET — that is what
+      // must not be full bore on its main. A major branch is an intermediate
+      // duct that legitimately sits one size under the main feeding it, and
+      // counting it here inflated every main on a tree whose children are
+      // branches rather than finals.
+      const finalWants = children.filter(c => c.role === 'final')
         .map(c => c.cappedFromMm || c.diameterMm);
       const childMain = Math.max(0, ...children.filter(isMain).map(c => c.diameterMm || 0));
       // A MAIN IS NEVER A 250 — the floor is the largest final still to come

@@ -11,6 +11,7 @@ import { UNIT_SPECS, UNIT_SPEC_META, findUnitSpec, specsForBrand } from '../desi
 import { designReturnAir, selectReturnDuct } from '../designer/engines/returnair.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { RETURN_DUCT_SIZES_MM } from '../designer/engines/nac-standard.mjs';
+import { maxAirflowPerReturnLs, returnCountFor } from '../designer/engines/nac-standard.mjs';
 
 test('the data is attributed to the sheets it came off', () => {
   assert.match(UNIT_SPEC_META.source, /TECH DATA SHEETS/);
@@ -176,4 +177,35 @@ test('450 and 500 are not on the SUPPLY duct ladder at all', () => {
   assert.ok(!ladder.includes(500));
   assert.equal(Math.max(...ladder), 400);
   assert.equal(DEFAULT_SETTINGS.duct.maxDiameterMm, 400);
+});
+
+// ── How many return points, decided by the duct rather than a round number ──
+
+test('one return point carries only what one duct can carry', () => {
+  // The biggest duct on the return ladder at the fastest it may run.
+  const cap = maxAirflowPerReturnLs(5);
+  assert.ok(Math.abs(cap - 795) < 1, cap + ' L/s');
+  // It is derived, so it moves with the band rather than disagreeing with it.
+  assert.ok(maxAirflowPerReturnLs(4) < cap);
+});
+
+test('a second return is fitted as soon as one duct cannot carry the air', () => {
+  // The bug: at 800 L/s the design stayed on ONE return, which no return duct
+  // NAC fits can carry inside its band. The tool reported 5.03 m/s and told
+  // the estimator to add a return, instead of fitting one.
+  assert.equal(returnCountFor(790), 1);
+  assert.equal(returnCountFor(800), 2);
+  assert.equal(returnCountFor(1202), 2);
+  // And the estimator's own call still wins.
+  assert.equal(returnCountFor(1202, { override: 1 }), 1);
+});
+
+test('no return point is ever left over its velocity band', () => {
+  for (const total of [300, 500, 790, 800, 1000, 1202, 1400]) {
+    const count = returnCountFor(total);
+    const d = selectReturnDuct(total / count, DEFAULT_SETTINGS);
+    assert.ok(d.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max,
+      total + ' L/s over ' + count + ' return(s) runs at ' + d.velocityMs + ' m/s');
+    assert.equal(d.exceedsStandard, false, total + ' L/s exceeded the standard');
+  }
 });

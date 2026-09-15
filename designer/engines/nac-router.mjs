@@ -479,7 +479,10 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
         afterCluster: ci,
         atIndex: cluster.taps[cluster.taps.length - 1].alongIndex,
         airflowLs: carried,
-        size: mainFloorForFinals(sizeFor(carried), [largestFinalAfter[ci]])
+        // A size ABOVE the largest final still downstream — level with it is a
+        // full-bore take-off.
+        size: Math.max(MIN_MAIN_DIAMETER_MM,
+          mainFloorForFinals(sizeFor(carried), [largestFinalAfter[ci]]))
       });
     });
 

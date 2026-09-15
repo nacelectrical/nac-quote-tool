@@ -425,6 +425,17 @@ export function checkNacSchedule(data) {
     oversizedBranch.length ? oversizedBranch.map(b => 'BTO ' + b.number).join(', ')
       : 'all ' + data.totals.btos + ' take-offs within their parent');
 
+  // FULL BORE: a take-off the same size as the main it comes off, with air
+  // still to carry past it. Rejected at 250; it is the same fault at 300.
+  const fullBore = data.btos.filter(b => b.parentRole === 'main' &&
+    b.parentDiameterMm && b.branchDiameterMm >= b.parentDiameterMm);
+  check('No take-off is the same size as the main it comes off',
+    fullBore.length === 0,
+    fullBore.length
+      ? fullBore.map(b => 'BTO ' + b.number + ' ' + dia(b.branchDiameterMm) +
+          ' off ' + dia(b.parentDiameterMm)).join(', ')
+      : 'every take-off is at least a size under its main');
+
   return { ok: checks.every(c => c.ok), checks,
            passed: checks.filter(c => c.ok).length, failed: checks.filter(c => !c.ok).length };
 }

@@ -364,7 +364,19 @@ export const MIN_MAIN_DIAMETER_MM = 300;
  * @param {number} childMainMm   the next stretch of the same main, if any
  */
 export function mainFloorForFinals(sizedMm, finalsMm = [], childMainMm = null) {
-  const wants = [sizedMm || 0, ...finalsMm.filter(Boolean)];
+  // A MAIN IS ALWAYS AT LEAST ONE STOCK SIZE ABOVE THE LARGEST FINAL COMING
+  // OFF IT. Level with it is a FULL-BORE take-off: the whole main turning into
+  // one room's flex while it still has air to carry past. That is what Nick
+  // rejected at 250, and it came back at 300 the moment a 300 final appeared,
+  // which is how you can tell it was never about the number.
+  //
+  // MIN_MAIN_DIAMETER_MM falls out of this rather than standing beside it: 250
+  // finals are the common case, and the size above 250 is 300.
+  const largestFinal = Math.max(0, ...finalsMm.filter(Boolean));
+  const aboveFinals = largestFinal
+    ? (STOCKED_DIAMETERS_MM.find(mm => mm > largestFinal) ?? largestFinal)
+    : 0;
+  const wants = [sizedMm || 0, aboveFinals];
   if (childMainMm) wants.push(childMainMm);
   return Math.max(...wants) || sizedMm;
 }
@@ -566,14 +578,39 @@ export const RETURN_DUCT_SIZES_MM = Object.freeze([350, 400, 450]);
 export const RETURN_AIR = Object.freeze({
   minReturns: 1,
   maxReturns: 2,
-  /** Above this airflow a single return grille becomes impractical. */
+  /**
+   * Above this airflow a single return grille becomes impractical.
+   *
+   * A round number, and it was the wrong one: at 800 L/s it left the design on
+   * ONE return, which the biggest return duct NAC fits cannot carry inside its
+   * velocity band. The tool then reported a return at 5.03 m/s and told the
+   * estimator to add another — right information, wrong design. It should just
+   * fit two. So the real limit is worked out from the duct, below, and this is
+   * only a ceiling on top of it.
+   */
   secondReturnAboveLs: 900
 });
+
+/**
+ * The most air ONE return point can take.
+ *
+ * The largest duct on the return ladder, at the fastest that duct is allowed to
+ * run. Physics, not a round number — so it moves if the ladder or the band
+ * moves, instead of quietly disagreeing with them.
+ */
+export function maxAirflowPerReturnLs(maxVelocityMs = 5) {
+  const d = Math.max(...RETURN_DUCT_SIZES_MM) / 2000;
+  return Math.PI * d * d * maxVelocityMs * 1000;   // m3/s -> L/s
+}
 
 export function returnCountFor(designAirflowLs, opts = {}) {
   if (opts.override === 1 || opts.override === 2) return opts.override;
   const flow = Number(designAirflowLs) || 0;
-  return flow >= RETURN_AIR.secondReturnAboveLs ? RETURN_AIR.maxReturns : RETURN_AIR.minReturns;
+  const perReturnCap = maxAirflowPerReturnLs(opts.maxVelocityMs ?? 5);
+  // Two returns once ONE duct cannot carry it, or once a single grille becomes
+  // impractical — whichever comes first.
+  return (flow > perReturnCap || flow >= RETURN_AIR.secondReturnAboveLs)
+    ? RETURN_AIR.maxReturns : RETURN_AIR.minReturns;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -758,6 +795,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   plenumBalance,
   choosePlenumMains,
   returnDuctSizesMm: RETURN_DUCT_SIZES_MM,
+  maxAirflowPerReturnLs,
   mainReductions: MAIN_REDUCTIONS,
   minMainDiameterMm: MIN_MAIN_DIAMETER_MM,
   mainFloorForFinals,
