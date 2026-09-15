@@ -706,6 +706,28 @@ export const DRAWING = Object.freeze({
   trunkColour: '#B061C6',
   /** The return is a different system and is the only grey line. */
   returnColour: '#8A8FA3',
+
+  /**
+   * COLOUR MEANS SIZE.
+   *
+   * On the drawing a duct's colour is its DIAMETER, not its zone. An installer
+   * in a roof space is asking "what do I pull for this one", and the answer is
+   * a size — so the size is what the eye should get first, without reading a
+   * label. Zone identity is carried by the schedule, the badges and the damper
+   * that actually controls it.
+   *
+   * Ordered so bigger reads heavier: cool and light for a 200, through green
+   * and amber, to magenta for a 400.
+   */
+  sizeColours: Object.freeze({
+    200: '#4A90D9',
+    250: '#E8A33D',
+    300: '#3FA96B',
+    350: '#8E6ACB',
+    400: '#C0479E'
+  }),
+  /** Anything off the ladder, so a manual override is still drawn. */
+  sizeColourFallback: '#5A6377',
   /** One palette, shared by the plan, the chips and the tables. */
   zonePalette: Object.freeze([
     Object.freeze({ key: 'amber', line: '#E8A33D', fill: 'rgba(232,163,61,0.18)' }),

@@ -23,6 +23,7 @@ import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFin
          plenumBalance, MIN_MAIN_DIAMETER_MM, RETURN_DUCT_SIZES_MM,
          choosePlenumMains } from '../designer/engines/nac-standard.mjs';
 import { balanceGroups } from '../designer/engines/nac-router.mjs';
+import { sizeColour, sizeKey } from '../designer/ui/flex-renderer.mjs';
 
 // The real sheet: every label at the pixel it is printed, with the size text
 // printed under it. Transcribed off the plan, NOT INVENTED.
@@ -667,4 +668,64 @@ test('the equipment is not counted among the unpriced or placeholder lines', () 
     'the unit is listed as unpriced');
   assert.ok(!(design.bom.placeholderLabels || []).includes(equipment.label),
     'the unit is listed as a placeholder rate');
+});
+
+// ── Colour means SIZE, and a damper is a thing somebody fits ────────────────
+
+test('every duct size has its own colour, and a return keeps grey', () => {
+  const sizes = [200, 250, 300, 350, 400];
+  const seen = sizes.map(mm => sizeColour(mm, 'supply'));
+  assert.equal(new Set(seen).size, sizes.length, 'two sizes share a colour: ' + seen.join(', '));
+  for (const c of seen) assert.match(c, /^#[0-9a-f]{6}$/i);
+  // A return is the other system and is never coloured by its size.
+  assert.equal(sizeColour(400, 'return'), sizeColour(200, 'return'));
+  assert.notEqual(sizeColour(400, 'return'), sizeColour(400, 'supply'));
+  // An off-ladder size still draws rather than vanishing.
+  assert.match(sizeColour(175, 'supply'), /^#[0-9a-f]{6}$/i);
+});
+
+test('the size key lists only the sizes this design actually uses', () => {
+  const routes = {};
+  for (const s of design.network.sections) {
+    routes[s.id] = { diameterMm: s.diameterMm, role: s.role };
+  }
+  const key = sizeKey(routes);
+  const supply = [...new Set(design.network.sections
+    .filter(s => s.role !== 'return').map(s => s.diameterMm))].sort((a, b) => a - b);
+  assert.deepEqual(key.map(k => k.diameterMm), supply);
+  // Ascending, and no return size smuggled in.
+  assert.ok(!key.some(k => k.diameterMm === design.returnDesign.duct.diameterMm &&
+                           !supply.includes(k.diameterMm)));
+});
+
+test('a zone damper is drawn for every motor bought, and no others', () => {
+  // The drawing showed seven dampers on a design whose order carried six
+  // motors: the always-open zone had one it never needs.
+  const motors = design.bom.items.find(i => i.key === 'zone_motor');
+  assert.ok(motors, 'no zone motor line in the BOM');
+  assert.equal(design.zoneDampers.length, motors.quantity,
+    design.zoneDampers.length + ' dampers drawn, ' + motors.quantity + ' motors bought');
+});
+
+test('the always-open zone gets no damper', () => {
+  const open = design.zones.zones.filter(z => z.alwaysOpen).map(z => z.name);
+  assert.ok(open.length, 'fixture has no always-open zone');
+  for (const name of open) {
+    assert.ok(!design.zoneDampers.some(d => d.zone === name),
+      name + ' is always open and still has a damper');
+  }
+});
+
+test('every damper sits on a real duct and knows which way it runs', () => {
+  const byId = new Map(design.network.sections.map(s => [s.id, s]));
+  for (const d of design.zoneDampers) {
+    const run = byId.get(d.sectionId);
+    assert.ok(run, d.zone + ' damper is on no section');
+    assert.ok(Number.isFinite(d.angle), d.zone + ' damper has no duct angle');
+    assert.ok(Number.isFinite(d.x) && Number.isFinite(d.y));
+    // And it is on that run's own first leg, not floating.
+    const a = run.points[0], b = run.points[1];
+    const expected = Math.atan2(b.y - a.y, b.x - a.x);
+    assert.ok(Math.abs(d.angle - expected) < 1e-9, d.zone + ' damper is turned the wrong way');
+  }
 });

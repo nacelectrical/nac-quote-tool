@@ -28,6 +28,7 @@ import { h, card, badge, banner, button, field, input, select, empty,
          money, num, int, table } from './dom.mjs';
 import { collectInterruptions, INTERRUPT } from '../engines/interruptions.mjs';
 import { AUTO_ROUTE_NOTICE, LABEL_DETAIL } from '../engines/router.mjs';
+import { sizeColour } from './flex-renderer.mjs';
 import { supplierOrderList, JOB_STATE, READY_TO_ORDER } from '../engines/order.mjs';
 import { CONDITIONING, EXCLUDED_BANNER, classificationSummary,
          isExcludedRoom, needsClassificationReview } from '../engines/classify.mjs';
@@ -41,6 +42,21 @@ export const QUICK_STEPS = [
 ];
 
 /** Which steps are behind us, so the stepper can show progress honestly. */
+/**
+ * The SIZE KEY for the drawing's legend: every supply diameter this design
+ * actually contains, smallest first, in the colour it is drawn in.
+ *
+ * Built from the design rather than from the ladder, so the key never lists a
+ * size the house does not have.
+ */
+function ductSizeKey(d) {
+  const sizes = new Set((d?.network?.sections || [])
+    .filter(x => x.role !== 'return' && x.diameterMm)
+    .map(x => x.diameterMm));
+  return [...sizes].sort((a, b) => a - b)
+    .map(mm => ({ diameterMm: mm, colour: sizeColour(mm, 'supply') }));
+}
+
 export function quickStepState(design, interruptions) {
   const d = design || {};
   // RULE 4 — a plan whose conditioned rooms all carry printed dimensions is
@@ -394,14 +410,15 @@ function stepDesign(app, interruptions) {
         // rather than discovered on site.
         routed
           ? h('div', { class: 'qlegend' },
-              // The NAC names for the four things on the drawing, in the
-              // colours the plan viewer actually draws them in.
-              h('span', { class: 'qlegend-item trunk' }, 'SUPPLY MAIN'),
-              h('span', { class: 'qlegend-item branch' }, 'MAJOR BRANCH'),
-              h('span', { class: 'qlegend-item final' }, 'FINAL FLEX — ZONE COLOUR'),
+              // COLOUR MEANS SIZE on the drawing, so the legend is a SIZE KEY
+              // built from the sizes this design actually uses — not a list of
+              // roles, and not a list of sizes it does not contain.
+              ...ductSizeKey(d).map(k =>
+                h('span', { class: 'qlegend-item', style: 'color:' + k.colour },
+                  '\u00f8' + k.diameterMm)),
               h('span', { class: 'qlegend-item return' }, 'RETURN'),
-              h('span', { class: 'qlegend-sym bto' }, h('i', {}, '\u25C6'), 'TAKE-OFF'),
-              h('span', { class: 'qlegend-sym damper' }, h('i', {}, '\u25A0'), 'ZONE DAMPER'),
+              h('span', { class: 'qlegend-sym bto' }, h('i', {}, '\u25CF'), 'TAKE-OFF'),
+              h('span', { class: 'qlegend-sym damper' }, h('i', {}, '\u29C4'), 'ZONE DAMPER'),
               h('span', { class: 'qlegend-sym outlet' }, h('i', {}, '\u2295'), 'OUTLET'),
               h('span', { class: 'qlegend-count' },
                 (d.network?.mainSupplyCount ?? 0) + ' supply mains · ' +

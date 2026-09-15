@@ -31,6 +31,30 @@
 // and the pressure calculation read — so the picture cannot show a system the
 // numbers do not.
 
+import { DRAWING } from '../engines/nac-standard.mjs';
+
+/**
+ * The colour of a duct: its SIZE.
+ *
+ * A return keeps grey, because it is the other system and must never be read
+ * as a supply run whatever size it happens to be.
+ */
+export function sizeColour(diameterMm, role) {
+  if (role === 'return') return DRAWING.returnColour;
+  return DRAWING.sizeColours[diameterMm] || DRAWING.sizeColourFallback;
+}
+
+/** Every size on this drawing, in order, for the key. */
+export function sizeKey(routes) {
+  const seen = new Map();
+  for (const r of Object.values(routes || {})) {
+    if (!r.diameterMm || r.role === 'return') continue;
+    seen.set(r.diameterMm, sizeColour(r.diameterMm, r.role));
+  }
+  return [...seen.entries()].sort((a, b) => a[0] - b[0])
+    .map(([mm, colour]) => ({ diameterMm: mm, colour }));
+}
+
 /** Screen width of a duct, from its real diameter. */
 export function tubeWidthPx(diameterMm, pxPerMm, opts = {}) {
   const min = opts.minPx ?? 3.5;
@@ -202,6 +226,34 @@ export function drawTakeOff(ctx, at, { colour = '#0c0c1e', r = 4 } = {}) {
   ctx.restore();
 }
 
+/**
+ * A ZONE DAMPER, drawn the way one is drawn on a duct layout: a short barrel
+ * across the run with the blade on its spindle through it.
+ *
+ * Turned to sit across the duct, because a damper lying along the duct is not
+ * a damper, it is a decoration.
+ */
+export function drawDamper(ctx, at, angle = 0, { colour = '#1d7a48' } = {}) {
+  ctx.save();
+  ctx.translate(at.x, at.y);
+  ctx.rotate(angle);
+  const w = 7, h = 11;   // w along the duct, h across it
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fill();
+  ctx.stroke();
+  // The blade, on the slant, the way a damper is shown part open.
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + 1, h / 2 - 1.5);
+  ctx.lineTo(w / 2 - 1, -h / 2 + 1.5);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** The fan coil and its supply plenum, as one object. */
 export function drawUnit(ctx, at, { w = 34, h = 24 } = {}) {
   ctx.save();
@@ -243,7 +295,7 @@ export function drawZoneBadge(ctx, at, { index, colour }) {
  * the fittings, then the text on top of all of it.
  */
 export function drawFlexDesign(ctx, view) {
-  const { routes, outlets, markers, plenum, zoneFillByRoomId, rooms,
+  const { routes, outlets, markers, plenum, zoneFillByRoomId, rooms, dampers,
           toScreen, pxPerMm, labelDetail } = view;
 
   // ── 1. Zone wash ────────────────────────────────────────────────────────
@@ -268,7 +320,8 @@ export function drawFlexDesign(ctx, view) {
 
   for (const run of runs) {
     drawTube(ctx, run.screen, {
-      colour: run.colour || '#5fa8ff',
+      // SIZE, not zone.
+      colour: sizeColour(run.diameterMm, run.role),
       widthPx: run.widthPx,
       // A return is the other system, and must never be read as a supply run
       // whatever colour the palette gives it.
@@ -281,10 +334,12 @@ export function drawFlexDesign(ctx, view) {
     if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
     drawTakeOff(ctx, toScreen(m));
   }
-  for (const o of (outlets || [])) {
-    const z = o.roomId ? zoneFillByRoomId?.[o.roomId] : null;
-    drawOutlet(ctx, toScreen(o), { colour: z?.colour || '#3b4358' });
-  }
+  for (const o of (outlets || [])) drawOutlet(ctx, toScreen(o), { colour: '#3b4358' });
+
+  // ZONE DAMPERS, in the ductwork. One per closable zone, on the run that feeds
+  // that zone and nothing else — a motor somebody buys, fits and wires, so it
+  // belongs on the drawing at the place they fit it.
+  for (const d of (dampers || [])) drawDamper(ctx, toScreen(d), d.angle ?? 0);
   if (plenum && plenum.x !== undefined) drawUnit(ctx, toScreen(plenum));
 
   // ── 4. Sizes, written on the ducts ──────────────────────────────────────
@@ -304,6 +359,7 @@ export function drawFlexDesign(ctx, view) {
     for (const m of (markers || [])) {
       if (m.type === 'bto' || (m.type === 'junction' && m.bto)) reserve(m, 12, 12);
     }
+    for (const d of (dampers || [])) reserve(d, 16, 16);
     if (plenum && plenum.x !== undefined) reserve(plenum, 40, 30);
 
     const clear = (x, y, w, h) => {

@@ -192,6 +192,8 @@ export function createPlanViewer(container, opts = {}) {
         plenum: state.plenum,
         zoneFillByRoomId: state.zoneFillByRoomId,
         rooms: state.rooms,
+        // Zone dampers are drawn IN the ductwork, across the run they control.
+        dampers: (state.markers || []).filter(m => m.type === 'damper'),
         toScreen,
         scale: state.scale,
         pxPerMm: state.pxPerMm || null,

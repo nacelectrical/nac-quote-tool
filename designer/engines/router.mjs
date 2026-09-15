@@ -1064,7 +1064,16 @@ function orthogonal(from, to) {
  * the drawing rather than left implied. The position stays editable — this is a
  * starting point, like everything else the router produces.
  */
-export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
+export function placeZoneDampers(network, { zoneOverrides = {}, zones = null } = {}) {
+  // AN ALWAYS-OPEN ZONE HAS NO MOTOR, SO IT GETS NO DAMPER.
+  //
+  // The common zone is what keeps air moving when everything else shuts; there
+  // is nothing to close and the BOM never buys a motor for it. Drawing one put
+  // seven dampers on a plan whose order carries six motors — a fitting on the
+  // drawing that nobody installs, which is the same fault as a fitting in the
+  // design that nobody drew.
+  const alwaysOpen = new Set((zones?.zones || [])
+    .filter(z => z.alwaysOpen).map(z => z.name));
   const sections = network?.sections || [];
   const byId = new Map(sections.map(s => [s.id, s]));
   const kids = new Map();
@@ -1096,7 +1105,7 @@ export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
     const below = zonesBelow.get(s.id) || new Set();
     if (below.size !== 1) continue;
     const zone = [...below][0];
-    if (done.has(zone)) continue;
+    if (done.has(zone) || alwaysOpen.has(zone)) continue;
     const parent = s.parentId ? byId.get(s.parentId) : null;
     const parentBelow = parent ? (zonesBelow.get(parent.id) || new Set()) : new Set();
     // The highest run that is still all one zone: its parent must carry more
@@ -1112,9 +1121,13 @@ export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
       continue;
     }
     // Just off the take-off, on the first leg, which is where it is reachable.
+    // The ANGLE of that leg travels with it so the drawing can sit the damper
+    // ACROSS the duct — a damper drawn along the duct is a decoration.
     const a = s.points[0], b = s.points[1];
     out.push({ id: 'damper_' + s.id, sectionId: s.id, zone, roomId: s.roomId ?? null,
-               x: a.x + (b.x - a.x) * 0.35, y: a.y + (b.y - a.y) * 0.35, moved: false });
+               x: a.x + (b.x - a.x) * 0.35, y: a.y + (b.y - a.y) * 0.35,
+               angle: Math.atan2(b.y - a.y, b.x - a.x),
+               diameterMm: s.diameterMm ?? null, moved: false });
   }
   return out;
 }

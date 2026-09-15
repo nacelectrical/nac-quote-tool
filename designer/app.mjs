@@ -604,6 +604,9 @@ export class DesignerApp {
     this.viewer.setMarkers(d.network?.routed
       ? [...routedMarkers(d.network, d.autoRoute),
          ...(d.zoneDampers || []).map(z => ({ type: 'damper', x: z.x, y: z.y,
+           // The angle of the duct it sits on, so the drawing can put the
+           // damper ACROSS the run rather than along it.
+           angle: z.angle ?? 0, sectionId: z.sectionId, diameterMm: z.diameterMm ?? null,
            label: z.zone, title: 'Zone damper — ' + z.zone }))]
       : []);
     this.viewer.setLayout(d.layout || {});

@@ -321,7 +321,8 @@ export function runPipeline(design, ctx = {}) {
   }
 
   d.zoneDampers = d.network?.routed
-    ? placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {} })
+    ? placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {},
+                                    zones: d.zones })
     : [];
 
   // ── 9. Static pressure (PART 21) ──────────────────────────────────────────
