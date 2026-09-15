@@ -392,7 +392,17 @@ export function reducerRequired(parentSection, childSection) {
 export const MAIN_REDUCTIONS = Object.freeze({
   maxPerMain: 2,
   /** Ignore a step smaller than this — not worth a fitting. */
-  minStepMm: 50
+  minStepMm: 50,
+
+  /**
+   * How far a main must run before it may be reduced.
+   *
+   * The balanced plenum put a take-off 130 mm off the box on one main, and the
+   * reduction planner duly reduced there — 130 mm of 350 flex and then a
+   * reducer. Nobody installs that: you run the size off the plenum a sensible
+   * way into the roof before you neck it down.
+   */
+  minStretchM: 1.5
 });
 
 export const SUPPLY_PLENUM = Object.freeze({
@@ -400,9 +410,54 @@ export const SUPPLY_PLENUM = Object.freeze({
   maxMains: 3,
   /** Below this the house genuinely only warrants two mains. */
   thirdMainAboveLs: 700,
+
+  /**
+   * EVERY DUCT OFF THE PLENUM IS THE SAME SIZE, AND THE AIR IS SHARED
+   * EVENLY BETWEEN THEM.
+   *
+   * This is how the plenum is actually made up: two or three spigots of one
+   * size, not one big duct and two small ones. It follows from what a plenum
+   * is — a box with identical outlets — and it is what the Dungannon Court
+   * sheet shows.
+   *
+   * It also changes how the house is divided. Grouping the outlets purely by
+   * where they sit put 702 L/s down one main and 208 down another: same
+   * plenum, wildly different ducts. The groups now have to come out balanced,
+   * so the division is by AIR as well as by area.
+   */
+  sameSizeMains: true,
+
+  /**
+   * How far off an even share a main may be.
+   *
+   * Rooms come in whole outlets, so a perfectly even split is not usually
+   * available — three mains on a 1202 L/s house cannot each carry exactly
+   * 400.7. This is the band within which the split still counts as balanced.
+   */
+  balanceTolerancePct: 15,
+
   /** What each main must record. */
   requiredFields: Object.freeze(['diameterMm', 'airflowLs', 'serves'])
 });
+
+/**
+ * How evenly the air is shared across the mains.
+ *
+ * Returns the mean, the worst deviation from it as a percentage, and whether
+ * that is inside the tolerance above.
+ */
+export function plenumBalance(mainAirflowsLs = []) {
+  const flows = mainAirflowsLs.filter(n => Number.isFinite(n) && n > 0);
+  if (!flows.length) return { meanLs: 0, worstDeviationPct: 0, balanced: true, flows };
+  const mean = flows.reduce((a, b) => a + b, 0) / flows.length;
+  const worst = Math.max(...flows.map(f => Math.abs(f - mean) / mean * 100));
+  return {
+    meanLs: Math.round(mean),
+    worstDeviationPct: Math.round(worst * 10) / 10,
+    balanced: worst <= SUPPLY_PLENUM.balanceTolerancePct,
+    flows
+  };
+}
 
 /**
  * How many mains should leave the plenum for this system.
@@ -616,6 +671,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   finalSizeByAirflow: FINAL_SIZE_BY_AIRFLOW,
   bto: BTO,
   supplyPlenum: SUPPLY_PLENUM,
+  plenumBalance,
   mainReductions: MAIN_REDUCTIONS,
   mainFloorForFinals,
   returnAir: RETURN_AIR,

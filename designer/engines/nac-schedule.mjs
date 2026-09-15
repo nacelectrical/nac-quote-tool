@@ -17,7 +17,8 @@
 // system from the one being quoted.
 
 import {
-  FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, STOCKED_DIAMETERS_MM
+  FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, STOCKED_DIAMETERS_MM,
+  plenumBalance
 } from './nac-standard.mjs';
 import { DEFAULT_SETTINGS } from './settings.mjs';
 
@@ -69,10 +70,18 @@ export function nacScheduleData(design, opts = {}) {
   };
 
   // ── 1. Supply plenum ─────────────────────────────────────────────────────
+  const plenumSizes = [...new Set(plenumDucts.map(s => s.diameterMm))];
+  const balance = plenumBalance(plenumDucts.map(s => s.airflowLs));
   const plenum = {
     ductCount: plenumDucts.length,
     allowedMin: SUPPLY_PLENUM.minMains,
     allowedMax: SUPPLY_PLENUM.maxMains,
+    // THE NAC PLENUM RULE: one size across all of them, air shared evenly.
+    sizesMm: plenumSizes,
+    sameSize: plenumSizes.length === 1,
+    ductSizeMm: plenumSizes.length === 1 ? plenumSizes[0] : null,
+    balance,
+    tolerancePct: SUPPLY_PLENUM.balanceTolerancePct,
     totalAirflowLs: plenumDucts.reduce((n, s) => n + (s.airflowLs || 0), 0),
     ducts: plenumDucts.map(s => ({
       id: s.id,
@@ -201,6 +210,12 @@ export function nacScheduleData(design, opts = {}) {
       .filter(c => c.role === 'final' || c.role === 'branch');
     const vIfKept = velocityMs(s.airflowLs, s.reducerFrom);
     const vAfter = velocityMs(s.airflowLs, s.diameterMm);
+    // How small this stretch was ALLOWED to go. A main tail carrying 150 L/s
+    // would like to be a 200, but it still has 250 finals coming off it, so it
+    // stays a 250 and runs slow. That is the install rule beating the velocity
+    // band, and the schedule has to say so rather than look like a mistake.
+    const floorMm = Math.max(0, ...downstreamOutlets(s.id).map(f => f.diameterMm || 0));
+    const heldByFinals = floorMm > 0 && s.diameterMm <= floorMm && vAfter < band.preferredMin;
     return {
       ref: 'R' + (i + 1),
       onRun: s.mainKey ? 'Main ' + s.mainKey : s.id,
@@ -222,6 +237,8 @@ export function nacScheduleData(design, opts = {}) {
       // step is bought because the smaller duct is closer to how NAC runs a
       // main. Saying "under the minimum" when it is 4.40 against a 4.00
       // minimum is the sort of near-enough reason that hides a real mistake.
+      finalsFloorMm: floorMm || null,
+      heldByFinals,
       reason: vIfKept < band.preferredMin ? 'below_minimum' : 'oversized',
       why: s.role === 'final'
         ? 'ON A FINAL — not allowed. The BTO takes the branch to final size.'
@@ -235,7 +252,11 @@ export function nacScheduleData(design, opts = {}) {
               : 'Left at ' + dia(s.reducerFrom) + ' the main would run at ' + vIfKept +
                 ' m/s against a ' + band.preferred + ' m/s target — oversized for what ' +
                 'it still carries') +
-            '; at ' + dia(s.diameterMm) + ' it runs at ' + vAfter + ' m/s.'
+            '; at ' + dia(s.diameterMm) + ' it runs at ' + vAfter + ' m/s' +
+            (heldByFinals
+              ? ', below the ' + band.preferredMin + ' m/s band \u2014 it cannot go ' +
+                'smaller because ' + dia(floorMm) + ' finals still come off it.'
+              : '.')
           : 'Airflow falls to ' + s.airflowLs + ' L/s; ' + dia(s.diameterMm) +
             ' holds ' + vAfter + ' m/s.'
     };
@@ -276,6 +297,18 @@ export function checkNacSchedule(data) {
   check('Supply plenum carries ' + SUPPLY_PLENUM.minMains + ' or ' + SUPPLY_PLENUM.maxMains + ' ducts only',
     data.plenum.ductCount >= SUPPLY_PLENUM.minMains && data.plenum.ductCount <= SUPPLY_PLENUM.maxMains,
     data.plenum.ductCount + ' ducts off the plenum');
+
+  check('Every duct off the plenum is the same size',
+    data.plenum.sameSize,
+    data.plenum.sameSize ? data.plenum.ductCount + ' x ' + dia(data.plenum.ductSizeMm)
+      : data.plenum.sizesMm.map(dia).join(' + '));
+
+  check('The air is shared evenly across them (within ' +
+    data.plenum.tolerancePct + '%)',
+    data.plenum.balance.balanced,
+    data.plenum.balance.flows.join(' / ') + ' L/s against a ' +
+    data.plenum.balance.meanLs + ' L/s even share \u2014 worst ' +
+    data.plenum.balance.worstDeviationPct + '% off');
 
   check('Return is ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' ducts only',
     data.ret.ductCount >= RETURN_AIR.minReturns && data.ret.ductCount <= RETURN_AIR.maxReturns,
@@ -377,7 +410,12 @@ export function nacDuctSchedule(design, opts = {}) {
   L.push('1. SUPPLY PLENUM');
   rule();
   L.push('   Supply ducts off the plenum: ' + d.plenum.ductCount +
-         '   (NAC fits ' + d.plenum.allowedMin + ' or ' + d.plenum.allowedMax + ')');
+         ' \u00d7 ' + dia(d.plenum.ductSizeMm) +
+         '   (NAC fits ' + d.plenum.allowedMin + ' or ' + d.plenum.allowedMax +
+         ', all one size)');
+  L.push('   Even share: ' + d.plenum.balance.meanLs + ' L/s each. Worst duct is ' +
+         d.plenum.balance.worstDeviationPct + '% off that (tolerance ' +
+         d.plenum.tolerancePct + '%).');
   L.push('');
   L.push('   ' + pad('DUCT', 9) + pad('SIZE', 7) + rpad('AIRFLOW', 10) +
          rpad('VELOCITY', 11) + rpad('OUTLETS', 9) + '   SERVES');

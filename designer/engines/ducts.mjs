@@ -423,7 +423,11 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       destination: seg.destination,
       airflowLs: seg.airflowLs,
       lengthMm: seg.lengthMm ?? null,
-      diameterMm: diameterOverrides[seg.id],
+      // The estimator's manual override wins; failing that, a size the
+      // topology generator has already decided (the plenum's mains are all one
+      // size, which is a decision about the PLENUM, not about one duct's
+      // velocity) ; failing both, velocity picks it.
+      diameterMm: diameterOverrides[seg.id] ?? seg.diameterMm,
       rigid: !!seg.rigid,
       fittings: [...(seg.fittings || []), ...extra]
     }, opts);

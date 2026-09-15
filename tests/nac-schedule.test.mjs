@@ -19,8 +19,9 @@ import { runPipeline } from '../designer/engines/pipeline.mjs';
 import { buildCatalogue } from '../designer/engines/catalogue.mjs';
 import { nacScheduleData, checkNacSchedule, nacDuctSchedule, velocityMs }
   from '../designer/engines/nac-schedule.mjs';
-import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFinals }
-  from '../designer/engines/nac-standard.mjs';
+import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFinals,
+         plenumBalance } from '../designer/engines/nac-standard.mjs';
+import { balanceGroups } from '../designer/engines/nac-router.mjs';
 
 // The real sheet: every label at the pixel it is printed, with the size text
 // printed under it. Transcribed off the plan, not invented.
@@ -84,6 +85,63 @@ test('every supply duct off the plenum states its size, airflow and rooms', () =
     assert.ok(duct.airflowLs > 0, duct.name + ' has no airflow');
     assert.ok(duct.serves.length > 0, duct.name + ' serves nothing');
     assert.ok(duct.outletCount > 0, duct.name + ' reaches no outlet');
+  }
+});
+
+test('every duct off the plenum is the same size', () => {
+  assert.equal(S.plenum.sizesMm.length, 1,
+    'plenum carries ' + S.plenum.sizesMm.join(' + '));
+  assert.ok(S.plenum.ductSizeMm > 0);
+  for (const duct of S.plenum.ducts) {
+    assert.equal(duct.diameterMm, S.plenum.ductSizeMm);
+  }
+});
+
+test('the air is shared evenly across the plenum ducts', () => {
+  const b = S.plenum.balance;
+  assert.equal(b.balanced, true,
+    b.flows.join(' / ') + ' L/s is ' + b.worstDeviationPct + '% off an even share');
+  assert.ok(b.worstDeviationPct <= SUPPLY_PLENUM.balanceTolerancePct);
+});
+
+test('plenumBalance measures the worst deviation, not the average', () => {
+  assert.deepEqual(plenumBalance([400, 400, 400]),
+    { meanLs: 400, worstDeviationPct: 0, balanced: true, flows: [400, 400, 400] });
+  // 700/208/292 — the split this rule was written to stop.
+  const bad = plenumBalance([702, 208, 292]);
+  assert.equal(bad.balanced, false);
+  assert.ok(bad.worstDeviationPct > 70);
+  assert.equal(plenumBalance([]).balanced, true);
+});
+
+test('balancing moves whole rooms, never half of one', () => {
+  // Two groups, wildly uneven, with a two-outlet room sitting between them.
+  const groups = [
+    [{ roomId: 'a', x: 0, y: 0, airflowLs: 300 },
+     { roomId: 'b', x: 10, y: 0, airflowLs: 100 },
+     { roomId: 'b', x: 11, y: 0, airflowLs: 100 }],
+    [{ roomId: 'c', x: 40, y: 0, airflowLs: 100 }]
+  ];
+  const out = balanceGroups(groups, { tolerancePct: 15 });
+  const flows = out.map(g => g.reduce((n, o) => n + o.airflowLs, 0));
+  assert.ok(Math.max(...flows) - Math.min(...flows) < 300, flows.join('/'));
+  // Room b is still whole, wherever it ended up.
+  const whereB = out.map((g, i) => g.some(o => o.roomId === 'b') ? i : -1).filter(i => i >= 0);
+  assert.equal(whereB.length, 1, 'room b was split across two mains');
+  assert.equal(out[whereB[0]].filter(o => o.roomId === 'b').length, 2);
+  // And no main was emptied.
+  assert.ok(out.every(g => g.length > 0));
+});
+
+test('one room never feeds off two different mains', () => {
+  const mainOfRoom = new Map();
+  for (const b of S.btos) {
+    const main = b.parentId.split('_')[1];
+    if (mainOfRoom.has(b.room)) {
+      assert.equal(mainOfRoom.get(b.room), main,
+        b.room + ' is fed from Main ' + mainOfRoom.get(b.room) + ' and Main ' + main);
+    }
+    mainOfRoom.set(b.room, main);
   }
 });
 
@@ -241,13 +299,31 @@ test('every reducer is on a main and says why it exists', () => {
     assert.ok(isOff < wasOff,
       r.ref + ' steps to a size no closer to the ' + r.bandPreferredMs +
       ' m/s target: ' + r.velocityIfNotReducedMs + ' -> ' + r.velocityAfterMs + ' m/s');
-    // And the reduced main must still be inside the band NAC runs mains in.
-    assert.ok(r.velocityAfterMs >= r.bandMinMs && r.velocityAfterMs <= r.bandMaxMs,
+    // And the reduced main must be inside the band NAC runs mains in — unless
+    // it is being HELD UP by the finals still to come off it, which is the
+    // install rule beating the velocity band and has to be stated as such.
+    assert.ok(r.velocityAfterMs <= r.bandMaxMs,
       r.ref + ' leaves the main at ' + r.velocityAfterMs + ' m/s');
+    if (r.velocityAfterMs < r.bandMinMs) {
+      assert.equal(r.heldByFinals, true,
+        r.ref + ' runs slow at ' + r.velocityAfterMs + ' m/s for no stated reason');
+      assert.ok(/cannot go smaller/.test(r.why), r.why);
+    }
     // The stated reason must match which of the two cases it actually is.
     assert.equal(r.reason, r.velocityIfNotReducedMs < r.bandMinMs ? 'below_minimum' : 'oversized');
     assert.ok(r.reason === 'below_minimum'
       ? /under the .* minimum/.test(r.why) : /oversized/.test(r.why), r.why);
+  }
+});
+
+test('a reducer has a real length of duct on both sides of it', () => {
+  // A reducer 130 mm off the plenum, or one with 140 mm of duct after it, is a
+  // fitting bought for nothing. Both happened once the plenum went to one size.
+  for (const m of S.mainRuns) {
+    for (const s of m.stretches) {
+      assert.ok(s.lengthM >= MAIN_REDUCTIONS.minStretchM,
+        m.name + '/' + s.id + ' is only ' + s.lengthM + ' m long');
+    }
   }
 });
 

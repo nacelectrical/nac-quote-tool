@@ -191,7 +191,11 @@ export function runPipeline(design, ctx = {}) {
       rooms: included, airflow: d.airflow, outlets: d.outlets,
       layout: d.layout || {}, zones: zonesForRouting,
       returnDesign: d.returnDesign || null
-    }, { settings, returnCount: d.returnCount ?? undefined }), d.calibration, { settings });
+      // The router needs the scale to know how far along a main a reduction
+      // actually falls: a reducer 130 mm off the plenum is not something
+      // anybody fits, and that is a judgement in metres, not pixels.
+    }, { settings, calibration: d.calibration,
+         returnCount: d.returnCount ?? undefined }), d.calibration, { settings });
     d.autoRoute = applyLockedGeometry(tree, d, settings);
   } else if (mode !== ROUTING_MODE.AUTO && d.autoRoute?.generated) {
     // Kept as it was: switching to MANUAL does not delete the estimator's work.

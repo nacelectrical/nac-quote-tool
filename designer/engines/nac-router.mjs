@@ -200,7 +200,79 @@ export function groupOutlets(outletPoints, k) {
     groups[i].push(take);
     biggest.splice(biggest.indexOf(take), 1);
   }
-  return groups.filter(g => g.length);
+  return balanceGroups(groups.filter(g => g.length));
+}
+
+/**
+ * Even the air out across the groups.
+ *
+ * THE NAC PLENUM RULE: two or three ducts of ONE size, carrying roughly the
+ * same air each. Clustering on position alone gave 702 / 208 / 292 L/s off one
+ * plenum — three identical spigots feeding wildly different loads, which is
+ * neither how a plenum is made nor something anyone can balance on site.
+ *
+ * So after the spatial pass, outlets move from the heaviest group to the
+ * lightest, and the one that moves is always the outlet SITTING NEAREST the
+ * lightest group — the division stays a division of the house, not a
+ * spreadsheet. A move is only taken if it actually improves the worst
+ * deviation, which is what stops it oscillating.
+ *
+ * Outlets in the same room move together: one room's two diffusers fed off
+ * two different mains is not a design, it is an accident.
+ */
+export function balanceGroups(groups, opts = {}) {
+  if (groups.length < 2) return groups;
+  const tolerance = opts.tolerancePct ?? SUPPLY_PLENUM.balanceTolerancePct;
+  const flowOf = (g) => g.reduce((n, o) => n + (o.airflowLs || 0), 0);
+  const centroid = (g) => ({
+    x: g.reduce((n, o) => n + o.x, 0) / g.length,
+    y: g.reduce((n, o) => n + o.y, 0) / g.length
+  });
+  const worst = (gs) => {
+    const flows = gs.map(flowOf);
+    const mean = flows.reduce((a, b) => a + b, 0) / flows.length;
+    return mean > 0 ? Math.max(...flows.map(f => Math.abs(f - mean) / mean * 100)) : 0;
+  };
+
+  const work = groups.map(g => [...g]);
+  for (let pass = 0; pass < 40; pass++) {
+    if (worst(work) <= tolerance) break;
+    const flows = work.map(flowOf);
+    const heavy = flows.indexOf(Math.max(...flows));
+    const light = flows.indexOf(Math.min(...flows));
+    if (heavy === light) break;
+    const target = centroid(work[light]);
+
+    // Candidates are whole ROOMS in the heaviest group, nearest the lightest
+    // group first. A room never splits across two mains.
+    const rooms = [...new Set(work[heavy].map(o => o.roomId))]
+      .map(roomId => {
+        const members = work[heavy].filter(o => o.roomId === roomId);
+        return {
+          roomId, members,
+          ls: members.reduce((n, o) => n + o.airflowLs, 0),
+          d: Math.min(...members.map(o => dist(target, o)))
+        };
+      })
+      .sort((a, b) => a.d - b.d);
+
+    let moved = false;
+    for (const room of rooms) {
+      // Never empty a main: the plenum has to keep all of its ducts.
+      if (room.members.length >= work[heavy].length) continue;
+      const trial = work.map((g, i) =>
+        i === heavy ? g.filter(o => o.roomId !== room.roomId)
+        : i === light ? [...g, ...room.members] : g);
+      if (worst(trial) < worst(work) - 0.01) {
+        work[heavy] = trial[heavy];
+        work[light] = trial[light];
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;   // nothing left that helps — this is as even as it gets
+  }
+  return work.filter(g => g.length);
 }
 
 /** A readable name for a group, from the rooms in it. */
@@ -294,6 +366,17 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     Math.min(SUPPLY_PLENUM.maxMains, outletPoints.length));
   const groups = groupOutlets(outletPoints, wantMains);
 
+  // ── THE NAC PLENUM RULE: every duct off it is the same size ──────────────
+  // A plenum is a box with identical spigots. Sizing each main on its own
+  // airflow gave a 400, a 250 and a 250 off one box. They are all one size,
+  // chosen for the HEAVIEST group so none of them is over-velocity, and the
+  // groups have already been evened out above so that one size suits them all.
+  const sizeForMain = (ls) => selectDiameter(ls, 'main', { settings }).diameterMm;
+  const groupFlows = groups.map(g => g.reduce((n, o) => n + o.airflowLs, 0));
+  const commonMainMm = SUPPLY_PLENUM.sameSizeMains
+    ? Math.max(...groupFlows.map(sizeForMain))
+    : null;
+
   const segments = [];
   const nodes = [{ id: 'plenum', type: 'plenum', x: plenum.x, y: plenum.y,
                    source: plenumSource, label: 'Supply plenum' }];
@@ -364,8 +447,11 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
       Math.max(0, ...clusters.slice(ci + 1).flatMap(c =>
         c.taps.map(t => finalSizeForAirflow(t.outlet.airflowLs)))));
 
+    // The run STARTS at the plenum's common size, not at whatever this group's
+    // own airflow would pick on its own: what leaves a plenum is decided by the
+    // plenum, and all of its ducts are the same.
     let carried = groupLs;
-    const startSize = sizeFor(carried);
+    const startSize = commonMainMm || sizeFor(carried);
     const candidates = [];
     clusters.forEach((cluster, ci) => {
       const taken = cluster.taps.reduce((sum, t) => sum + t.outlet.airflowLs, 0);
@@ -383,13 +469,35 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     // biggest drops — not at every size on the ladder. Five reducers on one run
     // is money and resistance nobody buys, and it turns one duct into five
     // segments the pressure calculation then has to pretend are real.
+    //
+    // And a reduction has to be far enough along the run to be a real fitting.
+    // The balanced plenum put a take-off 130 mm off the box on one main, and
+    // the planner reduced there: 130 mm of 350 flex and then a reducer. So a
+    // stretch has to earn its length before the next one starts.
+    const mPerPx = opts.calibration?.mmPerPixel ? opts.calibration.mmPerPixel / 1000 : null;
+    const alongM = (i) => {
+      if (!mPerPx) return Infinity;   // no scale yet: do not block on length
+      let n = 0;
+      for (let k = 1; k <= Math.min(i, runPts.length - 1); k++) n += dist(runPts[k - 1], runPts[k]);
+      return n * mPerPx;
+    };
+
+    // Both sides of a reducer have to be a real length of duct: enough run
+    // before it to be worth starting at the bigger size, and enough after it to
+    // be worth necking down at all. A reducer with 140 mm of duct on the far
+    // side of it is a fitting bought for nothing.
+    const totalM = alongM(runPts.length - 1);
     const steps = [];
     let running = startSize;
+    let lastBreakM = 0;
     for (const c of candidates) {
-      if (running - c.size >= MAIN_REDUCTIONS.minStepMm) {
-        steps.push({ ...c, from: running, drop: running - c.size });
-        running = c.size;
-      }
+      if (running - c.size < MAIN_REDUCTIONS.minStepMm) continue;
+      const atM = alongM(c.atIndex);
+      if (atM - lastBreakM < MAIN_REDUCTIONS.minStretchM) continue;
+      if (totalM - atM < MAIN_REDUCTIONS.minStretchM) continue;
+      steps.push({ ...c, from: running, drop: running - c.size, atM });
+      running = c.size;
+      lastBreakM = atM;
     }
     const kept = steps
       .sort((a, b) => b.drop - a.drop)
@@ -398,14 +506,14 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
 
     // Now cut the run into one stretch per KEPT reduction.
     const stretches = [];
-    let cur = { from: 0, airflowLs: groupLs, clusters: [] };
+    let cur = { from: 0, airflowLs: groupLs, sizeMm: startSize, clusters: [] };
     clusters.forEach((cluster, ci) => {
       cur.clusters.push({ cluster, ci });
       const step = kept.find(k => k.afterCluster === ci);
       cur.to = cluster.taps[cluster.taps.length - 1].alongIndex;
       if (step) {
         stretches.push(cur);
-        cur = { from: step.atIndex, airflowLs: step.airflowLs, clusters: [] };
+        cur = { from: step.atIndex, airflowLs: step.airflowLs, sizeMm: step.size, clusters: [] };
       }
     });
     if (cur.clusters.length) { cur.to = runPts.length - 1; stretches.push(cur); }
@@ -429,6 +537,10 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
           : 'Main ' + letter + ' (reduced)',
         serves: si === 0 ? [...new Set(members.map(m => m.roomLabel))] : null,
         airflowLs: round(stretch.airflowLs, 0),
+        // The size the PLENUM RULE and the reduction plan decided. Velocity
+        // does not get a second vote on a main, or the first duct off the
+        // plenum stops matching the other two.
+        diameterMm: stretch.sizeMm,
         points: runPts.slice(from, to),
         rigid: false,
         fittings: (si === 0 && gi === 0) ? ['supply_plenum'] : []
