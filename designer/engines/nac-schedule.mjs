@@ -154,8 +154,13 @@ export function nacScheduleData(design, opts = {}) {
         parentDiameterMm: parent?.diameterMm ?? null,
         branchDiameterMm: s.diameterMm,
         airflowLs: s.airflowLs,
-        room: roomLabel(s),
-        outlet: s.destination,
+        // A take-off either feeds ONE outlet, or it feeds a major branch that
+        // then feeds several. Both are real take-offs somebody fits; only the
+        // first has a room and an outlet behind it.
+        feedsBranch: s.nacRole === 'MAJOR_BRANCH',
+        room: s.nacRole === 'MAJOR_BRANCH' ? '—' : roomLabel(s),
+        outlet: s.nacRole === 'MAJOR_BRANCH'
+          ? s.id + ' (' + (s.serves || []).length + ' rooms)' : s.destination,
         outletOfRoom: row ? row.quantity : 1,
         zone: s.zone || null,
         reducedAtBto: parent && parent.diameterMm !== s.diameterMm
@@ -295,6 +300,7 @@ export function nacScheduleData(design, opts = {}) {
       mainStretches: mains.length,
       majorBranches: majors.length,
       btos: btos.length,
+      outletBtos: btos.filter(b => !b.feedsBranch).length,
       finals: finals.length,
       outlets: rooms.reduce((n, r) => n + r.outletCount, 0),
       returns: ret.ductCount,
@@ -371,9 +377,15 @@ export function checkNacSchedule(data) {
     maxPerOutlet.length ? maxPerOutlet.map(r => r.room + ' ' + r.perOutletLs + ' L/s').join(', ')
       : 'heaviest outlet is ' + Math.max(...data.rooms.map(r => r.perOutletLs)) + ' L/s');
 
+  // A take-off onto a MAJOR BRANCH is a real take-off too — the bedroom wing
+  // comes off the main through one. What the rule is about is that no outlet is
+  // reached any other way, so it is the OUTLET take-offs that must match the
+  // finals, not every take-off on the job.
   check('Every final outlet comes directly from a BTO',
-    data.totals.btos === data.totals.finals,
-    data.totals.btos + ' take-offs for ' + data.totals.finals + ' finals');
+    data.totals.outletBtos === data.totals.finals,
+    data.totals.outletBtos + ' take-offs to an outlet for ' + data.totals.finals +
+    ' finals' + (data.totals.btos > data.totals.outletBtos
+      ? ', plus ' + (data.totals.btos - data.totals.outletBtos) + ' onto a major branch' : ''));
 
   const reducerOnFinal = data.reducers.filter(r => r.onFinal);
   check('No reducer between a BTO and its outlet',
@@ -532,11 +544,13 @@ export function nacDuctSchedule(design, opts = {}) {
     L.push('   ' + rpad(b.number, 4) + '   ' + pad(b.parentId, 12) +
            pad(dia(b.parentDiameterMm), 8) + pad(dia(b.branchDiameterMm), 8) +
            rpad(b.airflowLs + ' L/s', 10) + '   ' + pad(b.room, 17) +
-           (b.outletOfRoom > 1 ? b.outlet : b.room + ' (single outlet)'));
+           (b.feedsBranch ? b.outlet
+            : b.outletOfRoom > 1 ? b.outlet : b.room + ' (single outlet)'));
   }
   L.push('');
-  L.push('   ' + d.totals.btos + ' take-offs for ' + d.totals.finals +
-         ' finals — every outlet comes off its own BTO.');
+  L.push('   ' + d.totals.btos + ' take-offs: ' + d.totals.outletBtos + ' to an outlet, ' +
+         (d.totals.btos - d.totals.outletBtos) + ' to a major branch — ' +
+         'every outlet comes off its own BTO.');
   L.push('');
 
   // ── 4 ────────────────────────────────────────────────────────────────────

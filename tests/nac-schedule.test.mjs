@@ -173,11 +173,13 @@ test('plenumBalance measures the worst deviation, not the average', () => {
 
 test('balancing moves whole rooms, never half of one', () => {
   // Two groups, wildly uneven, with a two-outlet room sitting between them.
+  // Room b sits ON the boundary — as near the light group as its own — so it is
+  // the one that may move. A room buried inside its own main may not (below).
   const groups = [
     [{ roomId: 'a', x: 0, y: 0, airflowLs: 300 },
      { roomId: 'b', x: 10, y: 0, airflowLs: 100 },
      { roomId: 'b', x: 11, y: 0, airflowLs: 100 }],
-    [{ roomId: 'c', x: 40, y: 0, airflowLs: 100 }]
+    [{ roomId: 'c', x: 14, y: 0, airflowLs: 100 }]
   ];
   const out = balanceGroups(groups, { tolerancePct: 15 });
   const flows = out.map(g => g.reduce((n, o) => n + o.airflowLs, 0));
@@ -188,6 +190,38 @@ test('balancing moves whole rooms, never half of one', () => {
   assert.equal(out[whereB[0]].filter(o => o.roomId === 'b').length, 2);
   // And no main was emptied.
   assert.ok(out.every(g => g.length > 0));
+});
+
+test('a room buried inside its own main is not moved to even the numbers up', () => {
+  // Balancing on airflow alone walked a family room onto the bedroom main
+  // purely because the numbers came out evener — a division nobody could
+  // explain standing in the roof. Room b is 30 away from the light group and 3
+  // from its own centre, so it stays where it is and the plenum stays uneven.
+  const groups = [
+    [{ roomId: 'a', x: 0, y: 0, airflowLs: 300 },
+     { roomId: 'b', x: 10, y: 0, airflowLs: 100 },
+     { roomId: 'b', x: 11, y: 0, airflowLs: 100 }],
+    [{ roomId: 'c', x: 40, y: 0, airflowLs: 100 }]
+  ];
+  const out = balanceGroups(groups, { tolerancePct: 15 });
+  assert.equal(out[0].length, 3, 'a room deep inside its own main was moved');
+  assert.equal(out[1].length, 1);
+});
+
+test('the open plan is only divided once nothing else will balance the plenum', () => {
+  // Two open-plan rooms and one bedroom. Moving the bedroom cannot fix it, so
+  // the open plan has to give — on a house whose open plan is most of the air,
+  // refusing to split it makes a balanced plenum arithmetically impossible.
+  const groups = [
+    [{ roomId: 'liv', x: 0, y: 0, airflowLs: 300, openPlan: true },
+     { roomId: 'kit', x: 7, y: 0, airflowLs: 300, openPlan: true }],
+    [{ roomId: 'bed', x: 10, y: 0, airflowLs: 100 }]
+  ];
+  const out = balanceGroups(groups, { tolerancePct: 15 });
+  const flows = out.map(g => g.reduce((n, o) => n + o.airflowLs, 0)).sort((a, b) => a - b);
+  assert.deepEqual(flows, [300, 400], flows.join('/'));
+  // And it was the open-plan room NEAREST the other main that went.
+  assert.ok(out[1].some(o => o.roomId === 'kit'), 'the far side of the open plan moved');
 });
 
 test('one room never feeds off two different mains', () => {
@@ -287,7 +321,19 @@ test('airflow falls along every main', () => {
 // ── 3. Take-offs ────────────────────────────────────────────────────────────
 
 test('every final comes off its own BTO', () => {
-  assert.equal(S.totals.btos, S.totals.finals);
+  // A take-off onto a MAJOR BRANCH is a take-off too — the bedroom wing comes
+  // off the main through one — so it is the OUTLET take-offs that must match
+  // the finals, not every take-off on the job.
+  assert.equal(S.totals.outletBtos, S.totals.finals);
+  assert.ok(S.totals.btos >= S.totals.outletBtos);
+  assert.equal(S.btos.filter(b => !b.feedsBranch).length, S.totals.outletBtos);
+});
+
+test('a take-off onto a major branch names the branch, not a room', () => {
+  for (const b of S.btos.filter(x => x.feedsBranch)) {
+    assert.equal(b.room, '—', 'BTO ' + b.number + ' claims a room it does not serve');
+    assert.match(b.outlet, /^major_.* \(\d+ rooms\)$/);
+  }
 });
 
 test('every BTO records parent size, branch size, airflow and what it serves', () => {

@@ -325,6 +325,53 @@ export function capBranchToParent(branchDiameterMm, parentDiameterMm) {
 }
 
 /**
+ * HOW FAR UNDER ITS PARENT A TAKE-OFF MAY BE.
+ *
+ * Nick, on the foyer: it "should NOT come straight off a 400 main — it must be
+ * served more sensibly from an appropriate branch / major run." The general
+ * rule behind that is a step limit. Out of the sizes NAC stocks it reads as one
+ * sentence an installer would say out loud:
+ *
+ *     YOU DO NOT PUT A 200 TAKE-OFF ON A 350 OR A 400 MAIN.
+ *
+ * 350 -> 300 -> 250 is two steps and is a saddle take-off anybody fits. 350
+ * down to 200 is three, and it is what produced the central cluster: every
+ * small room in the house tapping the biggest duct within a metre of the
+ * plenum. Those rooms gather onto a major branch instead, and the branch taps
+ * the main.
+ */
+export const MAX_TAKEOFF_STEPS_BELOW_PARENT = 2;
+
+/** Where a diameter sits on the stocked ladder. -1 if NAC does not stock it. */
+export function sizeStepIndex(mm) {
+  return STOCKED_DIAMETERS_MM.indexOf(mm);
+}
+
+/** How many stock sizes a take-off sits below the duct it comes off. */
+export function takeOffStepsBelow(branchMm, parentMm) {
+  const b = sizeStepIndex(branchMm);
+  const p = sizeStepIndex(parentMm);
+  if (b < 0 || p < 0) return 0;
+  return p - b;
+}
+
+/** May this branch be taken straight off this parent, or does it need a spur? */
+export function takeOffAllowedOn(branchMm, parentMm) {
+  return takeOffStepsBelow(branchMm, parentMm) <= MAX_TAKEOFF_STEPS_BELOW_PARENT;
+}
+
+/**
+ * The smallest duct that may carry a take-off of this size — what a spur has to
+ * be so the take-off off IT is legal.
+ */
+export function parentCeilingForTakeOff(branchMm) {
+  const b = sizeStepIndex(branchMm);
+  if (b < 0) return null;
+  return STOCKED_DIAMETERS_MM[Math.min(STOCKED_DIAMETERS_MM.length - 1,
+                                       b + MAX_TAKEOFF_STEPS_BELOW_PARENT)];
+}
+
+/**
  * Is a reducer genuinely needed between these two runs?
  *
  * ONLY where a main or major duct actually steps down because the air it is
@@ -625,7 +672,10 @@ export const OUTLET_RULES = Object.freeze({
   byRoomType: Object.freeze({
     bedroom: Object.freeze({ preferred: 1, maxAuto: 2, splitOverM: 6.0, splitOverSqM: 20,
       note: 'One outlet unless the room is long enough to need two.' }),
-    living: Object.freeze({ preferred: 1, maxAuto: 4, splitOverM: 5.0, splitOverSqM: 18,
+    // 18 m2 split a 19.6 m2 formal lounge into two outlets, which is not how
+    // NAC does a lounge — one diffuser covers it. 20 keeps the split where it
+    // belongs: a 30 m2 living and a 22 m2 family still take two.
+    living: Object.freeze({ preferred: 1, maxAuto: 4, splitOverM: 5.0, splitOverSqM: 20,
       note: 'Living and family areas are spread across the space for throw.' }),
     dining: Object.freeze({ preferred: 1, maxAuto: 3, splitOverM: 5.5, splitOverSqM: 20 }),
     kitchen: Object.freeze({ preferred: 1, maxAuto: 2, splitOverM: 5.5, splitOverSqM: 20 }),

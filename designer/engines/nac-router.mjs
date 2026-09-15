@@ -54,8 +54,14 @@ import { selectDiameter } from './ducts.mjs';
 import {
   mainSupplyCount, returnCountFor, FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR,
   BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS, MIN_MAIN_DIAMETER_MM,
-  finalSizeForAirflow, mainFloorForFinals, choosePlenumMains
+  finalSizeForAirflow, mainFloorForFinals, choosePlenumMains,
+  takeOffAllowedOn, STOCKED_DIAMETERS_MM, capBranchToParent
 } from './nac-standard.mjs';
+
+/** The smallest take-off that may legally come off this duct. */
+function smallestTakeOffOn(parentMm) {
+  return STOCKED_DIAMETERS_MM.find(mm => takeOffAllowedOn(mm, parentMm)) ?? parentMm;
+}
 
 // ── Geometry: flexible duct sweeps ───────────────────────────────────────────
 
@@ -143,9 +149,74 @@ function nearestOnRun(runPts, p) {
  * two furthest-apart outlets, then the one furthest from both) so the same
  * plan always produces the same design.
  */
-export function groupOutlets(outletPoints, k) {
+/**
+ * WHICH PART OF THE HOUSE AN OUTLET BELONGS TO.
+ *
+ * An installer does not divide a house with a compass, they divide it by what
+ * it is: the open-plan living side, the bedroom wing, and whatever is left.
+ * Clustering on position alone put the lounge on the living main and the foyer
+ * on the bedroom main, because those happen to be the nearest points — which
+ * is a division nobody could explain standing in the roof.
+ */
+function areaOf(outlet) {
+  if (outlet.openPlan) return 'living';
+  if (outlet.roomType === 'bedroom') return 'sleep';
+  return 'other';
+}
+
+/**
+ * Seed the mains on the AREAS, then let position sort out what is left.
+ *
+ * Two mains: living side, and everything else. Three: living, bedroom wing,
+ * and the remainder. 'other' rooms — a formal lounge, a foyer, a study — join
+ * whichever seed they actually sit nearest, because they are the rooms that
+ * genuinely could go either way.
+ */
+export function groupByArea(outletPoints, k) {
+  const byArea = { living: [], sleep: [], other: [] };
+  for (const o of outletPoints) byArea[areaOf(o)].push(o);
+
+  const centroid = (g) => g.length
+    ? { x: g.reduce((n, o) => n + o.x, 0) / g.length,
+        y: g.reduce((n, o) => n + o.y, 0) / g.length }
+    : null;
+
+  // The seeds that actually have rooms behind them, biggest area first.
+  const seeds = [];
+  if (byArea.living.length) seeds.push({ key: 'living', members: [...byArea.living] });
+  if (byArea.sleep.length) seeds.push({ key: 'sleep', members: [...byArea.sleep] });
+  if (!seeds.length) return null;
+
+  // A third main only when there is a genuine third area to give it.
+  if (k >= 3 && byArea.other.length >= 2) {
+    seeds.push({ key: 'other', members: [...byArea.other] });
+  } else if (byArea.other.length) {
+    // Otherwise every leftover room joins the seed it sits nearest — by ROOM,
+    // so one room never ends up split across two mains.
+    const rooms = [...new Set(byArea.other.map(o => o.roomId))];
+    for (const roomId of rooms) {
+      const mine = byArea.other.filter(o => o.roomId === roomId);
+      const c = centroid(mine);
+      const best = seeds.reduce((a, sd) =>
+        dist(centroid(sd.members), c) < dist(centroid(a.members), c) ? sd : a, seeds[0]);
+      best.members.push(...mine);
+    }
+  }
+
+  if (seeds.length < 2) return null;          // one area only — fall back
+  return seeds.slice(0, k).map(sd => sd.members);
+}
+
+export function groupOutlets(outletPoints, k, opts = {}) {
   const pts = outletPoints.filter(o => o && isFinite(o.x) && isFinite(o.y));
   if (pts.length <= k) return pts.map(p => [p]);
+
+  // AREA FIRST. Geometry is the fallback for a plan whose rooms carry nothing
+  // to group on.
+  if (opts.byArea !== false) {
+    const areas = groupByArea(pts, k);
+    if (areas && areas.length >= 2) return balanceGroups(areas);
+  }
 
   // Deterministic seeds: furthest pair, then furthest from what is chosen.
   let seeds = [];
@@ -235,7 +306,14 @@ export function balanceGroups(groups, opts = {}) {
   };
 
   const work = groups.map(g => [...g]);
-  for (let pass = 0; pass < 40; pass++) {
+  // THE OPEN PLAN IS DIVIDED ONLY AS A LAST RESORT. Rooms that can genuinely
+  // go either way are moved first; the open plan is only split if the plenum
+  // is STILL outside tolerance once they have run out. On a house whose open
+  // plan is two thirds of the air, refusing to split it makes a balanced
+  // plenum arithmetically impossible — so the choice is a divided open plan
+  // or an unbalanceable box, and an installer divides the open plan.
+  let splitOpenPlan = false;
+  for (let pass = 0; pass < 80; pass++) {
     if (worst(work) <= tolerance) break;
     const flows = work.map(flowOf);
     const heavy = flows.indexOf(Math.max(...flows));
@@ -256,10 +334,25 @@ export function balanceGroups(groups, opts = {}) {
       })
       .sort((a, b) => a.d - b.d);
 
+    const heavyCentre = centroid(work[heavy]);
     let moved = false;
     for (const room of rooms) {
       // Never empty a main: the plenum has to keep all of its ducts.
       if (room.members.length >= work[heavy].length) continue;
+      // ONLY A ROOM THAT GENUINELY SITS BETWEEN THE TWO MAY MOVE.
+      //
+      // Balancing on airflow alone walked a family room out of the open-plan
+      // side and onto the bedroom main, purely because the numbers came out
+      // evener — a division nobody could explain standing in the roof. A room
+      // moves only when it is about as close to the lighter main's area as to
+      // its own.
+      const mine = Math.min(...room.members.map(o => dist(heavyCentre, o)));
+      if (room.d > mine * (opts.boundaryRatio ?? 1.3)) continue;
+      // AND THE OPEN PLAN IS NOT DIVIDED. Rooms that share one air space share
+      // one main: taking the family room off the living main to even the
+      // numbers up is the thing that stops a drawing being explainable.
+      if (!splitOpenPlan && room.members.some(o => o.openPlan) &&
+          work[heavy].some(o => o.openPlan && o.roomId !== room.roomId)) continue;
       const trial = work.map((g, i) =>
         i === heavy ? g.filter(o => o.roomId !== room.roomId)
         : i === light ? [...g, ...room.members] : g);
@@ -270,7 +363,10 @@ export function balanceGroups(groups, opts = {}) {
         break;
       }
     }
-    if (!moved) break;   // nothing left that helps — this is as even as it gets
+    if (!moved) {
+      if (splitOpenPlan) break;   // this is as even as this house gets
+      splitOpenPlan = true;       // now the open plan may be divided
+    }
   }
   return work.filter(g => g.length);
 }
@@ -318,13 +414,44 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
   let plenum = layout.plenum?.x !== undefined ? { x: layout.plenum.x, y: layout.plenum.y }
              : layout.indoorUnit?.x !== undefined ? { x: layout.indoorUnit.x, y: layout.indoorUnit.y }
              : null;
-  let plenumSource = plenum ? 'placed' : 'assumed_centre';
+  let plenumSource = plenum ? 'placed' : null;
   if (!plenum) {
-    plenum = { x: footprint.x + footprint.w / 2, y: footprint.y + footprint.h / 2 };
-    warnings.push({ code: 'PLENUM_POSITION_ASSUMED', severity: 'CHECK',
-      message: 'No supply plenum has been placed, so it was assumed at the middle of the house. ' +
-               'Place it and re-route for real lengths.' });
+    // A FAN COIL GOES OVER THE HALLWAY. That is where NAC puts it: central,
+    // reachable through a manhole, next to where the return comes back. The
+    // middle of the FOOTPRINT is a different point — often the middle of a
+    // living room — and putting it there is what made every run appear to
+    // explode out of one spot in the centre of the plan.
+    const hall = placed.filter(r => r.roomType === 'hallway')
+      .sort((a, b) => (b.boundaryPx.w * b.boundaryPx.h) - (a.boundaryPx.w * a.boundaryPx.h))[0];
+    if (hall) {
+      plenum = { x: hall.boundaryPx.x + hall.boundaryPx.w / 2,
+                 y: hall.boundaryPx.y + hall.boundaryPx.h / 2 };
+      plenumSource = 'assumed_hallway';
+      warnings.push({ code: 'PLENUM_POSITION_ASSUMED', severity: 'CHECK',
+        message: 'No supply plenum has been placed, so it was assumed over ' + hall.label +
+                 ' — where NAC normally sits the fan coil. Place it and re-route for real lengths.' });
+    } else {
+      plenum = { x: footprint.x + footprint.w / 2, y: footprint.y + footprint.h / 2 };
+      plenumSource = 'assumed_centre';
+      warnings.push({ code: 'PLENUM_POSITION_ASSUMED', severity: 'CHECK',
+        message: 'No supply plenum has been placed and this plan has no hallway, so it was ' +
+                 'assumed at the middle of the house. Place it and re-route for real lengths.' });
+    }
   }
+
+  // HOW FAR A DUCT HAS TO GET AWAY FROM THE PLENUM before anything comes off
+  // it — the same length a reducer needs to be worth fitting. Without a scale
+  // yet it falls back to a fraction of the house.
+  const plenumClearPx = opts.calibration?.mmPerPixel
+    ? MAIN_REDUCTIONS.minStretchM * 1000 / opts.calibration.mmPerPixel
+    : Math.max(footprint.w, footprint.h) * 0.12;
+
+  // Rooms in the always-open zone ARE the open-plan living side — the zoning
+  // engine has already worked out which rooms share an air space, so the duct
+  // grouping does not have to guess at it a second time.
+  const openPlanRooms = new Set((zones?.zones || [])
+    .filter(z => z.alwaysOpen || z.kind === 'common')
+    .flatMap(z => z.roomIds || []));
 
   // ── Every outlet that has to be reached ───────────────────────────────────
   const outletPoints = [];
@@ -348,6 +475,10 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
         of: qty,
         airflowLs: (row.adjustedLs || 0) / qty,
         zone: zoneByRoom.get(row.roomId) || null,
+        // What KIND of space this is, which is how the house gets divided into
+        // mains. The open-plan zone is the living side; a bedroom is the wing.
+        roomType: room.roomType || null,
+        openPlan: openPlanRooms.has(row.roomId),
         x: manual?.x !== undefined ? manual.x : b.x + b.w * frac,
         y: manual?.y !== undefined ? manual.y : b.y + b.h / 2
       });
@@ -421,9 +552,33 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     // ── Where each outlet leaves the main ───────────────────────────────────
     // A BTO sits on the main at the point nearest the outlet it feeds, so the
     // final flex is the short run it should be.
+    // ── NOTHING COMES OFF A MAIN IN ITS FIRST FEW METRES ───────────────────
+    // Nick, on the foyer: it "should NOT come straight off a 400 main — it must
+    // be served more sensibly from an appropriate branch / major run." The
+    // plenum sits over the hallway, so the foyer's own take-off landed ON the
+    // plenum, and so did the master's, and the branch to the family room. Five
+    // ducts leaving one point is the "messy central cluster where everything
+    // appears to explode off the plenum".
+    //
+    // A main leaves the box and GETS CLEAR before anything comes off it — the
+    // same length a reducer needs to be worth fitting. A take-off that wants to
+    // sit inside that is slid along the run to where the main actually is, and
+    // its flex covers the rest. Nothing is added to the job: it is the same
+    // duct, tapped where an installer would tap it.
+    const deadZonePx = plenumClearPx;
+    let clearIndex = 0;
+    for (let k = 1, run = 0; k < runPts.length; k++) {
+      run += dist(runPts[k - 1], runPts[k]);
+      if (run >= deadZonePx) { clearIndex = k; break; }
+      clearIndex = k;
+    }
+
     const taps = members.map(o => {
       const near = nearestOnRun(runPts, o);
-      return { outlet: o, at: near.pt, alongIndex: near.i, run: dist(near.pt, o) };
+      const i = Math.max(near.i, clearIndex);
+      const at = runPts[i];
+      return { outlet: o, at, alongIndex: i, run: dist(at, o),
+               slidOffPlenum: i > near.i };
     }).sort((a, b) => a.alongIndex - b.alongIndex);
 
     // ── HARD RULE 5: outlets far from the main share a major branch ─────────
@@ -431,16 +586,42 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     // them, and each then comes off it through its own BTO. Pulling each of
     // them individually back to the main is the "explosion of branches" this
     // model exists to stop.
+    //
+    // AND A SLEEPING WING GETS ITS OWN, whether or not it happens to sit far
+    // from the main. Two or more bedrooms grouped together down one end of the
+    // house is a WING, and an installer runs one duct down it and takes off it
+    // — they do not pull four separate runs back past each other to a main.
+    // That is the difference between a layout somebody designed and a layout a
+    // clustering algorithm produced.
     const farThreshold = Math.max(footprint.w, footprint.h) * 0.16;
+
+    const wingRoomIds = new Set();
+    const beds = taps.filter(t => t.outlet.roomType === 'bedroom');
+    if (beds.length >= BTO_RULES.minRoomsForMajorBranch + 1) {
+      // Split the bedrooms into the wing and any lone bedroom sitting apart
+      // from it — a master off the living end is not part of the wing.
+      const bedGroups = groupOutlets(beds.map(t => t.outlet), 2, { byArea: false });
+      const wing = (bedGroups || []).sort((a, b) => b.length - a.length)[0] || [];
+      if (wing.length >= BTO_RULES.minRoomsForMajorBranch) {
+        for (const o of wing) wingRoomIds.add(o.roomId);
+      }
+    }
+
     const clusters = [];
+    const wingTaps = taps.filter(t => wingRoomIds.has(t.outlet.roomId));
+    if (wingTaps.length >= BTO_RULES.minRoomsForMajorBranch) {
+      clusters.push({ direct: false, wing: true, taps: wingTaps });
+    }
     for (const t of taps) {
+      if (wingRoomIds.has(t.outlet.roomId)) continue;
       if (t.run < farThreshold) { clusters.push({ direct: true, taps: [t] }); continue; }
-      const open = clusters.find(c => !c.direct &&
+      const open = clusters.find(c => !c.direct && !c.wing &&
         dist(c.taps[0].outlet, t.outlet) < farThreshold &&
         Math.abs(c.taps[0].alongIndex - t.alongIndex) < runPts.length * 0.3);
       if (open) open.taps.push(t);
       else clusters.push({ direct: false, taps: [t] });
     }
+    clusters.sort((a, b) => a.taps[0].alongIndex - b.taps[0].alongIndex);
 
     // ── The main, split ONLY where its size actually changes ───────────────
     // A main is one continuous flex duct. It gets reduced when enough air has
@@ -470,11 +651,21 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     // plenum, and all of its ducts are the same.
     let carried = groupLs;
     const startSize = commonMainMm || sizeFor(carried);
+    // The least air that justifies a main at all: the smallest main NAC runs,
+    // at the slowest a main is allowed to move.
+    const minMainVel = settings.duct?.velocity?.main?.preferredMin ?? 4;
+    const minMainLs = Math.PI * Math.pow(MIN_MAIN_DIAMETER_MM / 2000, 2) * minMainVel * 1000;
     const candidates = [];
     clusters.forEach((cluster, ci) => {
       const taken = cluster.taps.reduce((sum, t) => sum + t.outlet.airflowLs, 0);
       carried -= taken;
       if (ci >= clusters.length - 1 || carried <= 1) return;
+      // A MAIN STOPS BEING A MAIN WHEN THE AIR RUNS OUT. Once what is left
+      // would not fill the smallest main NAC runs, there is nothing to reduce
+      // TO: reducing anyway bought a 300 reducer so 56 L/s could crawl the last
+      // 4.8 m at 0.79 m/s. The remaining outlets stay on the stretch they are
+      // already on and come off it as finals.
+      if (carried < minMainLs) return;
       candidates.push({
         afterCluster: ci,
         atIndex: cluster.taps[cluster.taps.length - 1].alongIndex,
@@ -575,13 +766,28 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
 
         // HARD RULE 5 — outlets sitting well off the main share ONE major
         // branch, and each then comes off it through its own BTO.
-        if (!cluster.direct && cluster.taps.length >= BTO_RULES.minRoomsForMajorBranch) {
+        if (!cluster.direct &&
+            (cluster.spur || cluster.taps.length >= BTO_RULES.minRoomsForMajorBranch)) {
           const hub = {
             x: cluster.taps.reduce((sum, t) => sum + t.outlet.x, 0) / cluster.taps.length,
             y: cluster.taps.reduce((sum, t) => sum + t.outlet.y, 0) / cluster.taps.length
           };
           const toward = lerp(cluster.taps[0].at, hub, 0.7);
           const majorLs = cluster.taps.reduce((sum, t) => sum + t.outlet.airflowLs, 0);
+          // A MAJOR BRANCH IS SIZED LIKE A MAIN, NOT LIKE A FINAL.
+          //   - one stock size ABOVE the largest final coming off it, or it is
+          //     a full-bore take-off with air still to carry past the first room
+          //     (the bedroom wing came out a 200 branch with three 200s on it);
+          //   - never more than two sizes under the duct it taps, or the branch
+          //     itself is the take-off the step rule exists to stop;
+          //   - never bigger than that duct.
+          const majorFinals = cluster.taps.map(t => finalSizeForAirflow(t.outlet.airflowLs));
+          const majorMm = capBranchToParent(
+            Math.max(
+              mainFloorForFinals(selectDiameter(majorLs, 'branch', { settings }).diameterMm,
+                                 majorFinals),
+              smallestTakeOffOn(stretch.sizeMm)),
+            stretch.sizeMm);
           const majorId = 'major_' + letter + '_' + (btoNo + 1);
           btoNo += 1;
           segments.push({
@@ -597,6 +803,7 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
             destination: groupName(cluster.taps.map(t => t.outlet)),
             serves: [...new Set(cluster.taps.map(t => t.outlet.roomLabel))],
             airflowLs: round(majorLs, 0),
+            diameterMm: majorMm,
             zone: cluster.taps[0].outlet.zone,
             points: sweep(cluster.taps[0].at, toward, 0.12),
             fittings: ['takeoff']
@@ -644,15 +851,65 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
   // ── HARD RULE 6: one or two returns ───────────────────────────────────────
   const returnCount = returnDesign?.returnCount
     ?? returnCountFor(systemLs, { override: opts.returnCount });
+  // A RETURN GOES IN A HALLWAY. That is where NAC puts them: central,
+  // reachable, out of the rooms. Putting them in the two BIGGEST rooms dropped
+  // a grille in the middle of the living area and another in a bedroom, which
+  // is neither how it is installed nor something anybody wants in a ceiling
+  // they look at.
+  const centreOf = (r) => ({ x: r.boundaryPx.x + r.boundaryPx.w / 2,
+                             y: r.boundaryPx.y + r.boundaryPx.h / 2 });
+  const halls = placed.filter(r => r.roomType === 'hallway')
+    .sort((a, b) => dist(plenum, centreOf(a)) - dist(plenum, centreOf(b)));
+
+  // Where a house has fewer hallways than returns, the extra one goes into the
+  // CIRCULATION serving the rooms furthest from the first: the corridor a
+  // bedroom wing hangs off. Approximated as the point between the plenum and
+  // that group, which is the corridor on any normal plan.
+  // A RETURN GRILLE IS NOT UNDER THE PLENUM. The fan coil sits over the
+  // hallway, so the hallway's centre and the plenum are the same point, and the
+  // return came out as a duct of zero length from the box back to itself. The
+  // grille goes along the hallway, clear of the unit — which is where you would
+  // stand to look at it.
+  const clearOfPlenum = (pt, room) => {
+    if (dist(pt, plenum) >= plenumClearPx) return pt;
+    const b = room.boundaryPx;
+    const along = b.w >= b.h ? { x: 1, y: 0 } : { x: 0, y: 1 };
+    const room_half = (b.w >= b.h ? b.w : b.h) / 2;
+    const reach = Math.min(Math.max(plenumClearPx, room_half * 0.6), room_half * 0.9);
+    const a = { x: plenum.x + along.x * reach, y: plenum.y + along.y * reach };
+    const c = { x: plenum.x - along.x * reach, y: plenum.y - along.y * reach };
+    // Away from the busiest end of the house, so the grille is not in the
+    // middle of the supply runs.
+    const busy = { x: footprint.x + footprint.w / 2, y: footprint.y + footprint.h / 2 };
+    return dist(a, busy) > dist(c, busy) ? a : c;
+  };
+  const returnSpots = halls.map(r =>
+    ({ pt: clearOfPlenum(centreOf(r), r), from: r.label, hallway: true }));
+  if (returnSpots.length < returnCount) {
+    const used = returnSpots[0]?.pt || plenum;
+    // The furthest room from the first return, and ITS nearest neighbours —
+    // not the three furthest rooms overall, which on this plan sat at opposite
+    // ends of the house and averaged out to a point in the middle of nothing.
+    const others = placed.filter(r => r.roomType !== 'hallway');
+    const seed = others.reduce((a, r) =>
+      (dist(used, centreOf(r)) > dist(used, centreOf(a)) ? r : a), others[0]);
+    const far = seed ? [...others]
+      .sort((a, b) => dist(centreOf(seed), centreOf(a)) - dist(centreOf(seed), centreOf(b)))
+      .slice(0, 3) : [];
+    if (far.length) {
+      const c = { x: far.reduce((n, r) => n + centreOf(r).x, 0) / far.length,
+                  y: far.reduce((n, r) => n + centreOf(r).y, 0) / far.length };
+      returnSpots.push({ pt: lerp(plenum, c, 0.62),
+                         from: far.map(r => r.label).join(' / ') + ' corridor', hallway: false });
+    }
+  }
+
   const returnRuns = [];
-  const biggest = [...placed].sort((a, b) =>
-    (b.boundaryPx.w * b.boundaryPx.h) - (a.boundaryPx.w * a.boundaryPx.h));
   for (let i = 0; i < Math.min(returnCount, RETURN_AIR.maxReturns); i++) {
     const host = layout['returnGrille' + (i === 0 ? '' : '_' + (i + 1))];
+    const spot = returnSpots[i] || null;
     const src = host?.x !== undefined ? { x: host.x, y: host.y }
-      : biggest[i] ? { x: biggest[i].boundaryPx.x + biggest[i].boundaryPx.w / 2,
-                       y: biggest[i].boundaryPx.y + biggest[i].boundaryPx.h / 2 }
-      : null;
+      : spot ? spot.pt : null;
     if (!src) continue;
     returnRuns.push({
       id: i === 0 ? 'return' : 'return_' + (i + 1),
@@ -661,7 +918,8 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
       flex: true,
       index: i + 1,
       assumed: host?.x === undefined,
-      from: biggest[i]?.label || null,
+      hallway: !!returnSpots[i]?.hallway,
+      from: returnSpots[i]?.from || null,
       points: sweep(src, plenum, 0.14)
     });
   }
