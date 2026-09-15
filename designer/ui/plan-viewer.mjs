@@ -10,6 +10,7 @@
 // It is deliberately not a CAD package. Everything it produces is a number the
 // estimator can see, edit or replace by hand.
 
+import { drawFlexDesign } from './flex-renderer.mjs';
 import { h } from './dom.mjs';
 import { ROUTING, DRAWING } from '../engines/nac-standard.mjs';
 
@@ -75,7 +76,11 @@ export function createPlanViewer(container, opts = {}) {
     zoneFillByRoomId: {},    // roomId -> { colour, fill, shortName }
     outlets: [],             // { x, y, roomId, neckMm, index }
     labelBoxes: [],          // collision bookkeeping, rebuilt every frame
-    plenum: null             // indoor unit / supply plenum
+    plenum: null,            // indoor unit / supply plenum
+    // Real millimetres per screen pixel, so a duct can be drawn the size
+    // it actually is rather than at a drawing-convention stroke width.
+    pxPerMm: null,
+    labelDetail: null
   };
 
   const canvas = h('canvas', { class: 'plan-canvas' });
@@ -158,6 +163,32 @@ export function createPlanViewer(container, opts = {}) {
     // Every frame starts with an empty label ledger — a label placed last frame
     // must not push this frame's labels around.
     state.labelBoxes = [];
+
+    // ── THE INSTALLER DRAWING ────────────────────────────────────────────
+    //
+    // Design view is rendered by the FLEX RENDERER, not by the general plan
+    // viewer's own linework. It is a different drawing: tubes to scale, swept,
+    // sizes written on the duct, figures off the plan. The code below this is
+    // the SETUP view — room boxes, handles, calibration marks — which is a
+    // different job and stays as it is.
+    if (state.designView && !state.showAnalysis) {
+      drawFlexDesign(ctx, {
+        routes: state.routes,
+        outlets: state.outlets,
+        markers: state.markers,
+        plenum: state.plenum,
+        zoneFillByRoomId: state.zoneFillByRoomId,
+        rooms: state.rooms,
+        toScreen,
+        scale: state.scale,
+        pxPerMm: state.pxPerMm || null,
+        labelDetail: state.labelDetail || null
+      });
+      drawZoneSchedule();
+      drawZoneBadges();
+      if (state.mode === MODES.EDIT_ROUTE) drawHandles();
+      return;
+    }
 
     // Zone shading sits under the linework, the way it does on a real design
     // sheet: the colour tells you which damper controls the space, the lines
@@ -1191,9 +1222,13 @@ export function createPlanViewer(container, opts = {}) {
     setCalibration(c) {
       const changed = state.calibration !== c;
       state.calibration = c;
+      // The calibration is what lets a duct be drawn its real size. Without it
+      // the flex renderer falls back to keeping the RATIO between sizes.
+      state.pxPerMm = c?.pixelsPerMm || null;
       if (changed) state.calibrationPoints = [];
       draw();
     },
+    setLabelDetail(detail) { state.labelDetail = detail || null; draw(); },
     resetCalibrationPoints() { state.calibrationPoints = []; draw(); },
     setRooms(rooms) { state.rooms = rooms || []; draw(); },
     selectRoom(id) { state.selectedRoomId = id; draw(); },
