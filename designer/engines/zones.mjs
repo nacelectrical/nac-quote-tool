@@ -4,6 +4,7 @@
 // the engine says so and recommends a constant zone — the estimator decides.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { DRAWING } from './nac-standard.mjs';
 import { round } from './units.mjs';
 
 export const ZONE_KINDS = ['individual', 'grouped', 'constant', 'common', 'spill'];
@@ -121,21 +122,14 @@ export function updateZones(zoneAnalysis, airflow, mutate, opts = {}) {
 // by someone who does not see colour well — no red/green pair carries meaning
 // on its own, and every zone is also numbered.
 
-export const ZONE_PALETTE = [
-  { key: 'amber',  line: '#E8A33D', fill: 'rgba(232,163,61,0.22)',  name: 'Amber'  },
-  { key: 'green',  line: '#3FA96B', fill: 'rgba(63,169,107,0.22)',  name: 'Green'  },
-  { key: 'blue',   line: '#3E86C9', fill: 'rgba(62,134,201,0.22)',  name: 'Blue'   },
-  { key: 'rose',   line: '#D4688A', fill: 'rgba(212,104,138,0.22)', name: 'Rose'   },
-  { key: 'violet', line: '#8E72CE', fill: 'rgba(142,114,206,0.22)', name: 'Violet' },
-  { key: 'teal',   line: '#3BA5A0', fill: 'rgba(59,165,160,0.22)',  name: 'Teal'   },
-  { key: 'clay',   line: '#C4783C', fill: 'rgba(196,120,60,0.22)',  name: 'Clay'   },
-  { key: 'slate',  line: '#6B7FA3', fill: 'rgba(107,127,163,0.22)', name: 'Slate'  }
-];
+// From the NAC DUCT DESIGN STANDARD, so the yellow block on the drawing is the
+// same Zone 4 as the yellow row in the zone list.
+export const ZONE_PALETTE = DRAWING.zonePalette.map(c => ({ ...c, name: c.key }));
 
 /** The trunk belongs to no zone, so it is drawn in its own neutral colour. */
-export const TRUNK_COLOUR = '#B061C6';
+export const TRUNK_COLOUR = DRAWING.trunkColour;
 /** The return is a different system and must never read as a supply run. */
-export const RETURN_COLOUR = '#8A8FA3';
+export const RETURN_COLOUR = DRAWING.returnColour;
 
 /**
  * Give every zone a colour and a number, and say which rooms carry it.

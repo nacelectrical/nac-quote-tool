@@ -273,11 +273,27 @@ test('this house is past a single unit, and says so', () => {
     'a 23 kW load must be flagged as a dual or custom system: ' + codes.join(', '));
 });
 
-test('one return cannot carry this house, and the design says so', () => {
+test('a house this size gets a second return rather than an overloaded one', () => {
+  // This used to assert a WARNING, because the design always fitted one return
+  // and then complained that it was too small. Under the NAC RETURN RULE the
+  // standard fits one or two, so the answer to "this is too much for one
+  // return" is a second return — not a warning the estimator has to act on.
   const d = designFromSheet();
-  const codes = (d.returnDesign.warnings || []).map(w => w.code);
-  assert.ok(codes.includes('RETURN_AIR_UNDERSIZED'),
-    'over 700 L/s through one return must be flagged: ' + codes.join(', '));
+  const r = d.returnDesign;
+  assert.ok(r.returnCount >= 1 && r.returnCount <= 2,
+    'NAC fits one or two returns, not ' + r.returnCount);
+
+  const codes = (r.warnings || []).map(w => w.code);
+  // Either the air per return is within what one return carries, or it is
+  // flagged. Silently overloading a return is the thing that must not happen.
+  assert.ok(!codes.includes('RETURN_AIR_UNDERSIZED') || r.returnCount === 2,
+    'a return left undersized without fitting a second: ' + codes.join(', '));
+  assert.ok(r.perReturnLs <= r.designAirflowLs,
+    'per-return airflow cannot exceed the system');
+  if (r.returnCount === 2) {
+    assert.ok(Math.abs(r.perReturnLs - r.designAirflowLs / 2) < 1,
+      'two returns share the air evenly');
+  }
 });
 
 test('a plan with no dimension chain is not reported as a failed read', () => {

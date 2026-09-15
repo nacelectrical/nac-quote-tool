@@ -23,12 +23,12 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { isConditionedRoom } from './classify.mjs';
+import { mainSupplyCount, ROUTING, DRAWING, BTO as BTO_RULES } from './nac-standard.mjs';
 import { round } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
 /** Stamped on every auto-generated route. Never remove it from a route. */
-export const AUTO_ROUTE_NOTICE =
-  'AUTO ROUTE — VERIFY SITE CONDITIONS, STRUCTURE AND CLEARANCES BEFORE INSTALLATION';
+export const AUTO_ROUTE_NOTICE = ROUTING.notice;
 
 export const ROUTING_MODE = { AUTO: 'auto', ASSISTED: 'assisted', MANUAL: 'manual' };
 
@@ -58,7 +58,7 @@ export const DEFAULT_LABEL_DETAIL = LABEL_DETAIL.DIAMETER;
 export function segmentLabel(section, detail = DEFAULT_LABEL_DETAIL, opts = {}) {
   if (!section || detail === LABEL_DETAIL.HIDE) return null;
   // NAC's own drawings write the size as "ø300", so the tool does too.
-  const dia = section.diameterMm ? '\u00f8' + section.diameterMm : null;
+  const dia = section.diameterMm ? DRAWING.diameterPrefix + section.diameterMm : null;
   if (!dia && section.airflowLs == null) return null;
 
   const flow = section.airflowLs != null ? round(section.airflowLs, 0) + ' L/s' : null;
@@ -104,11 +104,11 @@ export function lineWidthForDiameter(diameterMm, opts = {}) {
  * the fallbacks for a design that has not been zoned yet.
  */
 export const ROLE_COLOUR = {
-  main:   '#B061C6',   // the spine, in its own neutral colour
-  trunk:  '#B061C6',
+  main:   DRAWING.trunkColour,   // the spine, in its own neutral colour
+  trunk:  DRAWING.trunkColour,
   branch: '#5fa8ff',
   final:  '#8fd0ff',
-  return: '#8A8FA3'    // the only grey line on the drawing
+  return: DRAWING.returnColour   // the only grey line on the drawing
 };
 
 export function roleColour(role) {
@@ -291,46 +291,71 @@ export function trunkSpine(footprint, plenum) {
  */
 export function trunkArms(plenum, drops, opts = {}) {
   if (!plenum || !drops?.length) return [];
+  const want = opts.mainCount
+    || mainSupplyCount(drops.reduce((sum, d) => sum + (d.airflowLs || 0), 0), drops.length);
+
   const buckets = { E: [], W: [], S: [], N: [] };
   for (const d of drops) {
     const dx = d.target.x - plenum.x;
     const dy = d.target.y - plenum.y;
-    // Whichever offset is larger decides the arm, so a room that is mostly to
-    // the left goes on the west run even if it is also a little below.
+    // Whichever offset is larger decides the direction, so a room that is mostly
+    // to the left goes west even if it is also a little below.
     if (Math.abs(dx) >= Math.abs(dy)) buckets[dx >= 0 ? 'E' : 'W'].push(d);
     else buckets[dy >= 0 ? 'S' : 'N'].push(d);
   }
 
-  // A trunk that serves one room is a branch. Fold it into whichever remaining
-  // arm its room is closest to in the other axis.
   const order = ['E', 'W', 'S', 'N'];
-  const minPerArm = opts.minRoomsPerArm ?? 2;
-  for (const k of order) {
-    if (buckets[k].length === 0 || buckets[k].length >= minPerArm) continue;
-    const horizontal = k === 'E' || k === 'W';
-    const alt = order.filter(o => o !== k && buckets[o].length >= minPerArm);
-    if (!alt.length) continue;
-    for (const d of buckets[k].splice(0)) {
-      // Nearest arm measured along the axis that arm does NOT travel on.
-      const best = alt.reduce((a, o) => {
-        const oh = o === 'E' || o === 'W';
-        const dist = oh ? Math.abs(d.target.y - plenum.y) : Math.abs(d.target.x - plenum.x);
-        return (a === null || dist < a.dist) ? { key: o, dist } : a;
+  const flowOf = (k) => buckets[k].reduce((sum, d) => sum + (d.airflowLs || 0), 0);
+  const axisOf = (k) => (k === 'E' || k === 'W');
+
+  // THE NAC SUPPLY PLENUM RULE: the air leaves the fan coil on TWO OR THREE
+  // mains, each serving a group of the house. Not one — a single trunk is not
+  // a plenum, it is a tee — and not four, which is more penetrations than
+  // anybody puts in a fan coil.
+  //
+  // So the four compass buckets are folded down to the number wanted, smallest
+  // first: the rooms on a light direction join whichever kept main is nearest
+  // in the axis that main does not travel along.
+  const live = () => order.filter(k => buckets[k].length);
+  while (live().length > want) {
+    const smallest = live().sort((a, b) => flowOf(a) - flowOf(b))[0];
+    const keep = live().filter(k => k !== smallest);
+    for (const d of buckets[smallest].splice(0)) {
+      const best = keep.reduce((acc, k) => {
+        const dist = axisOf(k) ? Math.abs(d.target.y - plenum.y) : Math.abs(d.target.x - plenum.x);
+        return (acc === null || dist < acc.dist) ? { k, dist } : acc;
       }, null);
-      buckets[best.key].push(d);
+      buckets[best.k].push(d);
     }
+  }
+
+  // Fewer live directions than the plenum should have: split the busiest one in
+  // two along its own axis, so the plenum still leaves on the right number of
+  // mains instead of everything hanging off a single run.
+  while (live().length < want && live().length >= 1) {
+    const busiest = live().sort((a, b) => flowOf(b) - flowOf(a))[0];
+    const members = buckets[busiest];
+    if (members.length < 2) break;
+    const horizontal = axisOf(busiest);
+    const across = (d) => horizontal ? d.target.y : d.target.x;
+    const sorted = [...members].sort((a, b) => across(a) - across(b));
+    const half = Math.ceil(sorted.length / 2);
+    // The empty compass bucket on the other axis takes the far half, so the two
+    // mains leave the plenum in genuinely different directions.
+    const spare = order.find(k => !buckets[k].length && axisOf(k) !== horizontal);
+    if (!spare) break;
+    buckets[busiest] = sorted.slice(0, half);
+    buckets[spare] = sorted.slice(half);
   }
 
   return order
     .filter(k => buckets[k].length)
     .map(k => {
-      const horizontal = k === 'E' || k === 'W';
-      const sign = (k === 'E' || k === 'S') ? 1 : -1;
+      const horizontal = axisOf(k);
       return {
         key: k,
         horizontal,
-        sign,
-        // The arm runs straight out of the plenum on one axis.
+        sign: (k === 'E' || k === 'S') ? 1 : -1,
         axisPos: horizontal ? plenum.y : plenum.x,
         drops: buckets[k].sort((a, b) => {
           const da = horizontal ? Math.abs(a.target.x - plenum.x) : Math.abs(a.target.y - plenum.y);
@@ -539,12 +564,20 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
         parentId: prevId,
         role: isFirst ? 'main' : 'trunk',
         arm: arm.key,
+        // THE NAC SUPPLY PLENUM RULE: ONE plenum, with two or three mains off
+        // it. The plenum itself is a single fitting and is counted once, on the
+        // first main only — counting it per arm bought three plenums for a
+        // house that has one.
+        plenumOutlet: isFirst,
+        // A main records the group of the house it feeds, because that is what
+        // an installer and the order need to know about it.
+        serves: isFirst ? arm.drops.map(d => d.label) : null,
         destination: isFirst ? 'Supply plenum \u2192 J' + junctionCounter
                              : 'J' + (junctionCounter - 1) + ' \u2192 J' + junctionCounter,
         airflowLs: carriedFrom[i],
         points: dedupePoints([prevPoint, jPoint]),
         rigid: isFirst,
-        fittings: isFirst ? ['supply_plenum'] : []
+        fittings: (isFirst && armIndex === 0) ? ['supply_plenum'] : []
       });
       prevPoint = jPoint;
       prevId = segId;
@@ -660,6 +693,16 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
     spine: trunkSpine(footprint, plenum),
     arms: arms.map(a => ({ key: a.key, horizontal: a.horizontal,
                            rooms: a.drops.map(d => d.label) })),
+    // What leaves the fan coil. Two or three, each serving a group of the
+    // house — the thing an installer looks at first.
+    supplyMains: arms.map((a, i) => ({
+      index: i + 1,
+      arm: a.key,
+      segmentId: i === 0 ? 'main' : 'main_' + a.key.toLowerCase(),
+      airflowLs: round(a.drops.reduce((sum, d) => sum + (d.airflowLs || 0), 0), 0),
+      serves: a.drops.map(d => d.label)
+    })),
+    mainCount: arms.length,
     plenum: { ...plenum, source: plenumSource },
     junctionCount: junctionCounter,
     warnings,

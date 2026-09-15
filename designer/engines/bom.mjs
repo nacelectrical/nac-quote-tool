@@ -167,6 +167,18 @@ export function buildBillOfMaterials(design, opts = {}) {
     items.push({ ...line(key, qty, ctx), category: 'ductwork' });
   });
 
+  // THE NAC BOM RULE: the order follows the REAL topology. A reducer is only
+  // known once the tree has been sized — it is where a main steps down because
+  // the air it still carries has dropped — so it is counted off the sized
+  // sections rather than from a fitting list written before sizing. Counting it
+  // the old way bought nothing for four reducers the drawing showed.
+  const realReducers = (design.network?.sections || []).filter(s => s.reducerFrom).length;
+  const alreadyCounted = fittingCounts.reducer || 0;
+  if (realReducers > alreadyCounted) {
+    items.push({ ...line('reducer', realReducers - alreadyCounted, ctx), category: 'ductwork',
+      note: 'Where a main or major duct steps down. A take-off to outlet size is not a reducer.' });
+  }
+
   const totalDuctM = design.network?.totalDuctLengthM || 0;
   if (totalDuctM > 0) {
     // One support roughly every 1.5 m of flex, per manufacturer install guidance.

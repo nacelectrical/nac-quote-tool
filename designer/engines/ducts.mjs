@@ -6,6 +6,7 @@
 // entry — never from an assumption the estimator cannot see.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { allowedDiametersFor, reducerRequired, capBranchToParent } from './nac-standard.mjs';
 import { round, mmToM } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
@@ -62,25 +63,25 @@ export function pressureDropPaPerM(diameterMm, airflowLs, opts = {}) {
  * against the chosen size rather than left to be guessed at.
  */
 export function autoLadderFor(role, settings = DEFAULT_SETTINGS) {
+  // THE NAC DUCT DESIGN STANDARD decides which sizes may be chosen. Settings
+  // republish the same numbers for the Design Settings screen, so an estimator
+  // who edits them there still wins — but the DEFAULTS come from one place.
   const D = settings.duct;
-  const F = D.finalBranch;
-  if (role === 'final' && F) {
-    const ladder = (F.autoLadderMm || D.availableDiametersMm)
-      .filter(d => d >= (F.preferredMinMm ?? 0) && d <= (F.maxMm ?? Infinity));
-    return { ladder, min: F.preferredMinMm, max: F.maxMm,
-             rule: 'NAC final/outlet rule: ' + ladder.join(' / ') + ' mm only.' };
+  const std = allowedDiametersFor(role);
+  if (role === 'final') {
+    const F = D.finalBranch || {};
+    const ladder = (F.autoLadderMm || std.sizes)
+      .filter(d => d >= (F.preferredMinMm ?? std.min) && d <= (F.maxMm ?? std.max));
+    return { ladder, min: F.preferredMinMm ?? std.min, max: F.maxMm ?? std.max, rule: std.rule };
   }
-  if (role === 'branch' && D.branchMinMm) {
-    const ladder = D.availableDiametersMm.filter(d => d >= D.branchMinMm && d <= D.maxDiameterMm);
-    return { ladder, min: D.branchMinMm, max: D.maxDiameterMm,
-             rule: 'NAC branch rule: nothing smaller than ' + D.branchMinMm + ' mm.' };
+  if (role === 'branch') {
+    const floor = D.branchMinMm ?? std.min;
+    return { ladder: D.availableDiametersMm.filter(d => d >= floor && d <= D.maxDiameterMm),
+             min: floor, max: D.maxDiameterMm, rule: std.rule };
   }
-  // Trunk, main and return. No upper rule beyond the stocked maximum, but the
-  // same floor as everything else: NAC does not fit 150 flex anywhere.
-  const floor = D.autoMinDiameterMm ?? 0;
-  const ladder = D.availableDiametersMm.filter(d => d >= floor && d <= D.maxDiameterMm);
-  return { ladder, min: floor || null, max: D.maxDiameterMm,
-           rule: floor ? 'NAC fits nothing smaller than ' + floor + ' mm.' : null };
+  const floor = D.autoMinDiameterMm ?? std.min;
+  return { ladder: D.availableDiametersMm.filter(d => d >= floor && d <= D.maxDiameterMm),
+           min: floor, max: D.maxDiameterMm, rule: std.rule };
 }
 
 export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
@@ -413,6 +414,11 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       // labels it and the installer sheet lists it, so it has to survive sizing.
       major: !!seg.major,
       serves: seg.serves ?? null,
+      plenumOutlet: !!seg.plenumOutlet,
+      // THE NAC BTO RULE: every take-off records the parent duct size, its own
+      // size, the air it carries and what it serves. Filled in below once the
+      // parent's diameter is known.
+      bto: !!seg.bto || !!seg.major || seg.role === 'branch',
       points: seg.points || null,
       auto: true,
       // A lock is the estimator's decision about a real roof space. It has to
@@ -428,16 +434,58 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
     });
   }
 
-  // Reducers: a size change between a segment and its parent.
+  // THE NAC DUCT DESIGN STANDARD: a take-off is never larger than the run
+  // feeding it. The branch velocity band is tighter than the trunk band, so a
+  // major branch could ask for a size up from the main it comes off — which is
+  // not a duct anybody installs.
+  const parentOf = new Map(sections.map(s => [s.id, s.parentId]));
+  const sizeById = new Map(sections.map(s => [s.id, s.diameterMm]));
+  for (const s of sections) {
+    if (s.role !== 'branch' && s.role !== 'final') continue;
+    const pid = parentOf.get(s.id);
+    const parentMm = pid ? sizeById.get(pid) : null;
+    const capped = capBranchToParent(s.diameterMm, parentMm);
+    if (capped !== s.diameterMm) {
+      s.cappedFromMm = s.diameterMm;
+      s.diameterMm = capped;
+      s.sizeNote = 'Held at ' + capped + ' mm: a take-off is never larger than the ' +
+                   parentMm + ' mm run feeding it.';
+      sizeById.set(s.id, capped);
+    }
+  }
+
+  // Reducers. THE NAC DUCT DESIGN STANDARD decides when one genuinely exists:
+  // only where a main or major duct steps down because the air it is still
+  // carrying has dropped. Never to reach outlet size — that is what the BTO is
+  // for, and calling a take-off a reducer put a fitting on the order nobody
+  // installs and a loss in the calculation that is not there.
   const byId = new Map(sections.map(s => [s.id, s]));
   for (const s of sections) {
     if (!s.parentId) continue;
     const parent = byId.get(s.parentId);
-    if (!parent || s.role === 'branch' || s.role === 'final') continue;
-    if (parent.diameterMm && s.diameterMm && parent.diameterMm !== s.diameterMm) {
-      s.reducerFrom = parent.diameterMm;
-      s.reducerTo = s.diameterMm;
-    }
+    if (!reducerRequired(parent, s)) continue;
+    s.reducerFrom = parent.diameterMm;
+    s.reducerTo = s.diameterMm;
+  }
+
+  // THE NAC BTO RULE — MAIN FLEX -> BTO -> CORRECTLY SIZED FINAL FLEX -> OUTLET.
+  // Every take-off carries the four things an installer and the order need:
+  // what it comes off, what size it is, what it carries and what it serves.
+  for (const s of sections) {
+    if (!s.bto) { s.btoRecord = null; continue; }
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    s.btoRecord = {
+      id: 'bto_' + s.id,
+      sectionId: s.id,
+      parentSectionId: parent?.id ?? null,
+      parentDiameterMm: parent?.diameterMm ?? null,
+      branchDiameterMm: s.diameterMm ?? null,
+      branchAirflowLs: s.airflowLs ?? null,
+      serves: s.serves || (s.destination ? [s.destination] : []),
+      major: !!s.major,
+      // The transition happens AT the take-off. There is no reducer here.
+      reducer: false
+    };
   }
 
   const totalsByDiameter = {};
@@ -451,6 +499,17 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
     topology: { nodes: topology.nodes, footprint: topology.footprint, spine: topology.spine,
                 plenum: topology.plenum, junctionCount: topology.junctionCount },
     reducerCount: sections.filter(s => s.reducerFrom).length,
+    // Every take-off in the design, which is what the BOM buys and the
+    // installer sheet lists.
+    btos: sections.filter(s => s.btoRecord).map(s => s.btoRecord),
+    btoCount: sections.filter(s => s.btoRecord).length,
+    // THE NAC SUPPLY PLENUM RULE: the mains leaving the fan coil, with the size
+    // and airflow the BOM and the installer sheet need.
+    supplyMains: sections.filter(s => s.plenumOutlet).map(s => ({
+      segmentId: s.id, arm: s.arm ?? null, diameterMm: s.diameterMm,
+      airflowLs: s.airflowLs, serves: s.serves || null
+    })),
+    mainSupplyCount: sections.filter(s => s.plenumOutlet).length,
     junctionCount: topology.junctionCount || 0,
     totalDuctLengthM: round(sections.reduce((s, x) => s + (x.lengthM || 0), 0), 2),
     totalsByDiameter,

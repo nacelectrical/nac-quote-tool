@@ -1,6 +1,7 @@
 // NAC AI HVAC DESIGNER — PART 19: return air design.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { RETURN_AIR, returnCountFor } from './nac-standard.mjs';
 import { round } from './units.mjs';
 import { selectDiameter, velocity } from './ducts.mjs';
 import { findUnitSpec } from './unit-specs.mjs';
@@ -10,14 +11,20 @@ import { findUnitSpec } from './unit-specs.mjs';
  * Supports a single return or several, and always shows the face velocities so
  * an undersized return is obvious before it becomes a noise complaint.
  */
-export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm = null,
+export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSizesMm = null,
                                   filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null,
                                   unit = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const R = settings.returnAir;
 
   const designLs = Number(totalAirflowLs) * R.designFraction;
-  const perReturnLs = designLs / Math.max(1, returnCount);
+  // THE NAC RETURN RULE: one return, or two. Never an arbitrary number and
+  // never zero — how many comes from the standard, sized off the design
+  // airflow and the selected unit.
+  const count = Math.min(RETURN_AIR.maxReturns,
+    Math.max(RETURN_AIR.minReturns,
+      returnCount == null ? returnCountFor(designLs) : Number(returnCount)));
+  const perReturnLs = designLs / count;
   const warnings = [];
 
   if (perReturnLs > R.maxSingleReturnLs) {
@@ -32,7 +39,7 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
   const requiredGrossAreaM2 = requiredFreeAreaM2 / R.grilleFreeAreaRatio;
 
   const returns = [];
-  for (let i = 0; i < Math.max(1, returnCount); i++) {
+  for (let i = 0; i < count; i++) {
     const override = grilleSizesMm && grilleSizesMm[i];
     const candidates = R.standardGrilleSizesMm.map(([w, h]) => ({
       widthMm: w, heightMm: h,
@@ -126,7 +133,8 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
 
   return {
     designAirflowLs: round(designLs, 0),
-    returnCount: Math.max(1, returnCount),
+    returnCount: count,
+    returnCountRule: 'NAC fits ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' returns; ' + count + ' at ' + Math.round(designLs) + ' L/s.',
     perReturnLs: round(perReturnLs, 0),
     requiredFreeAreaM2: round(requiredFreeAreaM2, 3),
     requiredGrossAreaM2: round(requiredGrossAreaM2, 3),

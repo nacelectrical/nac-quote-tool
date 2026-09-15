@@ -1,3 +1,4 @@
+import NAC from './nac-standard.mjs';
 // NAC AI HVAC DESIGNER — HVAC DESIGN SETTINGS (PART 12)
 // Every engineering assumption the deterministic engines use lives here.
 // Nothing in the engines may hard-code a design constant that belongs in this file.
@@ -156,133 +157,46 @@ export const DEFAULT_SETTINGS = {
 
   // ── Outlets (PART 15) ───────────────────────────────────────────────────────
   outlets: {
-    // Practical capacity per outlet before noise becomes an issue.
-    // What NAC actually fit. The 4-way, slot and sidewall outlets were in here
-    // from the shipped defaults and NAC do not use them; offering them only
-    // meant an outlet type that could be chosen and then had no confirmed
-    // price behind it. The linear bar grille stays because it does go on
-    // occasionally — it is quoted separately, which the bill of materials says.
+    // Practical capacity per outlet before noise becomes an issue. What NAC
+    // actually fit.
     types: {
       round_diffuser:  { label: 'Round ceiling diffuser', minLs: 25, nominalLs: 90,  maxLs: 130, throwM: 4.0, faceVelocityMs: 2.5 },
       linear_bar:      { label: 'Linear bar grille',      minLs: 30, nominalLs: 110, maxLs: 160, throwM: 5.0, faceVelocityMs: 2.6 }
     },
     defaultType: 'round_diffuser',
-    // Rooms with a long dimension over this get a second outlet for throw.
     splitIfLongestDimM: 5.5,
-    maxOutletsPerRoom: 4,
-
-    // == How many outlets a room gets =========================================
-    // NAC's install practice, per room type, where it differs from "however
-    // many the capacity table needs". A bedroom gets one outlet; a long living
-    // area gets the air spread across the space rather than blown from one
-    // corner. Editable here so NAC can change practice without code.
-    //
-    // `preferred`  the number NAC would normally fit
-    // `maxAuto`    the most AUTO DESIGN will fit without being asked
-    // `splitOverM` a room longer than this gets another outlet for throw
-    // `splitOverSqM` a room bigger than this does too
-    byRoomType: {
-      bedroom:  { preferred: 1, maxAuto: 2, splitOverM: 6.0, splitOverSqM: 20,
-                  note: 'One outlet unless the room is long enough to need two.' },
-      living:   { preferred: 1, maxAuto: 4, splitOverM: 5.0, splitOverSqM: 18,
-                  note: 'Living and family areas are spread across the space for throw.' },
-      dining:   { preferred: 1, maxAuto: 3, splitOverM: 5.5, splitOverSqM: 20 },
-      kitchen:  { preferred: 1, maxAuto: 2, splitOverM: 5.5, splitOverSqM: 20 },
-      media:    { preferred: 1, maxAuto: 2, splitOverM: 6.0, splitOverSqM: 22 },
-      study:    { preferred: 1, maxAuto: 1, splitOverM: 7.0, splitOverSqM: 25,
-                  note: 'A study is small — one outlet.' },
-      hallway:  { preferred: 1, maxAuto: 2, splitOverM: 8.0, splitOverSqM: 25 },
-      other:    { preferred: 1, maxAuto: 3, splitOverM: 5.5, splitOverSqM: 20 }
-    },
-
-    // == Outlet neck sizes ====================================================
-    // The neck is what the flex connects to, and it is how NAC orders a
-    // diffuser: a "250 diffuser" is a 250 neck. It is NOT the branch duct size
-    // and it is NOT the face size, and labelling a diffuser with a duct size is
-    // how the drawing came to be covered in 150s.
-    //
-    // The capacities below are DERIVED from NAC's own final-duct velocity band
-    // applied to the neck area (nominal = preferred velocity, max = maximum) —
-    // they are not a manufacturer's figures. Replace them with the diffuser
-    // supplier's published data when NAC settles on a model.
-    neckSizesMm: [200, 250, 300],
-    // NAC sizes a final more generously than a velocity calculation does. On
-    // NAC's own Dungannon Court drawing a 65 L/s bedroom takes a 250 and the
-    // 110-125 L/s living runs take a 300 — both a size up from what the
-    // velocity band alone would pick. These bands reproduce that practice.
-    // Airflow is per OUTLET, not per room.
-    neckByAirflowLs: [
-      { upToLs: 60,  neckMm: 200 },
-      { upToLs: 110, neckMm: 250 },
-      { upToLs: 160, neckMm: 300 }
-      // Above the last band the room gets another outlet, never a bigger final.
-    ],
-    // Face size is a property of the diffuser model NAC chooses, not something
-    // that can be calculated from airflow. Left blank until the model is known,
-    // and reported as such rather than guessed.
-    faceSizeByNeckMm: {},
-    faceSizeNote: 'Face size comes from the selected diffuser model — confirm with the supplier.'
+    // From the NAC DUCT DESIGN STANDARD — how many outlets a room gets, the
+    // neck sizes, and why the face size is left blank.
+    maxOutletsPerRoom: NAC.outlets.maxPerRoom,
+    byRoomType: JSON.parse(JSON.stringify(NAC.outlets.byRoomType)),
+    neckSizesMm: [...NAC.outlets.neckSizesMm],
+    neckByAirflowLs: NAC.finalSizeByAirflow.map(b => ({ upToLs: b.upToLs, neckMm: b.sizeMm })),
+    faceSizeByNeckMm: { ...NAC.outlets.faceSizeByNeckMm },
+    faceSizeNote: NAC.outlets.faceSizeNote
   },
 
   // ── Duct sizing (PART 16) ───────────────────────────────────────────────────
+  // ── Duct sizing (PART 16) ───────────────────────────────────────────────────
+  // Every install rule here comes from the NAC DUCT DESIGN STANDARD. They are
+  // republished into settings so the HVAC Design Settings screen can show and
+  // edit them, but the STANDARD is where they are decided — this is a view of
+  // it, not a second copy.
   duct: {
-    // Standard Australian flex sizes. 175 and 225 are not stocked lines — MMEM
-    // quote 200–400 — so the engine no longer sizes to a duct NAC cannot buy.
-    //
-    // NAC do not install 450 or 500. Anything that would need more than a 400
-    // is run as two ducts instead, which is how it goes in on site: 450 and 500
-    // flex is a fight to get through a truss roof and NAC do not carry it.
-    availableDiametersMm: [100, 125, 150, 200, 250, 300, 350, 400],
-    // Hard ceiling on any single duct. Raise this only if NAC start carrying
-    // larger flex — the engine splits the run rather than exceed it.
-    maxDiameterMm: 400,
-
-    // == What NAC actually connects to an outlet ==============================
-    // A velocity calculation will happily approve a 150 for a bedroom, and NAC
-    // does not install that. Sizing to the smallest duct the physics permits is
-    // how the drawing ended up covered in 150 on rooms that get a 200 on site.
-    //
-    // These are install rules, not physics, so they live here where NAC can
-    // change them without touching the engine. They are ENFORCED in
-    // selectDiameter(), so the bill of materials, the pressure calculation and
-    // the drawing all carry the same size.
+    availableDiametersMm: [...NAC.stockedDiametersMm],
+    maxDiameterMm: NAC.maxDiameterMm,
     finalBranch: {
-      // The only sizes AUTO DESIGN may choose for a final / outlet connection.
-      autoLadderMm: [200, 250, 300],
-      // Never smaller than this automatically, whatever the velocity says.
-      preferredMinMm: 200,
-      // Never larger than this on a final. A room needing more air than one
-      // 300 should carry gets ANOTHER OUTLET, not a bigger duct - 350 and 400
-      // are trunk and major-branch sizes, not outlet connections.
-      maxMm: 300,
-      // Available to the estimator by hand for a special case. Never chosen
-      // automatically.
-      manualOnlyMm: [100, 125, 150]
+      autoLadderMm: [...NAC.finalFlex.autoSizesMm],
+      preferredMinMm: NAC.finalFlex.minMm,
+      maxMm: NAC.finalFlex.maxMm,
+      manualOnlyMm: [...NAC.finalFlex.manualOnlyMm]
     },
-    // The smallest duct AUTO DESIGN will put on a room branch. A branch may
-    // still go up to maxDiameterMm - it is a major branch, not an outlet.
-    branchMinMm: 200,
-    // == Take-offs ============================================================
-    // How far apart two rooms can be along a trunk arm and still share ONE
-    // take-off. Bigger means fewer, larger BTOs feeding a group of rooms — the
-    // three minor bedrooms off one branch — which is how a house actually goes
-    // in. Smaller means a take-off per room, which is the "central explosion"
-    // of branches that made the drawing unreadable.
-    // A fraction of the house's longest side, so it scales with the plan.
-    junctionClusterFraction: 0.12,
-    // A take-off serving this many rooms or more gets a MAJOR BRANCH run out to
-    // the group before it splits, rather than every room being pulled all the
-    // way back to the trunk.
-    majorBranchMinRooms: 2,
+    branchMinMm: NAC.branchMinMm,
+    autoMinDiameterMm: NAC.autoMinDiameterMm,
+    junctionClusterFraction: NAC.bto.clusterFraction,
+    majorBranchMinRooms: NAC.bto.minRoomsForMajorBranch,
 
-    // The smallest duct AUTO DESIGN will choose for ANY run, trunk included.
-    // NAC does not install 100, 125 or 150 flex, so the auto design never picks
-    // one - not on a final, not on a branch, and not on the short tail of a
-    // trunk arm that happens to be carrying one bedroom's worth of air.
-    // They stay in availableDiametersMm so the estimator can still set one by
-    // hand for a special case.
-    autoMinDiameterMm: 200,
-    // Preferred / maximum velocities in m/s by duct role.
+    // Preferred / maximum velocities in m/s by duct role. PHYSICS, not install
+    // practice, so these stay here rather than in the standard.
     velocity: {
       main:   { preferredMin: 4.0, preferred: 6.0, max: 8.0 },
       branch: { preferredMin: 3.0, preferred: 4.5, max: 6.0 },

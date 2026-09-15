@@ -11,6 +11,7 @@
 // estimator can see, edit or replace by hand.
 
 import { h } from './dom.mjs';
+import { ROUTING, DRAWING } from '../engines/nac-standard.mjs';
 
 export const MODES = {
   VIEW: 'view',
@@ -428,7 +429,7 @@ export function createPlanViewer(container, opts = {}) {
       ctx.strokeStyle = 'rgba(10,10,26,0.34)';
       ctx.lineWidth = width + 3;
       ctx.beginPath();
-      smoothPath(screenPts, opts.radius ?? Math.max(6, width * 2));
+      smoothPath(screenPts, opts.radius ?? Math.max(ROUTING.bendRadiusPx / 2, width * 2));
       ctx.stroke();
     }
 
@@ -436,7 +437,7 @@ export function createPlanViewer(container, opts = {}) {
     ctx.lineWidth = width;
     if (dash) ctx.setLineDash(dash);
     ctx.beginPath();
-    smoothPath(screenPts, opts.radius ?? Math.max(6, width * 2));
+    smoothPath(screenPts, opts.radius ?? Math.max(ROUTING.bendRadiusPx / 2, width * 2));
     ctx.stroke();
     ctx.restore();
   }

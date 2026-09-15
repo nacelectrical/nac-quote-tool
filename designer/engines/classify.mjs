@@ -20,11 +20,15 @@
 // answers, and silently treating the first as the second is how a room drops
 // out of a system that was supposed to condition it.
 
-export const CONDITIONING = {
-  CONDITIONED: 'CONDITIONED',
-  NON_CONDITIONED: 'NON_CONDITIONED',
-  REVIEW_REQUIRED: 'REVIEW_REQUIRED'
-};
+// Every rule below comes from the NAC DUCT DESIGN STANDARD. This module used
+// to hold its own copy of the exclusion list, which is exactly how the list in
+// the classifier and the list in the drawing drifted apart.
+import {
+  CONDITIONING, EXCLUDED_ROOMS, CONDITIONED_ROOMS, FIXTURE_INSIDE_A_ROOM,
+  OUTDOOR_AREAS, EXCLUDED_BANNER, normaliseRoomLabel, roomMatchForm
+} from './nac-standard.mjs';
+
+export { CONDITIONING, EXCLUDED_BANNER, normaliseRoomLabel };
 
 export const CONDITIONING_LABELS = {
   CONDITIONED: 'Conditioned',
@@ -32,116 +36,8 @@ export const CONDITIONING_LABELS = {
   REVIEW_REQUIRED: 'Classification needs a decision'
 };
 
-/** The wording Nick asked to see against an excluded room, verbatim. */
-export const EXCLUDED_BANNER = 'EXCLUDED FROM AIR CONDITIONING';
-
-// ── Label normalisation ──────────────────────────────────────────────────────
-// Australian builders' plans write the same room half a dozen ways. "W.I.R.",
-// "WIR", "W I R", "En-suite", "ENSUITE", "L'DRY", "CUP'D". One spelling per
-// room is a fantasy, so every label is flattened to a comparable form before a
-// single pattern is tried.
-
-/**
- * Collapse dotted initialisms, straighten curly quotes, and fold the
- * separators Australian plans use inside a single room name. "En-suite" and
- * "En suite" both have to reach the `ensuite` pattern or a hyphen silently
- * turns an ensuite into a conditioned room — which is exactly what it did.
- */
-export function normaliseRoomLabel(label) {
-  return String(label || '')
-    .replace(/[‘’]/g, "'")
-    .replace(/[–—]/g, '-')
-    .replace(/\b(?:[A-Za-z]\.){2,}/g, (m) => m.replace(/\./g, ''))   // W.I.R. -> WIR
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * The form the patterns actually run against: lower case, hyphens and
- * apostrophes removed so "En-suite" reads as "ensuite" and "L'DRY" as "ldry",
- * and every remaining non-letter turned into a space so word boundaries work.
- */
-function matchForm(label) {
-  return normaliseRoomLabel(label)
-    .toLowerCase()
-    .replace(/[''`´]/g, '')
-    .replace(/-/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// ── The exclusion list ───────────────────────────────────────────────────────
-// NAC's standing rule, written out. Each entry carries the plain-English reason
-// the estimator is shown, so the screen can say WHY a room was dropped rather
-// than just dropping it.
-
-const EXCLUDED = [
-  // Wet areas
-  { re: /\bbath ?rooms?\b|\bbaths?\b|\bbthrm\b|\bbath rm\b/, name: 'Bathroom', why: 'Bathroom — NAC does not air condition wet areas.' },
-  // "En-suite" and "En suite" are both common in print. The hyphen is folded
-  // away in matchForm; the SPACE has to be matched here, or a plan that prints
-  // it as two words puts a wet area into the load.
-  { re: /\bensuites?\b|\ben suites?\b|\bens\b|\bensuit\b/, name: 'Ensuite', why: 'Ensuite — NAC does not air condition wet areas.' },
-  { re: /\bwcs?\b|\bw c\b|\btoilets?\b|\bwater closet\b|\blav\b|\blavatory\b/, name: 'WC', why: 'Toilet / WC — NAC does not air condition wet areas.' },
-  { re: /\bpowder( room| rm)?\b|\bpdr\b/, name: 'Powder room', why: 'Powder room — NAC does not air condition wet areas.' },
-  { re: /\blaundry\b|\bldry\b|\blndry\b|\blaund\b|\bl dry\b/, name: 'Laundry', why: 'Laundry — NAC does not air condition laundries.' },
-
-  // Vehicle and outdoor
-  { re: /\bgarages?\b|\bgge\b|\bgar\b/, name: 'Garage', why: 'Garage — outside the conditioned envelope.' },
-  { re: /\bcar ?ports?\b/, name: 'Carport', why: 'Carport — outside the conditioned envelope.' },
-  { re: /\balfrescos?\b/, name: 'Alfresco', why: 'Alfresco — an outdoor area.' },
-  { re: /\bporch(es)?\b|\bporticos?\b/, name: 'Porch', why: 'Porch — an outdoor area.' },
-  { re: /\bpatios?\b/, name: 'Patio', why: 'Patio — an outdoor area.' },
-  { re: /\bverandahs?\b|\bverandas?\b|\bvrndh\b/, name: 'Verandah', why: 'Verandah — an outdoor area.' },
-  { re: /\bdecks?\b|\bbalcon(y|ies)\b|\bcourt ?yards?\b|\bterraces?\b|\boutdoor\b/, name: 'Outdoor area', why: 'Outdoor area — outside the conditioned envelope.' },
-
-  // Storage — the long tail, which is where plans get creative
-  { re: /\bpantr(y|ies)\b|\bptry\b|\bpntry\b|\bpan\b/, name: 'Pantry', why: 'Pantry — a storage space, not a conditioned room.' },
-  { re: /\bwips?\b|\bwalk ?in ?pantr(y|ies)\b|\bbutlers? ?pantr(y|ies)\b|\bbutlers\b/, name: 'Walk-in pantry', why: 'Walk-in pantry — a storage space, not a conditioned room.' },
-  { re: /\bwirs?\b|\bw i r\b|\bwalk ?in ?robes?\b|\bwalk ?in ?wardrobes?\b/, name: 'Walk-in robe', why: 'Walk-in robe — a storage space, not a conditioned room.' },
-  { re: /\bbirs?\b|\bb i r\b|\bbuilt ?in ?robes?\b/, name: 'Built-in robe', why: 'Built-in robe — a storage space, not a conditioned room.' },
-  { re: /\brobes?\b|\bwardrobes?\b|\bwdr\b/, name: 'Robe', why: 'Robe — a storage space, not a conditioned room.' },
-  { re: /\bcup ?boards?\b|\bcupb\b|\bcupd\b|\bcpd\b|\bcbd\b|\bbroom\b|\bcloaks?\b/, name: 'Cupboard', why: 'Cupboard — a storage space, not a conditioned room.' },
-  { re: /\blinens?\b|\blin\b/, name: 'Linen', why: 'Linen cupboard — a storage space, not a conditioned room.' },
-  { re: /\bstores?\b|\bstorage\b|\bstore ?rooms?\b|\bstr\b/, name: 'Store', why: 'Store — a storage space, not a conditioned room.' },
-
-  // Plant and voids
-  { re: /\bplant( room| rm)?\b|\bswitch ?room\b|\bmeter ?box\b|\bmech(anical)? ?room\b/, name: 'Plant room', why: 'Plant room — not an occupied space.' },
-  { re: /\bvoids?\b|\bstair ?wells?\b|\briser\b|\bduct ?shaft\b/, name: 'Void', why: 'Void — not a floor area NAC conditions.' },
-  { re: /\bshed\b|\bpool\b|\bdriveway\b|\bwater ?tank\b|\bbin ?store\b/, name: 'External', why: 'Not part of the residence.' }
-];
-
-// ── Rooms NAC does condition ─────────────────────────────────────────────────
-// A compound label has to be resolved by what the space PRIMARILY is, not by
-// whichever token happens to match first. "BED 3 / ROBE" is a bedroom that has
-// a robe in it, and it is air conditioned. "MASTER BEDROOM + WIR" likewise.
-// The excluded token is describing a fixture inside a conditioned room, so the
-// conditioned token wins.
-//
-// Kitchen is the case Nick called out by name: a kitchen is part of the
-// open-plan living area and is conditioned, and it must not be dragged out by
-// the pantry beside it.
-
-const CONDITIONED_ROOMS = [
-  { re: /\bmaster( bed(room)?| suite)?\b|\bbed ?rooms?\b|\bbeds? ?\d*\b|\bbdrm\b|\bbrm\b|\bguest( bed(room)?| room)?\b|\bnursery\b/, type: 'bedroom' },
-  { re: /\bkitchens?\b|\bkitch\b|\bktn\b/, type: 'kitchen' },
-  { re: /\bdining\b|\bmeals?\b|\bdine\b/, type: 'dining' },
-  { re: /\blounges?\b|\blivings?\b|\bfamily\b|\brumpus\b|\bgames?\b|\bsitting\b|\bretreat\b|\bactivity\b|\bleisure\b/, type: 'living' },
-  { re: /\bmedia\b|\btheatres?\b|\btheaters?\b|\bcinemas?\b|\bhome ?theatre\b/, type: 'media' },
-  { re: /\bstud(y|ies)\b|\boffices?\b|\bhome ?office\b|\bden\b/, type: 'study' },
-  { re: /\bhalls?\b|\bhall ?ways?\b|\bentr(y|ance)\b|\bfoyers?\b|\bpassages?\b|\bcorridors?\b|\blobby\b/, type: 'hallway' }
-];
-
-/**
- * A conditioned room whose label ALSO carries an excluded token. Only a
- * fixture that genuinely lives inside a habitable room qualifies — a robe, a
- * built-in, a cupboard, a pantry off a kitchen, a linen press. An ensuite off
- * a bedroom does NOT: it is a separate wet area behind a door, and NAC does
- * not condition it, so "BED 1 / ENSUITE" stays two rooms and the wet one is
- * still excluded on its own.
- */
-const FIXTURE_INSIDE_A_ROOM = /\b(robes?|wardrobes?|wirs?|birs?|cup ?boards?|cupb|cupd|cpd|cbd|linens?|pantr(y|ies)|ptry|wips?|butlers?|stores?|storage)\b/;
+const EXCLUDED = EXCLUDED_ROOMS;
+const matchForm = roomMatchForm;
 
 // ── The classifier ───────────────────────────────────────────────────────────
 

@@ -241,7 +241,9 @@ export function runPipeline(design, ctx = {}) {
   // ── 8. Return air (PART 19) ───────────────────────────────────────────────
   d.returnDesign = designReturnAir({
     totalAirflowLs: d.airflow.allocatedAirflowLs,
-    returnCount: d.returnCount || 1,
+    // null lets the NAC DUCT DESIGN STANDARD decide one or two; an estimator's
+    // own choice still wins.
+    returnCount: d.returnCount ?? null,
     grilleSizesMm: d.returnGrilleOverrides || null,
     filterSizeMm: d.returnFilterOverride || null,
     ductLengthMm: d.returnDuctLengthMm ?? null,
@@ -271,7 +273,7 @@ export function runPipeline(design, ctx = {}) {
       if (d.returnRoute?.lengthMm) {
         d.returnDesign = designReturnAir({
           totalAirflowLs: d.airflow.allocatedAirflowLs,
-          returnCount: d.returnCount || 1,
+          returnCount: d.returnCount ?? null,
           grilleSizesMm: d.returnGrilleOverrides || null,
           filterSizeMm: d.returnFilterOverride || null,
           ductLengthMm: d.returnRoute.lengthMm,

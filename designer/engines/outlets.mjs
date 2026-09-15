@@ -5,6 +5,7 @@
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round, mmToM } from './units.mjs';
 import { selectDiameter, ductAreaM2, velocity } from './ducts.mjs';
+import { FINAL_FLEX, maxAirflowPerOutletLs } from './nac-standard.mjs';
 
 /**
  * THE THREE SIZES, WHICH ARE NOT THE SAME NUMBER.
@@ -113,9 +114,12 @@ export function designRoomOutlets(room, airflowLs, opts = {}) {
   // NAC's final-duct ceiling: a room wanting more air than one 300 should carry
   // gets ANOTHER OUTLET, never a bigger final. This is the rule that keeps 350
   // and 400 off outlet connections.
-  const F = settings.duct.finalBranch;
-  const maxNeck = F ? F.maxMm : settings.duct.maxDiameterMm;
-  const perOutletCeilingLs = ductAreaM2(maxNeck) * settings.duct.velocity.final.max * 1000;
+  // THE NAC DUCT DESIGN STANDARD: a room wanting more air than one final should
+  // carry gets ANOTHER OUTLET, never a bigger duct.
+  const maxNeck = settings.duct.finalBranch?.maxMm ?? FINAL_FLEX.maxMm;
+  const perOutletCeilingLs = maxNeck === FINAL_FLEX.maxMm
+    ? maxAirflowPerOutletLs(settings.duct.velocity.final.max)
+    : ductAreaM2(maxNeck) * settings.duct.velocity.final.max * 1000;
   const byDuctLimit = Math.max(1, Math.ceil(flow / perOutletCeilingLs));
   if (byDuctLimit > qty) {
     qty = byDuctLimit;

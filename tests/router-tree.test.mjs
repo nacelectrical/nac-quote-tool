@@ -224,9 +224,15 @@ test('a unit at one end of the house still produces a sensible trunk', () => {
   assert.ok(trunks(t).length >= 2);
   // Everything still reached.
   for (const r of ROOMS) assert.ok(seg(t, 'branch_' + r.id), r.label);
-  // And the trunk still only gets smaller.
-  const line = trunks(t);
-  for (let i = 1; i < line.length; i++) assert.ok(line[i].airflowLs < line[i - 1].airflowLs);
+  // And each run still only gets smaller than the one FEEDING it — the plenum
+  // leaves on two or three mains, so a flat list is not one chain.
+  const byId = new Map(t.segments.map(x => [x.id, x]));
+  for (const run of trunks(t)) {
+    const parent = run.parentId ? byId.get(run.parentId) : null;
+    if (!parent) continue;
+    assert.ok(run.airflowLs < parent.airflowLs,
+      run.id + ' carries ' + run.airflowLs + ' after ' + parent.id + ' carried ' + parent.airflowLs);
+  }
 });
 
 test('with no plenum placed it says so rather than pretending', () => {
