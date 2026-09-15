@@ -82,15 +82,35 @@ export const DUCTED_CATALOGUE = [
     { id: 's8', name: 'AC140TNHPKG — Duct S2+', kw: 14.0, phase: '1Ph' },
     { id: 's9', name: 'AC160TNHPKG — Duct S2+', kw: 16.0, phase: '1Ph' }
   ]},
+  // Braemar ducted, the whole range NAC can quote. Seeley International sell it
+  // as three families and the sizes below are the sizes that exist — 7 kW is
+  // the smallest ducted unit Braemar make, and three phase starts at 20 kW.
+  //   KDHV  R32 inverter, single phase, indoor KDHV…D1S / outdoor KCHV…D1B.
+  //         This is the family MMEM stock (see MMEM_DUCTED), so these are the
+  //         only Braemar models that come out of the box with a cost on file.
+  //   SDHV  R410A inverter, indoor SDHV…D1S / outdoor SCHV…D1S (D3S on three
+  //         phase). Still supported and still installed, so still quotable.
+  //   KGHV  Dominator Series 2 — one size, and it is rated on HEATING (20 kW),
+  //         which is why the model number says 200 and the cooling figure is
+  //         12.2 kW. `kw` here stays cooling, as it is for every other model.
+  // The kW figures are Braemar's published rated cooling capacities. They are
+  // model identity, not engineering data: no airflow, static pressure or
+  // electrical figure is asserted for Braemar anywhere, so the engines still
+  // report SPECIFICATION DATA REQUIRED until NAC load the data sheets.
   { id: 'braemar', name: 'Braemar', url: 'https://www.braemar.com.au/products/cooling/ducted-reverse-cycle-air-conditioning', models: [
-    { id: 'br1', name: 'KDHA070 — Ducted RC',     kw: 7.0,  phase: '1Ph' },
-    { id: 'br2', name: 'KDHA100 — Ducted RC',     kw: 10.0, phase: '1Ph' },
-    { id: 'br3', name: 'KDHA120 — Ducted RC',     kw: 12.0, phase: '1Ph' },
-    { id: 'br4', name: 'KDHA140 — Ducted RC',     kw: 14.0, phase: '1Ph' },
-    { id: 'br5', name: 'KDHA160 — Ducted RC',     kw: 16.0, phase: '1Ph' },
-    { id: 'br6', name: 'SDHV200 — Ducted RC 3Ph', kw: 20.0, phase: '3Ph' },
-    { id: 'br7', name: 'Dominator S2 KGHV120',    kw: 12.2, phase: '1Ph' },
-    { id: 'br8', name: 'Dominator S2 KGHV160',    kw: 16.0, phase: '1Ph' }
+    { id: 'br1',  name: 'KDHV070D1S — Ducted Inverter R32', kw: 7.1,  phase: '1Ph' },
+    { id: 'br2',  name: 'KDHV100D1S — Ducted Inverter R32', kw: 10.0, phase: '1Ph' },
+    { id: 'br3',  name: 'KDHV125D1S — Ducted Inverter R32', kw: 12.4, phase: '1Ph' },
+    { id: 'br4',  name: 'KDHV140D1S — Ducted Inverter R32', kw: 13.5, phase: '1Ph' },
+    { id: 'br5',  name: 'KDHV160D1S — Ducted Inverter R32', kw: 16.3, phase: '1Ph' },
+    { id: 'br9',  name: 'SDHV07D1S — Ducted Inverter',      kw: 7.0,  phase: '1Ph' },
+    { id: 'br10', name: 'SDHV10D1S — Ducted Inverter',      kw: 10.0, phase: '1Ph' },
+    { id: 'br11', name: 'SDHV12D1S — Ducted Inverter',      kw: 12.0, phase: '1Ph' },
+    { id: 'br12', name: 'SDHV14D1S — Ducted Inverter',      kw: 14.0, phase: '1Ph' },
+    { id: 'br13', name: 'SDHV16D1S — Ducted Inverter',      kw: 16.0, phase: '1Ph' },
+    { id: 'br6',  name: 'SDHV20D3S — Ducted Inverter 3Ph',  kw: 20.0, phase: '3Ph' },
+    { id: 'br14', name: 'SDHV24D3S — Ducted Inverter 3Ph',  kw: 24.0, phase: '3Ph' },
+    { id: 'br7',  name: 'KGHV200A1S — Dominator Series 2',  kw: 12.2, phase: '1Ph' }
   ]},
   // Gree and Panasonic are on NAC's MMEM account but were never in the quote
   // tool's list. Their models come in from the supplier price list below.

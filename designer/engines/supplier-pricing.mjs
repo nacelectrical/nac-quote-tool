@@ -19,6 +19,9 @@ export const MMEM_META = {
 /**
  * Ducted indoor + outdoor sets. `code` is the pair exactly as MMEM list it;
  * `indoor` is the first half, which is what the tool matches models on.
+ * Optional `model` is the manufacturer's own indoor/outdoor pair, for the lines
+ * where MMEM's code is a stock number rather than the manufacturer's — it gives
+ * the catalogue a second, equally valid way to name the same unit.
  */
 export const MMEM_DUCTED = [
   // ── Daikin — Premium Inverter, single phase ────────────────────────────────
@@ -95,11 +98,16 @@ export const MMEM_DUCTED = [
   { brandId: 'samsung', code: 'AC160TNHPKG/SA / AC160TXAPKG/SA', kw: 16.0, phase: '1Ph', cost: 3450, series: 'Ducted' },
 
   // ── Braemar ────────────────────────────────────────────────────────────────
-  { brandId: 'braemar', code: 'MMABRAKCHV070D1B', kw: 7.0,  phase: '1Ph', cost: 1850, series: 'Ducted' },
-  { brandId: 'braemar', code: 'MMABRAKCHV100D1B', kw: 10.0, phase: '1Ph', cost: 2430, series: 'Ducted' },
-  { brandId: 'braemar', code: 'MMABRAKCHV125D1B', kw: 12.5, phase: '1Ph', cost: 2875, series: 'Ducted' },
-  { brandId: 'braemar', code: 'MMABRAKCHV140D1B', kw: 14.0, phase: '1Ph', cost: 3160, series: 'Ducted' },
-  { brandId: 'braemar', code: 'MMABRAKCHV160D1B', kw: 16.0, phase: '1Ph', cost: 3480, series: 'Ducted' }
+  // MMEM's own stock code is the whole line item (MMA + BRA + the Braemar
+  // outdoor code), which no catalogue model name will ever equal, so `model`
+  // carries the manufacturer's indoor/outdoor pair the code buys. Without it
+  // these five would not match the KDHV models in the catalogue and would be
+  // appended a second time under their MMEM codes.
+  { brandId: 'braemar', code: 'MMABRAKCHV070D1B', model: 'KDHV070D1S / KCHV070D1B', kw: 7.0,  phase: '1Ph', cost: 1850, series: 'Ducted Inverter R32' },
+  { brandId: 'braemar', code: 'MMABRAKCHV100D1B', model: 'KDHV100D1S / KCHV100D1B', kw: 10.0, phase: '1Ph', cost: 2430, series: 'Ducted Inverter R32' },
+  { brandId: 'braemar', code: 'MMABRAKCHV125D1B', model: 'KDHV125D1S / KCHV125D1B', kw: 12.5, phase: '1Ph', cost: 2875, series: 'Ducted Inverter R32' },
+  { brandId: 'braemar', code: 'MMABRAKCHV140D1B', model: 'KDHV140D1S / KCHV140D1B', kw: 14.0, phase: '1Ph', cost: 3160, series: 'Ducted Inverter R32' },
+  { brandId: 'braemar', code: 'MMABRAKCHV160D1B', model: 'KDHV160D1S / KCHV160D1B', kw: 16.0, phase: '1Ph', cost: 3480, series: 'Ducted Inverter R32' }
 ];
 
 /**
@@ -284,7 +292,10 @@ export function codesMatch(catalogueName, mmemCode) {
 /** Find the MMEM line for a catalogue model, matching code then kW and phase. */
 export function findSupplierLine(brandId, modelName, kw, phase) {
   const onBrand = MMEM_DUCTED.filter(m => m.brandId === brandId);
-  const byCode = onBrand.filter(m => codesMatch(modelName, m.code));
+  // A line may carry the manufacturer's model pair as well as MMEM's stock
+  // code; either is a legitimate way to name the same unit.
+  const byCode = onBrand.filter(m => codesMatch(modelName, m.code) ||
+    (m.model && codesMatch(modelName, m.model)));
   if (byCode.length === 1) return byCode[0];
   if (byCode.length > 1) {
     // Several regional variants share a code — separate them on phase, then kW.
