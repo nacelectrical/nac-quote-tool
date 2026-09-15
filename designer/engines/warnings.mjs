@@ -5,7 +5,7 @@
 // acknowledgement. A CRITICAL warning blocks design approval until it is
 // explicitly acknowledged by a named estimator.
 
-import { crossCheckFloorArea, incompleteRooms } from './rooms.mjs';
+import { crossCheckFloorArea, incompleteRooms, isAutoCleared } from './rooms.mjs';
 import { isConditionedRoom } from './classify.mjs';
 
 export const SEVERITY = { INFO: 'INFO', CHECK: 'CHECK', WARNING: 'WARNING', CRITICAL: 'CRITICAL' };
@@ -93,9 +93,18 @@ export function collectWarnings(design, opts = {}) {
       out.push(normalise({ code: 'MEDIUM_ROOM_MEASUREMENT_CONFIDENCE', severity: SEVERITY.CHECK,
         message: r.label + ' measurement confidence is ' + r.confidence + '%. Confirm the dimensions.' }, 'rooms'));
     }
-    if (r.status !== 'Verified' && r.status !== 'Manual') {
-      out.push(normalise({ code: 'UNVERIFIED_ROOM', severity: SEVERITY.WARNING,
-        message: r.label + ' has not been verified — it is excluded from sizing until it is.' }, 'rooms'));
+    // WHAT ACTUALLY DECIDES THIS IS sizableRooms(). A room read confidently off
+    // the plan is AUTO-CLEARED and is sized, whatever its status says — so
+    // testing the status alone here told the estimator that eleven rooms were
+    // excluded from a 22.54 kW load that had in fact sized all of them. A
+    // warning that misdescribes the design is worse than no warning.
+    if (r.status !== 'Verified' && r.status !== 'Manual' && !r.overrideApproved) {
+      out.push(isAutoCleared(r)
+        ? normalise({ code: 'ROOM_AUTO_CLEARED', severity: SEVERITY.CHECK,
+            message: r.label + ' was sized from the dimensions printed on the plan (' +
+              r.areaSqM + ' m²) without being confirmed. Check it on site.' }, 'rooms')
+        : normalise({ code: 'UNVERIFIED_ROOM', severity: SEVERITY.WARNING,
+            message: r.label + ' has not been verified — it is excluded from sizing until it is.' }, 'rooms'));
     }
     if (!r.insulation) {
       out.push(normalise({ code: 'MISSING_INSULATION', severity: SEVERITY.INFO,

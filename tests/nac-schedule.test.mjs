@@ -476,3 +476,47 @@ test('the schedule describes the SAME network the BOM and pressure read', () => 
   assert.equal(S.totals.reducers, design.network.reducerCount);
   assert.equal(S.totals.btos, design.network.btoCount);
 });
+
+// ── A warning must describe the design that was actually produced ───────────
+
+test('a room sized from the plan is not reported as excluded from sizing', () => {
+  // The bug: eleven rooms were reported "excluded from sizing" on a 22.54 kW
+  // load that had sized all eleven of them. The status alone does not decide
+  // it — sizableRooms() auto-clears a room read confidently off the plan.
+  const sizedIds = new Set(design.roomLoads.filter(l => l.designW > 0).map(l => l.roomId));
+  const unverified = design.rooms.filter(r =>
+    r.conditioned && r.status !== 'Verified' && r.status !== 'Manual');
+  assert.ok(unverified.length > 0, 'fixture no longer exercises this');
+
+  for (const r of unverified) {
+    if (!sizedIds.has(r.id)) continue;
+    const excluded = (design.warnings || []).filter(w =>
+      w.code === 'UNVERIFIED_ROOM' && w.message.includes(r.label));
+    assert.deepEqual(excluded, [],
+      r.label + ' carries ' + design.roomLoads.find(l => l.roomId === r.id).designW +
+      ' W but is reported as excluded from sizing');
+  }
+});
+
+test('a room sized from the plan is still flagged for checking on site', () => {
+  const autoCleared = (design.warnings || []).filter(w => w.code === 'ROOM_AUTO_CLEARED');
+  assert.ok(autoCleared.length > 0, 'nothing asks the estimator to check the printed sizes');
+  for (const w of autoCleared) {
+    assert.equal(w.severity, 'CHECK');
+    assert.match(w.message, /printed on the plan/);
+  }
+});
+
+test('the load the tool reports is the load it calculated', () => {
+  const L = design.systemLoad;
+  const summed = design.roomLoads.reduce((n, l) => n + l.designW, 0);
+  // Raw room loads, then system diversity, then the safety margin — which is a
+  // MULTIPLIER (1.05), not a fraction.
+  assert.equal(Math.round(L.rawCoolingW), Math.round(summed));
+  const expected = L.rawCoolingW * L.systemDiversity * L.safetyMargin;
+  assert.ok(Math.abs(L.designCoolingW - expected) < 2,
+    L.designCoolingW + ' W reported, ' + Math.round(expected) + ' W from ' +
+    Math.round(summed) + ' x ' + L.systemDiversity + ' x ' + L.safetyMargin);
+  assert.equal(L.designCoolingKw, Math.round(L.designCoolingW / 10) / 100);
+  assert.equal(L.roomCount, design.roomLoads.length);
+});
