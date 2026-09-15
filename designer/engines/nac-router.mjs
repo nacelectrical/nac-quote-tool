@@ -53,7 +53,8 @@ import { isConditionedRoom } from './classify.mjs';
 import { selectDiameter } from './ducts.mjs';
 import {
   mainSupplyCount, returnCountFor, FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR,
-  BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS
+  BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS,
+  finalSizeForAirflow, mainFloorForFinals
 } from './nac-standard.mjs';
 
 // ── Geometry: flexible duct sweeps ───────────────────────────────────────────
@@ -355,6 +356,14 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
 
     // Walk the air down the run and note every point where the size NAC would
     // fit changes. Those are the CANDIDATE reductions.
+    // A main may not be reduced past a FINAL that still has to come off it: a
+    // 250 take-off cannot be fitted to a 200 main, and capping it would give
+    // one room two different final sizes for the same airflow. So each
+    // candidate reduction is floored at the largest final still downstream.
+    const largestFinalAfter = clusters.map((_, ci) =>
+      Math.max(0, ...clusters.slice(ci + 1).flatMap(c =>
+        c.taps.map(t => finalSizeForAirflow(t.outlet.airflowLs)))));
+
     let carried = groupLs;
     const startSize = sizeFor(carried);
     const candidates = [];
@@ -366,7 +375,7 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
         afterCluster: ci,
         atIndex: cluster.taps[cluster.taps.length - 1].alongIndex,
         airflowLs: carried,
-        size: sizeFor(carried)
+        size: mainFloorForFinals(sizeFor(carried), [largestFinalAfter[ci]])
       });
     });
 

@@ -7,7 +7,7 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { allowedDiametersFor, reducerRequired, capBranchToParent,
-         finalSizeForAirflow } from './nac-standard.mjs';
+         finalSizeForAirflow, mainFloorForFinals } from './nac-standard.mjs';
 import { round, mmToM } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
@@ -469,6 +469,44 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       edited: !!seg.edited,
       editedAt: seg.editedAt || null
     });
+  }
+
+  // THE NAC DUCT DESIGN STANDARD: a main may not reduce past a final it still
+  // has to serve. Velocity alone wanted to take a main down to 200 while two
+  // 250 finals were still to come off it, which forced those finals down a
+  // size — the same room ending up with a 250 and a 200 for identical airflow.
+  // The install rule outranks the velocity band here: a slow main tail costs
+  // nothing, an undersized final is noise at the diffuser.
+  //
+  // Worked from the leaves back toward the plenum, so lifting a stretch also
+  // lifts every stretch above it and a main can never be narrower than the one
+  // it feeds.
+  {
+    const byIdNow = new Map(sections.map(s => [s.id, s]));
+    const kids = new Map();
+    for (const s of sections) {
+      if (!s.parentId) continue;
+      if (!kids.has(s.parentId)) kids.set(s.parentId, []);
+      kids.get(s.parentId).push(s);
+    }
+    const isMain = (s) => s.role === 'main' || s.role === 'trunk';
+    const depth = (s) => { let n = 0, c = s; while (c?.parentId && n < 40) { c = byIdNow.get(c.parentId); n += 1; } return n; };
+    const mains = sections.filter(isMain).sort((a, b) => depth(b) - depth(a));
+    for (const m of mains) {
+      const children = kids.get(m.id) || [];
+      // What each final coming off this stretch ASKS FOR from its airflow,
+      // before any capping — capping to a too-small main is the bug.
+      const finalWants = children.filter(c => c.role === 'final' || c.role === 'branch')
+        .map(c => c.cappedFromMm || c.diameterMm);
+      const childMain = Math.max(0, ...children.filter(isMain).map(c => c.diameterMm || 0));
+      const floor = mainFloorForFinals(m.diameterMm, finalWants, childMain || null);
+      if (floor > m.diameterMm) {
+        m.heldUpFromMm = m.diameterMm;
+        m.diameterMm = floor;
+        m.sizeNote = 'Held at ' + floor + ' mm: a main is never reduced past a final ' +
+                     'still to come off it.';
+      }
+    }
   }
 
   // THE NAC DUCT DESIGN STANDARD: a take-off is never larger than the run

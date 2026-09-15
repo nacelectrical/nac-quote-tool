@@ -331,6 +331,32 @@ export function capBranchToParent(branchDiameterMm, parentDiameterMm) {
  * still carrying has dropped. Never to reach outlet size — that is what the BTO
  * is for.
  */
+/**
+ * How small a main is allowed to get.
+ *
+ * A main may only step down as far as the LARGEST FINAL still to come off it.
+ * This is not a new rule — it falls straight out of two Nick has already
+ * stated: a final's size comes from its airflow, and a take-off is never
+ * larger than the run feeding it. Put together, a main that reduces past a
+ * final it still has to serve forces that final down a size.
+ *
+ * It bit on the real plan: LOUNGE has two outlets at 74 L/s, and both should
+ * be 250. The second one came off a stretch of main that had already stepped
+ * to 200, so the same room got a 250 and a 200 for identical airflow. The
+ * velocity band wanted the smaller main; the install rule outranks it, because
+ * a slow main tail is harmless and an undersized final is noise at the
+ * diffuser.
+ *
+ * @param {number} sizedMm       what velocity chose for this stretch
+ * @param {number[]} finalsMm    every final still downstream of it
+ * @param {number} childMainMm   the next stretch of the same main, if any
+ */
+export function mainFloorForFinals(sizedMm, finalsMm = [], childMainMm = null) {
+  const wants = [sizedMm || 0, ...finalsMm.filter(Boolean)];
+  if (childMainMm) wants.push(childMainMm);
+  return Math.max(...wants) || sizedMm;
+}
+
 export function reducerRequired(parentSection, childSection) {
   if (!parentSection || !childSection) return false;
   // A take-off is a take-off, not a reduction. This is the rule that used to be
@@ -591,6 +617,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   bto: BTO,
   supplyPlenum: SUPPLY_PLENUM,
   mainReductions: MAIN_REDUCTIONS,
+  mainFloorForFinals,
   returnAir: RETURN_AIR,
   outlets: OUTLET_RULES,
   zoning: ZONING,
