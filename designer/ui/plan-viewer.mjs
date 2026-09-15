@@ -10,7 +10,7 @@
 // It is deliberately not a CAD package. Everything it produces is a number the
 // estimator can see, edit or replace by hand.
 
-import { drawFlexDesign } from './flex-renderer.mjs';
+import { drawFlexDesign, sizeKey } from './flex-renderer.mjs';
 import { h } from './dom.mjs';
 import { ROUTING, DRAWING } from '../engines/nac-standard.mjs';
 
@@ -294,7 +294,7 @@ export function createPlanViewer(container, opts = {}) {
       for (const chip of state.zoneChips) {
         if (!chip.anchorPx) continue;
         const b = chip.anchorPx;
-        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 18, 18, 'badge');   // eslint-disable-line
+        void b;   // no badge is drawn in design view — nothing to reserve
       }
     }
   }
@@ -405,6 +405,62 @@ export function createPlanViewer(container, opts = {}) {
     });
     ctx.restore();
     state.labelBoxes.push({ x: box.x, y: box.y, w, h, kind: 'schedule' });
+    drawSizeKey(box.x, box.y + h + 10, w);
+  }
+
+  /**
+   * THE DUCT SIZE KEY.
+   *
+   * Nick's first rule of reading the drawing is "duct size from colour", so the
+   * key belongs ON the sheet under the schedule, not in a strip of HTML beside
+   * the canvas where it is not part of the drawing and does not print.
+   */
+  function drawSizeKey(x, y, w) {
+    const sizes = sizeKey(state.routes || {});
+    const hasReturn = Object.values(state.routes || {}).some(r => r.role === 'return');
+    if (!sizes.length) return;
+    const rows = sizes.length + (hasReturn ? 1 : 0);
+    const rowH = 12, pad = 7, headH = 18;
+    const h = headH + rows * rowH + pad;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.97)';
+    ctx.strokeStyle = 'rgba(60,66,88,0.35)';
+    ctx.lineWidth = 1;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 5); ctx.fill(); ctx.stroke(); }
+    else { ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '800 9px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = '#16162e';
+    ctx.fillText('DUCT SIZE', x + pad, y + 6);
+
+    ctx.lineCap = 'round';
+    sizes.forEach((sz, i) => {
+      const ry = y + headH + i * rowH + rowH / 2;
+      ctx.strokeStyle = sz.colour;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x + pad, ry); ctx.lineTo(x + pad + 22, ry); ctx.stroke();
+      ctx.font = '600 8.5px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = '#23283a';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('\u00f8' + sz.diameterMm, x + pad + 28, ry);
+    });
+    if (hasReturn) {
+      const ry = y + headH + sizes.length * rowH + rowH / 2;
+      ctx.strokeStyle = DRAWING.returnColour;
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x + pad, ry); ctx.lineTo(x + pad + 22, ry); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#23283a';
+      ctx.textBaseline = 'middle';
+      ctx.font = '600 8.5px -apple-system, system-ui, sans-serif';
+      ctx.fillText('RETURN', x + pad + 28, ry);
+    }
+    ctx.restore();
+    state.labelBoxes.push({ x, y, w, h, kind: 'schedule' });
   }
 
   // A zone's name on the schedule is the room it covers when it covers one, and
@@ -434,37 +490,19 @@ export function createPlanViewer(container, opts = {}) {
    * One small disc, in the zone's colour, in the middle of the zone. Nothing
    * else — the figures are in the schedule.
    */
-  function drawZoneBadges() {
-    // ZONING IS SHOWN BY THE DAMPER, NOT BY A BADGE IN EVERY ROOM. Nick's
-    // hierarchy puts zoning on the damper and its label, so a zone that HAS a
-    // damper out on the plan already says so and a second numbered disc in the
-    // middle of the room is clutter sitting on top of the diffusers.
-    //
-    // The zone with no damper is the one that never closes — the open plan —
-    // and that one still needs saying, because nothing else on the drawing
-    // does.
-    const damperZones = new Set((state.markers || [])
-      .filter(m => m.type === 'damper' && m.label).map(m => m.label));
-    for (const chip of state.zoneChips) {
-      if (!chip.anchorPx) continue;
-      if (damperZones.has(chip.fullName) || damperZones.has(chip.title)) continue;
-      const b = chip.anchorPx;
-      const c = toScreen({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
-      // Small and quiet. Seven saturated discs the size of the diffusers were
-      // competing with the ducts for attention; the badge only has to tie a
-      // space back to a row in the schedule.
-      ctx.save();
-      ctx.beginPath(); ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.lineWidth = 2.2; ctx.strokeStyle = chip.colour; ctx.stroke();
-      ctx.font = '800 9px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = '#23283a';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(chip.index ?? ''), c.x, c.y + 0.5);
-      ctx.restore();
-    }
-  }
+  /**
+   * NO NUMBERED CIRCLES ON THE PLAN.
+   *
+   * Nick: "Hide by default ... unnecessary numbered circles, repeated labels."
+   * Zoning is read off the DAMPERS — the Z-tag is on the motor, where the zone
+   * actually closes — and the schedule carries the figures. A disc in the
+   * middle of every room was a third way of saying the same thing, sitting on
+   * top of the diffusers while it said it.
+   *
+   * The zone that never closes has no damper to label, so the schedule marks
+   * it rather than the plan.
+   */
+  function drawZoneBadges() { /* intentionally nothing — see above */ }
 
   const boxesOverlap = (a, b) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;

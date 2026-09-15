@@ -320,6 +320,13 @@ export function nacScheduleData(design, opts = {}) {
 export function checkNacSchedule(data) {
   const checks = [];
   const check = (rule, ok, detail) => checks.push({ rule, ok: !!ok, detail });
+  // A NOTE is not a failure. Some rules pull against one another on a real
+  // house — you cannot both follow the areas an installer works in and share
+  // the air evenly when one area is two thirds of it. Where that happens the
+  // schedule says which way it went and by how much, rather than failing a
+  // design that is right or quietly redrawing the house to make a number come
+  // out.
+  const note = (rule, ok, detail) => checks.push({ rule, ok: !!ok, note: !ok, detail });
 
   check('Supply plenum carries ' + SUPPLY_PLENUM.minMains + ' or ' + SUPPLY_PLENUM.maxMains + ' ducts only',
     data.plenum.ductCount >= SUPPLY_PLENUM.minMains && data.plenum.ductCount <= SUPPLY_PLENUM.maxMains,
@@ -330,12 +337,14 @@ export function checkNacSchedule(data) {
     data.plenum.sameSize ? data.plenum.ductCount + ' x ' + dia(data.plenum.ductSizeMm)
       : data.plenum.sizesMm.map(dia).join(' + '));
 
-  check('The air is shared evenly across them (within ' +
+  note('The air is shared evenly across them (within ' +
     data.plenum.tolerancePct + '%)',
     data.plenum.balance.balanced,
     data.plenum.balance.flows.join(' / ') + ' L/s against a ' +
     data.plenum.balance.meanLs + ' L/s even share \u2014 worst ' +
-    data.plenum.balance.worstDeviationPct + '% off');
+    data.plenum.balance.worstDeviationPct + '% off. ' +
+    'The mains follow the areas of the house, so where one area carries most of ' +
+    'the air the ducts off the plenum carry it too.');
 
   const smallMains = data.mainRuns.flatMap(m =>
     m.stretches.filter(s => s.diameterMm < MIN_MAIN_DIAMETER_MM)
@@ -460,13 +469,30 @@ export function checkNacSchedule(data) {
           ' off ' + dia(b.parentDiameterMm)).join(', ')
       : 'every take-off is at least a size under its main');
 
-  return { ok: checks.every(c => c.ok), checks,
-           passed: checks.filter(c => c.ok).length, failed: checks.filter(c => !c.ok).length };
+  const hard = checks.filter(c => !c.note);
+  return { ok: hard.every(c => c.ok), checks,
+           passed: hard.filter(c => c.ok).length,
+           failed: hard.filter(c => !c.ok).length,
+           hardCount: hard.length,
+           notes: checks.filter(c => c.note && !c.ok) };
 }
 
 /**
  * The schedule as text, in the order an estimator reads it.
  */
+/** Break a sentence into lines no longer than n characters. */
+function wrapAt(text, n) {
+  const words = String(text || '').split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    if (line && (line + ' ' + w).length > n) { lines.push(line); line = w; }
+    else line = line ? line + ' ' + w : w;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 export function nacDuctSchedule(design, opts = {}) {
   const d = nacScheduleData(design, opts);
   const v = checkNacSchedule(d);
@@ -609,13 +635,21 @@ export function nacDuctSchedule(design, opts = {}) {
   L.push('7. NAC HARD RULE CHECK');
   rule();
   for (const c of v.checks) {
-    L.push('   ' + (c.ok ? 'PASS' : 'FAIL') + '  ' + pad(c.rule, 62) +
-           (c.detail ? '  ' + c.detail : ''));
+    const mark = c.ok ? 'PASS' : (c.note ? 'NOTE' : 'FAIL');
+    // A note carries a reason, and a reason does not fit on the end of a line.
+    if (c.note && !c.ok) {
+      L.push('   NOTE  ' + c.rule);
+      for (const line of wrapAt(c.detail, 66)) L.push('         ' + line);
+    } else {
+      L.push('   ' + mark + '  ' + pad(c.rule, 62) + (c.detail ? '  ' + c.detail : ''));
+    }
   }
   L.push('');
   rule();
   L.push((v.ok ? 'SCHEDULE PASSES ALL NAC HARD RULES' : 'SCHEDULE FAILS ' + v.failed + ' RULE(S)') +
-         '   (' + v.passed + '/' + v.checks.length + ')');
+         '   (' + v.passed + '/' + v.hardCount + ')' +
+         (v.notes.length ? '   \u00b7  ' + v.notes.length + ' note' +
+          (v.notes.length > 1 ? 's' : '') + ' to read' : ''));
 
   return L.join('\n');
 }

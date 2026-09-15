@@ -460,7 +460,23 @@ export function reducerRequired(parentSection, childSection) {
  * and a final reached through five contrived segments is the artificial-segment
  * failure the NAC rules name.
  */
+/**
+ * THE LOCAL BRANCH.
+ *
+ * The rooms nearest the plenum are the ones that make a main look like the
+ * centre of a spiderweb. Where two or more of them sit near one another they
+ * share one short branch off the main, and each comes off IT.
+ */
+export const LOCAL_BRANCH = Object.freeze({
+  /** How much of a main counts as "near the plenum". */
+  nearZoneFraction: 0.55,
+  /** How near two of those rooms have to be, as a multiple of the far-threshold. */
+  radiusFactor: 2
+});
+
 export const MAIN_REDUCTIONS = Object.freeze({
+  /** A main is only necked down if this many outlets are still to come off it. */
+  minOutletsAfter: 2,
   maxPerMain: 2,
   /** Ignore a step smaller than this — not worth a fitting. */
   minStepMm: 50,

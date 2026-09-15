@@ -867,6 +867,9 @@ export function routedMarkers(network, tree) {
                      // A BTO is a fitting an installer sets; a plain junction
                      // where the trunk meets a branch is just a meeting point.
                      bto: n.type === 'bto' || !!n.bto,
+                     // The direction of the duct the collar sits on, so the
+                     // drawing can set the take-off across it.
+                     angle: n.angle,
                      serves: n.serves || [],
                      title: 'Branch take-off \u2014 serves ' + (n.serves || []).join(', ') });
     }

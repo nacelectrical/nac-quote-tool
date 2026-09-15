@@ -110,18 +110,28 @@ function alongPath(pts, fraction) {
   return null;
 }
 
-/** Trace a run as a smooth curve. Flex does not turn corners. */
+/**
+ * Trace a run as a smooth curve. Flex does not turn corners.
+ *
+ * A Catmull-Rom spline THROUGH the points rather than a chain of quadratics
+ * near them: the old version cut every corner slightly, which on a long run
+ * read as a series of small kinks — the "rigid CAD line" look. This passes
+ * through each point and leaves the run a single continuous sweep.
+ */
 function tracePath(ctx, pts) {
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
   if (pts.length === 2) { ctx.lineTo(pts[1].x, pts[1].y); return; }
-  for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i].x + pts[i + 1].x) / 2;
-    const my = (pts[i].y + pts[i + 1].y) / 2;
-    ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    ctx.bezierCurveTo(
+      p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
+      p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
+      p2.x, p2.y);
   }
-  const last = pts[pts.length - 1];
-  ctx.lineTo(last.x, last.y);
 }
 
 /**
@@ -136,20 +146,22 @@ export function drawTube(ctx, screenPts, { colour, widthPx, isReturn = false }) 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // A soft white halo, not a black casing. It lifts the run off the printed
-  // floor plan without adding a second heavy line beside every duct.
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-  ctx.lineWidth = widthPx + 2.6;
+  // FLEX DUCT, NOT A ROAD. Nick: no lane-like outlines, no heavy graphical
+  // edging — light and natural. So there is no casing and no core highlight:
+  // one stroke, the colour of its size, with a faint white underlay only
+  // where the printed plan behind it would otherwise swallow it.
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = widthPx + 1.6;
   tracePath(ctx, screenPts);
   ctx.stroke();
 
-  // THE RETURN IS SECONDARY. It was the fattest, greyest thing on the sheet,
-  // lying across the middle of the house. It is now a light dashed line that
-  // reads as "the air comes back this way" and then gets out of the way.
+  // THE RETURN IS SECONDARY. It is the other system, and it must not compete
+  // with the supply for the eye.
   if (isReturn) {
+    ctx.globalAlpha = 0.75;
     ctx.strokeStyle = colour;
     ctx.lineWidth = widthPx;
-    ctx.setLineDash([9, 6]);
+    ctx.setLineDash([10, 7]);
     tracePath(ctx, screenPts);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -170,7 +182,7 @@ export function drawTube(ctx, screenPts, { colour, widthPx, isReturn = false }) 
  * Dark text with a white halo, turned to lie along the run. No box: a box is a
  * label sitting ON a drawing, text is a label that is PART of one.
  */
-export function drawDuctLabel(ctx, text, at, { angle = 0, size = 11 } = {}) {
+export function drawDuctLabel(ctx, text, at, { angle = 0, size = 11, colour = '#16162e' } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
   // Lie along the duct ONLY where the duct is roughly horizontal. A size turned
@@ -188,22 +200,30 @@ export function drawDuctLabel(ctx, text, at, { angle = 0, size = 11 } = {}) {
   ctx.strokeStyle = 'rgba(255,255,255,0.92)';
   ctx.lineWidth = 3.5;
   ctx.strokeText(text, 0, 0);
-  ctx.fillStyle = '#16162e';
+  ctx.fillStyle = colour;
   ctx.fillText(text, 0, 0);
   ctx.restore();
 }
 
 /** A ceiling diffuser. */
-export function drawOutlet(ctx, at, { colour = '#3b4358', r = 7 } = {}) {
+export function drawOutlet(ctx, at, { colour = '#2a3040', r = 6 } = {}) {
+  // A CEILING DIFFUSER, drawn as one: the square of the face with its diagonals
+  // — the symbol on every mechanical sheet — not a ringed circle with a plus in
+  // it, which read as a widget.
   ctx.save();
-  ctx.beginPath(); ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
+  ctx.translate(at.x, at.y);
   ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.fill();
-  ctx.lineWidth = 2.2; ctx.strokeStyle = colour; ctx.stroke();
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(at.x - r * 0.48, at.y); ctx.lineTo(at.x + r * 0.48, at.y);
-  ctx.moveTo(at.x, at.y - r * 0.48); ctx.lineTo(at.x, at.y + r * 0.48);
-  ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.rect(-r, -r, r * 2, r * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-r, -r); ctx.lineTo(r, r);
+  ctx.moveTo(r, -r); ctx.lineTo(-r, r);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -213,12 +233,20 @@ export function drawOutlet(ctx, at, { colour = '#3b4358', r = 7 } = {}) {
  * Small and solid. Twelve of them must not swamp a house, but an installer
  * counting collars for the van has to be able to.
  */
-export function drawTakeOff(ctx, at, { colour = '#0c0c1e', r = 4 } = {}) {
+export function drawTakeOff(ctx, at, { colour = '#2a3040', angle = 0, r = 3 } = {}) {
+  // A BRANCH TAKE-OFF, the way one is drawn: a short bar across the main where
+  // the collar goes. Nick: "no big diamonds, no debug nodes, no multiple
+  // overlapping symbols — small, simple, professional." A white-filled ringed
+  // circle at every branch was reading as a node on a graph.
   ctx.save();
-  ctx.beginPath(); ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = colour; ctx.stroke();
+  ctx.translate(at.x, at.y);
+  ctx.rotate(angle);
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.lineTo(0, r);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -270,23 +298,66 @@ export function drawDamper(ctx, at, angle = 0, { colour = '#1d7a48', label = nul
   ctx.restore();
 }
 
-/** The fan coil and its supply plenum, as one object. */
-export function drawUnit(ctx, at, { w = 28, h = 19 } = {}) {
+/**
+ * THE FAN COIL AND ITS SUPPLY PLENUM, as a mechanical plan symbol.
+ *
+ * Nick: "Replace the current app-style box icon. Use a simple mechanical plan
+ * symbol. It should look like part of an HVAC drawing, not a UI button." So it
+ * is line work, not a filled dark chip: the unit outlined, the fan drawn as the
+ * diagonal cross a fan is always drawn as, and the plenum as the short bar
+ * across the face the mains leave from.
+ */
+export function drawUnit(ctx, at, { w = 30, h = 20, angle = 0 } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
-  ctx.fillStyle = 'rgba(38,42,58,0.95)';
-  ctx.strokeStyle = '#0c0c1e';
-  ctx.lineWidth = 2;
-  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, 4); ctx.fill(); ctx.stroke(); }
-  else { ctx.fillRect(-w / 2, -h / 2, w, h); ctx.strokeRect(-w / 2, -h / 2, w, h); }
-  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.rotate(angle);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.strokeStyle = '#2a3040';
   ctx.lineWidth = 1.6;
-  for (let i = -1; i <= 1; i++) {
-    ctx.beginPath();
-    ctx.moveTo(-w * 0.28, i * 5.5);
-    ctx.lineTo(w * 0.28, i * 5.5);
-    ctx.stroke();
+  ctx.beginPath();
+  ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fill();
+  ctx.stroke();
+
+  // The fan: the diagonal cross.
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, -h / 2); ctx.lineTo(w / 2, h / 2);
+  ctx.moveTo(w / 2, -h / 2); ctx.lineTo(-w / 2, h / 2);
+  ctx.stroke();
+
+  // The supply plenum: the bar across the face the mains leave from.
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, h / 2 + 2.5); ctx.lineTo(w / 2, h / 2 + 2.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * A RETURN AIR GRILLE.
+ *
+ * The return has to end in something or it is a line that stops in a hallway.
+ * A plain rectangle with a hatch, which is what a return grille is drawn as,
+ * and kept light so it stays secondary to the supply.
+ */
+export function drawReturnGrille(ctx, at, { colour = '#6E7486', w = 17, h = 13 } = {}) {
+  ctx.save();
+  ctx.translate(at.x, at.y);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fill();
+  ctx.stroke();
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  for (let y = -h / 2 + 3; y < h / 2; y += 3) {
+    ctx.moveTo(-w / 2 + 1.5, y); ctx.lineTo(w / 2 - 1.5, y);
   }
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -359,7 +430,7 @@ export function drawFlexDesign(ctx, view) {
   // ── 3. Fittings ─────────────────────────────────────────────────────────
   for (const m of (markers || [])) {
     if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
-    drawTakeOff(ctx, toScreen(m));
+    drawTakeOff(ctx, toScreen(m), { angle: (m.angle ?? 0) + Math.PI / 2 });
   }
   for (const o of (outlets || [])) drawOutlet(ctx, toScreen(o), { colour: '#3b4358' });
 
@@ -370,6 +441,20 @@ export function drawFlexDesign(ctx, view) {
     drawDamper(ctx, toScreen(d), d.angle ?? 0,
       { colour: d.colour || '#1d7a48', label: d.zoneLabel || d.label || null });
   }
+  // A RETURN ENDS IN A GRILLE. Without one the return was a dashed line that
+  // stopped in the middle of a hallway for no visible reason.
+  for (const run of runs) {
+    if (run.role !== 'return') continue;
+    const far = run.screen[run.screen.length - 1];
+    const near = run.screen[0];
+    const plen = plenum ? toScreen(plenum) : null;
+    const grille = (plen && Math.hypot(far.x - plen.x, far.y - plen.y) >
+                            Math.hypot(near.x - plen.x, near.y - plen.y)) ? far : near;
+    drawReturnGrille(ctx, grille);
+  }
+  // THE FAN COIL SITS SQUARE ON THE SHEET. Turning it to face its mains
+  // produced a rotated square with a cross through it, which reads as a
+  // diamond — a symbol nobody uses — rather than as a unit.
   if (plenum && plenum.x !== undefined) drawUnit(ctx, toScreen(plenum));
 
   // ── 4. Sizes, written on the ducts ──────────────────────────────────────
@@ -433,9 +518,10 @@ export function drawFlexDesign(ctx, view) {
       // its own run, just beside it instead of on it.
       const offsets = [0, run.widthPx / 2 + 8, -(run.widthPx / 2 + 8),
                        run.widthPx / 2 + 16, -(run.widthPx / 2 + 16)];
-      const spots = isMain ? [0.55, 0.38, 0.72, 0.25, 0.85, 0.48, 0.65, 0.3]
-                           : [0.6, 0.42, 0.78, 0.5, 0.68, 0.34, 0.88];
-      for (const off of offsets) {
+      const spots = isReturn ? [0.75, 0.86, 0.62, 0.5, 0.35]
+                   : isMain ? [0.55, 0.38, 0.72, 0.25, 0.85, 0.48, 0.65, 0.3]
+                            : [0.6, 0.42, 0.78, 0.5, 0.68, 0.34, 0.88];
+      for (const off of (isReturn ? [0, 14, -14, 22, -22] : offsets)) {
         for (const f of spots) {
           const p = alongPath(run.screen, f);
           if (!p) continue;
@@ -448,14 +534,31 @@ export function drawFlexDesign(ctx, view) {
         }
         if (at) break;
       }
+      // THE RETURN SIZE IS NOT OPTIONAL. Two short hallway drops beside the fan
+      // coil have nowhere clear to put a label, and the drawing came out with
+      // no return size on it at all. It is set beside the run and takes its
+      // chances with the crowding, because a size that is missing is worse than
+      // a size that is close to something else.
+      if (!at && isReturn) {
+        const p = alongPath(run.screen, 0.8);
+        if (p) at = { ...p, x: p.x - Math.sin(p.angle) * 16, y: p.y + Math.cos(p.angle) * 16 };
+      }
       if (!at) continue;
       // Too short to write on without the text overhanging both ends.
       const text = isReturn
         ? 'RETURN ' + (returns.length > 1 ? returns.length + ' × ' : '') +
           'ø' + run.diameterMm
         : 'ø' + run.diameterMm;
-      if (at.totalPx < width * 0.7) continue;
-      drawDuctLabel(ctx, text, at, { angle: at.angle, size: isMain ? 10.5 : 9 });
+      // A RETURN ALWAYS CARRIES ITS SIZE, however short its run. Two short
+      // hallway drops are exactly the right answer, and they left the drawing
+      // with no return size on it at all.
+      if (!isReturn && at.totalPx < width * 0.7) continue;
+      // THE RETURN DOES NOT SHOUT. Nick: "Do not let return text dominate the
+      // drawing." It was set in the same weight as a main and sat across the
+      // middle of the house.
+      drawDuctLabel(ctx, text, at,
+        { angle: at.angle, size: isReturn ? 8.5 : isMain ? 10.5 : 9,
+          colour: isReturn ? DRAWING.returnColour : '#16162e' });
     }
   }
 }

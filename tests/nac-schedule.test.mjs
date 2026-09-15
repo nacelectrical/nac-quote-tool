@@ -95,7 +95,10 @@ const V = checkNacSchedule(S);
 // ── The gate ────────────────────────────────────────────────────────────────
 
 test('the schedule passes every NAC hard rule', () => {
-  const failed = V.checks.filter(c => !c.ok).map(c => c.rule + ' — ' + c.detail);
+  // Hard rules only. A NOTE is a rule that pulls against another one on this
+  // particular house — the plenum balance against the installer areas — and it
+  // is reported with its figures, not failed.
+  const failed = V.checks.filter(c => !c.ok && !c.note).map(c => c.rule + ' — ' + c.detail);
   assert.deepEqual(failed, [], failed.join('\n'));
   assert.equal(V.ok, true);
 });
@@ -154,11 +157,30 @@ test('the plenum on the real plan is 2 x 400', () => {
   assert.equal(S.plenum.ductSizeMm, 400);
 });
 
-test('the air is shared evenly across the plenum ducts', () => {
+test('the plenum balance is measured, and said out loud when it is off', () => {
+  // THE AREAS WIN. On this house the open plan is most of the air, so mains
+  // that follow the areas an installer works in cannot also be even. The
+  // schedule does not fail the design for that and does not quietly redraw the
+  // house to make the number come out — it reports it as a NOTE with the
+  // figures, and the estimator decides.
   const b = S.plenum.balance;
-  assert.equal(b.balanced, true,
-    b.flows.join(' / ') + ' L/s is ' + b.worstDeviationPct + '% off an even share');
-  assert.ok(b.worstDeviationPct <= SUPPLY_PLENUM.balanceTolerancePct);
+  assert.ok(Number.isFinite(b.worstDeviationPct));
+  assert.equal(b.balanced, b.worstDeviationPct <= SUPPLY_PLENUM.balanceTolerancePct);
+  const V = checkNacSchedule(S);
+  const row = V.checks.find(c => /shared evenly/.test(c.rule));
+  assert.ok(row, 'the plenum balance is not checked at all');
+  if (!b.balanced) {
+    assert.equal(row.note, true, 'an unbalanced plenum was reported as a hard failure');
+    assert.match(row.detail, /follow the areas of the house/);
+    assert.ok(V.notes.includes(row));
+  }
+});
+
+test('a NOTE never counts as a hard-rule failure', () => {
+  const V = checkNacSchedule(S);
+  assert.equal(V.hardCount + V.notes.length, V.checks.length);
+  assert.equal(V.failed, V.checks.filter(c => !c.ok && !c.note).length);
+  assert.equal(V.ok, V.failed === 0);
 });
 
 test('plenumBalance measures the worst deviation, not the average', () => {
@@ -208,25 +230,26 @@ test('a room buried inside its own main is not moved to even the numbers up', ()
   assert.equal(out[1].length, 1);
 });
 
-test('the open plan is only divided once nothing else will balance the plenum', () => {
-  // Two open-plan rooms and one bedroom. Moving the bedroom cannot fix it, so
-  // the open plan has to give — on a house whose open plan is most of the air,
-  // refusing to split it makes a balanced plenum arithmetically impossible.
+test('the open plan is never divided across two mains', () => {
+  // Nick: "think in installer areas, not geometry." Two open-plan rooms and one
+  // bedroom: moving the bedroom cannot even this plenum up, and the open plan
+  // is not allowed to give, so it stays uneven and the schedule says so.
   const groups = [
     [{ roomId: 'liv', x: 0, y: 0, airflowLs: 300, openPlan: true },
      { roomId: 'kit', x: 7, y: 0, airflowLs: 300, openPlan: true }],
     [{ roomId: 'bed', x: 10, y: 0, airflowLs: 100 }]
   ];
   const out = balanceGroups(groups, { tolerancePct: 15 });
-  const flows = out.map(g => g.reduce((n, o) => n + o.airflowLs, 0)).sort((a, b) => a - b);
-  assert.deepEqual(flows, [300, 400], flows.join('/'));
-  // And it was the open-plan room NEAREST the other main that went.
-  assert.ok(out[1].some(o => o.roomId === 'kit'), 'the far side of the open plan moved');
+  assert.equal(out[0].length, 2, 'the open plan was split across two mains');
+  assert.ok(out[1].every(o => o.roomId === 'bed'));
 });
 
 test('one room never feeds off two different mains', () => {
   const mainOfRoom = new Map();
-  for (const b of S.btos) {
+  // Only take-offs that serve a ROOM. A take-off onto a major branch carries no
+  // room, and two of them on two different mains is a main each having a branch,
+  // not one room fed from both.
+  for (const b of S.btos.filter(x => !x.feedsBranch)) {
     const main = b.parentId.split('_')[1];
     if (mainOfRoom.has(b.room)) {
       assert.equal(mainOfRoom.get(b.room), main,
