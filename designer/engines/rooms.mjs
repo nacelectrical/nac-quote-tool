@@ -668,22 +668,32 @@ export function parseFloorAreaText(text) {
  *
  * Rooms that already have a boundary are left exactly as they are.
  */
-export function deriveBoundariesFromPrintedSizes(rooms, calibration) {
+export function deriveBoundariesFromPrintedSizes(rooms, calibration, opts = {}) {
   const pxPerMm = calibration?.pixelsPerMm;
   if (!pxPerMm) return rooms || [];
+  const imgW = opts.imageWidthPx ?? calibration.imageWidthPx ?? null;
+  const imgH = opts.imageHeightPx ?? calibration.imageHeightPx ?? null;
+
   return (rooms || []).map(r => {
     if (r.boundaryPx) return r;
     if (!r.labelPx || r.measurement?.incomplete) return r;
     const w = Number(r.widthMm), l = Number(r.lengthMm);
     if (!(w > 0) || !(l > 0)) return r;
     const wPx = w * pxPerMm, hPx = l * pxPerMm;
+    const cx = r.labelPx.x + (r.labelPx.w || 0) / 2;
+    const cy = r.labelPx.y + (r.labelPx.h || 0) / 2;
+
+    let x = cx - wPx / 2;
+    let y = cy - hPx / 2;
+    // Keep the rectangle on the drawing. A room name printed near the top of
+    // its room throws a centred box off the sheet, and a zone wash hanging in
+    // the margin reads as a mistake rather than as an approximation.
+    if (imgW) x = Math.max(0, Math.min(x, imgW - wPx));
+    if (imgH) y = Math.max(0, Math.min(y, imgH - hPx));
+
     return {
       ...r,
-      boundaryPx: {
-        x: r.labelPx.x + (r.labelPx.w || 0) / 2 - wPx / 2,
-        y: r.labelPx.y + (r.labelPx.h || 0) / 2 - hPx / 2,
-        w: wPx, h: hPx
-      },
+      boundaryPx: { x, y, w: wPx, h: hPx },
       boundaryDerived: 'printed_size_at_label'
     };
   });

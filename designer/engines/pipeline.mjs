@@ -69,7 +69,8 @@ export function runPipeline(design, ctx = {}) {
   // nothing for the duct router to route to. Give it its rectangle now that a
   // scale exists, so the DESIGN step draws a layout instead of a blank plan.
   if (d.calibration?.pixelsPerMm) {
-    d.rooms = deriveBoundariesFromPrintedSizes(d.rooms, d.calibration);
+    d.rooms = deriveBoundariesFromPrintedSizes(d.rooms, d.calibration, {
+      imageWidthPx: d.plan?.widthPx ?? null, imageHeightPx: d.plan?.heightPx ?? null });
   }
 
   // ── 0b. Which rooms share an air space (PART 20) ──────────────────────────

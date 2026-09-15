@@ -63,7 +63,18 @@ export function createPlanViewer(container, opts = {}) {
     dragging: null,
     showRooms: true,
     showRoutes: true,
-    showLayout: true
+    showLayout: true,
+    // DESIGN PRESENTATION.
+    // `analysis` is the setup workings — room boxes, confidence colours,
+    // calibration marks. Useful while measuring, clutter once the design is
+    // being reviewed, so it is off in design view behind a toggle.
+    showAnalysis: true,
+    designView: false,
+    zoneChips: [],           // { title, kw, airflowLs, areaSqM, colour, anchorPx }
+    zoneFillByRoomId: {},    // roomId -> { colour, fill, shortName }
+    outlets: [],             // { x, y, roomId, neckMm, index }
+    labelBoxes: [],          // collision bookkeeping, rebuilt every frame
+    plenum: null             // indoor unit / supply plenum
   };
 
   const canvas = h('canvas', { class: 'plan-canvas' });
@@ -143,11 +154,172 @@ export function createPlanViewer(container, opts = {}) {
     ctx.drawImage(state.image, 0, 0);
     ctx.restore();
 
-    if (state.showRooms) drawRooms();
-    if (state.showRoutes) { drawRoutes(); drawMarkers(); }
-    if (state.showLayout) drawLayout();
+    // Every frame starts with an empty label ledger — a label placed last frame
+    // must not push this frame's labels around.
+    state.labelBoxes = [];
+
+    // Zone shading sits under the linework, the way it does on a real design
+    // sheet: the colour tells you which damper controls the space, the lines
+    // tell you how the air gets there.
+    if (state.designView) drawZoneFills();
+    if (state.showRooms && (!state.designView || state.showAnalysis)) drawRooms();
+    if (state.showRoutes) { drawRoutes(); drawMarkers(); drawOutlets(); }
+    drawUnit();
+    if (state.showLayout && (!state.designView || state.showAnalysis)) drawLayout();
     if (state.mode === MODES.EDIT_ROUTE) drawHandles();
-    drawCalibration();
+    if (!state.designView || state.showAnalysis) drawCalibration();
+    if (state.designView) drawZoneChips();
+  }
+
+  /**
+   * Zone shading. One soft wash per zone, under the ducts.
+   *
+   * This is the thing that makes a duct drawing readable at arm's length: you
+   * see which rooms move together before you have read a single number.
+   */
+  function drawZoneFills() {
+    for (const room of state.rooms) {
+      if (!room.boundaryPx) continue;
+      const z = state.zoneFillByRoomId[room.id];
+      if (!z) continue;
+      const p = toScreen(room.boundaryPx);
+      const w = room.boundaryPx.w * state.scale;
+      const hh = room.boundaryPx.h * state.scale;
+      // A boundary the tool placed from a printed size is an approximation,
+      // not a survey. It is washed lighter and left unoutlined, so it reads as
+      // "this zone is around here" rather than as a measured room edge.
+      const approx = !!room.boundaryDerived;
+      ctx.save();
+      ctx.globalAlpha = approx ? 0.55 : 1;
+      ctx.fillStyle = z.fill;
+      ctx.fillRect(p.x, p.y, w, hh);
+      if (!approx) {
+        ctx.strokeStyle = z.colour;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p.x, p.y, w, hh);
+      }
+      ctx.restore();
+    }
+  }
+
+  /**
+   * The block of figures beside each zone:
+   *
+   *   Zone 4
+   *   6.23 kW
+   *   374 L/s
+   *   41.5 m²
+   *
+   * Small, tinted with the zone's own colour, and placed inside the zone's
+   * biggest room so it reads as belonging to that space.
+   */
+  function drawZoneChips() {
+    for (const chip of state.zoneChips) {
+      if (!chip.anchorPx) continue;
+      // Anchored on the middle of the zone's biggest room, so the block sits
+      // in the space it describes rather than off in a corner of it.
+      const lines = [
+        chip.title,
+        (chip.kw ?? 0).toFixed(2) + ' kW',
+        Math.round(chip.airflowLs || 0) + ' L/s',
+        (chip.areaSqM ?? 0).toFixed(1) + ' m\u00b2'
+      ];
+      // Try the corners of the zone before the middle. A room name and its size
+      // are printed across the centre of the room on the builder's own drawing,
+      // and the tool cannot see that text to avoid it — but it can stay out of
+      // the middle, which is where it always is.
+      const b = chip.anchorPx;
+      const corners = [
+        { x: b.x, y: b.y },
+        { x: b.x + b.w, y: b.y },
+        { x: b.x, y: b.y + b.h },
+        { x: b.x + b.w, y: b.y + b.h },
+        { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+      ].map(toScreen);
+      for (const c of corners) {
+        if (placeChip(lines, { x: c.x + 4, y: c.y + 4 }, chip.colour, chip.fill, { spread: 1 })) break;
+      }
+    }
+  }
+
+  /**
+   * Draw a small stacked label, nudged until it is not sitting on another one.
+   *
+   * Overlapping text is the single thing that makes a duct drawing unusable —
+   * two sizes on top of each other is worse than no size at all — so every
+   * label goes through here and every label is remembered for the rest of the
+   * frame.
+   */
+  function placeChip(lines, at, colour, fillStyle, opts = {}) {
+    const titleFont = '700 10px -apple-system, system-ui, sans-serif';
+    const bodyFont = '600 9.5px -apple-system, system-ui, sans-serif';
+    const pad = 5, lh = 11.5, spine = 3;
+    ctx.save();
+    // Measure each line in the font it is actually drawn in, or a long title
+    // overflows a box sized from the shorter body lines.
+    let w = 0;
+    lines.forEach((l, i) => {
+      ctx.font = i === 0 ? titleFont : bodyFont;
+      w = Math.max(w, ctx.measureText(l).width);
+    });
+    w = Math.ceil(w) + pad * 2 + spine;
+    const h = Math.ceil(lines.length * lh) + pad * 2;
+
+    const box = findFreeSpot(at.x, at.y, w, h, opts.spread ?? 1);
+    if (!box) { ctx.restore(); return null; }
+
+    ctx.fillStyle = fillStyle || 'rgba(12,12,28,0.88)';
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(box.x, box.y, w, h, 3); ctx.fill(); ctx.stroke(); }
+    else { ctx.fillRect(box.x, box.y, w, h); ctx.strokeRect(box.x, box.y, w, h); }
+
+    // A coloured spine down the left edge, so the chip is tied to its zone even
+    // in a photocopy.
+    ctx.fillStyle = colour;
+    ctx.fillRect(box.x, box.y, spine, h);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    lines.forEach((l, i) => {
+      ctx.font = i === 0 ? titleFont : bodyFont;
+      ctx.fillStyle = i === 0 ? colour : '#e9ecf7';
+      ctx.fillText(l, box.x + spine + pad, box.y + pad + i * lh);
+    });
+    ctx.restore();
+    state.labelBoxes.push({ x: box.x, y: box.y, w, h });
+    return box;
+  }
+
+  const boxesOverlap = (a, b) =>
+    a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+  /**
+   * Find somewhere this label fits.
+   *
+   * Tries where it was asked to go, then steps outward in a ring — right, left,
+   * below, above, then further — and gives up rather than stacking. A label the
+   * estimator cannot read is worse than a label that is not there, and a
+   * drawing where everything is drawn but nothing is legible is the failure
+   * this avoids.
+   */
+  function findFreeSpot(x, y, w, h, spread) {
+    const tries = [[0, 0]];
+    for (let ring = 1; ring <= 4 * spread; ring++) {
+      const d = ring * 13;
+      tries.push([d, 0], [-d - w, 0], [0, d], [0, -d], [d, d], [-d - w, d], [d, -d], [-d - w, -d]);
+    }
+    const r = wrap.getBoundingClientRect();
+    for (const [dx, dy] of tries) {
+      const cand = { x: x + dx, y: y + dy, w, h };
+      // A label half off the canvas is not a label. Pull it back inside before
+      // testing it, so the search does not "succeed" somewhere invisible.
+      cand.x = Math.max(2, Math.min(cand.x, r.width - w - 2));
+      cand.y = Math.max(2, Math.min(cand.y, r.height - h - 2));
+      if (!state.labelBoxes.some(b => boxesOverlap(cand, b))) return cand;
+    }
+    return null;   // nowhere free — drop it rather than pile it on
   }
 
   function drawRooms() {
@@ -212,19 +384,59 @@ export function createPlanViewer(container, opts = {}) {
     }
   }
 
-  function drawPolyline(points, colour, width, dash) {
+  /**
+   * Draw a run with its corners rounded.
+   *
+   * Flex duct does not turn a square corner — it sweeps — and a drawing made of
+   * right angles reads as a schematic rather than something somebody is going
+   * to install. Each bend is replaced by a quadratic curve tucked inside the
+   * corner, with the radius kept below half the shorter leg so a short segment
+   * cannot swallow its own neighbours.
+   */
+  function smoothPath(screenPts, radius) {
+    if (screenPts.length < 3 || radius <= 0) {
+      ctx.moveTo(screenPts[0].x, screenPts[0].y);
+      for (let i = 1; i < screenPts.length; i++) ctx.lineTo(screenPts[i].x, screenPts[i].y);
+      return;
+    }
+    ctx.moveTo(screenPts[0].x, screenPts[0].y);
+    for (let i = 1; i < screenPts.length - 1; i++) {
+      const prev = screenPts[i - 1], cur = screenPts[i], next = screenPts[i + 1];
+      const d1 = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+      const d2 = Math.hypot(next.x - cur.x, next.y - cur.y);
+      const r = Math.min(radius, d1 / 2, d2 / 2);
+      if (!(r > 0.5)) { ctx.lineTo(cur.x, cur.y); continue; }
+      const a = { x: cur.x + (prev.x - cur.x) * (r / d1), y: cur.y + (prev.y - cur.y) * (r / d1) };
+      const b = { x: cur.x + (next.x - cur.x) * (r / d2), y: cur.y + (next.y - cur.y) * (r / d2) };
+      ctx.lineTo(a.x, a.y);
+      ctx.quadraticCurveTo(cur.x, cur.y, b.x, b.y);
+    }
+    const last = screenPts[screenPts.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+
+  function drawPolyline(points, colour, width, dash, opts = {}) {
     if (points.length < 2) return;
+    const screenPts = points.map(toScreen);
     ctx.save();
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = width;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
+
+    // A soft dark casing under every run. It is what keeps a pale duct legible
+    // over a pale floor plan without having to shout with colour.
+    if (opts.casing !== false && !dash) {
+      ctx.strokeStyle = 'rgba(10,10,26,0.34)';
+      ctx.lineWidth = width + 3;
+      ctx.beginPath();
+      smoothPath(screenPts, opts.radius ?? Math.max(6, width * 2));
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
     if (dash) ctx.setLineDash(dash);
     ctx.beginPath();
-    points.forEach((pt, i) => {
-      const s = toScreen(pt);
-      if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
-    });
+    smoothPath(screenPts, opts.radius ?? Math.max(6, width * 2));
     ctx.stroke();
     ctx.restore();
   }
@@ -237,16 +449,35 @@ export function createPlanViewer(container, opts = {}) {
   function drawRouteLabel(text, at, colour) {
     const lines = String(text).split('\n');
     ctx.save();
-    ctx.font = '600 10px -apple-system, system-ui, sans-serif';
+    ctx.font = '700 10px -apple-system, system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const pad = 3;
     const lh = 12;
     const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad * 2;
     const h = lines.length * lh + pad * 2 - 2;
-    const x = at.x + 9;
-    const y = at.y - h / 2;
-    ctx.fillStyle = 'rgba(8,8,24,0.82)';
+
+    // Every duct label competes for the same few clear patches of plan, so it
+    // goes through the same placement as everything else: nudged off anything
+    // already drawn, and dropped rather than stacked if there is nowhere free.
+    const spot = findFreeSpot(at.x + 9, at.y - h / 2, w, h, 2);
+    if (!spot) { ctx.restore(); return; }
+    const { x, y } = spot;
+
+    // A leader line back to the run, so a label that had to move still says
+    // which duct it belongs to.
+    if (Math.hypot(x - at.x, y + h / 2 - at.y) > 16) {
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(at.x, at.y);
+      ctx.lineTo(x + (x > at.x ? 0 : w), y + h / 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.fillStyle = 'rgba(10,10,26,0.86)';
     ctx.strokeStyle = colour;
     ctx.lineWidth = 1;
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 3); ctx.fill(); ctx.stroke(); }
@@ -254,6 +485,33 @@ export function createPlanViewer(container, opts = {}) {
     ctx.fillStyle = '#eef1ff';
     lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad + i * lh));
     ctx.restore();
+    state.labelBoxes.push({ x, y, w, h });
+  }
+
+  /**
+   * Outlets, drawn the way a design sheet draws them: a small ring at the end
+   * of the run, not a labelled node.
+   *
+   * The neck size is already on the final duct beside it, so the symbol itself
+   * carries no text — repeating it would be the clutter this is replacing.
+   */
+  function drawOutlets() {
+    for (const o of state.outlets) {
+      const s = toScreen(o);
+      const z = o.roomId ? state.zoneFillByRoomId[o.roomId] : null;
+      const colour = z?.colour || '#cfd6e8';
+      ctx.save();
+      ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = colour; ctx.stroke();
+      // The cross inside is the diffuser, the way it is drawn on a ceiling plan.
+      ctx.beginPath();
+      ctx.moveTo(s.x - 3.2, s.y); ctx.lineTo(s.x + 3.2, s.y);
+      ctx.moveTo(s.x, s.y - 3.2); ctx.lineTo(s.x, s.y + 3.2);
+      ctx.lineWidth = 1.2; ctx.strokeStyle = colour; ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function drawRoutes() {
@@ -275,7 +533,9 @@ export function createPlanViewer(container, opts = {}) {
 
       // Nodes are the handles. On an auto route they are only worth showing
       // when this is the route being worked on, or the plan turns into confetti.
-      const showNodes = active || !route.auto;
+      // In design view they are never shown — an installer is reading the
+      // layout, not editing it.
+      const showNodes = !state.designView && (active || !route.auto);
       if (showNodes) {
         route.points.forEach((pt, i) => {
           const s = toScreen(pt);
@@ -288,14 +548,22 @@ export function createPlanViewer(container, opts = {}) {
         });
       }
 
-      if (route.label && route.points.length) {
+      // INSTALLER VIEW shows the sizes that decide what gets pulled off the
+      // van: the trunk, each take-off, and the return. A size repeated on every
+      // short run into a bedroom is the clutter, not the information.
+      const labelHere = state.designView
+        ? (route.labelPriority ?? 2) >= 2 || route.role === 'return'
+        : true;
+      if (route.label && labelHere && route.points.length) {
         // Against the middle of the run, not the end: the end of a branch is
-        // where the outlet marker already is, and two things fight for it.
+        // where the outlet already is, and two things fight for it.
         const mid = route.points[Math.floor((route.points.length - 1) / 2)];
         const next = route.points[Math.floor((route.points.length - 1) / 2) + 1] || mid;
         const at = toScreen({ x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 });
         drawRouteLabel(route.label, at, colour);
       }
+      // A dashed auto route is drawn without a casing, so it still reads as
+      // provisional rather than as something already installed.
     }
     if (state.draftRoute.length) {
       drawPolyline(state.draftRoute, '#F5C200', 3, [7, 5]);
@@ -315,7 +583,20 @@ export function createPlanViewer(container, opts = {}) {
    * implied by two lines meeting.
    */
   function drawMarkers() {
-    for (const m of state.markers) {
+    for (const marker of state.markers) {
+      // In design view a marker is a SYMBOL. Its text belongs in the zone block
+      // and on the duct label; repeating "Open" beside every damper is the
+      // clutter that made the drawing unreadable.
+      // INSTALLER VIEW carries only what somebody fits: the take-offs and the
+      // zone dampers. A reducer is already stated by the size changing on the
+      // two labels either side of it — one fact, one mark — and a plain node
+      // where two lines meet is not a fitting at all.
+      if (state.designView && marker.type === 'reducer') continue;
+      // A plain junction where two lines meet is not a fitting. The take-off
+      // and the zone damper are, and they are the only marks an installer needs
+      // on the drawing.
+      if (state.designView && marker.type === 'junction' && !marker.bto) continue;
+      const m = state.designView ? { ...marker, label: null } : marker;
       const s = toScreen(m);
       ctx.save();
       if (m.type === 'junction') {
@@ -388,6 +669,34 @@ export function createPlanViewer(container, opts = {}) {
       }
       ctx.restore();
     }
+  }
+
+  /**
+   * The indoor unit and its supply plenum, as one symbol.
+   *
+   * A fan-coil in a roof space is a box with the trunk coming off it, and that
+   * is what gets drawn — not a labelled debug node with coordinates beside it.
+   */
+  function drawUnit() {
+    const p = state.plenum;
+    if (!p || p.x === undefined) return;
+    const s = toScreen(p);
+    ctx.save();
+    const w = 30, hh = 20;
+    ctx.fillStyle = 'rgba(232,236,247,0.96)';
+    ctx.strokeStyle = '#3b4358';
+    ctx.lineWidth = 2;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(s.x - w / 2, s.y - hh / 2, w, hh, 3); ctx.fill(); ctx.stroke(); }
+    else { ctx.fillRect(s.x - w / 2, s.y - hh / 2, w, hh); ctx.strokeRect(s.x - w / 2, s.y - hh / 2, w, hh); }
+    // Fan blades, so it reads as plant rather than as a junction box.
+    ctx.strokeStyle = '#3b4358';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(s.x - 4.5, s.y - 4.5); ctx.lineTo(s.x + 4.5, s.y + 4.5);
+    ctx.moveTo(s.x + 4.5, s.y - 4.5); ctx.lineTo(s.x - 4.5, s.y + 4.5);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawLayout() {
@@ -776,6 +1085,27 @@ export function createPlanViewer(container, opts = {}) {
     selectRoom(id) { state.selectedRoomId = id; draw(); },
     setRoutes(routes) { state.routes = routes || {}; draw(); },
     setMarkers(markers) { state.markers = markers || []; draw(); },
+
+    // ── Design presentation ─────────────────────────────────────────────────
+    /** Zone shading and the per-zone figure blocks. */
+    setZones({ chips = [], byRoomId = {} } = {}) {
+      state.zoneChips = chips || [];
+      state.zoneFillByRoomId = byRoomId || {};
+      draw();
+    },
+    /** Where the diffusers go, so they can be drawn as symbols not nodes. */
+    setOutlets(outlets) { state.outlets = outlets || []; draw(); },
+    /** The indoor unit / supply plenum position. */
+    setPlenum(p) { state.plenum = p || null; draw(); },
+    /**
+     * DESIGN VIEW hides the setup workings — room boxes, calibration marks,
+     * route handles — and turns on zone shading. It is what an installer looks
+     * at; ANALYSIS is what the estimator measured with.
+     */
+    setDesignView(on) { state.designView = !!on; draw(); },
+    isDesignView() { return !!state.designView; },
+    setShowAnalysis(on) { state.showAnalysis = !!on; draw(); },
+    showsAnalysis() { return !!state.showAnalysis; },
     setHandles(handles) { state.handles = handles || []; draw(); },
     /** Image px per screen px — the app needs it to size a touch radius. */
     imagePerScreen() { return 1 / state.scale; },

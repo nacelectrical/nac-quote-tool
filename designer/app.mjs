@@ -29,6 +29,7 @@ import { CONDITIONING, CONDITIONING_LABELS, EXCLUDED_BANNER, isConditionedRoom,
          isExcludedRoom, needsClassificationReview,
          classificationSummary } from './engines/classify.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
+import { zoneColours, zoneChips } from './engines/zones.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
 import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
@@ -607,8 +608,66 @@ export class DesignerApp {
       : []);
     this.viewer.setLayout(d.layout || {});
     this.viewer.setHandles(this.currentHandles());
+
+    // Zone shading, the figure blocks, the diffusers and the indoor unit — the
+    // things that turn a schematic into something an installer can read.
+    const zc = zoneColours(d.zones);
+    this.viewer.setZones({
+      chips: zoneChips(d.zones, { rooms: d.rooms || [], roomLoads: d.roomLoads || [] }),
+      byRoomId: zc.byRoomId
+    });
+    this.viewer.setOutlets(this.outletPoints());
+    this.viewer.setPlenum(d.layout?.indoorUnit || d.layout?.plenum || d.autoRoute?.plenum || null);
+    // DESIGN view is the installer's drawing; ANALYSIS is the estimator's
+    // workings. Quick mode's review screen is the former.
+    this.viewer.setDesignView(this.mode === 'quick' && this.quickStep === 'design');
+    this.viewer.setShowAnalysis(!!this.showAnalysisOverlay);
     this.viewer.redraw();
     return this.viewer;
+  }
+
+  /**
+   * Where the diffusers actually sit, taken off the end of each final run.
+   *
+   * The router already put a final segment on every outlet, so the end of that
+   * segment IS the outlet — deriving it any other way would let the symbol
+   * drift away from the duct that feeds it.
+   */
+  outletPoints() {
+    const d = this.design;
+    const sections = d.network?.sections || [];
+    const out = [];
+    // Every BRANCH ends at a diffuser — that is the first outlet in the room.
+    // Every FINAL ends at another one. Taking only the finals missed the
+    // single-outlet rooms entirely, which on this plan is most of the house.
+    for (const sec of sections) {
+      if (sec.role !== 'branch' && sec.role !== 'final') continue;
+      if (!sec.points?.length) continue;
+      const end = sec.points[sec.points.length - 1];
+      out.push({ x: end.x, y: end.y, roomId: sec.roomId || null,
+                 neckMm: sec.diameterMm ?? null, sectionId: sec.id });
+    }
+    return out;
+  }
+
+  /**
+   * How much each duct label says.
+   *
+   * The default is the size and nothing else, because that is what an
+   * installer reads off a drawing. The airflow and the length are still one
+   * press away for whoever is checking the engineering.
+   */
+  cycleLabelDetail() {
+    const order = [LABEL_DETAIL.DIAMETER, LABEL_DETAIL.DIAMETER_FLOW, LABEL_DETAIL.FULL, LABEL_DETAIL.HIDE];
+    const at = order.indexOf(this.labelDetail || DEFAULT_LABEL_DETAIL);
+    this.labelDetail = order[(at + 1) % order.length];
+    this.render();
+  }
+
+  /** SHOW ANALYSIS OVERLAY — the estimator's workings, back on top. */
+  toggleAnalysisOverlay() {
+    this.showAnalysisOverlay = !this.showAnalysisOverlay;
+    this.render();
   }
 
   renderPlanTab() {
@@ -1731,6 +1790,9 @@ export class DesignerApp {
         labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL,
         returnRoute: this.design.returnRoute,
         returnDesign: this.design.returnDesign,
+        // Each run takes its zone's colour, so an installer can follow one
+        // colour from the trunk to the outlet and know which damper shuts it.
+        zoneColourByRoomId: zoneColours(this.design.zones).byRoomId,
         activeId: this.activeSegmentId || null
       });
       // A second return is a second duct to buy and draw.

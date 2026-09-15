@@ -49,13 +49,53 @@ export function pressureDropPaPerM(diameterMm, airflowLs, opts = {}) {
  * configured band for the duct's role. Returns the selection plus every
  * diameter that was considered, so the choice is auditable.
  */
+/**
+ * The diameters AUTO DESIGN is allowed to choose from for a given duct role.
+ *
+ * This is where NAC's install practice overrules the physics. A velocity
+ * calculation approves a 150 for a bedroom and NAC does not fit one, so the
+ * ladder for a final connection starts at 200 and stops at 300 — a room that
+ * wants more air than one 300 should carry gets another outlet, not a bigger
+ * duct. Trunks and major branches are unaffected.
+ *
+ * Returns the ladder plus the rule that produced it, so the reason can be shown
+ * against the chosen size rather than left to be guessed at.
+ */
+export function autoLadderFor(role, settings = DEFAULT_SETTINGS) {
+  const D = settings.duct;
+  const F = D.finalBranch;
+  if (role === 'final' && F) {
+    const ladder = (F.autoLadderMm || D.availableDiametersMm)
+      .filter(d => d >= (F.preferredMinMm ?? 0) && d <= (F.maxMm ?? Infinity));
+    return { ladder, min: F.preferredMinMm, max: F.maxMm,
+             rule: 'NAC final/outlet rule: ' + ladder.join(' / ') + ' mm only.' };
+  }
+  if (role === 'branch' && D.branchMinMm) {
+    const ladder = D.availableDiametersMm.filter(d => d >= D.branchMinMm && d <= D.maxDiameterMm);
+    return { ladder, min: D.branchMinMm, max: D.maxDiameterMm,
+             rule: 'NAC branch rule: nothing smaller than ' + D.branchMinMm + ' mm.' };
+  }
+  // Trunk, main and return. No upper rule beyond the stocked maximum, but the
+  // same floor as everything else: NAC does not fit 150 flex anywhere.
+  const floor = D.autoMinDiameterMm ?? 0;
+  const ladder = D.availableDiametersMm.filter(d => d >= floor && d <= D.maxDiameterMm);
+  return { ladder, min: floor || null, max: D.maxDiameterMm,
+           rule: floor ? 'NAC fits nothing smaller than ' + floor + ' mm.' : null };
+}
+
 export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const D = settings.duct;
   const band = D.velocity[role] || D.velocity.branch;
   const flow = Number(airflowLs) || 0;
 
-  const considered = D.availableDiametersMm.map(d => {
+  // NAC's install rules decide what may be chosen; the velocity band then
+  // decides which of those to use. Doing it the other way round is how a
+  // bedroom ended up on a 150.
+  const { ladder, min, max, rule } = autoLadderFor(role, settings);
+  const usable = ladder.length ? ladder : D.availableDiametersMm;
+
+  const considered = usable.map(d => {
     const v = velocity(d, flow);
     return {
       diameterMm: d,
@@ -66,21 +106,43 @@ export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
   });
 
   // Prefer the smallest diameter sitting in the preferred band; otherwise the
-  // smallest that is simply under the maximum; otherwise the largest available.
+  // smallest that is simply under the maximum; otherwise the largest allowed.
   const preferred = considered.find(c => c.withinPreferred);
   const acceptable = considered.find(c => c.withinMax);
   const chosen = preferred || acceptable || considered[considered.length - 1];
+
+  // A final that is still over its velocity limit at the largest size NAC
+  // fits is not a duct problem — the room needs another outlet. Say so, rather
+  // than quietly running it over speed or reaching for a 350.
+  const overCapacity = !acceptable && !preferred;
+  const carryLimitLs = round(ductAreaM2(chosen.diameterMm) * band.max * 1000, 0);
 
   return {
     ...chosen,
     role,
     band,
+    ladder: usable,
+    ladderRule: rule,
+    atLadderMinimum: min !== null && chosen.diameterMm === min,
+    atLadderMaximum: max !== null && chosen.diameterMm === max,
+    overCapacity,
+    carryLimitLs,
     idealDiameterMm: round(idealDiameterMm(flow, band.preferred), 0),
-    reason: preferred
-      ? 'Smallest catalogued diameter inside the preferred ' + band.preferredMin + '–' + band.preferred + ' m/s band for a ' + role + ' duct.'
-      : acceptable
-        ? 'No diameter falls in the preferred band; smallest diameter under the ' + band.max + ' m/s maximum.'
-        : 'Airflow exceeds every catalogued diameter at the ' + band.max + ' m/s maximum.',
+    reason: overCapacity
+      ? round(flow, 0) + ' L/s is more than a ' + chosen.diameterMm + ' mm ' + role +
+        ' should carry (' + carryLimitLs + ' L/s at ' + band.max + ' m/s). ' +
+        (role === 'final'
+          ? 'Split this room across more outlets rather than fitting a larger final.'
+          : 'Split the run.')
+      : preferred
+        ? 'Smallest size NAC fits on a ' + role + ' that sits inside the preferred ' +
+          band.preferredMin + '-' + band.preferred + ' m/s band.' + (rule ? ' ' + rule : '')
+        : min !== null && chosen.diameterMm === min && chosen.velocityMs < band.preferredMin
+          ? round(flow, 0) + ' L/s runs slowly in a ' + min + ' mm (' + chosen.velocityMs +
+            ' m/s), but ' + min + ' mm is NAC\'s minimum ' + role +
+            ' size — a smaller duct is not fitted.' + (rule ? ' ' + rule : '')
+          : 'No size falls in the preferred band; smallest under the ' + band.max +
+            ' m/s maximum (' + chosen.velocityMs + ' m/s).' + (rule ? ' ' + rule : ''),
     considered
   };
 }
@@ -344,6 +406,13 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       junctionId: seg.junctionId ?? null,
       roomId: seg.roomId ?? null,
       zone: seg.zone ?? null,
+      // Which trunk arm this run belongs to — the drawing colours by it and the
+      // pressure check walks it, so it has to survive sizing like the lock does.
+      arm: seg.arm ?? null,
+      // A major branch is the take-off feeding a group of rooms. The drawing
+      // labels it and the installer sheet lists it, so it has to survive sizing.
+      major: !!seg.major,
+      serves: seg.serves ?? null,
       points: seg.points || null,
       auto: true,
       // A lock is the estimator's decision about a real roof space. It has to

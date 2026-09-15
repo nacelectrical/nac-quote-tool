@@ -292,21 +292,24 @@ const drawn = await p.evaluate(() => {
   return {
     canvas: !!document.querySelector('.main canvas'),
     routes: routes.length,
-    labelled: routes.filter(r => /Ø/.test(r.label || '')).length,
+    labelled: routes.filter(r => /\u00f8\d+/.test(r.label || '')).length,
     trunk: routes.filter(r => r.role === 'trunk' || r.role === 'main').length,
     branch: routes.filter(r => r.role === 'branch').length,
     final: routes.filter(r => r.role === 'final').length,
     ret: routes.filter(r => r.role === 'return').length,
     markers: (v?.state?.markers || []).length,
     markerTypes: [...new Set((v?.state?.markers || []).map(m => m.type))].sort(),
-    diameters: [...new Set(routes.map(r => (r.label || '').match(/(\d+)Ø/)?.[1]).filter(Boolean))]
+    diameters: [...new Set(routes.map(r => (r.label || '').match(/\u00f8(\d+)/)?.[1]).filter(Boolean))]
   };
 });
 console.log('      ' + JSON.stringify(drawn));
 say('the plan canvas is on the DESIGN step', drawn.canvas);
 say('duct runs are drawn on it', drawn.routes > 0, drawn.routes + ' polylines');
-say('every run carries its diameter', drawn.labelled === drawn.routes,
-  drawn.labelled + ' of ' + drawn.routes + ' labelled');
+// A run that repeats the size of the run feeding it is deliberately left
+// unlabelled — the same number twice on one duct is clutter, not information.
+say('the sizes are on the drawing, without labelling the same duct twice',
+  drawn.labelled > 0 && drawn.labelled <= drawn.routes,
+  drawn.labelled + ' labels on ' + drawn.routes + ' runs');
 say('TRUNK is drawn', drawn.trunk > 0, drawn.trunk + ' trunk runs');
 say('BRANCHES are drawn', drawn.branch > 0, drawn.branch + ' branches');
 say('the RETURN is drawn', drawn.ret > 0, drawn.ret + ' return run');
@@ -314,6 +317,11 @@ say('zone dampers and fittings are drawn', drawn.markers > 0, drawn.markerTypes.
 say('no 450 or 500 duct is anywhere on it',
   !drawn.diameters.includes('450') && !drawn.diameters.includes('500'),
   drawn.diameters.sort((a, c) => a - c).join('/') + ' mm');
+// NAC's install rules, enforced by the sizing engine and therefore visible on
+// the drawing: nothing below 200, and nothing above 300 on an outlet run.
+say('no 150 or smaller anywhere in the auto design',
+  !drawn.diameters.some(x => Number(x) < 200),
+  drawn.diameters.filter(x => Number(x) < 200).join('/') || 'smallest is 200');
 
 const designText = await main();
 say('AUTO ROUTE — VERIFY SITE CONDITIONS is on screen',

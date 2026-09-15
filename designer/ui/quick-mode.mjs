@@ -27,7 +27,7 @@
 import { h, card, badge, banner, button, field, input, select, empty,
          money, num, int, table } from './dom.mjs';
 import { collectInterruptions, INTERRUPT } from '../engines/interruptions.mjs';
-import { AUTO_ROUTE_NOTICE } from '../engines/router.mjs';
+import { AUTO_ROUTE_NOTICE, LABEL_DETAIL } from '../engines/router.mjs';
 import { supplierOrderList, JOB_STATE, READY_TO_ORDER } from '../engines/order.mjs';
 import { CONDITIONING, EXCLUDED_BANNER, classificationSummary,
          isExcludedRoom, needsClassificationReview } from '../engines/classify.mjs';
@@ -377,6 +377,15 @@ function stepDesign(app, interruptions) {
         h('div', { class: 'qreview-plan-head' },
           h('strong', {}, 'Floor plan'),
           h('span', { class: 'note' }, 'Indoor unit, outlets, ducts, diameters, return and zones'),
+          // The estimator's workings are off by default once the design is
+          // being reviewed — room boxes, calibration marks and confidence
+          // colours are what the measuring was done with, not what the
+          // installer reads.
+          button(app.showAnalysisOverlay ? 'Hide analysis overlay' : 'SHOW ANALYSIS OVERLAY',
+            () => app.toggleAnalysisOverlay(),
+            app.showAnalysisOverlay ? 'small' : 'ghost small'),
+          button(app.labelDetail === LABEL_DETAIL.FULL ? 'Less detail' : 'More detail',
+            () => app.cycleLabelDetail(), 'ghost small'),
           button('Open the plan', () => app.setTab('plan'), 'ghost small')),
         app.quickPlanHost || h('div', { class: 'qplan-placeholder' }, 'Plan'),
         // RULE 5 / the closing line of Nick's brief — the layout is not

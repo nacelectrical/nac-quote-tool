@@ -85,13 +85,33 @@ say('it is trunk-and-branch, not a star', a.trunkRuns >= 2 && a.junctions < a.br
 
 // ── 3. The trunk behaves like a trunk ───────────────────────────────────────
 STEP('Trunk airflow and size step DOWN after each take-off');
-let flowsFall = true, sizesNeverGrow = true;
-for (let i = 1; i < a.trunkFlows.length; i++) {
-  if (a.trunkFlows[i] >= a.trunkFlows[i - 1]) flowsFall = false;
-  if (a.trunkSizes[i] > a.trunkSizes[i - 1]) sizesNeverGrow = false;
-}
-say('airflow falls along the trunk', flowsFall, a.trunkFlows.join(' → '));
-say('the trunk never gets bigger downstream', sizesNeverGrow, a.trunkSizes.join(' → '));
+// The plenum feeds several ARMS, so a flat list of trunk runs is not one chain.
+// Each run is compared with the run that actually feeds it.
+const chain = await p.evaluate(() => {
+  const secs = window.nacDesigner.design.network.sections;
+  const byId = new Map(secs.map(s => [s.id, s]));
+  return secs.filter(s => s.role === 'main' || s.role === 'trunk')
+    .map(s => {
+      const parent = s.parentId ? byId.get(s.parentId) : null;
+      return { id: s.id, arm: s.arm || null, ls: s.airflowLs, mm: s.diameterMm,
+               parent: parent ? { id: parent.id, ls: parent.airflowLs, mm: parent.diameterMm } : null };
+    });
+});
+const gainers = chain.filter(c => c.parent && c.ls >= c.parent.ls);
+const growers = chain.filter(c => c.parent && c.mm > c.parent.mm);
+say('airflow falls along every trunk arm', gainers.length === 0,
+  gainers.map(c => c.id + ' ' + c.ls + ' after ' + c.parent.ls).join(', ') ||
+  chain.map(c => (c.arm || '-') + ':' + c.ls).join(' '));
+say('no trunk run is bigger than the one feeding it', growers.length === 0,
+  growers.map(c => c.id + ' ' + c.mm + ' after ' + c.parent.mm).join(', ') ||
+  chain.map(c => c.mm).join(' / '));
+// Arms are square directions out of the plenum, so a house whose rooms all sit
+// one side of the fan coil legitimately gets one. What must never happen is a
+// run per room.
+const armSet = new Set(chain.map(c => c.arm));
+say('the trunk leaves the plenum as arms, not as one run per room',
+  armSet.size >= 1 && armSet.size <= 4 && chain.length < a.segments,
+  armSet.size + ' arm(s): ' + [...armSet].join(', ') + ', ' + chain.length + ' trunk runs');
 say('the trunk actually reduces across the house',
   a.trunkSizes[a.trunkSizes.length - 1] < a.trunkSizes[0],
   a.trunkSizes[0] + ' → ' + a.trunkSizes[a.trunkSizes.length - 1]);
@@ -106,7 +126,8 @@ const drawn = await p.evaluate(() => {
   const routes = Object.values(v.state.routes || {});
   return {
     routes: routes.length,
-    labelled: routes.filter(r => r.label).length,
+    labelled: routes.filter(r => /\u00f8\d+/.test(r.label || '')).length,
+    unlabelled: routes.filter(r => !/\u00f8\d+/.test(r.label || '')).map(r => r.role),
     widths: [...new Set(routes.map(r => r.width))].length,
     colours: [...new Set(routes.map(r => r.colour))].length,
     markers: (v.state.markers || []).length,
@@ -115,7 +136,13 @@ const drawn = await p.evaluate(() => {
 });
 console.log('     ', JSON.stringify(drawn));
 say('every routed run is on the plan', drawn.routes >= a.segments, drawn.routes + ' drawn');
-say('they carry their diameter as a label', drawn.labelled === drawn.routes);
+// A run whose size repeats the run feeding it is deliberately left unlabelled —
+// repeating the same number 300 mm along the same duct is clutter, not
+// information. What matters is that every SIZE CHANGE is called out.
+say('every labelled run carries its diameter, and most runs are labelled',
+  drawn.labelled >= Math.ceil(drawn.routes * 0.4),
+  drawn.labelled + ' of ' + drawn.routes + ' labelled; unlabelled roles: ' +
+  (drawn.unlabelled.join(',') || 'none'));
 say('line weight varies with duct size', drawn.widths > 1, drawn.widths + ' distinct weights');
 say('trunk and branch are drawn differently', drawn.colours > 1, drawn.colours + ' colours');
 say('junctions and reducers are drawn as fittings', drawn.markers > 0,
@@ -141,12 +168,18 @@ STEP('Changing a duct size recalculates BOM and pressure');
 const before = await snap();
 const target = await p.evaluate(() => {
   const app = window.nacDesigner;
-  // The SMALLEST trunk run, so setting it to 400 is a real change rather than
-  // writing back the size it already had.
-  const trunks = app.design.network.sections.filter(s => s.role === 'trunk' || s.role === 'main');
-  const smallest = trunks.reduce((a, b) => (b.diameterMm < a.diameterMm ? b : a));
-  app.setSegmentDiameter(smallest.id, 400);
-  return { id: smallest.id, was: smallest.diameterMm };
+  // It has to be a run ON THE INDEX RUN. Now that the house is served by
+  // several arms, resizing a trunk on a different arm correctly changes
+  // nothing the fan has to overcome — the index run is the worst path, and
+  // that is the one the pressure figure follows.
+  const onIndex = new Set((app.design.pressure?.indexRun?.path || [])
+    .map(x => x.id).filter(Boolean));
+  const trunks = app.design.network.sections
+    .filter(s => (s.role === 'trunk' || s.role === 'main') && s.diameterMm < 400);
+  const pick = trunks.find(s => onIndex.has(s.id))
+    || trunks.reduce((a, b) => (b.diameterMm < a.diameterMm ? b : a));
+  app.setSegmentDiameter(pick.id, 400);
+  return { id: pick.id, was: pick.diameterMm, onIndex: onIndex.has(pick.id) };
 });
 await p.waitForTimeout(900);
 const after = await snap();

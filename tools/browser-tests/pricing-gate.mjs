@@ -48,6 +48,32 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
   const va=p.locator('button',{hasText:'Verify all'}); if(await va.count()) await va.last().click();
   await p.waitForTimeout(1800);
 
+  // Put a line with NO COST AT ALL into the job, the way one really turns up.
+  //
+  // This used to happen by itself: the auto design fitted 150 mm zone dampers
+  // and no 150 damper is on the MMEM list, so every job had an unpriced line.
+  // NAC's minimum is now 200 and every size the AUTO design picks is priced —
+  // which is the right outcome, but it left this gate with nothing to catch.
+  //
+  // So the gap is created the way it still can be: the estimator drops one
+  // branch to 150 by hand, which NAC allows as a special case. There is no 150
+  // damper on the price list, so the job now has a line with no cost, and the
+  // gate has to stop the quote.
+  await p.evaluate(async ()=>{
+    const app=window.nacDesigner;
+    // A damper size that is not on the price list yet — which is exactly how an
+    // unpriced line turns up in real life when a supplier drops or renames a
+    // size. Removing the rate is the closest thing to that the app can be made
+    // to do now that every size the auto design picks is priced.
+    const m=await import('/designer/engines/materials.mjs');
+    for (const d of Object.keys(m.MATERIAL_CATALOGUE.zone_motor.byDiameter)) {
+      delete m.MATERIAL_CATALOGUE.zone_motor.byDiameter[d];
+    }
+    m.MATERIAL_CATALOGUE.zone_motor.cost=null;
+    app.update();
+  });
+  await p.waitForTimeout(1200);
+
   if (priceTheGaps){
     // What the estimator would do: give the lines with no cost a real cost.
     await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Materials'}).first().click(); await p.waitForTimeout(900);
@@ -85,7 +111,8 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
 console.log('\n[A] a line with NO cost at all');
 const a=await session({priceTheGaps:false});
 say('the quote is BLOCKED', a.quotes.length===0);
-say('the estimator is told which lines', /have no cost at all/.test(a.toasts) && /Zone motor/.test(a.toasts));
+say('the estimator is told which lines',
+  /have no cost at all/.test(a.toasts) && /Zone motor/i.test(a.toasts));
 say('no native confirm() was used', a.native.length===0);
 
 console.log('\n[B] gaps priced, but placeholder rates remain — estimator DECLINES');

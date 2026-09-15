@@ -262,7 +262,12 @@ test('duct diameters are chosen from the configured list within the velocity ban
   assert.equal(branch.diameterMm, 200);   // 175 is not a stocked flex size
   assert.ok(branch.velocityMs <= DEFAULT_SETTINGS.duct.velocity.branch.preferred);
   assert.ok(DEFAULT_SETTINGS.duct.availableDiametersMm.includes(branch.diameterMm));
-  assert.ok(branch.considered.length === DEFAULT_SETTINGS.duct.availableDiametersMm.length);
+  // Only the sizes NAC would actually fit on a branch are considered — the
+  // velocity band picks from NAC's install rules, not the other way round.
+  assert.ok(branch.considered.every(c => DEFAULT_SETTINGS.duct.availableDiametersMm.includes(c.diameterMm)));
+  assert.ok(branch.considered.every(c => c.diameterMm >= DEFAULT_SETTINGS.duct.branchMinMm),
+    'a branch is never sized below NAC\'s minimum');
+  assert.ok(branch.considered.length > 1, 'there is a real choice to make');
 });
 
 test('the brief\'s example is reproduced: 150 mm at 105 L/s is over the preferred branch velocity', () => {
