@@ -102,28 +102,39 @@ function tracePath(ctx, pts) {
  * Casing, body, core. The casing is what keeps a pale duct legible over a pale
  * floor plan without having to shout with colour.
  */
-export function drawTube(ctx, screenPts, { colour, widthPx, dashed = false }) {
+export function drawTube(ctx, screenPts, { colour, widthPx, isReturn = false }) {
   if (!screenPts || screenPts.length < 2) return;
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  if (!dashed) {
-    ctx.strokeStyle = 'rgba(12,12,30,0.30)';
-    ctx.lineWidth = widthPx + 3.5;
-    tracePath(ctx, screenPts);
-    ctx.stroke();
-  }
+  ctx.strokeStyle = 'rgba(12,12,30,0.30)';
+  ctx.lineWidth = widthPx + 3.5;
+  tracePath(ctx, screenPts);
+  ctx.stroke();
 
   ctx.strokeStyle = colour;
   ctx.lineWidth = widthPx;
-  if (dashed) ctx.setLineDash([widthPx * 1.6, widthPx * 1.1]);
   tracePath(ctx, screenPts);
   ctx.stroke();
-  ctx.setLineDash([]);
+
+  // A RETURN IS STILL A DUCT. Dashing the whole tube turned it into a row of
+  // grey blobs lying across the house. It keeps the tube and takes a broken
+  // centreline instead — the convention for "this one goes the other way" —
+  // and still reads as something somebody pulls through a roof.
+  if (isReturn) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(1.4, widthPx * 0.2);
+    ctx.setLineDash([widthPx * 0.85, widthPx * 0.7]);
+    tracePath(ctx, screenPts);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    return;
+  }
 
   // The core highlight is what makes it read as a tube rather than a fat line.
-  if (widthPx >= 7 && !dashed) {
+  if (widthPx >= 7) {
     ctx.strokeStyle = lighten(colour, 0.5);
     ctx.globalAlpha = 0.55;
     ctx.lineWidth = Math.max(1.2, widthPx * 0.26);
@@ -259,9 +270,9 @@ export function drawFlexDesign(ctx, view) {
     drawTube(ctx, run.screen, {
       colour: run.colour || '#5fa8ff',
       widthPx: run.widthPx,
-      // A return is the other system. Drawn as a dashed tube so it can never be
-      // read as a supply run, whatever colour the palette gives it.
-      dashed: run.role === 'return'
+      // A return is the other system, and must never be read as a supply run
+      // whatever colour the palette gives it.
+      isReturn: run.role === 'return'
     });
   }
 
@@ -281,7 +292,20 @@ export function drawFlexDesign(ctx, view) {
   // length. A final carries one only where it is not already obvious: one per
   // SIZE per main, not one per run, or twelve bedrooms all say ø200.
   if (labelDetail !== 'hide') {
+    // Every SYMBOL already on the drawing books its patch before a single size
+    // is written. Sizes were landing on the fan coil and on diffusers because
+    // only other sizes were being avoided.
     const placed = [];
+    const reserve = (pt, w, h) => {
+      const c = toScreen(pt);
+      placed.push({ x: c.x - w / 2, y: c.y - h / 2, w, h });
+    };
+    for (const o of (outlets || [])) reserve(o, 18, 18);
+    for (const m of (markers || [])) {
+      if (m.type === 'bto' || (m.type === 'junction' && m.bto)) reserve(m, 12, 12);
+    }
+    if (plenum && plenum.x !== undefined) reserve(plenum, 40, 30);
+
     const clear = (x, y, w, h) => {
       const box = { x: x - w / 2, y: y - h / 2, w, h };
       const hit = placed.some(b => box.x < b.x + b.w && box.x + box.w > b.x &&
@@ -291,22 +315,39 @@ export function drawFlexDesign(ctx, view) {
     };
 
     const seenFinal = new Set();
+    // Two identical returns do not need saying twice. One label, carrying the
+    // count, on the longer of them.
+    const returns = runs.filter(r => r.role === 'return');
+    const lengthOf = (r) => alongPath(r.screen, 1)?.totalPx || 0;
+    const labelledReturn = returns.length
+      ? returns.reduce((a, b) => (lengthOf(b) > lengthOf(a) ? b : a))
+      : null;
+
     for (const run of runs) {
       if (!run.diameterMm) continue;
       const isMain = run.role === 'main' || run.role === 'trunk';
       const isReturn = run.role === 'return';
+      if (isReturn && run !== labelledReturn) continue;
       if (!isMain && !isReturn) {
         const key = (run.mainKey || '') + ':' + run.diameterMm;
         if (seenFinal.has(key)) continue;
         seenFinal.add(key);
       }
-      const at = alongPath(run.screen, isMain ? 0.55 : 0.6);
+      // Try a few points along the run before giving up: a size dropped because
+      // one spot was busy is a size nobody can read anywhere.
+      const width = ((isReturn ? 'RETURN 2 × ø000' : 'ø' + run.diameterMm).length) * 7 + 6;
+      let at = null;
+      for (const f of (isMain ? [0.55, 0.38, 0.72, 0.25, 0.85] : [0.6, 0.42, 0.78])) {
+        const p = alongPath(run.screen, f);
+        if (p && clear(p.x, p.y, width, 15)) { at = p; break; }
+      }
       if (!at) continue;
       // Too short to write on without the text overhanging both ends.
-      const text = 'ø' + run.diameterMm;
-      const wide = text.length * 7 + 6;
-      if (at.totalPx < wide * 0.8) continue;
-      if (!clear(at.x, at.y, wide, 14)) continue;
+      const text = isReturn
+        ? 'RETURN ' + (returns.length > 1 ? returns.length + ' × ' : '') +
+          'ø' + run.diameterMm
+        : 'ø' + run.diameterMm;
+      if (at.totalPx < width * 0.8) continue;
       drawDuctLabel(ctx, text, at, { angle: at.angle, size: isMain ? 12 : 10.5 });
     }
   }

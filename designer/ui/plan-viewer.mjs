@@ -112,14 +112,27 @@ export function createPlanViewer(container, opts = {}) {
     draw();
   }
 
+  /** How much of the canvas the zone schedule needs down the left. */
+  const SCHEDULE_GUTTER_PX = 232;
+
+  function scheduleGutter(r) {
+    // A drawing sheet sizes the drawing to fit BESIDE its title block. Centring
+    // the plan and then hunting for somewhere to put the schedule is how the
+    // schedule ended up sitting on the house.
+    if (!state.designView || !state.zoneChips.length) return 0;
+    return r.width > SCHEDULE_GUTTER_PX * 2.2 ? SCHEDULE_GUTTER_PX : 0;
+  }
+
   function fit() {
     if (!state.image) return;
     const r = wrap.getBoundingClientRect();
     if (r.width < 80 || r.height < 80) { pendingFit = true; return; }
     pendingFit = false;
-    const s = Math.min(r.width / state.image.width, r.height / state.image.height) * 0.94;
+    const gutter = scheduleGutter(r);
+    const usable = r.width - gutter;
+    const s = Math.min(usable / state.image.width, r.height / state.image.height) * 0.94;
     state.scale = Math.max(state.minScale, Math.min(state.maxScale, s));
-    state.offsetX = (r.width - state.image.width * state.scale) / 2;
+    state.offsetX = gutter + (usable - state.image.width * state.scale) / 2;
     state.offsetY = (r.height - state.image.height * state.scale) / 2;
     draw();
   }
@@ -266,7 +279,7 @@ export function createPlanViewer(container, opts = {}) {
       for (const chip of state.zoneChips) {
         if (!chip.anchorPx) continue;
         const b = chip.anchorPx;
-        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 22, 22, 'badge');
+        put({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, 18, 18, 'badge');
       }
     }
   }
@@ -306,17 +319,21 @@ export function createPlanViewer(container, opts = {}) {
     const w = colM2 + 46 + pad;
     const h = headH + chips.length * rowH + pad;
 
-    // The margin left of the image is the natural home for it. Failing that,
-    // the margin on the right; failing both, the top-left of the plan itself.
-    const imgL = state.offsetX, imgR = state.offsetX + state.image.width * state.scale;
-    const box = imgL > w + 24 ? { x: imgL - w - 12, y: 12 }
-      : (r.width - imgR) > w + 24 ? { x: imgR + 12, y: 12 }
-      : { x: 12, y: 12 };
+    // fit() reserves the gutter, so the schedule has a home rather than hunting
+    // for a gap. It only falls back onto the plan on a canvas too narrow to
+    // have reserved one.
+    const gutter = scheduleGutter(r);
+    const box = gutter
+      ? { x: Math.max(8, (gutter - w) / 2), y: 14 }
+      : { x: 10, y: 10 };
     box.x = Math.max(6, Math.min(box.x, r.width - w - 6));
     box.y = Math.max(6, Math.min(box.y, r.height - h - 6));
 
-    ctx.fillStyle = 'rgba(10,10,28,0.92)';
-    ctx.strokeStyle = 'rgba(160,172,210,0.45)';
+    // A LEGEND ON A DRAWING SHEET, not a dark UI chip. The plan is pale; a
+    // heavy black block beside it pulls the eye away from the ducts, which are
+    // the thing being read.
+    ctx.fillStyle = 'rgba(255,255,255,0.97)';
+    ctx.strokeStyle = 'rgba(60,66,88,0.35)';
     ctx.lineWidth = 1;
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(box.x, box.y, w, h, 5); ctx.fill(); ctx.stroke(); }
     else { ctx.fillRect(box.x, box.y, w, h); ctx.strokeRect(box.x, box.y, w, h); }
@@ -324,11 +341,11 @@ export function createPlanViewer(container, opts = {}) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.font = titleFont;
-    ctx.fillStyle = '#F5C200';
+    ctx.fillStyle = '#16162e';
     ctx.fillText('ZONE SCHEDULE', box.x + pad, box.y + 8);
 
     ctx.font = headFont;
-    ctx.fillStyle = '#8f98b5';
+    ctx.fillStyle = '#7b8398';
     ctx.fillText('ZONE', box.x + nameX, box.y + 22);
     ctx.textAlign = 'right';
     ctx.fillText('kW', box.x + colKw + 22, box.y + 22);
@@ -351,7 +368,7 @@ export function createPlanViewer(container, opts = {}) {
 
       ctx.textAlign = 'left';
       ctx.font = rowFont;
-      ctx.fillStyle = '#e9ecf7';
+      ctx.fillStyle = '#23283a';
       // Clipped to its own column. A room name running through the kW figure
       // beside it is how a schedule stops being a schedule.
       ctx.save();
@@ -361,7 +378,7 @@ export function createPlanViewer(container, opts = {}) {
 
       ctx.textAlign = 'right';
       ctx.font = numFont;
-      ctx.fillStyle = '#cfd6e8';
+      ctx.fillStyle = '#4a5268';
       ctx.fillText((c.kw ?? 0).toFixed(2), box.x + colKw + 22, y + 3);
       ctx.fillText(String(Math.round(c.airflowLs || 0)), box.x + colLs + 22, y + 3);
       ctx.fillText((c.areaSqM ?? 0).toFixed(1), box.x + colM2 + 22, y + 3);
@@ -402,15 +419,16 @@ export function createPlanViewer(container, opts = {}) {
       if (!chip.anchorPx) continue;
       const b = chip.anchorPx;
       const c = toScreen({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+      // Small and quiet. Seven saturated discs the size of the diffusers were
+      // competing with the ducts for attention; the badge only has to tie a
+      // space back to a row in the schedule.
       ctx.save();
-      ctx.beginPath(); ctx.arc(c.x, c.y, 9, 0, Math.PI * 2);
-      ctx.fillStyle = chip.colour;
-      ctx.globalAlpha = 0.95;
+      ctx.beginPath(); ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
       ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(10,10,28,0.7)'; ctx.stroke();
-      ctx.font = '800 11px -apple-system, system-ui, sans-serif';
-      ctx.fillStyle = '#0a0a1c';
+      ctx.lineWidth = 2.2; ctx.strokeStyle = chip.colour; ctx.stroke();
+      ctx.font = '800 9px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = '#23283a';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(String(chip.index ?? ''), c.x, c.y + 0.5);
       ctx.restore();
