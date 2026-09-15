@@ -332,6 +332,18 @@ export function capBranchToParent(branchDiameterMm, parentDiameterMm) {
  * is for.
  */
 /**
+ * THE SMALLEST DUCT NAC RUNS AS A MAIN.
+ *
+ * Nick's call, and it settles the one thing the schedule could not: a main
+ * that had reduced to 250 was taking 250 finals off itself — a full-bore
+ * take-off with air still to carry past it. A main is not a 250.
+ *
+ * It is a floor on the MAIN only. A major branch is a branch, and a final is
+ * sized from its airflow; neither is bound by this.
+ */
+export const MIN_MAIN_DIAMETER_MM = 300;
+
+/**
  * How small a main is allowed to get.
  *
  * A main may only step down as far as the LARGEST FINAL still to come off it.
@@ -673,6 +685,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   supplyPlenum: SUPPLY_PLENUM,
   plenumBalance,
   mainReductions: MAIN_REDUCTIONS,
+  minMainDiameterMm: MIN_MAIN_DIAMETER_MM,
   mainFloorForFinals,
   returnAir: RETURN_AIR,
   outlets: OUTLET_RULES,

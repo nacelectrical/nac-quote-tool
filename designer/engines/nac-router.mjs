@@ -53,7 +53,7 @@ import { isConditionedRoom } from './classify.mjs';
 import { selectDiameter } from './ducts.mjs';
 import {
   mainSupplyCount, returnCountFor, FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR,
-  BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS,
+  BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS, MIN_MAIN_DIAMETER_MM,
   finalSizeForAirflow, mainFloorForFinals
 } from './nac-standard.mjs';
 
@@ -371,7 +371,11 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
   // airflow gave a 400, a 250 and a 250 off one box. They are all one size,
   // chosen for the HEAVIEST group so none of them is over-velocity, and the
   // groups have already been evened out above so that one size suits them all.
-  const sizeForMain = (ls) => selectDiameter(ls, 'main', { settings }).diameterMm;
+  // A MAIN IS NEVER A 250. Velocity will happily pick one for a light group;
+  // NAC does not run one, because the 250 finals coming off it would be
+  // full-bore take-offs with air still to carry past them.
+  const sizeForMain = (ls) => Math.max(MIN_MAIN_DIAMETER_MM,
+    selectDiameter(ls, 'main', { settings }).diameterMm);
   const groupFlows = groups.map(g => g.reduce((n, o) => n + o.airflowLs, 0));
   const commonMainMm = SUPPLY_PLENUM.sameSizeMains
     ? Math.max(...groupFlows.map(sizeForMain))
@@ -435,7 +439,8 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
     // So the airflow is walked down the run, the size NAC would fit is asked
     // for at each point, and a new segment starts only when that answer
     // changes. Each break is a real reducer somebody buys and fits.
-    const sizeFor = (ls) => selectDiameter(ls, 'main', { settings }).diameterMm;
+    const sizeFor = (ls) => Math.max(MIN_MAIN_DIAMETER_MM,
+      selectDiameter(ls, 'main', { settings }).diameterMm);
 
     // Walk the air down the run and note every point where the size NAC would
     // fit changes. Those are the CANDIDATE reductions.

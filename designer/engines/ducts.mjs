@@ -7,7 +7,8 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { allowedDiametersFor, reducerRequired, capBranchToParent,
-         finalSizeForAirflow, mainFloorForFinals } from './nac-standard.mjs';
+         finalSizeForAirflow, mainFloorForFinals,
+         MIN_MAIN_DIAMETER_MM } from './nac-standard.mjs';
 import { round, mmToM } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
 
@@ -503,12 +504,17 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       const finalWants = children.filter(c => c.role === 'final' || c.role === 'branch')
         .map(c => c.cappedFromMm || c.diameterMm);
       const childMain = Math.max(0, ...children.filter(isMain).map(c => c.diameterMm || 0));
-      const floor = mainFloorForFinals(m.diameterMm, finalWants, childMain || null);
+      // A MAIN IS NEVER A 250 — the floor is the largest final still to come
+      // off it, or the smallest main NAC runs, whichever is bigger.
+      const floor = Math.max(MIN_MAIN_DIAMETER_MM,
+        mainFloorForFinals(m.diameterMm, finalWants, childMain || null));
       if (floor > m.diameterMm) {
         m.heldUpFromMm = m.diameterMm;
         m.diameterMm = floor;
-        m.sizeNote = 'Held at ' + floor + ' mm: a main is never reduced past a final ' +
-                     'still to come off it.';
+        m.sizeNote = floor === MIN_MAIN_DIAMETER_MM
+          ? 'Held at ' + floor + ' mm: NAC does not run a main smaller than this.'
+          : 'Held at ' + floor + ' mm: a main is never reduced past a final ' +
+            'still to come off it.';
       }
     }
   }

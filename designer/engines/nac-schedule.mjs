@@ -18,7 +18,7 @@
 
 import {
   FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, STOCKED_DIAMETERS_MM,
-  plenumBalance
+  MIN_MAIN_DIAMETER_MM, plenumBalance
 } from './nac-standard.mjs';
 import { DEFAULT_SETTINGS } from './settings.mjs';
 
@@ -214,8 +214,11 @@ export function nacScheduleData(design, opts = {}) {
     // would like to be a 200, but it still has 250 finals coming off it, so it
     // stays a 250 and runs slow. That is the install rule beating the velocity
     // band, and the schedule has to say so rather than look like a mistake.
-    const floorMm = Math.max(0, ...downstreamOutlets(s.id).map(f => f.diameterMm || 0));
-    const heldByFinals = floorMm > 0 && s.diameterMm <= floorMm && vAfter < band.preferredMin;
+    const finalsFloor = Math.max(0, ...downstreamOutlets(s.id).map(f => f.diameterMm || 0));
+    const floorMm = Math.max(finalsFloor, MIN_MAIN_DIAMETER_MM);
+    const heldByFinals = s.diameterMm <= floorMm && vAfter < band.preferredMin;
+    const heldBy = !heldByFinals ? null
+      : finalsFloor >= MIN_MAIN_DIAMETER_MM ? 'finals' : 'min_main';
     return {
       ref: 'R' + (i + 1),
       onRun: s.mainKey ? 'Main ' + s.mainKey : s.id,
@@ -237,8 +240,10 @@ export function nacScheduleData(design, opts = {}) {
       // step is bought because the smaller duct is closer to how NAC runs a
       // main. Saying "under the minimum" when it is 4.40 against a 4.00
       // minimum is the sort of near-enough reason that hides a real mistake.
-      finalsFloorMm: floorMm || null,
+      finalsFloorMm: finalsFloor || null,
+      floorMm,
       heldByFinals,
+      heldBy,
       reason: vIfKept < band.preferredMin ? 'below_minimum' : 'oversized',
       why: s.role === 'final'
         ? 'ON A FINAL — not allowed. The BTO takes the branch to final size.'
@@ -255,7 +260,9 @@ export function nacScheduleData(design, opts = {}) {
             '; at ' + dia(s.diameterMm) + ' it runs at ' + vAfter + ' m/s' +
             (heldByFinals
               ? ', below the ' + band.preferredMin + ' m/s band \u2014 it cannot go ' +
-                'smaller because ' + dia(floorMm) + ' finals still come off it.'
+                'smaller because ' + (heldBy === 'finals'
+                  ? dia(finalsFloor) + ' finals still come off it.'
+                  : dia(MIN_MAIN_DIAMETER_MM) + ' is the smallest main NAC runs.')
               : '.')
           : 'Airflow falls to ' + s.airflowLs + ' L/s; ' + dia(s.diameterMm) +
             ' holds ' + vAfter + ' m/s.'
@@ -309,6 +316,15 @@ export function checkNacSchedule(data) {
     data.plenum.balance.flows.join(' / ') + ' L/s against a ' +
     data.plenum.balance.meanLs + ' L/s even share \u2014 worst ' +
     data.plenum.balance.worstDeviationPct + '% off');
+
+  const smallMains = data.mainRuns.flatMap(m =>
+    m.stretches.filter(s => s.diameterMm < MIN_MAIN_DIAMETER_MM)
+      .map(s => m.name + '/' + s.id + ' ' + dia(s.diameterMm)));
+  check('No main is smaller than ' + dia(MIN_MAIN_DIAMETER_MM),
+    smallMains.length === 0,
+    smallMains.length ? smallMains.join(', ')
+      : 'smallest main run is ' + dia(Math.min(...data.mainRuns
+          .flatMap(m => m.stretches.map(s => s.diameterMm)))));
 
   check('Return is ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' ducts only',
     data.ret.ductCount >= RETURN_AIR.minReturns && data.ret.ductCount <= RETURN_AIR.maxReturns,

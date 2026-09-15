@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { buildDuctTree, measureTree, deriveFootprint, trunkSpine, insideFootprint,
          AUTO_ROUTE_NOTICE } from '../designer/engines/router.mjs';
 import { buildDuctNetwork, indexRun } from '../designer/engines/ducts.mjs';
+import { MIN_MAIN_DIAMETER_MM } from '../designer/engines/nac-standard.mjs';
 
 // ── A house: bedrooms along the top, living along the bottom ────────────────
 //
@@ -319,22 +320,56 @@ test('the sized network uses the routed tree, and steps the trunk down', () => {
     assert.ok(s.diameterMm <= parent.diameterMm,
       s.id + ' is BIGGER than the trunk feeding it (' + parent.id + ')');
   }
-  // Somewhere in a seven-room house a trunk has to step down.
+  // And no main is under the size NAC actually runs. On a house this small
+  // every trunk tail is already AT that minimum, so nothing steps down — which
+  // is the rule working, not a trunk that forgot to reduce.
+  for (const s of line) {
+    assert.ok(s.diameterMm >= MIN_MAIN_DIAMETER_MM,
+      s.id + ' is a ' + s.diameterMm + ' main');
+  }
+});
+
+// The same house with the air a big system moves, so the trunk has room to
+// step down above the minimum. This is what keeps reducer recording covered
+// now that a small house legitimately produces none.
+const BIG_FLOW = { bed1: 260, bed2: 260, bed3: 250, study: 200, living: 620,
+                   dining: 400, kitchen: 320 };
+const BIG_AIRFLOW = {
+  rows: ROOMS.map(r => ({ roomId: r.id, label: r.label, adjustedLs: BIG_FLOW[r.id] })),
+  allocatedAirflowLs: Object.values(BIG_FLOW).reduce((a, b) => a + b, 0)
+};
+
+test('a trunk carrying real air does step down, above the minimum', () => {
+  const t = measureTree(build({ airflow: BIG_AIRFLOW }), CAL);
+  const net = buildDuctNetwork({ airflow: BIG_AIRFLOW, outlets: OUTLETS, topology: t });
+  const byId = new Map(net.sections.map(x => [x.id, x]));
+  const line = net.sections.filter(s => s.role === 'main' || s.role === 'trunk');
   assert.ok(line.some(s => {
     const parent = s.parentId ? byId.get(s.parentId) : null;
     return parent && s.diameterMm < parent.diameterMm;
-  }), 'no trunk run reduced anywhere in the house');
+  }), 'no trunk run reduced: ' + line.map(s => s.id + ':' + s.diameterMm).join(' '));
+  for (const s of line) assert.ok(s.diameterMm >= MIN_MAIN_DIAMETER_MM);
 });
 
-test('a reducer is recorded wherever the trunk changes size', () => {
-  const t = measureTree(build(), CAL);
-  const net = buildDuctNetwork({ airflow: AIRFLOW, outlets: OUTLETS, topology: t });
-  const reducers = net.sections.filter(s => s.reducerFrom);
-  assert.ok(reducers.length > 0, 'a stepping trunk must produce reducers to buy');
-  for (const r of reducers) {
-    assert.ok(r.reducerFrom > r.reducerTo, r.id + ' reduces upward');
+test('a reducer is recorded wherever the trunk changes size, and only there', () => {
+  for (const airflow of [AIRFLOW, BIG_AIRFLOW]) {
+    const t = measureTree(build({ airflow }), CAL);
+    const net = buildDuctNetwork({ airflow, outlets: OUTLETS, topology: t });
+    const byId = new Map(net.sections.map(x => [x.id, x]));
+    const reducers = net.sections.filter(s => s.reducerFrom);
+    for (const r of reducers) {
+      assert.ok(r.reducerFrom > r.reducerTo, r.id + ' reduces upward');
+    }
+    // One reducer for every trunk run that is a different size from its
+    // parent, and not one anywhere else.
+    const stepped = net.sections.filter(s => {
+      if (s.role !== 'main' && s.role !== 'trunk') return false;
+      const parent = s.parentId ? byId.get(s.parentId) : null;
+      return parent && parent.diameterMm !== s.diameterMm;
+    });
+    assert.equal(reducers.length, stepped.length);
+    assert.equal(net.reducerCount, reducers.length);
   }
-  assert.equal(net.reducerCount, reducers.length);
 });
 
 test('the geometry travels WITH the sized section, not in a parallel model', () => {

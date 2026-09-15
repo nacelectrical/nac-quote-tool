@@ -20,7 +20,7 @@ import { buildCatalogue } from '../designer/engines/catalogue.mjs';
 import { nacScheduleData, checkNacSchedule, nacDuctSchedule, velocityMs }
   from '../designer/engines/nac-schedule.mjs';
 import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFinals,
-         plenumBalance } from '../designer/engines/nac-standard.mjs';
+         plenumBalance, MIN_MAIN_DIAMETER_MM } from '../designer/engines/nac-standard.mjs';
 import { balanceGroups } from '../designer/engines/nac-router.mjs';
 
 // The real sheet: every label at the pixel it is printed, with the size text
@@ -171,6 +171,26 @@ test('no main reduces more than NAC fits', () => {
   }
 });
 
+test('a main is never a 250 — nor anything under the minimum', () => {
+  for (const m of S.mainRuns) {
+    for (const s of m.stretches) {
+      assert.ok(s.diameterMm >= MIN_MAIN_DIAMETER_MM,
+        m.name + '/' + s.id + ' is ' + s.diameterMm);
+    }
+  }
+});
+
+test('no take-off is the same size as the main it comes off', () => {
+  // The reason the minimum exists: a 250 take-off on a 250 main is full bore,
+  // with air still to carry past it.
+  for (const b of S.btos) {
+    if (b.parentRole !== 'main') continue;
+    assert.ok(b.branchDiameterMm < b.parentDiameterMm,
+      'BTO ' + b.number + ' takes ' + b.branchDiameterMm + ' off a ' +
+      b.parentDiameterMm + ' main');
+  }
+});
+
 test('a main never grows along its length', () => {
   for (const m of S.mainRuns) {
     for (let i = 1; i < m.stretches.length; i++) {
@@ -308,6 +328,12 @@ test('every reducer is on a main and says why it exists', () => {
       assert.equal(r.heldByFinals, true,
         r.ref + ' runs slow at ' + r.velocityAfterMs + ' m/s for no stated reason');
       assert.ok(/cannot go smaller/.test(r.why), r.why);
+      // And it has to name WHICH floor is holding it: the finals coming off it,
+      // or the smallest main NAC runs.
+      assert.ok(r.heldBy === 'finals' || r.heldBy === 'min_main', r.heldBy);
+      assert.ok(r.heldBy === 'finals'
+        ? /finals still come off it/.test(r.why)
+        : /smallest main NAC runs/.test(r.why), r.why);
     }
     // The stated reason must match which of the two cases it actually is.
     assert.equal(r.reason, r.velocityIfNotReducedMs < r.bandMinMs ? 'below_minimum' : 'oversized');
