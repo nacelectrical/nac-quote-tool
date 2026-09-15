@@ -644,3 +644,27 @@ test('the BOM still buys every metre of return flex', () => {
   assert.ok(Math.abs(rd.lengthM - rd.lengthPerDuctM * rd.ductCount) < 0.02,
     rd.lengthM + ' m total for ' + rd.ductCount + ' × ' + rd.lengthPerDuctM + ' m');
 });
+
+// ── A unit with a real supplier cost is not an unpriced unit ────────────────
+
+test('the selected unit carries its real supplier cost into the quote', () => {
+  // hasPrice means NAC has typed a RETAIL price. It is NOT what the quote is
+  // built from on the cost-plus-fee basis, and reading it as "no price" is
+  // wrong: the MMEM trade list carries a cost for this unit.
+  const u = design.selectedUnit;
+  assert.ok(u.supplierCost > 0, u.model + ' has no supplier cost');
+  assert.ok(u.supplierSource, 'the cost is not attributed to a price list');
+
+  const line = design.bom.items.find(i => i.key === 'indoor_outdoor_system');
+  assert.ok(line, 'no equipment line in the BOM');
+  assert.equal(line.priced, true, 'the equipment line is reported unpriced');
+  assert.equal(line.totalCost, u.supplierCost);
+});
+
+test('the equipment is not counted among the unpriced or placeholder lines', () => {
+  const equipment = design.bom.items.find(i => i.key === 'indoor_outdoor_system');
+  assert.ok(!(design.bom.unpricedLabels || []).includes(equipment.label),
+    'the unit is listed as unpriced');
+  assert.ok(!(design.bom.placeholderLabels || []).includes(equipment.label),
+    'the unit is listed as a placeholder rate');
+});

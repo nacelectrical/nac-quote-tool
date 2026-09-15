@@ -55,9 +55,20 @@ export function renderOverview(app) {
     stat('Total heating load', num(s.totalHeatingLoadKw, 2) + ' kW',
       load ? '×' + app.settings.load.heatingFactor + ' of cooling' : null),
     stat('Recommended system', s.recommendedSystem || '—', 'From the NAC catalogue'),
+    // WHAT THE QUOTE IS ACTUALLY BUILT FROM.
+    //
+    // hasPrice means NAC has typed a RETAIL price for this model. On the
+    // job-cost-plus-fee basis that price is never used — the sell price is the
+    // supplier COST plus the fee — so warning about it on a unit whose cost is
+    // known is noise, and it reads as "this unit has no price at all". It does
+    // not: 62 supplier lines carry a real trade cost.
     stat('Selected system', s.selectedSystem || '—',
-      d.selectedUnit?.hasPrice ? 'Priced in NAC Price Setup' : 'No NAC price configured',
-      d.selectedUnit?.hasPrice ? '' : 'warn'),
+      d.selectedUnit?.supplierCost
+        ? 'Cost $' + num(d.selectedUnit.supplierCost, 2) + ' — ' +
+          (d.selectedUnit.supplierSource || 'supplier price list')
+        : d.selectedUnit?.hasPrice ? 'Priced in NAC Price Setup'
+        : 'No cost for this unit — the quote will be short',
+      d.selectedUnit?.supplierCost || d.selectedUnit?.hasPrice ? '' : 'warn'),
     stat('Total airflow', int(s.totalAirflowLs) + ' L/s',
       d.airflow ? d.airflow.basisLabel : null),
     stat('Outlets', int(s.outletCount), d.outlets ? Object.entries(d.outlets.totals.byType)
