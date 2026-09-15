@@ -256,7 +256,10 @@ export function runPipeline(design, ctx = {}) {
     grilleSizesMm: d.returnGrilleOverrides || null,
     filterSizeMm: d.returnFilterOverride || null,
     ductLengthMm: d.returnDuctLengthMm ?? null,
-    diameterOverrideMm: d.returnDuctDiameterOverride || null
+    diameterOverrideMm: d.returnDuctDiameterOverride || null,
+    // The fan coil's own return spigots outrank any calculation — and without
+    // this the manufacturer data was never consulted at all.
+    unit: d.selectedUnit || null
   }, { settings });
 
   // ── 8b. Return air routing (PART 11) and zone dampers (PART 12) ───────────
@@ -292,7 +295,9 @@ export function runPipeline(design, ctx = {}) {
           grilleSizesMm: d.returnGrilleOverrides || null,
           filterSizeMm: d.returnFilterOverride || null,
           ductLengthMm: d.returnRoute.lengthMm,
-          diameterOverrideMm: d.returnDuctDiameterOverride || null
+          diameterOverrideMm: d.returnDuctDiameterOverride || null,
+          // Same here: the re-measure must not lose the unit's own connection.
+          unit: d.selectedUnit || null
         }, { settings });
       }
     }

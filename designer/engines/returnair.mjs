@@ -18,13 +18,39 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
   const R = settings.returnAir;
 
   const designLs = Number(totalAirflowLs) * R.designFraction;
-  // THE NAC RETURN RULE: one return, or two. Never an arbitrary number and
-  // never zero — how many comes from the standard, sized off the design
-  // airflow and the selected unit.
+
+  // THE FAN COIL'S OWN RETURN CONNECTION COMES FIRST.
+  //
+  // A ducted indoor unit has a fixed return spigot arrangement — the Daikin
+  // 16 kW is 2 × ø400 oval — and the return runs to it. That is manufacturer
+  // data, and 46 of the 489 units in the spec sheet state it. Calculating a
+  // return the unit has no connection for is not a design, it is a number.
+  //
+  // So the SPIGOTS decide how many ducts come back and what size they are.
+  // The velocity band still gets checked against them, but it does not get to
+  // overrule a physical connection.
+  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
+  const spigots = spec?.returnSpigots || null;
+
+  // GRILLES AND DUCTS ARE NOT THE SAME COUNT.
+  //
+  // A return POINT is a grille in a ceiling. A return DUCT is a run back to a
+  // spigot on the fan coil. One grille can feed a box that splits into the
+  // unit's two spigots, so the unit fixes the ducts and the airflow fixes the
+  // grilles. Collapsing the two is what had 601 L/s going through a duct the
+  // design thought was carrying 300.
+  //
+  // THE NAC RETURN RULE: one return point, or two. Never an arbitrary number
+  // and never zero.
   const count = Math.min(RETURN_AIR.maxReturns,
     Math.max(RETURN_AIR.minReturns,
       returnCount == null ? returnCountFor(designLs) : Number(returnCount)));
   const perReturnLs = designLs / count;
+
+  // Ducts back to the unit: its spigots where it states them, otherwise one
+  // duct per return point.
+  const ductCount = diameterOverrideMm ? 1 : (spigots ? spigots.count : count);
+  const perDuctLs = designLs / ductCount;
   const warnings = [];
 
   if (perReturnLs > R.maxSingleReturnLs) {
@@ -96,20 +122,22 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
   // one. A ducted unit has a fixed return spigot arrangement — one 400 or two
   // at 350/400 — and the duct runs to it. Calculating a diameter that the unit
   // has no connection for is not a design, it is a number.
-  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
-  const spigots = spec?.returnSpigots || null;
-
+  // ONE DUCT PER RETURN POINT. Where the spigots set the count, each spigot is
+  // one return duct carrying its share — dividing perReturnLs by the spigot
+  // count again would be counting the same split twice.
+  // Velocity is always worked out on the air in ONE DUCT — perDuctLs — never
+  // on the air at one grille.
   const duct = diameterOverrideMm
     ? { diameterMm: diameterOverrideMm, ductCount: 1,
-        velocityMs: round(velocity(diameterOverrideMm, perReturnLs), 2),
+        velocityMs: round(velocity(diameterOverrideMm, perDuctLs), 2),
         reason: 'Diameter set manually by the estimator.', manual: true }
     : spigots
       ? { diameterMm: spigots.diameterMm, ductCount: spigots.count,
-          velocityMs: round(velocity(spigots.diameterMm, perReturnLs / spigots.count), 2),
+          velocityMs: round(velocity(spigots.diameterMm, perDuctLs), 2),
           fromUnitSpec: true,
           reason: spec.model + ' has a ' + spigots.count + ' × ' + spigots.diameterMm +
             ' mm return connection (' + spec.returnFlangeText + '), so that is the return duct.' }
-      : selectReturnDuct(perReturnLs, settings);
+      : { ...selectReturnDuct(perDuctLs, settings), ductCount: count };
 
   if (duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'RESTRICTED_RETURN_PATH', severity: 'WARNING',
@@ -120,9 +148,10 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
   // above the band that is a note about the unit, not a sizing choice.
   if (duct.fromUnitSpec && duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'UNIT_RETURN_CONNECTION_TIGHT', severity: 'CHECK',
-      message: 'At ' + round(perReturnLs, 0) + ' L/s the unit\'s own ' + duct.ductCount + ' × ' +
+      message: 'At ' + round(perDuctLs, 0) + ' L/s each, the unit\'s own ' + duct.ductCount + ' × ' +
         duct.diameterMm + ' mm return connection runs at ' + duct.velocityMs + ' m/s. ' +
-        'Split the return across more grilles, or accept the noise.' });
+        'That is the connection the unit has — add return grilles to share the ' +
+        'air, or accept the noise.' });
   }
   if (duct.exceedsStandard) {
     warnings.push({ code: 'RETURN_EXCEEDS_NAC_STANDARD', severity: 'WARNING',
@@ -136,6 +165,8 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
     returnCount: count,
     returnCountRule: 'NAC fits ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' returns; ' + count + ' at ' + Math.round(designLs) + ' L/s.',
     perReturnLs: round(perReturnLs, 0),
+    /** Air in ONE duct back to the unit — not the same as air at one grille. */
+    perDuctLs: round(perDuctLs, 0),
     requiredFreeAreaM2: round(requiredFreeAreaM2, 3),
     requiredGrossAreaM2: round(requiredGrossAreaM2, 3),
     returns,

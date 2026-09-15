@@ -184,23 +184,32 @@ export function nacScheduleData(design, opts = {}) {
   // ── 5. Return air ────────────────────────────────────────────────────────
   const rd = design?.returnDesign || null;
   const ret = {
-    // The number of RETURN POINTS — which is the number of ducts, because NAC
-    // runs one duct back from each. It is not duct.ductCount: that is per
-    // point, and reading it as the total was how 2 returns became 4 ducts.
-    ductCount: rd?.returnCount ?? null,
+    // GRILLES and DUCTS are different counts. A return POINT is a grille in a
+    // ceiling; a return DUCT is a run back to a spigot on the fan coil, and the
+    // unit fixes how many of those there are.
+    pointCount: rd?.returnCount ?? null,
+    ductCount: rd?.duct?.ductCount ?? rd?.returnCount ?? null,
+    fromUnitSpec: !!rd?.duct?.fromUnitSpec,
+    unitConnection: rd?.duct?.unitReturnFlangeText || null,
+    perDuctLs: rd?.perDuctLs ?? rd?.perReturnLs ?? null,
     allowedMin: RETURN_AIR.minReturns,
     allowedMax: RETURN_AIR.maxReturns,
     totalAirflowLs: rd?.designAirflowLs ?? null,
     rule: rd?.returnCountRule || null,
-    // How many ducts run back from EACH return point. NAC runs one.
-    ductsPerReturn: rd?.duct?.ductCount ?? 1,
-    ducts: (rd?.returns || []).map(r => ({
-      index: r.index,
+
+    // One row per DUCT, carrying the air that is actually in that duct.
+    ducts: [...Array(rd?.duct?.ductCount ?? rd?.returnCount ?? 0)].map((_, i) => ({
+      index: i + 1,
       diameterMm: rd?.duct?.diameterMm ?? null,
-      airflowLs: r.airflowLs,
-      velocityMs: velocityMs(r.airflowLs, rd?.duct?.diameterMm),
-      grilleSize: r.grilleSize,
-      faceVelocityMs: r.faceVelocityMs
+      airflowLs: rd?.perDuctLs ?? rd?.perReturnLs ?? null,
+      velocityMs: velocityMs(rd?.perDuctLs ?? rd?.perReturnLs, rd?.duct?.diameterMm),
+      grilleSize: rd?.returns?.[i]?.grilleSize ?? null,
+      faceVelocityMs: rd?.returns?.[i]?.faceVelocityMs ?? null
+    })),
+    // One row per GRILLE.
+    points: (rd?.returns || []).map(r => ({
+      index: r.index, airflowLs: r.airflowLs,
+      grilleSize: r.grilleSize, faceVelocityMs: r.faceVelocityMs
     }))
   };
 
@@ -413,10 +422,13 @@ export function checkNacSchedule(data) {
     badReturn.length ? badReturn.map(dia).join(', ')
       : [...new Set(data.ret.ducts.map(d => dia(d.diameterMm)))].join(' / '));
 
-  // One duct back per return point — never two from one grille.
-  check('One duct per return point',
-    data.ret.ductsPerReturn === 1,
-    data.ret.ductsPerReturn + ' duct(s) from each of ' + data.ret.ductCount + ' return(s)');
+  // Every duct carries only its own share — the double-count that had 601 L/s
+  // in a duct the design thought was carrying 300.
+  const ductTotal = data.ret.ducts.reduce((n, d) => n + (d.airflowLs || 0), 0);
+  check('The return ducts carry the whole system between them',
+    data.ret.totalAirflowLs ? Math.abs(ductTotal - data.ret.totalAirflowLs) <= 2 : true,
+    data.ret.ductCount + ' × ' + dia(data.ret.ducts[0]?.diameterMm) + ' carrying ' +
+    ductTotal + ' L/s of ' + data.ret.totalAirflowLs + ' L/s');
 
   const oversizedBranch = data.btos.filter(b =>
     b.parentDiameterMm && b.branchDiameterMm > b.parentDiameterMm);
@@ -545,9 +557,16 @@ export function nacDuctSchedule(design, opts = {}) {
   // ── 5 ────────────────────────────────────────────────────────────────────
   L.push('5. RETURN AIR');
   rule();
-  L.push('   Return ducts: ' + d.ret.ductCount + '   (NAC fits ' + d.ret.allowedMin +
-         ' or ' + d.ret.allowedMax + ')');
-  if (d.ret.rule) L.push('   ' + d.ret.rule);
+  L.push('   Return grilles: ' + d.ret.pointCount + '   ducts back to the unit: ' +
+         d.ret.ductCount + ' \u00d7 ' + dia(d.ret.ducts[0]?.diameterMm) +
+         '   (NAC fits ' + d.ret.allowedMin + ' or ' + d.ret.allowedMax + ' returns)');
+  if (d.ret.fromUnitSpec) {
+    L.push('   From the unit: ' + d.ret.unitConnection +
+           ' \u2014 the fan coil\'s own return connection, so that is the duct.');
+  } else if (d.ret.rule) {
+    L.push('   ' + d.ret.rule + ' The unit states a rectangular flange, not round');
+    L.push('   spigots, so NAC standard return sizing applies.');
+  }
   L.push('');
   L.push('   ' + pad('DUCT', 10) + pad('SIZE', 7) + rpad('AIRFLOW', 10) + rpad('VELOCITY', 11) +
          '   ' + pad('GRILLE', 15) + 'FACE VELOCITY');

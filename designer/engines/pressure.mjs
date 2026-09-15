@@ -50,10 +50,22 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
     // A return design part-built (or restored from an older save) must still
     // produce an estimate rather than throw — this runs on the way to a quote.
     const rd = returnDesign.duct || {};
-    const returnDuctPa = rd.lengthM
-      ? round(rd.lengthM * 2.2, 1)                    // typical flex return loss per metre
+    // THE AIR TRAVELS THROUGH ONE DUCT, NOT ALL OF THEM IN SERIES.
+    //
+    // rd.lengthM is the total flex to BUY — two ducts is twice the metres on
+    // the order. Charging the pressure calculation for all of it added the
+    // second return's run to a path no air takes, and inflated the requirement
+    // by the length of a whole duct on every two-return design.
+    const runM = rd.lengthPerDuctM ?? rd.lengthM ?? 0;
+    const returnDuctPa = runM
+      ? round(runM * 2.2, 1)                          // typical flex return loss per metre
       : 0;
-    if (returnDuctPa) components.push({ item: 'Return duct', detail: rd.diameterMm + ' mm × ' + rd.lengthM + ' m', pa: returnDuctPa });
+    if (returnDuctPa) {
+      components.push({ item: 'Return duct',
+        detail: rd.diameterMm + ' mm × ' + runM + ' m' +
+                ((rd.ductCount ?? 1) > 1 ? ' (one of ' + rd.ductCount + ' in parallel)' : ''),
+        pa: returnDuctPa });
+    }
     components.push({ item: 'Return plenum', detail: 'Equivalent allowance', pa: round(settings.pressure.equivalentLengthM.return_plenum * 2.2, 1) });
     components.push({ item: 'Return grille', detail: returnDesign.returns?.[0]?.grilleSize || '', pa: C.return_grille });
     components.push({ item: 'Filter (clean)', detail: returnDesign.filter?.size || '', pa: C.filter_clean });

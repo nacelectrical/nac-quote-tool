@@ -153,8 +153,9 @@ test('the return picks the smallest duct that stays inside the band', () => {
 test('a 25 kW system returns through 2 x 450', () => {
   // 1202 L/s, two return points, 601 L/s each: a 450 at 3.78 m/s.
   const ret = designReturnAir({ totalAirflowLs: 1202, returnCount: 2, ductLengthMm: 4000 });
-  assert.equal(ret.returnCount, 2);
-  assert.equal(ret.duct.ductCount, 1, 'one duct back from each return point');
+  assert.equal(ret.returnCount, 2, 'two return grilles');
+  assert.equal(ret.duct.ductCount, 2, 'two ducts back to the unit');
+  assert.equal(ret.perDuctLs, ret.perReturnLs, 'one duct per grille when the unit has no spigots');
   assert.equal(ret.duct.diameterMm, 450);
   assert.ok(ret.duct.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max);
   assert.ok(!ret.warnings.some(w => w.code === 'RESTRICTED_RETURN_PATH'));
@@ -208,4 +209,34 @@ test('no return point is ever left over its velocity band', () => {
       total + ' L/s over ' + count + ' return(s) runs at ' + d.velocityMs + ' m/s');
     assert.equal(d.exceedsStandard, false, total + ' L/s exceeded the standard');
   }
+});
+
+// ── The unit's own spigots, which the pipeline never used to ask for ────────
+
+test('the Daikin 16 kW return runs on its own 2 x 400 spigots', () => {
+  // Manufacturer data, and 46 of the 489 units in the sheet state it. Nothing
+  // was passing the unit into designReturnAir, so all of it was being ignored.
+  const ret = designReturnAir({ totalAirflowLs: 800, ductLengthMm: 4000,
+    unit: { brandId: 'daikin', model: 'FDYAN160AV1 / RZA160C2V1' } });
+  assert.equal(ret.duct.fromUnitSpec, true);
+  assert.equal(ret.duct.ductCount, 2);
+  assert.equal(ret.duct.diameterMm, 400);
+  assert.equal(ret.duct.unitReturnFlangeText, '2 x 400 Oval');
+  // And the velocity is worked out on the air in ONE duct.
+  assert.equal(ret.perDuctLs, Math.round(ret.designAirflowLs / 2));
+  assert.ok(ret.duct.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max,
+    ret.duct.velocityMs + ' m/s');
+});
+
+test('a unit that states no spigots still gets NAC standard sizing', () => {
+  // The 25 kW Daikin publishes a rectangular flange, not round spigots, so
+  // NAC install practice sizes it — and that is what the schedule says.
+  const spec = findUnitSpec('daikin', 'FDYQN250LBV1');
+  assert.equal(spec.returnSpigots, null);
+  assert.match(spec.returnFlangeText, /x/);
+  const ret = designReturnAir({ totalAirflowLs: 1202, ductLengthMm: 4000,
+    unit: { brandId: 'daikin', model: 'FDYQN250LBV1' } });
+  assert.equal(ret.duct.fromUnitSpec, false);
+  assert.equal(ret.duct.diameterMm, 450);
+  assert.equal(ret.duct.ductCount, 2);
 });

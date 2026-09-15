@@ -365,13 +365,26 @@ test('the return is 1 or 2 ducts, each with a size and an airflow', () => {
   }
 });
 
-test('the return runs one duct per point, on the return ladder', () => {
-  assert.equal(S.ret.ductsPerReturn, 1,
-    S.ret.ductsPerReturn + ' ducts from each return point');
+test('every return duct carries only its own share', () => {
+  // The double-count this replaced had 601 L/s going through a duct the design
+  // thought was carrying 300.
+  const total = S.ret.ducts.reduce((n, d) => n + d.airflowLs, 0);
+  assert.ok(Math.abs(total - S.ret.totalAirflowLs) <= 2,
+    S.ret.ductCount + ' ducts carrying ' + total + ' of ' + S.ret.totalAirflowLs + ' L/s');
   for (const r of S.ret.ducts) {
     assert.ok(RETURN_DUCT_SIZES_MM.includes(r.diameterMm),
       'return ' + r.index + ' is ' + r.diameterMm);
+    assert.equal(r.airflowLs, S.ret.perDuctLs);
   }
+});
+
+test('grilles and ducts are counted separately', () => {
+  // One grille can feed a box that splits into the unit's two spigots, so these
+  // are genuinely two numbers. Both must be stated.
+  assert.ok(S.ret.pointCount >= 1);
+  assert.ok(S.ret.ductCount >= 1);
+  assert.equal(S.ret.points.length, S.ret.pointCount);
+  assert.equal(S.ret.ducts.length, S.ret.ductCount);
 });
 
 test('a 25 kW system returns through 2 x 450', () => {
@@ -603,4 +616,31 @@ test('with no site measurements the design blocks and names both rooms', async (
     'an unmeasured room carried load');
   assert.ok(blocked.systemLoad.totalConditionedAreaSqM < design.systemLoad.totalConditionedAreaSqM,
     'dropping two rooms did not reduce the conditioned area');
+});
+
+// ── Parallel ducts are not in series ────────────────────────────────────────
+
+test('the return pressure is one duct’s run, not every duct added together', () => {
+  // rd.lengthM is the flex to BUY — two ducts is twice the metres on the order.
+  // Charging the pressure calculation for all of it added the second return's
+  // run to a path no air takes.
+  const rd = design.returnDesign.duct;
+  assert.ok(rd.ductCount >= 2, 'fixture no longer has parallel return ducts');
+  assert.ok(rd.lengthM > rd.lengthPerDuctM, 'total flex should exceed one run');
+
+  const line = design.pressure.components.find(c => c.item === 'Return duct');
+  assert.ok(line, 'no return duct in the pressure breakdown');
+  const perDuctPa = Math.round(rd.lengthPerDuctM * 2.2 * 10) / 10;
+  assert.equal(line.pa, perDuctPa,
+    line.pa + ' Pa charged for ' + rd.lengthM + ' m when the air travels ' +
+    rd.lengthPerDuctM + ' m');
+  assert.match(line.detail, /one of 2 in parallel/);
+});
+
+test('the BOM still buys every metre of return flex', () => {
+  // The other half of the same distinction: pressure uses one run, the order
+  // uses all of them.
+  const rd = design.returnDesign.duct;
+  assert.ok(Math.abs(rd.lengthM - rd.lengthPerDuctM * rd.ductCount) < 0.02,
+    rd.lengthM + ' m total for ' + rd.ductCount + ' × ' + rd.lengthPerDuctM + ' m');
 });
