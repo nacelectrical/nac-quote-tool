@@ -440,6 +440,19 @@ export const SUPPLY_PLENUM = Object.freeze({
   sameSizeMains: true,
 
   /**
+   * The sizes NAC makes a plenum up in, biggest first.
+   *
+   * 400 is the standard spigot — 2 × 400 or 3 × 400 depending on the system —
+   * and the smaller two are for houses where a 400 would be so slow it is a
+   * waste of duct. A plenum spigot is never smaller than a main, so this
+   * ladder stops at MIN_MAIN_DIAMETER_MM.
+   */
+  mainSizesMm: Object.freeze([400, 350, 300]),
+
+  /** Counts to try, most mains first: more mains means shorter runs. */
+  mainCounts: Object.freeze([3, 2]),
+
+  /**
    * How far off an even share a main may be.
    *
    * Rooms come in whole outlets, so a perfectly even split is not usually
@@ -451,6 +464,51 @@ export const SUPPLY_PLENUM = Object.freeze({
   /** What each main must record. */
   requiredFields: Object.freeze(['diameterMm', 'airflowLs', 'serves'])
 });
+
+/**
+ * CHOOSE THE PLENUM: how many ducts leave it, and what size they all are.
+ *
+ * Both at once, because they are one decision. 1202 L/s off a plenum is
+ * 2 × ø400 at 4.78 m/s or 3 × ø400 at 3.19 m/s, and only the first is a duct
+ * moving air — so the count cannot be settled before the size.
+ *
+ * Tried biggest duct first (a 400 is the standard spigot), and within a size,
+ * most mains first (shorter runs). The first combination that puts every main
+ * inside the velocity band wins. If nothing does, the closest to the target is
+ * taken and the caller is told it is out of band rather than being given a
+ * quiet answer.
+ *
+ * @param systemLs  the whole supply airflow
+ * @param band      { preferredMin, preferred, max } for a main, from settings
+ */
+export function choosePlenumMains(systemLs, band = { preferredMin: 4, preferred: 6, max: 8 }, opts = {}) {
+  const sizes = opts.sizesMm || SUPPLY_PLENUM.mainSizesMm;
+  const counts = opts.counts || SUPPLY_PLENUM.mainCounts;
+  const options = [];
+  for (const diameterMm of sizes) {
+    for (const count of counts) {
+      const perMainLs = systemLs / count;
+      const r = diameterMm / 2000;
+      const velocityMs = Math.round(((perMainLs / 1000) / (Math.PI * r * r)) * 100) / 100;
+      options.push({
+        count, diameterMm,
+        perMainLs: Math.round(perMainLs),
+        velocityMs,
+        inBand: velocityMs >= band.preferredMin && velocityMs <= band.max
+      });
+    }
+  }
+  const inBand = options.filter(o => o.inBand);
+  const pick = inBand[0] || [...options]
+    .sort((a, b) => Math.abs(a.velocityMs - band.preferred) - Math.abs(b.velocityMs - band.preferred))[0];
+  return {
+    ...pick,
+    options,
+    reason: pick.count + ' \u00d7 \u00f8' + pick.diameterMm + ' at ' + pick.velocityMs +
+      ' m/s' + (pick.inBand ? '' : ' \u2014 OUTSIDE the ' + band.preferredMin + '\u2013' +
+        band.max + ' m/s band for a main') + '.'
+  };
+}
 
 /**
  * How evenly the air is shared across the mains.
@@ -490,6 +548,20 @@ export function mainSupplyCount(systemAirflowLs, roomCount = 0) {
 // One return, or two. Not an arbitrary number, and never zero. Sizing comes
 // from the selected unit and the design airflow, through the return engine —
 // this file decides only HOW MANY.
+
+/**
+ * THE RETURN DUCT LADDER.
+ *
+ * Separate from the supply ladder on purpose. Nick's rule that NAC never fits
+ * a 450 or a 500 is about SUPPLY — on the return a 450 is exactly what goes on
+ * a big unit, because the whole system comes back through one or two ducts and
+ * a 400 runs them too fast. On the 25 kW unit the returns are 2 × ø450.
+ *
+ * ONE DUCT PER RETURN POINT. The number of RETURNS is what scales with the
+ * system; running two ducts back from one grille was double-counting, and the
+ * drawing and the schedule disagreed with the return engine because of it.
+ */
+export const RETURN_DUCT_SIZES_MM = Object.freeze([350, 400, 450]);
 
 export const RETURN_AIR = Object.freeze({
   minReturns: 1,
@@ -684,6 +756,8 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
   bto: BTO,
   supplyPlenum: SUPPLY_PLENUM,
   plenumBalance,
+  choosePlenumMains,
+  returnDuctSizesMm: RETURN_DUCT_SIZES_MM,
   mainReductions: MAIN_REDUCTIONS,
   minMainDiameterMm: MIN_MAIN_DIAMETER_MM,
   mainFloorForFinals,

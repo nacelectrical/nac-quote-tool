@@ -20,7 +20,8 @@ import { buildCatalogue } from '../designer/engines/catalogue.mjs';
 import { nacScheduleData, checkNacSchedule, nacDuctSchedule, velocityMs }
   from '../designer/engines/nac-schedule.mjs';
 import { FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, mainFloorForFinals,
-         plenumBalance, MIN_MAIN_DIAMETER_MM } from '../designer/engines/nac-standard.mjs';
+         plenumBalance, MIN_MAIN_DIAMETER_MM, RETURN_DUCT_SIZES_MM,
+         choosePlenumMains } from '../designer/engines/nac-standard.mjs';
 import { balanceGroups } from '../designer/engines/nac-router.mjs';
 
 // The real sheet: every label at the pixel it is printed, with the size text
@@ -95,6 +96,35 @@ test('every duct off the plenum is the same size', () => {
   for (const duct of S.plenum.ducts) {
     assert.equal(duct.diameterMm, S.plenum.ductSizeMm);
   }
+});
+
+test('the plenum picks its count and its size together', () => {
+  // 1202 L/s is 2 x 400 at 4.78 m/s or 3 x 400 at 3.19 m/s, and only the first
+  // is a duct moving air — so the count cannot be settled before the size.
+  const p = choosePlenumMains(1202);
+  assert.equal(p.count, 2);
+  assert.equal(p.diameterMm, 400);
+  assert.equal(p.inBand, true);
+  // A bigger system fills three of the same spigot.
+  const big = choosePlenumMains(1800);
+  assert.equal(big.count, 3);
+  assert.equal(big.diameterMm, 400);
+  assert.equal(big.inBand, true);
+  // A small one steps the SIZE down rather than dropping below two mains.
+  const small = choosePlenumMains(600);
+  assert.equal(small.count, 2);
+  assert.ok(small.diameterMm < 400);
+  assert.ok(small.inBand);
+  // Every option it considered is a size NAC makes a plenum in.
+  for (const o of p.options) {
+    assert.ok(SUPPLY_PLENUM.mainSizesMm.includes(o.diameterMm));
+    assert.ok(o.count >= SUPPLY_PLENUM.minMains && o.count <= SUPPLY_PLENUM.maxMains);
+  }
+});
+
+test('the plenum on the real plan is 2 x 400', () => {
+  assert.equal(S.plenum.ductCount, 2);
+  assert.equal(S.plenum.ductSizeMm, 400);
 });
 
 test('the air is shared evenly across the plenum ducts', () => {
@@ -289,6 +319,40 @@ test('the return is 1 or 2 ducts, each with a size and an airflow', () => {
     assert.ok(r.diameterMm > 0);
     assert.ok(r.airflowLs > 0);
   }
+});
+
+test('the return runs one duct per point, on the return ladder', () => {
+  assert.equal(S.ret.ductsPerReturn, 1,
+    S.ret.ductsPerReturn + ' ducts from each return point');
+  for (const r of S.ret.ducts) {
+    assert.ok(RETURN_DUCT_SIZES_MM.includes(r.diameterMm),
+      'return ' + r.index + ' is ' + r.diameterMm);
+  }
+});
+
+test('a 25 kW system returns through 2 x 450', () => {
+  // Nick, on this unit. A 450 on the RETURN is not a contradiction of "never a
+  // 450" — that rule is about supply.
+  assert.equal(S.ret.ductCount, 2);
+  for (const r of S.ret.ducts) assert.equal(r.diameterMm, 450);
+});
+
+test('no return duct is over its velocity band', () => {
+  // The old design ran 2 x 350 at 6.25 m/s, over the 5 m/s return maximum.
+  for (const r of S.ret.ducts) {
+    assert.ok(r.velocityMs <= 5, 'return ' + r.index + ' at ' + r.velocityMs + ' m/s');
+  }
+});
+
+test('450 never appears on the supply side', () => {
+  const supply = [
+    ...S.plenum.ducts.map(d => d.diameterMm),
+    ...S.mainRuns.flatMap(m => m.stretches.map(x => x.diameterMm)),
+    ...S.rooms.flatMap(r => r.finalSizesMm)
+  ];
+  assert.ok(!supply.includes(450), 'a 450 got onto the supply side');
+  assert.ok(!supply.includes(500));
+  assert.ok(Math.max(...supply) <= 400);
 });
 
 test('the returns carry the whole system between them', () => {

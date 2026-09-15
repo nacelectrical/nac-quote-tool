@@ -226,10 +226,16 @@ export const DEFAULT_SETTINGS = {
       [700, 500], [800, 500], [900, 600], [1000, 600], [1200, 600]
     ],
     maxSingleReturnLs: 700,
-    // NAC's return standard: one 400 mm duct, or two ducts at 350 or 400.
-    // Nothing larger — 450 and 500 flex is not installed.
-    returnDuctSizesMm: [350, 400],
-    maxReturnDucts: 2
+    // NAC's return standard. 450 IS fitted on the return — on the 25 kW unit
+    // the returns are 2 x 450 — which is not a contradiction of "never a 450":
+    // that rule is about SUPPLY. Republished from the standard so the Design
+    // Settings screen edits one list, not a second copy.
+    returnDuctSizesMm: [...NAC.returnDuctSizesMm],
+    // ONE DUCT PER RETURN POINT. The number of RETURNS is what scales with the
+    // system. Running two ducts back from a single grille divided the airflow
+    // twice, so the return engine and the drawing disagreed about how much air
+    // was in each duct.
+    maxReturnDucts: 1
   },
 
   // ── Zoning (PART 20) ────────────────────────────────────────────────────────

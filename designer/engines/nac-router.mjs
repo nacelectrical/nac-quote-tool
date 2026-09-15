@@ -54,7 +54,7 @@ import { selectDiameter } from './ducts.mjs';
 import {
   mainSupplyCount, returnCountFor, FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR,
   BTO as BTO_RULES, ROUTING, MAIN_REDUCTIONS, MIN_MAIN_DIAMETER_MM,
-  finalSizeForAirflow, mainFloorForFinals
+  finalSizeForAirflow, mainFloorForFinals, choosePlenumMains
 } from './nac-standard.mjs';
 
 // ── Geometry: flexible duct sweeps ───────────────────────────────────────────
@@ -360,11 +360,21 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
   }
 
   // ── HARD RULE 1: two or three mains, each serving a spatial group ─────────
+  // HOW MANY DUCTS LEAVE THE PLENUM, AND WHAT SIZE THEY ALL ARE — one
+  // decision, not two. 1202 L/s is 2 x 400 at 4.78 m/s or 3 x 400 at 3.19,
+  // and only the first is a duct moving air, so the count cannot be settled
+  // before the size.
   const systemLs = outletPoints.reduce((s, o) => s + o.airflowLs, 0);
+  const plenumChoice = choosePlenumMains(systemLs, settings.duct?.velocity?.main);
   const wantMains = Math.min(
-    Math.max(opts.mainCount || mainSupplyCount(systemLs, placed.length), SUPPLY_PLENUM.minMains),
+    Math.max(opts.mainCount || plenumChoice.count, SUPPLY_PLENUM.minMains),
     Math.min(SUPPLY_PLENUM.maxMains, outletPoints.length));
   const groups = groupOutlets(outletPoints, wantMains);
+  if (!plenumChoice.inBand) {
+    warnings.push({ code: 'PLENUM_OUT_OF_BAND', severity: 'CHECK',
+      message: 'No 2 or 3 duct plenum keeps the mains inside the velocity band at ' +
+               Math.round(systemLs) + ' L/s. Closest is ' + plenumChoice.reason });
+  }
 
   // ── THE NAC PLENUM RULE: every duct off it is the same size ──────────────
   // A plenum is a box with identical spigots. Sizing each main on its own
@@ -377,9 +387,12 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
   const sizeForMain = (ls) => Math.max(MIN_MAIN_DIAMETER_MM,
     selectDiameter(ls, 'main', { settings }).diameterMm);
   const groupFlows = groups.map(g => g.reduce((n, o) => n + o.airflowLs, 0));
-  const commonMainMm = SUPPLY_PLENUM.sameSizeMains
-    ? Math.max(...groupFlows.map(sizeForMain))
-    : null;
+  // The plenum's own choice decides it. The groups came out balanced, so the
+  // size that suits the average suits all of them; the per-group fallback is
+  // only there for a plenum the estimator has forced to a count of its own.
+  const commonMainMm = !SUPPLY_PLENUM.sameSizeMains ? null
+    : wantMains === plenumChoice.count ? plenumChoice.diameterMm
+    : Math.max(...groupFlows.map(sizeForMain));
 
   const segments = [];
   const nodes = [{ id: 'plenum', type: 'plenum', x: plenum.x, y: plenum.y,

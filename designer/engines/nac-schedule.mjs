@@ -18,7 +18,7 @@
 
 import {
   FINAL_FLEX, SUPPLY_PLENUM, RETURN_AIR, MAIN_REDUCTIONS, STOCKED_DIAMETERS_MM,
-  MIN_MAIN_DIAMETER_MM, plenumBalance
+  MIN_MAIN_DIAMETER_MM, RETURN_DUCT_SIZES_MM, plenumBalance
 } from './nac-standard.mjs';
 import { DEFAULT_SETTINGS } from './settings.mjs';
 
@@ -184,11 +184,16 @@ export function nacScheduleData(design, opts = {}) {
   // ── 5. Return air ────────────────────────────────────────────────────────
   const rd = design?.returnDesign || null;
   const ret = {
-    ductCount: rd?.duct?.ductCount ?? rd?.returnCount ?? null,
+    // The number of RETURN POINTS — which is the number of ducts, because NAC
+    // runs one duct back from each. It is not duct.ductCount: that is per
+    // point, and reading it as the total was how 2 returns became 4 ducts.
+    ductCount: rd?.returnCount ?? null,
     allowedMin: RETURN_AIR.minReturns,
     allowedMax: RETURN_AIR.maxReturns,
     totalAirflowLs: rd?.designAirflowLs ?? null,
     rule: rd?.returnCountRule || null,
+    // How many ducts run back from EACH return point. NAC runs one.
+    ductsPerReturn: rd?.duct?.ductCount ?? 1,
     ducts: (rd?.returns || []).map(r => ({
       index: r.index,
       diameterMm: rd?.duct?.diameterMm ?? null,
@@ -385,15 +390,33 @@ export function checkNacSchedule(data) {
         ' mains = ' + data.totals.mains + ' runs + ' +
         (data.totals.mainStretches - data.totals.mains) + ' reductions');
 
-  const offLadder = [...new Set([
+  // SUPPLY and RETURN have different ladders, and that is deliberate. "Never a
+  // 450" is a rule about supply; on the return a 450 is what goes on a big
+  // unit, because the whole system comes back through one or two ducts.
+  const supplySizes = [...new Set([
     ...data.plenum.ducts.map(d => d.diameterMm),
     ...data.mainRuns.flatMap(m => m.stretches.map(s => s.diameterMm)),
-    ...data.rooms.flatMap(r => r.finalSizesMm),
-    ...data.ret.ducts.map(d => d.diameterMm)
-  ])].filter(mm => mm && !STOCKED_DIAMETERS_MM.includes(mm));
-  check('Every size is one NAC stocks — no 450, no 500',
+    ...data.majorBranches.map(b => b.diameterMm),
+    ...data.rooms.flatMap(r => r.finalSizesMm)
+  ])].filter(Boolean);
+  const offLadder = supplySizes.filter(mm => !STOCKED_DIAMETERS_MM.includes(mm));
+  check('Every SUPPLY size is one NAC stocks — no 450, no 500',
     offLadder.length === 0,
-    offLadder.length ? offLadder.map(dia).join(', ') : 'all sizes stocked');
+    offLadder.length ? offLadder.map(dia).join(', ')
+      : supplySizes.sort((a, b) => a - b).map(dia).join(' / '));
+
+  const badReturn = data.ret.ducts.map(d => d.diameterMm)
+    .filter(mm => mm && !RETURN_DUCT_SIZES_MM.includes(mm));
+  check('Every RETURN duct is a size NAC fits (' +
+    RETURN_DUCT_SIZES_MM.join(' / ') + ')',
+    badReturn.length === 0,
+    badReturn.length ? badReturn.map(dia).join(', ')
+      : [...new Set(data.ret.ducts.map(d => dia(d.diameterMm)))].join(' / '));
+
+  // One duct back per return point — never two from one grille.
+  check('One duct per return point',
+    data.ret.ductsPerReturn === 1,
+    data.ret.ductsPerReturn + ' duct(s) from each of ' + data.ret.ductCount + ' return(s)');
 
   const oversizedBranch = data.btos.filter(b =>
     b.parentDiameterMm && b.branchDiameterMm > b.parentDiameterMm);
