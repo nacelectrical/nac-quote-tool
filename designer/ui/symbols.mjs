@@ -2141,3 +2141,167 @@ export function drawFlowArrow(ctx, pts, { fraction = 0.5, colour = RETURN_COLOUR
   }
   return null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE BTO FABRICATION DETAIL — WHAT THE SHOP MARKS OUT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nick: "Add a BTO fabrication detail or diagram showing: inlet face; outlet
+// faces; collar sizes; collar locations; body dimensions."
+//
+// The plan symbol shows the fitting where it sits in the roof with its necks
+// pointing at the ducts they feed. That is the right drawing for an installer
+// and the wrong one for a fabricator, who needs each FACE flat, square on, with
+// the collar centres dimensioned off it. So this is a development: the inlet
+// end, then every face carrying collars, laid out side by side at one scale.
+//
+// It is drawn from the SAME face-layout object the schedule, the order and the
+// site editor read. Nothing here decides anything; if the layout says a collar
+// is 225 mm along Side A, that is where the circle goes.
+
+/** Colours for the detail: sheet metal, a red circle for a collar that failed. */
+export const DETAIL = Object.freeze({
+  panelFill: '#FFFFFF',
+  panelEdge: '#4A4F57',
+  seam: '#A9AEB6',
+  collar: '#1D7A48',
+  collarBad: WARNING_COLOUR,
+  dim: '#6C7280',
+  ink: INK
+});
+
+/**
+ * Draw the fabrication development of one fitting into `box`.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout  a `faceLayout` from `bto-faces.mjs`
+ * @param {object} box     { x, y, w, h }
+ * @param {object} opts    { title, subtitle, status }
+ */
+export function drawBtoFabricationDetail(ctx, layout, box, opts = {}) {
+  if (!layout) return null;
+  const pad = 14;
+  const headH = opts.title ? 34 : 0;
+  const footH = 30;                       // room for the per-face dimension text
+  const gap = 26;
+
+  // One panel per face that carries metal the shop has to punch.
+  const panels = [
+    { key: 'inlet', label: 'INLET END', uMm: layout.inlet.availableWidthMm,
+      vMm: layout.inlet.availableHeightMm, uAxis: 'body width', vAxis: 'body height',
+      collars: [{ nominalDiameterMm: layout.inlet.nominalDiameterMm,
+                  outsideDiameterMm: layout.inlet.outsideDiameterMm,
+                  centreUmm: layout.inlet.centreUmm, centreVmm: layout.inlet.centreVmm,
+                  destination: 'INLET', fits: layout.inlet.fits }],
+      fits: layout.inlet.fits },
+    ...layout.faces.map(f => ({
+      key: f.face, label: f.faceLabel.toUpperCase(), uMm: f.availableWidthMm,
+      vMm: f.availableHeightMm, uAxis: f.widthAxis, vAxis: f.heightAxis,
+      collars: f.collars.map(c => ({ ...c, fits: f.fits })), fits: f.fits,
+      requiredWidthMm: f.requiredWidthMm, requiredHeightMm: f.requiredHeightMm }))
+  ];
+
+  const totalUmm = panels.reduce((n, p) => n + p.uMm, 0);
+  const maxVmm = Math.max(...panels.map(p => p.vMm));
+  const availW = box.w - pad * 2 - gap * (panels.length - 1);
+  const availH = box.h - pad * 2 - headH - footH;
+  const scale = Math.min(availW / totalUmm, availH / maxVmm);
+
+  ctx.save();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+
+  if (opts.title) {
+    ctx.font = '800 15px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = DETAIL.ink;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(opts.title, box.x + pad, box.y + 20);
+    ctx.font = '600 10.5px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = layout.pass ? DETAIL.dim : DETAIL.collarBad;
+    ctx.fillText(opts.subtitle || (layout.bodyText + '  ·  ' + layout.status),
+      box.x + pad, box.y + 34);
+  }
+
+  let x = box.x + pad;
+  const baseY = box.y + pad + headH;
+  for (const p of panels) {
+    const w = p.uMm * scale, hh = p.vMm * scale;
+    const y = baseY + (availH - hh) / 2;
+
+    // The face itself, with its lock seams shown at the edges it folds on.
+    ctx.fillStyle = DETAIL.panelFill;
+    ctx.strokeStyle = p.fits ? DETAIL.panelEdge : DETAIL.collarBad;
+    ctx.lineWidth = p.fits ? 1.6 : 2.4;
+    ctx.beginPath(); ctx.rect(x, y, w, hh); ctx.fill(); ctx.stroke();
+    const seam = (layout.allowances.seamAllowanceMm || 0) * scale;
+    if (seam > 0.6) {
+      ctx.strokeStyle = DETAIL.seam;
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.rect(x + seam, y + seam, Math.max(1, w - seam * 2), Math.max(1, hh - seam * 2));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Every collar, at the centre the layout put it at.
+    for (const c of p.collars) {
+      const cx = x + (c.centreUmm || 0) * scale;
+      const cy = y + hh - (c.centreVmm || 0) * scale;      // v measured up the face
+      const r = ((c.outsideDiameterMm || 0) / 2) * scale;
+      ctx.strokeStyle = c.fits ? DETAIL.collar : DETAIL.collarBad;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, r), 0, Math.PI * 2); ctx.stroke();
+      // Centre lines — a fabricator marks off these, not off the circle.
+      ctx.strokeStyle = DETAIL.dim; ctx.lineWidth = 0.7;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(cx, y); ctx.lineTo(cx, y + hh);
+      ctx.moveTo(x, cy); ctx.lineTo(x + w, cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '700 9.5px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = c.fits ? DETAIL.ink : DETAIL.collarBad;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('ø' + c.nominalDiameterMm, cx, cy);
+      if (c.destination && c.destination !== 'INLET') {
+        ctx.font = '600 8.5px -apple-system, system-ui, sans-serif';
+        ctx.fillStyle = DETAIL.dim;
+        ctx.fillText(String(c.destination).slice(0, 16), cx, cy + Math.max(2, r) + 8);
+      }
+      // The collar centre, dimensioned off the face edge.
+      ctx.font = '600 8px -apple-system, system-ui, sans-serif';
+      ctx.fillStyle = DETAIL.dim;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(Math.round(c.centreUmm) + '', cx, y - 4);
+    }
+
+    // Face name, its size, and what it needed if that is different.
+    ctx.textAlign = 'center';
+    ctx.font = '800 9.5px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = p.fits ? DETAIL.ink : DETAIL.collarBad;
+    ctx.textBaseline = 'top';
+    ctx.fillText(p.label, x + w / 2, y + hh + 6);
+    ctx.font = '600 8.5px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = DETAIL.dim;
+    ctx.fillText(Math.round(p.uMm) + ' × ' + Math.round(p.vMm) + ' mm', x + w / 2, y + hh + 17);
+    if (!p.fits && p.requiredWidthMm) {
+      ctx.fillStyle = DETAIL.collarBad;
+      ctx.fillText('needs ' + Math.round(p.requiredWidthMm) + ' × ' +
+        Math.round(p.requiredHeightMm) + ' mm', x + w / 2, y + hh + 27);
+    }
+    x += w + gap;
+  }
+
+  // Anything that had no face at all is named rather than silently missing.
+  if ((layout.unplacedCollars || []).length) {
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.font = '800 10px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = DETAIL.collarBad;
+    ctx.fillText('NO FACE: ' + layout.unplacedCollars
+      .map(u => 'ø' + u.nominalDiameterMm).join(', '),
+      box.x + pad, box.y + box.h - 6);
+  }
+  ctx.restore();
+  return { panels: panels.length, scale };
+}

@@ -256,11 +256,40 @@ export function buildBillOfMaterials(design, opts = {}) {
       requiredCollarRunMm: body?.requiredCollarRunMm ?? null,
       fabricationDescription: body?.bomDescription || null,
       dimensionsVerified: body ? body.verified : null,
+      // ── THE COLLAR LAYOUT THE SHOP HAS TO MARK OUT ──────────────────────
+      // Which face, which centre, what clearance. A body on this line is
+      // fabrication-ready ONLY when somebody gave us the box and the collars
+      // were laid out on it and fitted.
+      bodyLengthMm: body?.bodyLengthMm ?? null,
+      bodyWidthMm: body?.bodyWidthMm ?? null,
+      bodyHeightMm: body?.bodyHeightMm ?? null,
+      bodySource: body?.faceLayout?.bodySource || null,
+      proposedBodyText: body?.proposedBodyText || null,
+      collarFaceLayout: body?.faceLayout
+        ? { pass: body.faceLayout.pass, validated: body.faceLayout.validated,
+            status: body.faceLayout.status, multiFace: body.faceLayout.multiFace,
+            facesUsed: body.faceLayout.facesUsed,
+            collars: body.faceLayout.collars.map(c => ({
+              portIndex: c.portIndex, face: c.face, faceLabel: c.faceLabel,
+              nominalDiameterMm: c.nominalDiameterMm,
+              outsideDiameterMm: c.outsideDiameterMm,
+              centreUmm: c.centreUmm, centreVmm: c.centreVmm,
+              edgeClearanceMm: c.edgeClearanceUmm,
+              clearanceToPreviousMm: c.clearanceToPreviousMm,
+              destination: c.destination })),
+            unplaced: body.faceLayout.unplacedCollars }
+        : null,
+      fabricationReady: !!body?.layoutValidated,
+      layoutStatus: body?.layoutStatus || null,
       note: 'Supply-air multi-spigot branch take-off. Not a saddle collar, not one ' +
             'per outlet, and never a return-air component.' +
             (body && !body.verified
-              ? ' Body size derived from the collars this design chose — confirm ' +
-                'against the fabricator\u2019s standard bodies before ordering.' : '') });
+              ? ' Body size is a PROPOSAL worked out from a collar-by-collar face ' +
+                'layout, not a fabricator\u2019s standard body — confirm against the ' +
+                'fabricator\u2019s bodies before ordering.' : '') +
+            (body && body.verified && !body.layoutValidated
+              ? ' THE COLLARS DO NOT FIT THIS BODY: ' +
+                (body.issues || []).map(i => i.message).join(' ') : '') });
   }
 
   const totalDuctM = design.network?.totalDuctLengthM || 0;

@@ -51,9 +51,11 @@ export { pdfFontsEmbedded };
 /** PART 26 — INTERNAL HVAC DESIGN SHEET, as a print page. */
 export function internalReportHtml(design, { logo = null, planSnapshot = null,
                                              planPlate = null, planLegend = null,
-                                             equipmentInset = null } = {}) {
+                                             equipmentInset = null,
+                                             btoDetails = [] } = {}) {
   return reportPageHtml(
-    internalReportDoc(design, { planSnapshot, planPlate, planLegend, equipmentInset }),
+    internalReportDoc(design,
+      { planSnapshot, planPlate, planLegend, equipmentInset, btoDetails }),
     { logo });
 }
 
@@ -79,14 +81,16 @@ export function openReport(html, title) {
 /** The PDF bytes and the name to save them under. Pure — no DOM. */
 export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
                                                planPlate = null, planLegend = null,
-                                               equipmentInset = null } = {}) {
+                                               equipmentInset = null,
+                                               btoDetails = [] } = {}) {
   // The customer summary gets the plan and nothing else. The equipment inset is
   // an installer's drawing — collars, plenum faces, which main leaves which
   // spigot — and putting it in front of a customer invites questions the
   // summary is not written to answer.
   const doc = kind === REPORT_KIND.CUSTOMER
     ? customerReportDoc(design, { planSnapshot })
-    : internalReportDoc(design, { planSnapshot, planPlate, planLegend, equipmentInset });
+    : internalReportDoc(design,
+        { planSnapshot, planPlate, planLegend, equipmentInset, btoDetails });
   return { bytes: renderReportPdf(doc, { logo }), filename: reportFileName(doc), doc };
 }
 
@@ -99,11 +103,12 @@ export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
  */
 export function downloadReportPdf(design, kind, { logo = null, planSnapshot = null,
                                                   planPlate = null, planLegend = null,
-                                                  equipmentInset = null } = {}) {
+                                                  equipmentInset = null,
+                                                  btoDetails = [] } = {}) {
   let built;
   try {
     built = buildReportPdf(design, kind,
-                           { logo, planSnapshot, planPlate, planLegend, equipmentInset });
+      { logo, planSnapshot, planPlate, planLegend, equipmentInset, btoDetails });
   } catch (e) {
     return { ok: false, error: 'The PDF could not be built: ' + (e.message || e) };
   }

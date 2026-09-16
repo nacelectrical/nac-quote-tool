@@ -48,6 +48,53 @@ export function damperSkuKey(diameterMm, actuator = DEFAULT_ACTUATOR) {
  * else — size, airflow, velocity, part number, price — is read from the duct
  * the damper sits in, so there is exactly one place the size can come from.
  */
+/**
+ * WHAT THE INSTALLER CHANGED ABOUT THE MOTORS, APPLIED TO THE ROUTER'S PLACES.
+ *
+ * The router decides where a zone needs a motor. On site the installer may move
+ * one, delete one the job does not need, reassign which zone it drives, or add
+ * one to a duct the router left alone. Those are recorded as overrides against
+ * the damper's id and folded in HERE — before the component is built — so the
+ * size, the SKU, the schedule row, the BOM line and the price still come from
+ * the duct the damper ends up in, and nothing is sized twice.
+ *
+ * There is deliberately no "set damper diameter" here either. The duct owns the
+ * size; change the duct.
+ */
+export function applyDamperPlacements(placements, overrides = {}, network = null) {
+  const sections = new Map((network?.sections || []).map(s => [s.id, s]));
+  const out = [];
+  for (const p of (placements || [])) {
+    const o = overrides[p.id] || overrides[p.sectionId] || null;
+    if (o?.removed) continue;
+    out.push(!o ? p : {
+      ...p,
+      x: o.x ?? p.x, y: o.y ?? p.y,
+      moved: p.moved || (o.x !== undefined && o.x !== null),
+      zone: o.zone || p.zone,
+      zoneChangedOnSite: !!o.zone && o.zone !== p.zone
+    });
+  }
+  // Motors added on site, on a supply duct the installer tapped.
+  for (const [id, o] of Object.entries(overrides)) {
+    if (!o?.added || o.removed) continue;
+    if (out.some(p => p.id === id || p.sectionId === o.sectionId)) continue;
+    const sec = o.sectionId ? sections.get(o.sectionId) : null;
+    if (sec && isReturnSection(sec)) continue;     // never on the return, ever
+    const mid = sec?.points?.length
+      ? sec.points[Math.floor(sec.points.length / 2)] : null;
+    out.push({
+      id, sectionId: o.sectionId || null,
+      zone: o.zone || sec?.zone || null,
+      roomId: sec?.roomId ?? null,
+      x: o.x ?? mid?.x ?? null, y: o.y ?? mid?.y ?? null,
+      angle: o.angle ?? 0, moved: o.x !== undefined && o.x !== null,
+      addedOnSite: true
+    });
+  }
+  return out.map((p, i) => ({ ...p, motorNumber: i + 1 }));
+}
+
 export function buildZoneDampers(placements, network, { nacRates = null,
                                                         actuator = DEFAULT_ACTUATOR,
                                                         sizeOverrides = {} } = {}) {
@@ -83,6 +130,8 @@ export function buildZoneDampers(placements, network, { nacRates = null,
       y: p.y ?? null,
       angle: p.angle ?? 0,
       moved: !!p.moved,
+      addedOnSite: !!p.addedOnSite,
+      zoneChangedOnSite: !!p.zoneChangedOnSite,
 
       // ── SIZE: THE DUCT'S, UNLESS SOMEBODY OVERRODE IT ON PURPOSE ────────
       ductDiameterMm,
@@ -185,5 +234,5 @@ export function validateZoneDampers(dampers, { network = null } = {}) {
   return { ok: failures.length === 0, failures };
 }
 
-export default { buildZoneDampers, damperBomLines, validateZoneDampers,
+export default { applyDamperPlacements, buildZoneDampers, damperBomLines, validateZoneDampers,
                  damperSkuKey, ductVelocityMs, DAMPER_DIAMETERS_MM, DEFAULT_ACTUATOR };

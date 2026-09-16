@@ -38,11 +38,35 @@ export function btoFabricationSchedule(design) {
         ' — ' + (p.airflowLs ?? '?') + ' L/s'),
       shapeText: spec.shapeText,
       bodyLengthMm: spec.bodyLengthMm,
+      bodyWidthMm: spec.bodyWidthMm,
+      bodyHeightMm: spec.bodyHeightMm,
       bodyDepthMm: spec.bodyDepthMm,
       bodyText: spec.bodyText,
       dimensionsSource: spec.dimensionsSource,
       dimensionsVerified: spec.dimensionsVerified,
       fabricationStatus: spec.fabricationStatus,
+      // ── THE PHYSICAL COLLAR LAYOUT ───────────────────────────────────────
+      // Nick: "which physical face each collar occupies; collar centre position
+      // on that face; collar outside diameter; edge clearance; clearance between
+      // adjacent collars; seam/fold allowance; inlet position; outlet positions;
+      // required face width and height; available face width and height;
+      // pass/fail result." All of it, per collar, off the same component object.
+      faceLayout: spec.faceLayout,
+      collarFaceLines: spec.collarFaceLines,
+      layoutStatus: spec.layoutStatus,
+      layoutPass: spec.layoutPass,
+      layoutValidated: spec.layoutValidated,
+      fabricationReady: spec.fabricationReady,
+      multiFace: spec.multiFace,
+      facesUsed: spec.facesUsed,
+      proposedBodyText: spec.proposedBodyText,
+      unplacedCollars: spec.unplacedCollars,
+      /** `Side A 225 mm` per collar — where to punch it. */
+      collarPositions: (spec.faceLayout?.collars || []).map(c =>
+        c.faceLabel + ' — ø' + c.nominalDiameterMm + ' (OD ' + c.outsideDiameterMm +
+        ') centre ' + c.centreUmm + ' × ' + c.centreVmm + ' mm, edge ' +
+        c.edgeClearanceUmm + ' mm' +
+        (c.clearanceToPreviousMm ? ', ' + c.clearanceToPreviousMm + ' mm to the last collar' : '')),
       fits: spec.fits,
       fitIssues: spec.fitIssues,
       configKey: spec.configKey,
@@ -95,7 +119,10 @@ export function buildSchedules(design) {
   return {
     bto,
     zoneDampers: dampers,
-    btoNeedingFabricationReview: bto.filter(r => !r.dimensionsVerified).map(r => r.id),
+    btoNeedingFabricationReview: bto.filter(r => !r.fabricationReady).map(r => r.id),
+    /** Bodies whose collars were laid out and DO NOT physically go on. */
+    btoFailingCollarLayout: bto.filter(r => r.layoutPass === false).map(r => r.id),
+    btoWithMultiFaceCollars: bto.filter(r => r.multiFace).map(r => r.id),
     btoNeedingPrice: bto.filter(r => r.priceStatus !== 'VERIFIED').map(r => r.id),
     damperSizeMismatches: dampers.filter(r => r.sizeMismatch).map(r => r.id)
   };

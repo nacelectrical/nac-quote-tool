@@ -168,21 +168,46 @@ export function applySiteEdits(design, edits) {
       case SITE_EDIT.SET_BTO_PORT_DESTINATION: {
         const cur = d.btoOverrides?.[e.target] || {};
         const dest = { ...(cur.portDestinations || {}), [e.after.portIndex]: e.after.destination };
-        d.btoOverrides = put(d.btoOverrides, e.target, { ...cur, portDestinations: dest });
+        const lab = { ...(cur.portDestinationLabels || {}),
+                      [e.after.portIndex]: e.after.destinationLabel || e.after.destination };
+        d.btoOverrides = put(d.btoOverrides, e.target,
+          { ...cur, portDestinations: dest, portDestinationLabels: lab });
         break;
       }
-      case SITE_EDIT.ADD_BTO_PORT:
+      // A COLLAR IS ADDED OR REMOVED BY NAME, NOT BY COUNT. Recording "now it
+      // has four" leaves the engine to guess which one went; recording the
+      // index removed and the collar added leaves nothing to guess.
+      case SITE_EDIT.ADD_BTO_PORT: {
+        const cur = d.btoOverrides?.[e.target] || {};
+        d.btoOverrides = put(d.btoOverrides, e.target, { ...cur,
+          addedPorts: [...(cur.addedPorts || []), {
+            diameterMm: e.after?.diameterMm ?? null,
+            servesOutletId: e.after?.destination || null,
+            servesRoomId: e.after?.destination || null,
+            servesLabel: e.after?.destinationLabel || null
+          }] });
+        break;
+      }
       case SITE_EDIT.REMOVE_BTO_PORT: {
         const cur = d.btoOverrides?.[e.target] || {};
-        d.btoOverrides = put(d.btoOverrides, e.target,
-          { ...cur, portCount: e.after.portCount });
+        d.btoOverrides = put(d.btoOverrides, e.target, { ...cur,
+          removedPortIndexes: [...(cur.removedPortIndexes || []),
+                               e.after?.portIndex ?? e.before?.port?.index] });
         break;
       }
+      // THE FABRICATOR'S CONFIRMED BOX REPLACES THE PROPOSAL.
+      // Three dimensions, because the collars are laid out on named faces and a
+      // face needs a width and a height. It stops being derived at this point,
+      // and the collar layout is then validated against the real box — which
+      // can fail, and says so, rather than passing because it was derived.
       case SITE_EDIT.SET_BTO_BODY:
         d.btoOverrides = put(d.btoOverrides, e.target,
           { ...(d.btoOverrides?.[e.target] || {}),
-            bodyLengthMm: e.after.bodyLengthMm, bodyDepthMm: e.after.bodyDepthMm,
-            // Entering a real body IS the verification. It stops being derived.
+            bodyLengthMm: e.after.bodyLengthMm,
+            bodyWidthMm: e.after.bodyWidthMm ?? e.after.bodyDepthMm,
+            bodyHeightMm: e.after.bodyHeightMm ?? e.after.bodyDepthMm,
+            bodyDepthMm: e.after.bodyDepthMm ?? e.after.bodyWidthMm,
+            bodyConfirmedBy: e.by || null, bodyConfirmedAt: e.at || null,
             dimensionsVerified: true });
         break;
       case SITE_EDIT.SET_BTO_PRICE:

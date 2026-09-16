@@ -10,6 +10,7 @@ import { h, mount, clear, button, badge, banner, empty, toast, input, field, sel
          confidenceBadge, num, money } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
 import { createSiteAdjust } from './ui/site-adjust.mjs';
+import { drawBtoFabricationDetail } from './ui/symbols.mjs';
 
 /**
  * THE FOUR WAYS TO LOOK AT THE PLAN TAB.
@@ -709,7 +710,8 @@ export class DesignerApp {
                    planLegend: this.viewer?.legendStrip() || null,
                    // The enlarged equipment crop, taken from the same Clean View
                    // drawing so the inset and the plan can never disagree.
-                   equipmentInset: this.viewer?.equipmentInset() || null };
+                   equipmentInset: this.viewer?.equipmentInset() || null,
+                   btoDetails: this.btoFabricationDetails() };
     const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
     const r = downloadReportPdf(this.design, kind, opts);
     if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
@@ -3058,6 +3060,38 @@ export class DesignerApp {
 
   // ── Reports (PART 26) ─────────────────────────────────────────────────────
 
+  /**
+   * THE FABRICATION DEVELOPMENT OF EVERY BTO, AS IMAGES FOR THE PDF.
+   *
+   * Nick: "Add a BTO fabrication detail or diagram showing: inlet face; outlet
+   * faces; collar sizes; collar locations; body dimensions." It is drawn from
+   * the same `faceLayout` the schedule and the order read, so the picture and
+   * the numbers cannot disagree.
+   */
+  btoFabricationDetails() {
+    const rows = this.design?.schedules?.bto || [];
+    const out = [];
+    for (const r of rows) {
+      if (!r.faceLayout) continue;
+      const W = 1120, H = 360, dpr = 2;
+      const cv = document.createElement('canvas');
+      cv.width = W * dpr; cv.height = H * dpr;
+      const c = cv.getContext('2d');
+      c.scale(dpr, dpr);
+      drawBtoFabricationDetail(c, r.faceLayout, { x: 0, y: 0, w: W, h: H }, {
+        title: r.id + '  \u2014  ' + r.shapeText,
+        subtitle: r.bodyText + '  \u00b7  ' + (r.layoutStatus || '')
+      });
+      out.push({
+        label: r.id,
+        src: cv.toDataURL('image/png'),
+        caption: r.id + ' — ' + r.shapeText + '. Body ' + r.bodyText + ', collars on ' +
+          (r.facesUsed || []).length + ' face(s). ' + (r.layoutStatus || '')
+      });
+    }
+    return out;
+  }
+
   async showReportMenu() {
     await loadPdfFonts();
     const snapshot = this.viewer?.snapshot({ clean: true, legend: true }) || null;
@@ -3082,7 +3116,7 @@ export class DesignerApp {
     });
     if (!which) return;
     const opts = { logo, planSnapshot: snapshot, planPlate: plate, planLegend,
-                   equipmentInset: inset };
+                   equipmentInset: inset, btoDetails: this.btoFabricationDetails() };
 
     if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
     if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');

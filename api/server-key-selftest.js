@@ -68,8 +68,12 @@ export default async function handler(req, res) {
   }
 
   const role = roleOf(KEY);
+  // Present / not present, and the role claim. NOT the key, NOT a prefix or a
+  // suffix, NOT a fingerprint, and NOT its length — a length alone tells an
+  // onlooker which of the two keys is configured.
   add('SUPABASE_KEY is set on the server', true,
-    'Present (' + KEY.length + ' characters). The key itself is never returned by this check.');
+    'Present. No part of the key — not a character of it, nor its length — is returned by ' +
+    'this check, written to a response, or logged.');
 
   if (role === 'service_role') {
     add('It is the SERVICE ROLE key', true,

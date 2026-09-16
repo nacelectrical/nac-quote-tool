@@ -9,7 +9,7 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { designRulesFor, settingsForDesign } from './design-rules.mjs';
-import { buildZoneDampers, validateZoneDampers } from './zone-dampers.mjs';
+import { buildZoneDampers, validateZoneDampers, applyDamperPlacements } from './zone-dampers.mjs';
 import { quoteGate, quoteGateWarnings } from './quote-gate.mjs';
 import { buildSchedules } from './schedules.mjs';
 import { round } from './units.mjs';
@@ -24,11 +24,14 @@ import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
-import { deriveBtos, validateBtos, btoBomLines, withBody, labelBtos } from './bto.mjs';
+import { deriveBtos, validateBtos, btoBomLines, withBody, labelBtos,
+         applyBtoOverrides } from './bto.mjs';
 import { buildReturnComponents, validateReturnSeparation, returnComponentCounts,
          findSupplyReturnClashes } from './return-model.mjs';
 import { buildAreaTopology } from './area-router.mjs';
 import { recommendedSupplySpigotCount, validateSupplySpigots } from './supply-spigots.mjs';
+import { selectSupplySpigotArrangement,
+         overrideSpigotArrangement } from './spigot-selection.mjs';
 import { assessPlacement } from './placement.mjs';
 import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
@@ -297,18 +300,90 @@ export function runPipeline(design, ctx = {}) {
     // A recommendation the engine always makes, and an installer choice that
     // always wins. The recommendation is reported either way, so a job that
     // was set by hand still shows what the rule would have said.
+    // ── WHICH ARRANGEMENT, NOT HOW MANY OUTLETS ───────────────────────────
+    //
+    // Nick: "Do not use outlet count as the deciding rule." So the decision is
+    // a choice between whole arrangements — 2 × ø350, 2 × ø400, 3 × ø400 and
+    // anything the unit or the job configures — each measured against the
+    // equipment, the airflow, the available static, the velocity ceiling, the
+    // pressure loss, the fabricated plenum, the installer areas, the roof and
+    // the collar spacing. The outlet count is carried as an input and decides
+    // nothing.
+    d.spigotSelection = selectSupplySpigotArrangement({
+      unit: d.selectedUnit || null,
+      systemAirflowLs: d.airflow.allocatedAirflowLs,
+      availableStaticPa: d.selectedUnit?.availableStaticPa ?? null,
+      installerAreas: d.installerAreas || null,
+      installerAreaCount: d.installerAreaCount ??
+        (d.installerAreas?.length ?? (zonesForRouting?.zones?.length || 0)),
+      roofGeometry: d.roofGeometry || null,
+      mainRouteLengthsM: d.mainRouteLengthsM || null,
+      longestMainRouteM: d.longestMainRouteM ?? null,
+      allowWidenedPlenum: d.allowWidenedPlenum !== false,
+      maxPlenumWidthMm: d.maxPlenumWidthMm ?? null,
+      arrangements: d.spigotArrangements || [],
+      outletCount: d.outlets.totals.total
+    }, { settings });
+    // The old outlet-count table, kept only so a sheet can show what the
+    // superseded rule would have said. NOTHING reads it to decide anything.
     d.spigotRecommendation = recommendedSupplySpigotCount(d.outlets.totals.total, {
       settings, systemAirflowLs: d.airflow.allocatedAirflowLs,
       diameterMm: d.supplyMainConfig?.diameterMm || 400
     });
 
-    // New designs default to practical installer areas. Older saved jobs have
-    // no routingStrategy field and retain the legacy spine unless explicitly
-    // converted. An installer configuration overrides the recommended count.
+    // ── A SAVED OR APPROVED DESIGN IS NEVER SILENTLY REROUTED ─────────────
+    //
+    // Nick: "Do not silently reroute saved or approved designs when this logic
+    // is introduced." A design that already carries `supplyMainConfig` keeps
+    // it, whatever the selection would now pick; the selection is recorded
+    // beside it so the difference is visible rather than applied.
     const useAreaRouter = d.routingStrategy === 'area' || !!d.supplyMainConfig;
-    const effectiveMainConfig = d.supplyMainConfig || {
-      count: d.spigotRecommendation.count, diameterMm: 400, source: 'recommended'
-    };
+    const chosen = d.spigotSelection?.chosen || null;
+    const effectiveMainConfig = d.supplyMainConfig || (chosen ? {
+      count: chosen.count, diameterMm: chosen.diameterMm, source: 'selected',
+      selectionKey: chosen.key
+    } : { count: 2, diameterMm: 400, source: 'fallback_no_feasible_arrangement' });
+    // ── THE INSTALLER'S OWN CHOICE, WITH ITS AUDIT RECORD ────────────────
+    //
+    // Nick: "Allow installer override, recording: original recommendation;
+    // selected override; person; date and time; reason." The override wins; it
+    // is still measured, and anything it overrides is carried as a warning
+    // rather than being quietly accepted.
+    if (d.supplyMainConfig) {
+      d.spigotOverride = overrideSpigotArrangement(d.spigotSelection, {
+        count: d.supplyMainConfig.count,
+        diameterMm: d.supplyMainConfig.diameterMm,
+        by: d.supplyMainConfig.approvedBy || d.supplyMainConfig.by || null,
+        at: d.supplyMainConfig.approvedAt || d.supplyMainConfig.at || null,
+        reason: d.supplyMainConfig.reason || d.supplyMainConfig.note || '',
+        job: {
+          unit: d.selectedUnit || null,
+          systemAirflowLs: d.airflow.allocatedAirflowLs,
+          availableStaticPa: d.selectedUnit?.availableStaticPa ?? null,
+          installerAreaCount: d.installerAreaCount ??
+            (d.installerAreas?.length ?? (zonesForRouting?.zones?.length || 0)),
+          roofGeometry: d.roofGeometry || null,
+          longestMainRouteM: d.longestMainRouteM ?? null,
+          allowWidenedPlenum: d.allowWidenedPlenum !== false,
+          outletCount: d.outlets.totals.total
+        }
+      }, { settings });
+      if (d.spigotOverride.warnings.length) {
+        d.routeWarnings = [...(d.routeWarnings || []), ...d.spigotOverride.warnings];
+      }
+    }
+    if (d.supplyMainConfig && chosen &&
+        (d.supplyMainConfig.count !== chosen.count ||
+         d.supplyMainConfig.diameterMm !== chosen.diameterMm)) {
+      d.spigotSelectionDiffers = {
+        stored: { count: d.supplyMainConfig.count, diameterMm: d.supplyMainConfig.diameterMm },
+        wouldChoose: { count: chosen.count, diameterMm: chosen.diameterMm },
+        message: 'This design is built as ' + d.supplyMainConfig.count + ' × ø' +
+          d.supplyMainConfig.diameterMm + ', which is what was saved and approved. The ' +
+          'selection would now choose ' + chosen.text + '. Nothing has been changed — ' +
+          'reroute deliberately if that is wanted.'
+      };
+    }
     const tree = useAreaRouter ? measureTree(buildAreaTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
       layout: d.layout || {}, zones: zonesForRouting,
@@ -470,8 +545,11 @@ export function runPipeline(design, ctx = {}) {
   // damper. Change the duct and all of them move.
   d.zoneDampers = d.network?.routed
     ? buildZoneDampers(
-        placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {},
-                                      zones: d.zones }),
+        // The router places them; the site edits move, delete, reassign and add.
+        applyDamperPlacements(
+          placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {},
+                                        zones: d.zones }),
+          d.zoneDamperOverrides || {}, d.network),
         d.network,
         { nacRates: ctx.nacRates || null,
           sizeOverrides: d.zoneDamperSizeOverrides || {} })
@@ -487,8 +565,10 @@ export function runPipeline(design, ctx = {}) {
   // on an outlet. They are DERIVED from the sized network — wherever two or
   // more runs leave the same duct at the same place — so the drawing, the
   // schedule and the order all read one object.
-  d.btos = labelBtos(d.network?.routed ? deriveBtos(d.network) : [], d.network)
-    .map(b => withBody(b));
+  d.btos = applyBtoOverrides(
+      labelBtos(d.network?.routed ? deriveBtos(d.network) : [], d.network),
+      d.btoOverrides || {}, d.network)
+    .map(b => withBody(b, { allowances: settings.btoFabrication || undefined }));
   d.btoValidation = validateBtos(d.btos);
   if (d.btoValidation.warnings?.length) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.warnings.map(w => ({

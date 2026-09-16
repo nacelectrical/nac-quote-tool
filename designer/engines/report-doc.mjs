@@ -99,7 +99,8 @@ function header(design, title, kind) {
 export function internalReportDoc(design, { planSnapshot = null,
                                             planPlate = null,
                                             planLegend = null,
-                                            equipmentInset = null } = {}) {
+                                            equipmentInset = null,
+                                            btoDetails = [] } = {}) {
   const d = design;
   const load = d.systemLoad, u = d.selectedUnit;
   const b = [];
@@ -286,6 +287,61 @@ export function internalReportDoc(design, { planSnapshot = null,
     // job that is made to a drawing rather than bought off a shelf, so it gets
     // its own row — and the row, the BOM line, the fabrication warning and the
     // symbol on the plan all read the same record.
+    // ── HOW THE SUPPLY SPIGOT ARRANGEMENT WAS DECIDED ───────────────────
+    //
+    // Nick: "Do not use outlet count as the deciding rule." So the working is
+    // printed: every arrangement that was available, what it would have done,
+    // and the reason each rejected one is not possible on this job.
+    if (d.spigotSelection) {
+      const sel = d.spigotSelection;
+      b.push(kv([
+        ['Supply spigots', sel.chosen ? sel.chosen.text : 'NONE AVAILABLE',
+          sel.chosen ? sel.chosen.perDuctAirflowLs + ' L/s per main at ' +
+            sel.chosen.velocityMs + ' m/s' : ''],
+        ['Decided on', sel.basis, 'outlet count is an input, not the rule'],
+        ['Installer areas', sel.inputs.installerAreaCount ?? '—',
+          sel.chosen ? sel.chosen.count + ' main(s)' : ''],
+        ['Longest main', sel.inputs.longestMainRouteM == null ? '—'
+          : sel.inputs.longestMainRouteM + ' m',
+          sel.chosen ? sel.chosen.mainLossPa + ' Pa of loss along it' : ''],
+        ['Available static', sel.inputs.availableStaticPa == null
+          ? 'UNVERIFIED' : sel.inputs.availableStaticPa + ' Pa',
+          sel.inputs.unit || ''],
+        ['Discharge flange', sel.inputs.supplyFlangeText || 'UNVERIFIED',
+          sel.chosen ? sel.chosen.collarRowMm + ' mm of collar face needed' : ''],
+        ['Roof clearance', sel.inputs.roofClearanceMm == null
+          ? 'NOT MEASURED' : sel.inputs.roofClearanceMm + ' mm',
+          sel.chosen ? 'ø' + sel.chosen.diameterMm + ' insulated flex needs ' +
+            sel.chosen.roofClearanceRequiredMm + ' mm' : '']
+      ]));
+      if (sel.ranked.length > 1 || sel.rejected.length) {
+        b.push(table(
+          [{ label: 'Arrangement', w: 1.2 }, { label: 'L/s per main', r: true },
+           { label: 'm/s', r: true }, { label: 'Main loss Pa', r: true },
+           { label: 'Plenum', w: 1.2 }, { label: 'Result', w: 2.4 }],
+          [...sel.ranked, ...sel.rejected],
+          r => [r.text, r.perDuctAirflowLs, r.velocityMs, r.mainLossPa,
+                r.plenumWidened ? 'widened' : 'flush',
+                !r.feasible ? 'NOT POSSIBLE — ' + r.blockers.map(x => x.message).join(' ')
+                  : (sel.chosen && r.key === sel.chosen.key ? 'CHOSEN' : 'possible')]));
+      }
+      if (d.spigotOverride?.differsFromRecommendation) {
+        b.push(flag('warn', 'INSTALLER OVERRIDE — this job is built as ' +
+          d.spigotOverride.selected.text + '. The engine would have chosen ' +
+          d.spigotOverride.recommended.text + '. Chosen by ' +
+          (d.spigotOverride.by || 'the installer') + ' on ' + d.spigotOverride.at +
+          (d.spigotOverride.reason ? ': ' + d.spigotOverride.reason : '') + '.'));
+      }
+      if (d.spigotSelectionDiffers) {
+        b.push(note(d.spigotSelectionDiffers.message));
+      }
+      if (sel.unverified.length) {
+        b.push(note('Not everything could be checked: ' + sel.unverified.join(', ') +
+          '. Those checks were NOT performed rather than performed against an ' +
+          'assumed figure.'));
+      }
+    }
+
     if (d.supplyPlenum) {
       b.push(kv([
         // A SUMMARY CARD IS A SUMMARY. The engine's full description is three
@@ -322,12 +378,15 @@ export function internalReportDoc(design, { planSnapshot = null,
     b.push(table(
       [{ label: 'BTO', w: 0.8 }, { label: 'Configuration', w: 2.2 },
        { label: 'Inlet (L/s)', r: true }, { label: 'Collars', r: true },
-       { label: 'Body (mm)', w: 1.4 }, { label: 'Dimensions', w: 1.3 },
+       { label: 'Body L × W × H (mm)', w: 1.6 }, { label: 'Collar faces', w: 1.2 },
+       { label: 'Layout', w: 1.5 },
        { label: 'Configuration key', w: 1.8 }, { label: 'Price', w: 1.2 }],
       btoRows,
       r => [r.id, r.shapeText, r.inletAirflowLs, r.outletCollarCount,
             r.bodyText || '—',
-            r.dimensionsVerified ? 'Verified' : 'DERIVED — review',
+            (r.facesUsed || []).length ? (r.facesUsed || []).length + ' faces' : '—',
+            r.fabricationReady ? 'VALIDATED'
+              : (r.layoutPass === false ? 'FAILS — does not fit' : 'PROPOSED — review'),
             r.configKey,
             r.priceStatus === 'VERIFIED'
               ? '$' + Number(r.cost).toFixed(2) + (r.quoteRef ? ' · ' + r.quoteRef : '')
@@ -339,12 +398,76 @@ export function internalReportDoc(design, { planSnapshot = null,
       b.push(bullets([r.id + ' — ' + r.shapeText + ', ' + r.inletAirflowLs + ' L/s in:',
                       ...r.collarLines]));
     }
+
+    // ── WHERE EVERY COLLAR PHYSICALLY GOES ────────────────────────────────
+    //
+    // Nick: "A body dimension cannot be derived only from the largest collar or
+    // inlet ... three Ø250 collars cannot be declared to fit across a 400 mm or
+    // 450 mm face." So the box is laid out collar by collar on named faces and
+    // the working is printed: face, centre, outside diameter, edge clearance,
+    // clearance to the neighbour, seam allowance, required against available.
+    b.push(softBreak());
+    b.push(h2('BTO collar face layout'));
+    b.push(note('Face layout is calculated per collar against fabrication allowances — ' +
+      'collar wall, ' + (btoRows[0]?.faceLayout?.allowances?.edgeClearanceMm ?? '—') +
+      ' mm edge clearance, ' +
+      (btoRows[0]?.faceLayout?.allowances?.collarClearanceMm ?? '—') +
+      ' mm between neighbouring collars and ' +
+      (btoRows[0]?.faceLayout?.allowances?.seamAllowanceMm ?? '—') +
+      ' mm of lock seam at each corner. These are geometric allowances, not a ' +
+      'fabricator\u2019s catalogue. A body worked out from them is a PROPOSAL and is ' +
+      'never reported as validated; validation happens against a body the fabricator ' +
+      'confirms, and it can fail.'));
+    for (const r of btoRows) {
+      b.push(kv([
+        ['Fitting', r.id, r.shapeText],
+        ['Body', r.bodyText || '—', r.dimensionsSource === 'configured'
+          ? 'confirmed by the fabricator' : 'proposed — ' + (r.proposedBodyText || '')],
+        ['Collar faces used', (r.facesUsed || []).join(', ') || '—',
+          r.multiFace ? 'collars are distributed across more than one face' : 'one face'],
+        ['Layout result', r.layoutPass ? 'PASS' : 'FAIL',
+          r.layoutStatus || ''],
+        ['Fabrication-ready', r.fabricationReady ? 'Yes' : 'No',
+          r.fabricationReady ? 'a real body, with the collars laid out on it'
+            : 'a proposal — not to be cut from']
+      ]));
+      b.push(bullets(r.collarFaceLines || []));
+      if ((r.unplacedCollars || []).length) {
+        b.push(flag('crit', 'CRITICAL — ' + r.id + ': ' +
+          r.unplacedCollars.map(u => 'ø' + u.nominalDiameterMm + ' → ' +
+            (u.destination || 'not connected') + '. ' + u.reason).join(' ')));
+      }
+      for (const i of (r.fitIssues || [])) {
+        if (i.code === 'COLLARS_EXCEED_AVAILABLE_SPACE') continue;   // said above
+        b.push(flag('crit', 'CRITICAL — ' + r.id + ': ' + i.message));
+      }
+    }
+    // The development drawing: inlet face, outlet faces, collar sizes, collar
+    // locations, body dimensions — the sheet the shop marks out from.
+    if ((btoDetails || []).length) {
+      b.push(softBreak(200));
+      b.push(h2('BTO fabrication details'));
+      for (const det of btoDetails) {
+        if (!det?.src) continue;
+        b.push(inset(det.src, det.caption || det.label || ''));
+      }
+    }
+
+    const failing = d.schedules?.btoFailingCollarLayout || [];
+    if (failing.length) {
+      b.push(flag('crit', 'CRITICAL — the collars on ' + failing.join(', ') + ' do not ' +
+        'physically fit the body recorded against them. Do not cut metal to these ' +
+        'dimensions: either the body grows, or the collars move to another face, or the ' +
+        'fabricator supplies dimensions and collar positions that work.'));
+    }
     const review = d.schedules?.btoNeedingFabricationReview || [];
     if (review.length) {
-      b.push(note('Body dimensions for ' + review.join(', ') + ' are DERIVED from the ' +
-        'collars this design chose, not taken from a fabricator\u2019s standard body. They ' +
-        'are a proposal to be confirmed before the metal is cut — they are not verified ' +
-        'dimensions and must not be ordered as though they were.'));
+      b.push(flag('warn', 'FABRICATION REVIEW REQUIRED — ' + review.join(', ') + '. Their ' +
+        'body dimensions are a PROPOSAL worked out from a collar-by-collar face layout, ' +
+        'not a fabricator\u2019s standard body, and they are NOT fabrication-ready. The ' +
+        'required collar layout is printed below. Enter the fabricator\u2019s confirmed ' +
+        'dimensions and collar positions and they replace the proposal everywhere — ' +
+        'schedule, order and price.'));
     }
     const noPrice = d.schedules?.btoNeedingPrice || [];
     if (noPrice.length) {

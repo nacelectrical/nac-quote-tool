@@ -31,11 +31,22 @@ const areaM2 = (mm) => Math.PI * Math.pow(mm / 2000, 2);
 export const spigotVelocity = (ls, mm) => Math.round((ls / 1000) / areaM2(mm) * 100) / 100;
 
 /**
- * The starting number of spigots for a job of this size.
+ * SUPERSEDED. NOTHING DECIDES ANYTHING WITH THIS ANY MORE.
  *
- * Past the table it is worked out from what the ducts can actually carry and
- * how many outlets one chain of fittings can reach, not left at three because
- * three was the last row of a lookup.
+ * Nick: "Do not use outlet count as the deciding rule." He is right, and this
+ * function is that rule. It is kept only so the internal sheet can show what
+ * the old lookup would have said beside what was actually chosen, which is
+ * useful while jobs designed under it are still on the books.
+ *
+ * The decision now lives in `spigot-selection.mjs`, which chooses between whole
+ * ARRANGEMENTS — 2 × ø350, 2 × ø400, 3 × ø400 and whatever a unit or a job
+ * configures — on the equipment, the airflow, the manufacturer spigot and
+ * flange data, the available static, the velocity ceiling, the pressure loss,
+ * the fabricated plenum's capacity, the installer areas, the roof geometry, the
+ * route lengths and the physical collar spacing. Outlet count is an input to
+ * that and decides nothing.
+ *
+ * @deprecated use `selectSupplySpigotArrangement`
  */
 export function recommendedSupplySpigotCount(outletCount, opts = {}) {
   const n = Math.max(0, Number(outletCount) || 0);

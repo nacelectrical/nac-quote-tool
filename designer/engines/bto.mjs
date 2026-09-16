@@ -29,6 +29,8 @@
 // same code serves any plan.
 
 import { BTO as BTO_RULES } from './nac-standard.mjs';
+import { btoFaceLayout, faceSize, DEFAULT_ALLOWANCES, DEFAULT_COLLAR_FACES,
+         faceLayoutLines } from './bto-faces.mjs';
 
 /**
  * NO UNIVERSAL PORT MAXIMUM.
@@ -88,60 +90,68 @@ export function isReturnSection(s) {
  * real bodies in settings and this reports against them instead.
  */
 export function btoBodyGeometry(bto, opts = {}) {
-  const gap = opts.collarGapMm ?? BTO_RULES.collarGapMm ?? 60;
-  const wall = opts.wallAllowanceMm ?? BTO_RULES.bodyWallAllowanceMm ?? 25;
-  const faces = Math.max(1, opts.collarFaces ?? BTO_RULES.collarFaces ?? 3);
+  const allowances = {
+    ...DEFAULT_ALLOWANCES,
+    ...(opts.collarGapMm != null ? { collarClearanceMm: opts.collarGapMm } : {}),
+    ...(opts.maxBodyLengthMm != null ? { maxBodyLengthMm: opts.maxBodyLengthMm } : {}),
+    ...(opts.allowances || {})
+  };
+  const faces = opts.collarFaces && Array.isArray(opts.collarFaces)
+    ? opts.collarFaces : DEFAULT_COLLAR_FACES;
+
+  // A body somebody GAVE us — a job setting, or the fabricator's own confirmed
+  // dimensions. Only against one of these can a layout be said to pass.
+  const givenLength = opts.bodyLengthMm ?? null;
+  const givenWidth = opts.bodyWidthMm ?? opts.bodyDepthMm ?? null;
+  const givenHeight = opts.bodyHeightMm ?? opts.bodyDepthMm ?? givenWidth;
+  const given = (givenLength || givenWidth)
+    ? { lengthMm: givenLength || givenWidth, widthMm: givenWidth || givenLength,
+        heightMm: givenHeight || givenWidth || givenLength }
+    : null;
+
+  const layout = btoFaceLayout(bto, {
+    body: given,
+    bodySource: given ? (opts.bodySource || 'configured') : undefined,
+    allowances, collarFaces: faces
+  });
+
   const collars = bto.ports.map(p => p.diameterMm).filter(Boolean);
   const inlet = bto.inletDiameterMm || 0;
-
-  // Depth has to swallow the inlet and the biggest collar, plus the metal.
-  // A CONFIGURED BODY IS CHECKED AGAINST; A DERIVED ONE IS ONLY DESCRIBED.
-  // Deriving the depth from the collars and then testing the collars against it
-  // is circular — it can never fail, so it would be a check in name only. Where
-  // a job configures a real body size, that size is what the collars have to fit.
   const maxCollar = collars.length ? Math.max(...collars) : 0;
-  const derivedDepthMm = Math.max(inlet, maxCollar) + wall * 2;
-  const configuredDepthMm = opts.bodyDepthMm ?? null;
-  const bodyDepthMm = configuredDepthMm ?? derivedDepthMm;
+  const frame = 2 * (allowances.edgeClearanceMm + allowances.seamAllowanceMm);
 
-  // Every collar needs its own diameter plus a clamp gap along a face.
-  const requiredCollarRunMm = collars.reduce((n, d) => n + d + gap, 0);
-  // Split across the faces that can take collars; the long sides are the body
-  // length, the end is the body depth, so length is what has to grow.
-  const longSides = Math.max(1, faces - 1);
-  const endFaceRunMm = faces > 1 ? bodyDepthMm : 0;
-  const runOnSidesMm = Math.max(0, requiredCollarRunMm - endFaceRunMm);
-  const derivedLengthMm = Math.max(inlet + wall * 2,
-    Math.ceil((runOnSidesMm / longSides) / 10) * 10);
-  const configuredLengthMm = opts.bodyLengthMm ?? null;
-  const bodyLengthMm = configuredLengthMm ?? derivedLengthMm;
+  // Collar run and the room for it, now measured PER FACE rather than pooled.
+  // The old totals let three ø250 collars pass against a 450 mm box because
+  // 930 mm was compared with three faces added together; they are not one face.
+  const requiredCollarRunMm = Math.round(
+    layout.faces.reduce((n, f) => n + f.requiredWidthMm, 0) +
+    layout.unplacedCollars.reduce((n, u) => n + u.outsideDiameterMm + frame, 0));
+  const availableCollarSpaceMm = Math.round(faces
+    .map(f => faceSize(f, { lengthMm: layout.bodyLengthMm, widthMm: layout.bodyWidthMm,
+                            heightMm: layout.bodyHeightMm }).uMm)
+    .reduce((n, u) => n + u, 0));
 
-  const availableCollarSpaceMm = bodyLengthMm * longSides + endFaceRunMm;
-  const maxBodyLengthMm = opts.maxBodyLengthMm ?? null;
+  const issues = layout.issues.map(i => ({ ...i }));
+  // The pooled code the rest of the program already knows, kept alongside the
+  // exact one so an existing report or check does not go quiet.
+  if (layout.unplacedCollars.length) {
+    issues.push({
+      code: 'COLLARS_EXCEED_AVAILABLE_SPACE',
+      message: (bto.label || bto.id) + ' needs ' + requiredCollarRunMm + ' mm of collar run ' +
+               'laid out face by face; the ' + layout.bodyText + ' body offers ' +
+               availableCollarSpaceMm + ' mm across its collar faces, and no single face ' +
+               'has room for ' + layout.unplacedCollars.length + ' of the collars.'
+    });
+  }
+  if (allowances.maxBodyLengthMm && layout.bodyLengthMm > allowances.maxBodyLengthMm) {
+    issues.push({
+      code: 'BODY_LONGER_THAN_CONFIGURED_MAXIMUM',
+      message: (bto.label || bto.id) + ' needs a ' + layout.bodyLengthMm + ' mm body; the ' +
+               'configured maximum is ' + allowances.maxBodyLengthMm + ' mm.'
+    });
+  }
 
-  const issues = [];
-  // A COLLAR BIGGER THAN THE DUCT FEEDING IT. Physically the spigot would be
-  // wider than the inlet it takes air from — you cannot pull 300 out of a 250.
-  if (inlet && maxCollar > inlet) {
-    issues.push({ code: 'COLLAR_LARGER_THAN_INLET',
-      message: 'A ø' + maxCollar + ' collar comes off a ø' + inlet + ' inlet.' });
-  }
-  // Against a body the job actually configured, not one derived from the answer.
-  if (configuredDepthMm && maxCollar > configuredDepthMm) {
-    issues.push({ code: 'COLLAR_EXCEEDS_BODY_DEPTH',
-      message: 'A ø' + maxCollar + ' collar will not fit the configured ' +
-               configuredDepthMm + ' mm body depth.' });
-  }
-  if (configuredLengthMm && requiredCollarRunMm > availableCollarSpaceMm) {
-    issues.push({ code: 'COLLARS_EXCEED_AVAILABLE_SPACE',
-      message: bto.label + ' needs ' + requiredCollarRunMm + ' mm of collar run on a body ' +
-               'offering ' + availableCollarSpaceMm + ' mm.' });
-  }
-  if (maxBodyLengthMm && bodyLengthMm > maxBodyLengthMm) {
-    issues.push({ code: 'BODY_LONGER_THAN_CONFIGURED_MAXIMUM',
-      message: bto.label + ' needs a ' + bodyLengthMm + ' mm body; the configured ' +
-               'maximum is ' + maxBodyLengthMm + ' mm.' });
-  }
+  const configured = !!given;
   return {
     portCount: bto.ports.length,
     collarDiametersMm: collars,
@@ -149,21 +159,31 @@ export function btoBodyGeometry(bto, opts = {}) {
     totalOutletAirflowLs: bto.ports.reduce((n, p) => n + (p.airflowLs || 0), 0),
     inletDiameterMm: inlet || null,
     inletAirflowLs: bto.inletAirflowLs,
-    bodyLengthMm, bodyDepthMm,
-    bodyText: bodyLengthMm + ' × ' + bodyDepthMm + ' × ' + bodyDepthMm + ' mm',
-    collarGapMm: gap,
+    bodyLengthMm: layout.bodyLengthMm,
+    bodyWidthMm: layout.bodyWidthMm,
+    bodyHeightMm: layout.bodyHeightMm,
+    /** Kept for every caller that knew a box as length × depth × depth. */
+    bodyDepthMm: layout.bodyWidthMm,
+    bodyText: layout.bodyText,
+    collarGapMm: allowances.collarClearanceMm,
     collarFaces: faces,
     requiredCollarRunMm,
     availableCollarSpaceMm,
     spareCollarSpaceMm: availableCollarSpaceMm - requiredCollarRunMm,
     fits: issues.length === 0,
     issues,
-    dimensionsSource: (configuredLengthMm || configuredDepthMm)
-      ? 'configured' : 'derived_from_collars',
-    verified: !!(configuredLengthMm && configuredDepthMm),
-    bomDescription: 'BTO distribution box ø' + (inlet || '?') + ' inlet — ' +
-      bto.ports.length + ' × collar (' + collars.map(d => 'ø' + d).join(', ') +
-      '), body ' + bodyLengthMm + ' × ' + bodyDepthMm + ' mm'
+    dimensionsSource: configured ? 'configured' : 'derived_from_collars',
+    verified: configured,
+    /** THE PHYSICAL PROOF: which face, which centre, what clearance, pass/fail. */
+    faceLayout: layout,
+    /** A proposal is never validated, however carefully it was worked out. */
+    layoutValidated: layout.validated,
+    layoutStatus: layout.status,
+    proposedBodyText: layout.proposedBody.bodyText,
+    bomDescription: 'BTO distribution box \u00f8' + (inlet || '?') + ' inlet \u2014 ' +
+      bto.ports.length + ' \u00d7 collar (' + collars.map(d => '\u00f8' + d).join(', ') +
+      '), body ' + layout.bodyText +
+      (layout.multiFace ? ', collars on ' + layout.facesUsed.length + ' faces' : '')
   };
 }
 
@@ -210,9 +230,118 @@ export function makeBto({ id, index, position, inletDiameterMm, inletAirflowLs,
   };
 }
 
+/**
+ * WHAT THE INSTALLER CHANGED ABOUT A FITTING, APPLIED TO THE DERIVED ONE.
+ *
+ * BTOs are derived from the routed network every time the pipeline runs, so a
+ * site edit cannot be written onto the object — the next recalculation would
+ * throw it away. It is recorded as an OVERRIDE against the fitting's id and
+ * re-applied here, after the derivation and before the body geometry, which is
+ * why undo is a cursor on a list rather than an inverse operation.
+ *
+ * An ADDED fitting is a real one the installer put on a duct that the router
+ * did not put one on. It is created here with the inlet of the duct it was
+ * tapped onto, and its collars start unconnected — the route is NOT silently
+ * redrawn, because Nick asked for the opposite of that. It shows up on the
+ * plan, the schedule and the order immediately, carrying its own configuration
+ * key and therefore its own PRICE REQUIRED.
+ */
+export function applyBtoOverrides(btos, overrides = {}, network = null) {
+  const sections = new Map((network?.sections || []).map(s => [s.id, s]));
+  const out = [];
+
+  for (const b of btos) {
+    const o = overrides[b.id];
+    if (o?.removed) continue;
+    out.push(applyOne(b, o));
+  }
+
+  // Fittings the installer added, in the order they were added.
+  for (const [id, o] of Object.entries(overrides)) {
+    if (!o?.added || o.removed) continue;
+    if (out.some(b => b.id === id)) continue;
+    const sec = o.sectionId ? sections.get(o.sectionId) : null;
+    const base = makeBto({
+      id, index: out.length + 1,
+      position: { x: o.x ?? sec?.points?.[0]?.x ?? null, y: o.y ?? sec?.points?.[0]?.y ?? null },
+      inletDiameterMm: o.inletDiameterMm ?? sec?.diameterMm ?? null,
+      inletAirflowLs: o.inletAirflowLs ?? sec?.airflowLs ?? 0,
+      fedBy: o.sectionId || null,
+      label: o.label || id,
+      ports: []
+    });
+    base.addedOnSite = true;
+    out.push(applyOne(base, o));
+  }
+  return out;
+
+  function applyOne(b, o) {
+    if (!o) return b;
+    let ports = b.ports.map(p => ({ ...p }));
+
+    // Collars the installer took off, by the index they were shown under.
+    const removed = new Set((o.removedPortIndexes || []).map(Number));
+    if (removed.size) ports = ports.filter(p => !removed.has(p.index));
+
+    // Collars the installer added. A new collar is honestly unconnected and
+    // carries no air until it is pointed at an outlet.
+    for (const add of (o.addedPorts || [])) {
+      ports.push({
+        index: 0, sectionId: add.sectionId || null,
+        diameterMm: add.diameterMm ?? null, airflowLs: 0,
+        servesOutletId: add.servesOutletId || null, servesRoomId: add.servesRoomId || null,
+        servesLabel: add.servesLabel || null, feedsBtoId: null,
+        intentionalDistribution: false, feedsSectionId: null,
+        zone: add.zone || null, damper: false, addedOnSite: true
+      });
+    }
+
+    // Re-number after add/remove so the sheet, the plan and the site editor all
+    // count the collars the same way.
+    ports = ports.map((p, i) => ({ ...p, index: i + 1 }));
+    for (const [idx, mm] of Object.entries(o.portDiametersMm || {})) {
+      const p = ports.find(x => x.index === Number(idx));
+      if (p && mm) p.diameterMm = Number(mm);
+    }
+    for (const [idx, dest] of Object.entries(o.portDestinations || {})) {
+      const p = ports.find(x => x.index === Number(idx));
+      if (!p) continue;
+      p.servesOutletId = dest;
+      p.servesRoomId = dest;
+      p.servesLabel = (o.portDestinationLabels || {})[idx] || dest;
+      p.reconnectedOnSite = true;
+    }
+
+    return {
+      ...b,
+      x: o.x ?? b.x,
+      y: o.y ?? b.y,
+      movedOnSite: o.x !== undefined && o.x !== null,
+      inletDiameterMm: o.inletDiameterMm ?? b.inletDiameterMm,
+      ports,
+      portCount: ports.length,
+      outletPortCount: ports.filter(p => p.servesOutletId).length,
+      /** Dimensions the FABRICATOR confirmed. They replace the proposal. */
+      confirmedBody: (o.bodyLengthMm || o.bodyWidthMm || o.bodyDepthMm) ? {
+        lengthMm: o.bodyLengthMm ?? null,
+        widthMm: o.bodyWidthMm ?? o.bodyDepthMm ?? null,
+        heightMm: o.bodyHeightMm ?? o.bodyDepthMm ?? null,
+        by: o.bodyConfirmedBy || null, at: o.bodyConfirmedAt || null
+      } : (b.confirmedBody || null)
+    };
+  }
+}
+
 /** The fitting with its fabrication record attached. */
 export function withBody(bto, opts = {}) {
-  return { ...bto, body: btoBodyGeometry(bto, opts) };
+  // A fabricator's confirmed dimensions REPLACE the derived proposal, and the
+  // collars are then laid out against the real box rather than a suggested one.
+  const c = bto.confirmedBody;
+  const o = c ? { ...opts, bodyLengthMm: c.lengthMm ?? opts.bodyLengthMm,
+                  bodyWidthMm: c.widthMm ?? opts.bodyWidthMm,
+                  bodyHeightMm: c.heightMm ?? opts.bodyHeightMm,
+                  bodySource: 'confirmed' } : opts;
+  return { ...bto, body: btoBodyGeometry(bto, o) };
 }
 
 /** Everything downstream of a fitting adds up to what goes into it. */
@@ -532,13 +661,37 @@ export function btoSpec(bto, { price = null } = {}) {
       zone: p.zone || null
     })),
     bodyLengthMm: body?.bodyLengthMm ?? null,
+    bodyWidthMm: body?.bodyWidthMm ?? body?.bodyDepthMm ?? null,
+    bodyHeightMm: body?.bodyHeightMm ?? body?.bodyDepthMm ?? null,
     bodyDepthMm: body?.bodyDepthMm ?? null,
     bodyText: body?.bodyText || null,
     dimensionsSource: body?.dimensionsSource || 'derived_from_collars',
     // NEVER CALLED VERIFIED UNLESS SOMEBODY VERIFIED IT. Nick: "do not describe
     // it as verified; do not invent a fabricator-approved dimension."
     dimensionsVerified: !derived,
-    fabricationStatus: derived ? 'DERIVED — FABRICATION REVIEW REQUIRED' : 'CONFIGURED',
+    // ── THE PHYSICAL PROOF ────────────────────────────────────────────────
+    // Which face every collar is on, where its centre is, what clearance it
+    // leaves, and whether the face is actually big enough. Nick: "Do not label
+    // a derived body as physically validated unless the face-layout
+    // calculation passes." A proposal never is, however well it was worked out.
+    faceLayout: body?.faceLayout || null,
+    layoutValidated: !!body?.layoutValidated,
+    layoutStatus: body?.layoutStatus || null,
+    layoutPass: body?.faceLayout ? body.faceLayout.pass : null,
+    collarFaceLines: faceLayoutLines(body?.faceLayout || null),
+    multiFace: !!body?.faceLayout?.multiFace,
+    facesUsed: body?.faceLayout?.facesUsed || [],
+    proposedBodyText: body?.proposedBodyText || null,
+    unplacedCollars: body?.faceLayout?.unplacedCollars || [],
+    fabricationStatus: derived
+      ? (body?.faceLayout && !body.faceLayout.pass
+          ? 'FABRICATION REVIEW REQUIRED — NO VALID COLLAR ARRANGEMENT'
+          : 'DERIVED — FABRICATION REVIEW REQUIRED')
+      : (body?.layoutValidated
+          ? 'CONFIRMED — COLLAR LAYOUT VALIDATED'
+          : 'FABRICATION REVIEW REQUIRED — COLLAR LAYOUT DOES NOT FIT'),
+    /** Fabrication-ready means a real body whose collars have been laid out on it. */
+    fabricationReady: !derived && !!body?.layoutValidated,
     fits: body ? body.fits : true,
     fitIssues: body?.issues || [],
     requiredCollarRunMm: body?.requiredCollarRunMm ?? null,
@@ -590,5 +743,6 @@ export const BTO_MODEL = Object.freeze({
 });
 
 export default { makeBto, deriveBtos, validateBtos, reconcileBto, btoBomLines,
+                 applyBtoOverrides,
                  btoBodyGeometry, withBody, isReturnSection, labelBtos,
                  btoConfigKey, btoGroupKey, btoShapeText, btoSpec };
