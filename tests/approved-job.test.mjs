@@ -358,3 +358,27 @@ test('the static pressure figure is not presented as verified', () => {
   assert.equal(out.pressure.availableStaticPa ?? null, null,
     'an available-static figure appeared without manufacturer data behind it');
 });
+
+test('return air reconciliation labels the rounding difference as rounding', async () => {
+  const { out } = await buildApproved();
+  const rec = out.returnDesign.reconciliation;
+  assert.ok(rec, 'returnDesign carries a reconciliation block');
+  assert.equal(rec.designAirflowLs, 799);
+  assert.equal(rec.labelledTotalLs, 800);
+  assert.equal(rec.differenceLs, 1);
+  assert.equal(rec.rounding, true);
+  assert.match(rec.note, /ROUNDING/);
+  assert.match(rec.note, /not a design imbalance/);
+});
+
+test('supply air reconciles exactly — no rounding drift across the three mains', async () => {
+  const { out } = await buildApproved();
+  assert.equal(out.supplySpigots.differenceLs, 0);
+  assert.equal(out.supplySpigots.rounding, false);
+  const mains = out.supplySpigots.rows.reduce((a, r) => a + r.airflowLs, 0);
+  assert.equal(mains, out.supplySpigots.totalLs);
+  const finals = out.network.sections
+    .filter(s => s.role === 'final')
+    .reduce((a, s) => a + s.airflowLs, 0);
+  assert.equal(finals, mains);
+});

@@ -186,8 +186,28 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
         ' m/s. Add another return air point, or set the duct manually.' });
   }
 
+  // Each grille is labelled with its own rounded share, so the labelled shares
+  // can add up to a litre or two either side of the design airflow. That is
+  // rounding and nothing else, and it is reported as rounding rather than left
+  // for someone to find in the tables.
+  const labelledTotalLs = returns.reduce((a, r) => a + r.airflowLs, 0);
+  const designRoundedLs = round(designLs, 0);
+  const reconciliation = {
+    designAirflowLs: designRoundedLs,
+    labelledTotalLs,
+    differenceLs: labelledTotalLs - designRoundedLs,
+    rounding: labelledTotalLs !== designRoundedLs,
+    note: labelledTotalLs === designRoundedLs
+      ? 'Return air reconciles exactly with the design airflow.'
+      : 'Return air differs from the design airflow by ' +
+        Math.abs(labelledTotalLs - designRoundedLs) + ' L/s. This is ROUNDING of ' +
+        count + ' equal grille shares (' + round(perReturnLs, 1) +
+        ' L/s each), not a design imbalance.'
+  };
+
   return {
-    designAirflowLs: round(designLs, 0),
+    designAirflowLs: designRoundedLs,
+    reconciliation,
     returnCount: count,
     returnCountRule: 'NAC fits ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' returns; ' + count + ' at ' + Math.round(designLs) + ' L/s.',
     perReturnLs: round(perReturnLs, 0),
