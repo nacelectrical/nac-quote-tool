@@ -131,6 +131,16 @@ export function collectWarnings(design, opts = {}) {
   push(design.airflow?.warnings, 'airflow');
   push(design.outlets?.warnings, 'outlets');
   push(design.network?.warnings, 'ductwork');
+  // THE ROUTING WARNINGS REACH THE APPROVAL GATE.
+  //
+  // They were assembled in the pipeline, shown on the Ductwork tab and printed
+  // in the report, and then went no further — so a CRITICAL raised by the
+  // topology validator, the return-separation check, the BTO validator or the
+  // supply-spigot check never counted toward `unacknowledgedCritical` and never
+  // blocked approval. A rule that blocks nothing is a rule nobody keeps.
+  // BTO_TO_OUTLET_CLEARANCE_REVIEW is raised here, which is why it surfaced.
+  push(design.routeWarnings, 'ductwork');
+  push(design.returnRouteWarnings, 'return');
   push(design.returnDesign?.warnings, 'return');
   push(design.zones?.warnings, 'zones');
   push(design.pressure?.warnings, 'pressure');

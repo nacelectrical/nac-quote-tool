@@ -167,8 +167,17 @@ export class PdfDoc {
     this.current = null;
   }
 
-  addPage() {
-    this.current = { ops: [], images: [] };
+  /**
+   * A page, optionally at its own size.
+   *
+   * A PDF carries a MediaBox per PAGE, not per document, so a landscape plan
+   * sheet can sit in the middle of a portrait report — which is the only way a
+   * floor plan gets printed at a size an installer can read. Pages with no size
+   * of their own take the document's.
+   */
+  addPage({ width = null, height = null } = {}) {
+    this.current = { ops: [], images: [],
+                     width: width ?? this.width, height: height ?? this.height };
     this.pages.push(this.current);
     return this.current;
   }
@@ -268,8 +277,9 @@ export class PdfDoc {
         ? ' /XObject << ' + page.images.map(n => '/' + n + ' ' +
             (imgFirst + this.images.findIndex(im => im.name === n)) + ' 0 R').join(' ') + ' >>'
         : '';
-      push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + this.width.toFixed(2) + ' ' +
-        this.height.toFixed(2) + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xo +
+      push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' +
+        (page.width ?? this.width).toFixed(2) + ' ' +
+        (page.height ?? this.height).toFixed(2) + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xo +
         ' >> /Contents ' + contentIds[i] + ' 0 R >>\n');
       endObj();
     });

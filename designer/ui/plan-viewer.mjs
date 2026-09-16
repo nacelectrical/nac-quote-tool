@@ -1468,6 +1468,60 @@ export function createPlanViewer(container, opts = {}) {
     /** The raw capture, with the view exactly as it stands. */
     snapshotRaw({ type = 'image/jpeg', quality = 0.92 } = {}) {
       return snapshotNow(type, quality);
+    },
+
+    /**
+     * AN ENLARGED CROP OF THE EQUIPMENT AREA.
+     *
+     * Nick: "An enlarged equipment-area inset… the installer must be able to
+     * see the return plenum fitted to the FCU intake, the FCU body, the supply
+     * plenum fitted to the discharge, two ø400 return collars, three ø400
+     * supply collars."
+     *
+     * At whole-house scale all of that is about a centimetre of paper. So the
+     * capture is taken from the SAME Clean View drawing — not a second,
+     * separately-drawn picture that could disagree with it — and the region
+     * comes from the bounds the renderer itself recorded for the assembly. The
+     * crop is then scaled up, so the collars print at a size you can count.
+     */
+    equipmentInset({ type = 'image/jpeg', quality = 0.94, pad = 150, zoom = 2.4 } = {}) {
+      const prior = { mode: state.mode, designView: state.designView,
+                      showAnalysis: state.showAnalysis, showRooms: state.showRooms,
+                      handles: state.handles, legend: state.showLegend };
+      state.mode = MODES.VIEW;
+      state.designView = true;
+      state.showAnalysis = false;
+      state.showRooms = false;
+      state.handles = [];
+      state.showLegend = false;              // a legend inside a crop is noise
+      draw();
+      try {
+        const b = state.drawn?.equipment?.bounds;
+        if (!state.image || !b) return null;
+        const dpr = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
+        const x = Math.max(0, (b.cx - b.w / 2 - pad) * dpr);
+        const y = Math.max(0, (b.cy - b.h / 2 - pad) * dpr);
+        const w = Math.min(canvas.width - x, (b.w + pad * 2) * dpr);
+        const h = Math.min(canvas.height - y, (b.h + pad * 2) * dpr);
+        if (!(w > 20 && h > 20)) return null;
+        const out = document.createElement('canvas');
+        out.width = Math.round(w * zoom);
+        out.height = Math.round(h * zoom);
+        const c = out.getContext('2d');
+        c.imageSmoothingEnabled = true;
+        c.imageSmoothingQuality = 'high';
+        c.fillStyle = '#FFFFFF';
+        c.fillRect(0, 0, out.width, out.height);
+        c.drawImage(canvas, x, y, w, h, 0, 0, out.width, out.height);
+        return out.toDataURL(type, quality);
+      } catch (e) {
+        return null;
+      } finally {
+        Object.assign(state, { mode: prior.mode, designView: prior.designView,
+                               showAnalysis: prior.showAnalysis, showRooms: prior.showRooms,
+                               handles: prior.handles, showLegend: prior.legend });
+        draw();
+      }
     }
   };
 

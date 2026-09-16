@@ -571,7 +571,10 @@ export class DesignerApp {
       });
     }
     const opts = { logo: document.querySelector('.brand img')?.src || null,
-                   planSnapshot: this.viewer?.snapshot({ clean: true, legend: true }) || null };
+                   planSnapshot: this.viewer?.snapshot({ clean: true, legend: true }) || null,
+                   // The enlarged equipment crop, taken from the same Clean View
+                   // drawing so the inset and the plan can never disagree.
+                   equipmentInset: this.viewer?.equipmentInset() || null };
     const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
     const r = downloadReportPdf(this.design, kind, opts);
     if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
@@ -2918,6 +2921,7 @@ export class DesignerApp {
 
   async showReportMenu() {
     const snapshot = this.viewer?.snapshot({ clean: true, legend: true }) || null;
+    const inset = this.viewer?.equipmentInset() || null;
     const logo = document.querySelector('.brand img')?.src || null;
     const which = await pickDialog({
       title: 'Which document?',
@@ -2935,7 +2939,7 @@ export class DesignerApp {
       ]
     });
     if (!which) return;
-    const opts = { logo, planSnapshot: snapshot };
+    const opts = { logo, planSnapshot: snapshot, equipmentInset: inset };
 
     if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
     if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');

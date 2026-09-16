@@ -73,42 +73,120 @@ const setView = async (v) => { await p.evaluate(k => window.nacDesigner.setPlanV
 await setView('clean');
 const D = await drawn();
 
-// ── 1. Two boxes, on two sides, with a gap between them ─────────────────────
-STEP('[1] The supply plenum and the return box are separate things in separate places');
+// ── 1. One assembled arrangement: RETURN PLENUM → FCU → SUPPLY PLENUM ───────
+STEP('[1] The plenums are bolted to opposite faces of the fan coil');
 say('the drawing recorded what it drew', !!D && !!D.equipment);
 const E = D.equipment;
-say('there is a supply plenum', !!E.supplyPlenum, E.supplyPlenum && P(E.supplyPlenum));
-say('there is a return box', !!E.returnBox, E.returnBox && P(E.returnBox));
+const SP = E.supplyPlenum, RP = E.returnPlenum;
+say('there is a supply plenum', !!SP, SP && P(SP));
+say('there is a return plenum', !!RP, RP && P(RP));
 say('they are not in the same place', E.separationPx > 30,
   Math.round(E.separationPx) + ' px apart');
 say('neither sits on the fan coil centre',
-  dist(E.supplyPlenum, E.fanCoil) > 10 && dist(E.returnBox, E.fanCoil) > 10,
-  'FCU ' + P(E.fanCoil));
-// Opposite sides, not merely two points a few pixels apart on the same side.
-const angleOf = (pt) => Math.atan2(pt.y - E.fanCoil.y, pt.x - E.fanCoil.x);
-const spread = Math.abs(((angleOf(E.returnBox) - angleOf(E.supplyPlenum) + Math.PI)
-  % (Math.PI * 2)) - Math.PI);
-say('they are on opposite sides of the fan coil', spread > Math.PI / 2,
-  Math.round(spread * 180 / Math.PI) + '° apart');
+  dist(SP, E.fanCoil) > 10 && dist(RP, E.fanCoil) > 10, 'FCU ' + P(E.fanCoil));
 
-// ── 2. Every duct ends where it should ──────────────────────────────────────
-STEP('[2] Return ducts terminate at the return box, and nothing else does');
-const nearBox = (pt) => dist(pt, E.returnBox) < 6;
-const nearPlenum = (pt) => dist(pt, E.supplyPlenum) < 6;
-say('every return duct ends at the return box',
-  D.returnEnds.every(r => nearBox(r.a) || nearBox(r.z)),
+// ATTACHED, NOT MERELY NEARBY. Each plenum's inner face is the fan coil's own
+// face, so the distance from the FCU centre to that face is exactly half the
+// unit — no gap to explain, and no overlap either.
+const along = (pt) => (pt.x - E.fanCoil.x) * Math.cos(E.angle)
+                    + (pt.y - E.fanCoil.y) * Math.sin(E.angle);
+const across = (pt) => -(pt.x - E.fanCoil.x) * Math.sin(E.angle)
+                     + (pt.y - E.fanCoil.y) * Math.cos(E.angle);
+say('the supply plenum is attached to the FCU discharge face',
+  Math.abs(along(SP.innerFace) - E.fanCoil.w / 2) < 0.5,
+  'inner face ' + along(SP.innerFace).toFixed(2) + ' px vs half-unit ' + (E.fanCoil.w / 2).toFixed(2));
+say('the return plenum is attached to the FCU return face',
+  Math.abs(along(RP.innerFace) + E.fanCoil.w / 2) < 0.5,
+  'inner face ' + along(RP.innerFace).toFixed(2) + ' px');
+say('neither plenum overlaps the FCU body',
+  along(SP.innerFace) >= E.fanCoil.w / 2 - 0.01 &&
+  along(RP.innerFace) <= -E.fanCoil.w / 2 + 0.01);
+say('there is no gap between either plenum and the FCU',
+  Math.abs(along(SP.innerFace) - E.fanCoil.w / 2) < 0.5 &&
+  Math.abs(along(RP.innerFace) + E.fanCoil.w / 2) < 0.5);
+say('the two plenums are on OPPOSITE faces', along(SP) > 0 && along(RP) < 0,
+  'supply ' + along(SP).toFixed(1) + ', return ' + along(RP).toFixed(1));
+say('both are aligned with the FCU body',
+  Math.abs(across(SP)) < 0.5 && Math.abs(across(RP)) < 0.5,
+  'off-centre by ' + across(SP).toFixed(2) + ' / ' + across(RP).toFixed(2) + ' px');
+say('their bodies are proportional to the FCU face',
+  SP.h >= E.fanCoil.h && RP.h >= E.fanCoil.h &&
+  SP.h <= E.fanCoil.h * 3 && RP.h <= E.fanCoil.h * 3,
+  'FCU face ' + E.fanCoil.h.toFixed(0) + ', supply ' + SP.h.toFixed(0) + ', return ' + RP.h.toFixed(0));
+
+// ── 1b. One collar per duct, and they are separate collars ──────────────────
+STEP('[1b] Three supply collars and two return collars, all distinct');
+say('the supply plenum shows exactly three ø400 collars', SP.collars.length === 3,
+  SP.collars.map(P).join(' '));
+say('the return plenum shows exactly two ø400 collars', RP.collars.length === 2,
+  RP.collars.map(P).join(' '));
+const allDistinct = (list) => list.every((c, i) =>
+  list.every((o, j) => i === j || dist(c, o) > 4));
+say('no two supply collars are in the same place', allDistinct(SP.collars));
+say('no two return collars are in the same place', allDistinct(RP.collars));
+say('every supply collar points out of the discharge face',
+  SP.collars.every(c => along(c) > 0), SP.collars.map(c => along(c).toFixed(0)).join(' '));
+say('every return collar points out of the return face',
+  RP.collars.every(c => along(c) < 0), RP.collars.map(c => along(c).toFixed(0)).join(' '));
+
+// ── 2. Every duct ends on its own collar ────────────────────────────────────
+STEP('[2] Return ducts terminate at separate return collars, and nothing else does');
+// A run is anchored at a collar TIP, one collar length beyond the face. Match
+// on the NEAREST collar rather than any collar inside a radius: the collars are
+// a duct-width apart, so a radius wide enough to reach a tip also reaches the
+// neighbour, and two ducts on two collars both answered to collar 0.
+const nearestCollar = (pt, collars) => {
+  let best = -1, bestK = Infinity;
+  collars.forEach((c, i) => { const k = dist(pt, c); if (k < bestK) { bestK = k; best = i; } });
+  return bestK <= 14 ? best : -1;
+};
+const onCollar = (pt, collars) => nearestCollar(pt, collars) >= 0;
+const seatOf = (pt, collars) => nearestCollar(pt, collars);
+say('every return duct ends on a return-plenum collar',
+  D.returnEnds.every(r => onCollar(r.a, RP.collars) || onCollar(r.z, RP.collars)),
   D.returnEnds.map(r => P(r.a) + '→' + P(r.z)).join('  '));
 say('exactly two return ducts land on it', D.returnEnds.length === 2,
   D.returnEnds.length + ' return runs');
-say('NO supply duct terminates at the return box',
-  D.supplyEnds.every(r => !nearBox(r.a) && !nearBox(r.z)),
-  D.supplyEnds.filter(r => nearBox(r.a) || nearBox(r.z)).map(r => r.role).join(', ') || 'none');
-say('NO return duct terminates at the supply plenum',
-  D.returnEnds.every(r => !nearPlenum(r.a) && !nearPlenum(r.z)),
-  D.returnEnds.filter(r => nearPlenum(r.a) || nearPlenum(r.z)).length + ' offenders');
-say('every supply main starts at the supply plenum',
-  D.supplyEnds.filter(r => r.role === 'main').every(r => nearPlenum(r.a)),
-  D.supplyEnds.filter(r => r.role === 'main').map(r => P(r.a)).join(' '));
+const retSeats = D.returnEnds.map(r =>
+  onCollar(r.z, RP.collars) ? seatOf(r.z, RP.collars) : seatOf(r.a, RP.collars));
+say('the two return ducts land on DIFFERENT collars',
+  retSeats.length === 2 && retSeats[0] !== retSeats[1] && retSeats.every(i => i >= 0),
+  'collar indices ' + retSeats.join(' and '));
+say('NO supply duct terminates on a return collar',
+  D.supplyEnds.every(r => !onCollar(r.a, RP.collars) && !onCollar(r.z, RP.collars)),
+  D.supplyEnds.filter(r => onCollar(r.a, RP.collars) || onCollar(r.z, RP.collars))
+    .map(r => r.role).join(', ') || 'none');
+say('NO return duct terminates on a supply collar',
+  D.returnEnds.every(r => !onCollar(r.a, SP.collars) && !onCollar(r.z, SP.collars)),
+  D.returnEnds.filter(r => onCollar(r.a, SP.collars) || onCollar(r.z, SP.collars)).length + ' offenders');
+const mains = D.supplyEnds.filter(r => r.role === 'main');
+say('every supply main starts on a supply-plenum collar',
+  mains.every(r => onCollar(r.a, SP.collars)), mains.map(r => P(r.a)).join(' '));
+const mainSeats = mains.map(r => seatOf(r.a, SP.collars));
+say('the three mains leave three DIFFERENT collars',
+  new Set(mainSeats).size === 3 && mainSeats.every(i => i >= 0),
+  'collar indices ' + mainSeats.join(', '));
+
+// ── 2b. No duct is drawn through the equipment ──────────────────────────────
+STEP('[2b] No duct is drawn through the fan coil or either plenum');
+const band = {
+  a0: -(E.fanCoil.w / 2 + RP.w), a1: E.fanCoil.w / 2 + SP.w,
+  c: Math.max(E.fanCoil.h, SP.h, RP.h) / 2
+};
+// Inside the band but not on a collar face is a duct crossing the metal. The
+// lead-out from each collar is deliberately allowed: that IS the connection.
+const throughMetal = [];
+for (const path of D.paths) {
+  for (const q of path.points) {
+    const la = along(q), ac = across(q);
+    if (la > band.a0 + 1 && la < band.a1 - 1 && Math.abs(ac) < band.c - 1) {
+      throughMetal.push(path.role + ' ' + P(q));
+      break;
+    }
+  }
+}
+say('no duct has a point inside the equipment bodies', throughMetal.length === 0,
+  throughMetal.join(', ') || 'none');
 
 STEP('[3] Supply and return share no endpoint at all');
 const shared = [];

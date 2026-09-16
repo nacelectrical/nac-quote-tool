@@ -336,6 +336,180 @@ say('a snapshot is produced', snap.ok);
 say('and the editing mode is put back afterwards', snap.after === snap.before,
   snap.before + ' → ' + snap.after);
 
+// ── The two redesigned symbols, measured rather than eyeballed ──────────────
+//
+// Nick rejected the old BTO ("a circle, pill, blob or generic route node") and
+// the old damper ("a floating square or a long slash extending outside the
+// duct"). Ink signatures cannot tell a blob from a manifold, so these read the
+// GEOMETRY the symbol library computes — the same numbers the renderer uses to
+// trim ducts back to the collar face — and check the things he listed.
+
+STEP('[10] The BTO is a fabricated manifold with countable collars');
+const btoGeo = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const mk = (outs, inletMm, outMm) => SYM.btoGeometry({
+    at: { x: 200, y: 200 }, inletAngle: Math.PI, outletAngles: outs,
+    inletMm, outletMm: outMm });
+  const A = mk([0, 0.8, -0.8], 400, [250, 250, 250]);          // BTO-A
+  const C = mk([0.4, -0.4], 400, [350, 350]);                  // BTO-C
+  const C2 = mk([0, 0.9, -0.9], 350, [250, 250, 250]);         // BTO-C2
+  const dims = (g) => ({
+    w: g.w, h: g.h, clearPx: g.clearPx,
+    inletWidth: g.inlet?.width ?? null,
+    outletWidths: g.outlets.map(o => o.width),
+    collars: g.outlets.length,
+    // How far each collar root is from the body centre, and its tip.
+    rootDist: g.outlets.map(o => Math.hypot(o.root.x - g.at.x, o.root.y - g.at.y)),
+    tipDist: g.outlets.map(o => Math.hypot(o.tip.x - g.at.x, o.tip.y - g.at.y)),
+    inletRootDist: g.inlet ? Math.hypot(g.inlet.root.x - g.at.x, g.inlet.root.y - g.at.y) : null,
+    // The angle each collar points, against the duct it belongs to.
+    angles: g.outlets.map(o => o.angle)
+  });
+  return { A: dims(A), C: dims(C), C2: dims(C2), wanted: [0, 0.8, -0.8] };
+});
+say('BTO-A draws three outlet collars for three ports', btoGeo.A.collars === 3);
+say('BTO-C draws two outlet collars for two ports', btoGeo.C.collars === 2);
+say('BTO-C2 draws three outlet collars for three ports', btoGeo.C2.collars === 3);
+say('every collar points along the duct it serves',
+  btoGeo.A.angles.every((a, i) => Math.abs(a - btoGeo.wanted[i]) < 1e-9),
+  btoGeo.A.angles.map(a => Math.round(a * 180 / Math.PI) + '°').join(' '));
+say('the inlet is drawn wider than the outlet collars',
+  btoGeo.A.inletWidth > Math.max(...btoGeo.A.outletWidths),
+  'inlet ' + btoGeo.A.inletWidth + ' vs outlets ' + btoGeo.A.outletWidths.join('/'));
+say('the body is compact enough not to cover the plan',
+  btoGeo.A.w <= 26 && btoGeo.A.h <= 30 && btoGeo.C2.w <= 26 && btoGeo.C2.h <= 30,
+  'A ' + btoGeo.A.w.toFixed(0) + '×' + btoGeo.A.h.toFixed(0) +
+  ', C2 ' + btoGeo.C2.w.toFixed(0) + '×' + btoGeo.C2.h.toFixed(0));
+say('the body is big enough to identify', btoGeo.A.w >= 15 && btoGeo.A.h >= 13);
+say('the body scales with the number of collars',
+  btoGeo.C2.h > btoGeo.C.h, 'three-port ' + btoGeo.C2.h.toFixed(1) +
+  ' vs two-port ' + btoGeo.C.h.toFixed(1));
+say('the body scales with the inlet size',
+  btoGeo.C.w > btoGeo.C2.w, 'ø400 inlet ' + btoGeo.C.w.toFixed(1) +
+  ' vs ø350 inlet ' + btoGeo.C2.w.toFixed(1));
+// THE DUCT STOPS AT THE COLLAR FACE. The renderer trims each run back to the
+// collar TIP, so every tip must be outside the body — otherwise the trimmed
+// duct would begin inside the metal and read as running through it.
+const halfDiag = (g) => Math.hypot(g.w, g.h) / 2;
+say('every collar tip lies outside the body',
+  btoGeo.A.tipDist.every((d, i) => d > btoGeo.A.rootDist[i]) &&
+  btoGeo.A.rootDist.every(d => d >= Math.min(btoGeo.A.w, btoGeo.A.h) / 2 - 0.01),
+  'roots ' + btoGeo.A.rootDist.map(d => d.toFixed(1)).join('/') +
+  ', tips ' + btoGeo.A.tipDist.map(d => d.toFixed(1)).join('/'));
+say('the trim radius reaches past the body corners',
+  btoGeo.A.clearPx >= Math.max(btoGeo.A.w, btoGeo.A.h) / 2,
+  'clear ' + btoGeo.A.clearPx.toFixed(1) + ' px vs half-body ' +
+  (Math.max(btoGeo.A.w, btoGeo.A.h) / 2).toFixed(1));
+
+// NOT A CIRCLE, NOT A ROUTE NODE. A rectangle with a double outline puts ink in
+// the corners of its bounding box; a disc does not, and an edit handle is both
+// round and far smaller.
+say('a BTO does not look like a route handle or a diffuser',
+  Math.abs(signatures.bto3.cornerPct - signatures.editHandle.cornerPct) > 6 ||
+  Math.abs(signatures.bto3.ink - signatures.editHandle.ink) > 100,
+  'bto ' + signatures.bto3.cornerPct + '% corner / ' + signatures.bto3.ink + 'px, handle ' +
+  signatures.editHandle.cornerPct + '% / ' + signatures.editHandle.ink + 'px');
+
+STEP('[11] The zone damper is an inline motorised damper');
+const dmp = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const g250 = SYM.damperGeometry({ at: { x: 200, y: 200 }, angle: 0.7,
+                                    diameterMm: 250, pxPerMm: 0.0566667, scale: 1 });
+  const g350 = SYM.damperGeometry({ at: { x: 200, y: 200 }, angle: 0.7,
+                                    diameterMm: 350, pxPerMm: 0.0566667, scale: 1 });
+  return { g250, g350, DAMPER: SYM.DAMPER };
+});
+say('the damper body is inline with the duct, not across it',
+  dmp.g250.angle === 0.7, 'body angle ' + dmp.g250.angle);
+say('the body width follows the duct diameter',
+  dmp.g350.h > dmp.g250.h, 'ø250 ' + dmp.g250.h.toFixed(1) +
+  ' vs ø350 ' + dmp.g350.h.toFixed(1));
+say('the body stays within sane bounds at any size',
+  dmp.g250.h >= dmp.DAMPER.minBodyWidth && dmp.g350.h <= dmp.DAMPER.maxBodyWidth,
+  dmp.g250.h.toFixed(1) + ' … ' + dmp.g350.h.toFixed(1));
+say('the actuator is mounted ON the body, not floating',
+  dmp.g250.actuator.offset <= dmp.g250.h / 2 + dmp.g250.actuator.h / 2 + dmp.DAMPER.shaft + 0.01,
+  'offset ' + dmp.g250.actuator.offset.toFixed(1) + ' px, body half-width ' +
+  (dmp.g250.h / 2).toFixed(1) + ' + actuator half ' + (dmp.g250.actuator.h / 2).toFixed(1) +
+  ' + shaft ' + dmp.DAMPER.shaft);
+// The blade is drawn inside the body by construction — it is clipped to
+// (w/2 - 1.6, h/2 - 1.6) — so the check is that the body is big enough to hold
+// a blade at all rather than a slash sticking out of a hairline.
+say('the body is large enough for the blade to sit inside it',
+  dmp.g250.w > 4 && dmp.g250.h > 4, dmp.g250.w.toFixed(1) + '×' + dmp.g250.h.toFixed(1));
+// COUNT THE ACTUATOR, NOT THE INK. Total ink says the opposite of the truth
+// here: the constant tile carries the words CONSTANT – LOCKED OPEN, which are
+// more ink than the little green box they replace. The actuator's own colour is
+// the only thing that answers the question actually being asked.
+const actuatorPixels = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const count = (opts) => {
+    const cv = document.createElement('canvas');
+    cv.width = 120; cv.height = 120;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#FFFFFF'; c.fillRect(0, 0, 120, 120);
+    SYM.drawZoneDamper(c, { x: 60, y: 60 }, opts);
+    const px = c.getImageData(0, 0, 120, 120).data;
+    let n = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      // The actuator green, #1D7A48, and the darker outline around it.
+      if (px[i] < 90 && px[i + 1] > 70 && px[i + 1] < 160 && px[i + 2] < 110 &&
+          px[i + 1] > px[i] + 25 && px[i + 1] > px[i + 2] + 15) n++;
+    }
+    return n;
+  };
+  return { motorised: count({ label: 'ZM-1 · Z3' }), constant: count({ constant: true }) };
+});
+say('a motorised zone draws an actuator', actuatorPixels.motorised > 20,
+  actuatorPixels.motorised + ' actuator px');
+say('a constant zone draws the same body with NO actuator',
+  actuatorPixels.constant === 0,
+  actuatorPixels.constant + ' actuator px on a locked-open damper');
+// And on the live drawing: never on a return, and the label is off the duct.
+const damperCheck = await p.evaluate(() => {
+  const d = window.nacDesigner.design;
+  const returnIds = new Set((d.returnRoutes || []).map(r => r.id));
+  return { onReturn: (d.zoneDampers || []).filter(z => returnIds.has(z.sectionId)).length,
+           total: (d.zoneDampers || []).length };
+});
+say('no zone damper is placed on return ductwork', damperCheck.onReturn === 0,
+  damperCheck.total + ' dampers, ' + damperCheck.onReturn + ' on returns');
+
+STEP('[12] The equipment assembly is one arrangement, not three loose boxes');
+const asm = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const g = SYM.equipmentAssembly({ at: { x: 300, y: 300 }, supplyBearing: -1.2,
+    supplyCollars: 3, returnCollars: 2, fcuW: 48, fcuH: 24 });
+  const local = (pt) => SYM.assemblyLocal(g, pt);
+  return {
+    angle: g.angle,
+    supplyInner: local(g.supply.innerFace).along,
+    returnInner: local(g.return.innerFace).along,
+    supplyCollars: g.supply.collars.length,
+    returnCollars: g.return.collars.length,
+    supplyAcross: g.supply.collars.map(c => local(c).across),
+    returnAcross: g.return.collars.map(c => local(c).across),
+    // A duct that tries to cross the assembly must be reported as blocked.
+    blockedThrough: SYM.assemblyBlocks(g, { x: 300, y: 200 }, { x: 300, y: 400 }),
+    blockedClear: SYM.assemblyBlocks(g, { x: 900, y: 200 }, { x: 900, y: 400 })
+  };
+});
+say('the unit is drawn square on the sheet',
+  Math.abs(asm.angle % (Math.PI / 2)) < 1e-9,
+  'axis ' + Math.round(asm.angle * 180 / Math.PI) + '°');
+say('the supply plenum bolts to the discharge face',
+  Math.abs(asm.supplyInner - 24) < 1e-9, asm.supplyInner.toFixed(2));
+say('the return plenum bolts to the return face',
+  Math.abs(asm.returnInner + 24) < 1e-9, asm.returnInner.toFixed(2));
+say('three supply collars, spread across the face, none doubled up',
+  asm.supplyCollars === 3 && new Set(asm.supplyAcross.map(v => v.toFixed(3))).size === 3,
+  asm.supplyAcross.map(v => v.toFixed(1)).join(' '));
+say('two return collars, spread across the face, none doubled up',
+  asm.returnCollars === 2 && new Set(asm.returnAcross.map(v => v.toFixed(3))).size === 2,
+  asm.returnAcross.map(v => v.toFixed(1)).join(' '));
+say('a duct through the assembly is detected', asm.blockedThrough === true);
+say('a duct well clear of it is not', asm.blockedClear === false);
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'}`);
 await b.close();
 process.exit(failures ? 1 : 0);

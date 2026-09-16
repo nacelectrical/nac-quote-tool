@@ -244,6 +244,172 @@ export function clearOfPlenum(at, plenum, target, minPx) {
   return { x: plenum.x + dx * minPx, y: plenum.y + dy * minPx };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE MINIMUM MEASURED DUCT BETWEEN A FITTING AND THE OUTLET IT FEEDS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nick: "A BTO must never sit directly on top of or immediately beside an
+// outlet. Every final duct from a BTO collar to an outlet must have a measured
+// routed length of at least 2.0 metres. This is an engineering/layout rule, not
+// just a drawing offset."
+//
+// It is a layout rule because of what a flex final actually is. A take-off
+// collar discharges into the duct as a jet; a diffuser hung 400 mm below it
+// gets that jet straight down its neck, which is noise, draught and a pattern
+// nobody can balance. The two metres is the run in which the air settles.
+//
+// MIN_FITTING_TO_OUTLET_PX did not do this job and was never meant to. It is a
+// drawing guard — it exists so the schedule cannot print a zero-length run —
+// and at 26 px on this plan it is 460 mm. Two outlets on the approved job (the
+// Foyer and Bedroom 4) sat at exactly that guard, which is the tell: the median
+// had converged onto them and the guard was all that moved the fitting.
+//
+// So the rule is measured, in metres, off the CALIBRATED plan, against the
+// routed polyline the router will actually emit — not the straight line between
+// the two, because the run that gets installed is the one that gets drawn.
+export const MIN_BTO_TO_OUTLET_DUCT_LENGTH_M = 2.0;
+
+/** The bow a final run is drawn with. One constant, so measuring and emitting
+ *  cannot drift apart: `finalRunLengthPx` measures the very polyline that
+ *  `emitFinal` later pushes into the segment. */
+const FINAL_BOW = 0.16;
+
+const polylineLengthPx = (pts) => {
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) n += dist(pts[i - 1], pts[i]);
+  return n;
+};
+
+/** The exact points of the final run from a fitting to an outlet. */
+export function finalRunPoints(from, to) { return sweep(from, to, FINAL_BOW); }
+
+/** Its measured routed length, in plan pixels. */
+export function finalRunLengthPx(from, to) {
+  return polylineLengthPx(finalRunPoints(from, to));
+}
+
+/** Inside a rectangle, with a margin. Negative margin grows the rectangle. */
+function insideRect(p, r, margin = 0) {
+  if (!r) return true;
+  return p.x >= r.x + margin && p.x <= r.x + r.w - margin
+      && p.y >= r.y + margin && p.y <= r.y + r.h - margin;
+}
+
+/**
+ * MOVE THE FITTING UNTIL EVERY RUN OFF IT IS A REAL DUCT.
+ *
+ * The wanted position is the weighted median — the cheapest place for the
+ * metal. When it leaves a final under the minimum, the fitting moves to the
+ * nearest position that is both PRACTICAL and COMPLIANT, and "practical" is
+ * four separate constraints, all of them Nick's:
+ *
+ *   • inside the conditioned footprint — never in or through an external wall;
+ *   • not inside an excluded room — not over a bathroom, ensuite, laundry or
+ *     garage, which is where the wet areas and the un-boarded ceiling are;
+ *   • far enough off the supply plenum that its main is still a main;
+ *   • every final it feeds at or over the minimum measured length.
+ *
+ * Among the positions that satisfy all four it takes the CHEAPEST — the one
+ * with the smallest size-weighted total of main plus finals — so the rule buys
+ * clearance without quietly buying duct. Nick: "Minimise the combined
+ * final-duct lengths only after satisfying the 2.0 m minimum."
+ *
+ * THE FITTING MOVES; THE RUN IS NEVER PADDED. There is no loop, no dog-leg and
+ * no detour inserted to make a number — the final is the same gentle bow it was
+ * before, measured honestly, and if it is short the METAL goes somewhere else.
+ * A run that reads 2.0 m is 2.0 m of duct somebody pulls.
+ */
+export function placeFittingClear(want, members, opts = {}) {
+  const minFinalPx = opts.minFinalPx > 0 ? opts.minFinalPx : 0;
+  const footprint = opts.footprint || null;
+  const avoid = opts.avoid || [];
+  const plenum = opts.plenum || null;
+  const minMainPx = opts.minMainPx > 0 ? opts.minMainPx : 0;
+  const weightOf = opts.weightOf || (() => 1);
+  const mainWeight = opts.mainWeight > 0 ? opts.mainWeight : 1;
+  const margin = opts.margin ?? 6;
+
+  const practical = (p) => {
+    if (footprint && !insideRect(p, footprint, margin)) return false;
+    if (plenum && minMainPx > 0 && dist(p, plenum) < minMainPx - 1e-6) return false;
+    for (const r of avoid) if (insideRect(p, r, -margin)) return false;
+    return true;
+  };
+  const compliant = (p) => members.every(o => finalRunLengthPx(p, o) >= minFinalPx - 1e-6);
+  const cost = (p) => {
+    let n = plenum ? mainWeight * dist(plenum, p) : 0;
+    for (const o of members) n += weightOf(o) * finalRunLengthPx(p, o);
+    return n;
+  };
+  const shortfalls = (p) => members
+    .map(o => ({ id: o.id, label: o.roomLabel, lengthPx: finalRunLengthPx(p, o) }))
+    .filter(r => r.lengthPx < minFinalPx - 1e-6);
+
+  if (!members.length || minFinalPx <= 0) {
+    return { at: want, moved: false, compliant: true, shortfalls: [] };
+  }
+  if (practical(want) && compliant(want)) {
+    return { at: want, moved: false, compliant: true, shortfalls: [] };
+  }
+
+  // A polar sweep around the wanted point. Rings rather than a grid because the
+  // answer is nearly always just outside the disc of one offending outlet, and
+  // rings find that first and cheaply. The radius runs out to three times the
+  // minimum, which is past the far side of any outlet that could be forcing the
+  // move.
+  const spread = members.reduce((n, o) => Math.max(n, dist(want, o)), 0);
+  const maxR = Math.max(minFinalPx * 3, spread * 1.6, 40);
+  const step = Math.max(2, minFinalPx / 12);
+  const BEARINGS = 96;
+  let best = null, bestCost = Infinity;
+  const consider = (p) => {
+    if (!practical(p) || !compliant(p)) return;
+    const c = cost(p);
+    if (c < bestCost) { bestCost = c; best = p; }
+  };
+  for (let r = step; r <= maxR; r += step) {
+    for (let i = 0; i < BEARINGS; i++) {
+      const a = (i / BEARINGS) * Math.PI * 2;
+      consider({ x: want.x + Math.cos(a) * r, y: want.y + Math.sin(a) * r });
+    }
+    // Stop as soon as a ring has produced something: any further ring is
+    // strictly further from the cheapest place the metal wanted to be.
+    if (best) break;
+  }
+  // One ring further out, finely, in case the cheapest point on the shell sits
+  // between two bearings of the ring that found it.
+  if (best) {
+    const r0 = dist(want, best);
+    for (let r = Math.max(step, r0 - step); r <= r0 + step; r += step / 4) {
+      for (let i = 0; i < BEARINGS * 2; i++) {
+        const a = (i / (BEARINGS * 2)) * Math.PI * 2;
+        consider({ x: want.x + Math.cos(a) * r, y: want.y + Math.sin(a) * r });
+      }
+    }
+    return { at: best, moved: true, compliant: true, shortfalls: [],
+             movedPx: round(dist(want, best), 1) };
+  }
+
+  // NOTHING PRACTICAL AND COMPLIANT EXISTS. The fitting is left at the best
+  // position it can legally occupy and the caller raises the review — the
+  // estimator is told, not quietly given a number that is not true.
+  let fallback = want, fallbackCost = Infinity;
+  for (let r = 0; r <= maxR; r += step) {
+    for (let i = 0; i < BEARINGS; i++) {
+      const a = (i / BEARINGS) * Math.PI * 2;
+      const p = r === 0 ? want : { x: want.x + Math.cos(a) * r, y: want.y + Math.sin(a) * r };
+      if (!practical(p)) continue;
+      // Rank by how far short the worst run still is, then by cost.
+      const worst = Math.min(...members.map(o => finalRunLengthPx(p, o)));
+      const c = (minFinalPx - worst) * 1000 + cost(p);
+      if (c < fallbackCost) { fallbackCost = c; fallback = p; }
+      if (r === 0) break;
+    }
+  }
+  return { at: fallback, moved: fallback !== want, compliant: false,
+           shortfalls: shortfalls(fallback) };
+}
+
 /** Airflow-weighted centre of a set of outlets — where a main is really going. */
 function airflowCentroid(items) {
   const w = items.reduce((n, o) => n + (o.airflowLs || 0), 0);
@@ -301,7 +467,7 @@ export function planAreaFittings(outlets, plenum, opts = {}) {
  * area's primary fitting.
  */
 export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, zones = null,
-                                    mainConfig = null } = {}, opts = {}) {
+                                    mainConfig = null, avoidRooms = [] } = {}, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const warnings = [];
   const roomsById = new Map((rooms || []).map(r => [r.id, r]));
@@ -400,6 +566,29 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
                    source: plenumSource, label: 'Supply plenum' }];
   const letters = 'ABCDEFGH';
 
+  // ── THE 2.0 m RULE, IN THIS PLAN'S OWN PIXELS ───────────────────────────
+  //
+  // Measured, so it needs the scale. On an uncalibrated plan there is no
+  // measured length to test — the rule falls back to the old drawing guard and
+  // says so rather than pretending a pixel is a millimetre.
+  const pxPerMmGlobal = opts.calibration?.pixelsPerMm || 0;
+  const minFinalM = opts.minBtoToOutletDuctLengthM
+    ?? settings.duct?.minimumBtoToOutletDuctLengthM
+    ?? MIN_BTO_TO_OUTLET_DUCT_LENGTH_M;
+  const minFinalPx = pxPerMmGlobal ? minFinalM * 1000 * pxPerMmGlobal : 0;
+  // Where a fitting must not be set: the wet areas and the garage. They are
+  // excluded from conditioning, so they never reach the router as rooms — the
+  // caller hands them over separately precisely so the placement can avoid
+  // them. An un-boarded roof section is not on any plan we are given; a
+  // fitting that has to go somewhere awkward raises the review instead.
+  const avoidBoxes = (avoidRooms || [])
+    .map(r => r?.boundaryPx).filter(b => b && b.w > 0 && b.h > 0);
+  // The same size weighting the median uses, so the search and the target it
+  // refines agree about what a metre of duct costs.
+  const finalWeight = (o) =>
+    (selectDiameter(o.airflowLs, 'final', { settings }).diameterMm || 250) / 250;
+  const clearanceReviews = [];
+
   areas.forEach(({ spec, members }, ai) => {
     const letter = spec.key || letters[ai];
     const areaLs = members.reduce((n, o) => n + o.airflowLs, 0);
@@ -428,9 +617,15 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
           at: undefined };
     if (!staged) {
       const base = planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
-      plan.at = clampInto(clearOfPlenum(base.at, plenum, airflowCentroid(members), minMainPx),
-                          footprint);
+      const want = clampInto(clearOfPlenum(base.at, plenum, airflowCentroid(members), minMainPx),
+                             footprint);
+      // EVERY FINAL OFF THIS FITTING IS A REAL DUCT, OR THE FITTING MOVES.
+      const set = placeFittingClear(want, members, {
+        minFinalPx, footprint, avoid: avoidBoxes, plenum, minMainPx,
+        weightOf: finalWeight, mainWeight: mainMm / 250 });
+      plan.at = set.at;
       plan.direct = base.direct;
+      if (!set.compliant) clearanceReviews.push({ key: letter, set });
     }
 
     // THE MAIN. Straight from the plenum to the area's one fitting, at the
@@ -460,7 +655,11 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
         airflowLs: round(o.airflowLs, 0),
         diameterMm: fixedMm || undefined,
         zone: o.zone,
-        points: sweep(at, { x: o.x, y: o.y }, 0.16),
+        // ONE FUNCTION DRAWS IT AND ONE FUNCTION MEASURES IT. The minimum-length
+        // rule tests `finalRunPoints`, so the emitted run has to BE that
+        // polyline — a second `sweep` call with its own bow constant would let
+        // the measured figure and the installed duct drift apart.
+        points: finalRunPoints(at, { x: o.x, y: o.y }),
         fittings: ['damper_open']
       });
       nodes.push({ id: o.id, type: 'outlet', x: o.x, y: o.y,
@@ -471,8 +670,17 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
       for (const arm of arms) {
         const armLs = arm.members.reduce((n, o) => n + o.airflowLs, 0);
         const armMm = arm.diameterMm || 350;
-        const local = planAreaFittings(arm.members, plan.at,
+        const base = planAreaFittings(arm.members, plan.at,
           { footprint, settings, mainDiameterMm: armMm });
+        // The arm's own fitting is where the outlets hang, so this is where the
+        // 2.0 m rule bites hardest: on the approved job BTO-C1 sat 0.46 m off
+        // the Foyer diffuser and BTO-C2 0.46 m off Bedroom 4.
+        const set = placeFittingClear(base.at, arm.members, {
+          minFinalPx, footprint, avoid: avoidBoxes,
+          plenum: plan.at, minMainPx: 0,
+          weightOf: finalWeight, mainWeight: armMm / 250 });
+        const local = { ...base, at: set.at };
+        if (!set.compliant) clearanceReviews.push({ key: arm.key, set });
         const branchId = 'branch_' + arm.key;
         segments.push({
           id: branchId, parentId: mainId, role: 'branch', nacRole: 'DISTRIBUTION_ARM',
@@ -495,9 +703,40 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
                  label: 'BTO-' + letter, ports: staged ? arms.length : plan.direct.length });
   });
 
+  // ── WHEN NO PRACTICAL COMPLIANT POSITION EXISTS ─────────────────────────
+  //
+  // Nick: "If no practical compliant location exists, raise
+  // BTO_TO_OUTLET_CLEARANCE_REVIEW and block final approval until the installer
+  // confirms the location." CRITICAL, so it reaches the approval gate; the
+  // message names the fitting and every run still short, with the figure it
+  // actually measured — never rounded up to look compliant.
+  const mmPerPx = pxPerMmGlobal ? 1 / pxPerMmGlobal : 0;
+  for (const { key, set } of clearanceReviews) {
+    const short = set.shortfalls
+      .map(s => s.label + ' ' + (mmPerPx ? (s.lengthPx * mmPerPx / 1000).toFixed(2) + ' m' : 'not measured'))
+      .join(', ');
+    warnings.push({
+      code: 'BTO_TO_OUTLET_CLEARANCE_REVIEW', severity: 'CRITICAL',
+      blocksFinalApproval: true,
+      btoKey: key,
+      minimumM: minFinalM,
+      shortfalls: set.shortfalls.map(s => ({ ...s,
+        lengthM: mmPerPx ? round(s.lengthPx * mmPerPx / 1000, 2) : null })),
+      message: 'BTO-' + key + ': no practical position keeps every final duct at or above the ' +
+        minFinalM + ' m minimum without putting the fitting outside the conditioned ' +
+        'envelope or into a wet area or garage. Still short: ' + short +
+        '. The installer must confirm the fitting location before this design is approved.'
+    });
+  }
+
   return {
     generated: true,
     model: 'nac_area',
+    /** What the 2.0 m rule was measured against, so a report can state it. */
+    minBtoToOutletDuctLengthM: minFinalM,
+    minBtoToOutletDuctLengthPx: round(minFinalPx, 1),
+    btoClearanceReviews: clearanceReviews.map(({ key, set }) => ({
+      key, shortfalls: set.shortfalls })),
     segments, nodes, footprint,
     plenum: { ...plenum, source: plenumSource },
     mainCount: areas.length,
@@ -516,4 +755,5 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
   };
 }
 
-export default { buildAreaTopology, formInstallerAreas, planAreaFittings, splitInTwo };
+export default { buildAreaTopology, formInstallerAreas, planAreaFittings, splitInTwo,
+                 placeFittingClear, finalRunPoints, finalRunLengthPx };

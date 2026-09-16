@@ -33,6 +33,18 @@ const flag    = (level, text) => ({ t: 'flag', level, text: String(text) });
 const bullets = (items) => ({ t: 'bullets', items: items.map(String) });
 const image   = (src, caption) => ({ t: 'image', src, caption: caption || '' });
 const pageBreak = () => ({ t: 'pagebreak' });
+/**
+ * A FLOOR PLAN ON ITS OWN LANDSCAPE SHEET.
+ *
+ * Nick: "A dedicated landscape floor-plan page." A house plan is wider than it
+ * is tall, so on a portrait page it is scaled to the narrow dimension and the
+ * duct sizes stop being readable — which makes the one page an installer
+ * actually carries the one page that does not work. A PDF carries a MediaBox
+ * per page, so this block turns itself sideways and nothing else changes.
+ */
+const planPage = (src, caption) => ({ t: 'planpage', src, caption: caption || '' });
+/** An enlarged crop of the equipment area, printed at a size you can read. */
+const inset = (src, caption) => ({ t: 'inset', src, caption: caption || '' });
 
 /** cols: [{ label, r?, w? }]; rows built through `get` so the cells are strings. */
 function table(cols, rows, get) {
@@ -69,7 +81,8 @@ function header(design, title, kind) {
 }
 
 /** THE INTERNAL HVAC DESIGN SHEET — the full working, NAC only. */
-export function internalReportDoc(design, { planSnapshot = null } = {}) {
+export function internalReportDoc(design, { planSnapshot = null,
+                                            equipmentInset = null } = {}) {
   const d = design;
   const load = d.systemLoad, u = d.selectedUnit;
   const b = [];
@@ -96,14 +109,33 @@ export function internalReportDoc(design, { planSnapshot = null } = {}) {
     ['Plan calibration', d.calibration ? nn(d.calibration.pixelsPerMm, 5) + ' px/mm' : 'NOT CALIBRATED']
   ]));
 
+  // ── PAGE 1 CARRIES THE THINGS THAT STOP THE JOB ─────────────────────────
+  //
+  // Nick: "Page 1: summary and major warnings." A CRITICAL that only appears on
+  // page 7 is a CRITICAL nobody reads before they order the equipment. The full
+  // warning schedule still prints later; these are the ones that block approval,
+  // stated where the sheet opens.
+  const majorWarnings = (d.warnings || []).filter(w => w.severity === 'CRITICAL');
+  if (majorWarnings.length) {
+    b.push(h2('Major warnings'));
+    for (const w of majorWarnings) {
+      b.push(flag('crit', 'CRITICAL — ' + w.code + '. ' + w.message + ' ' +
+        (w.acknowledged
+          ? 'Acknowledged by ' + w.acknowledgedBy + ' on ' +
+            new Date(w.acknowledgedAt).toLocaleString('en-AU') + '.'
+          : 'NOT ACKNOWLEDGED — this design cannot be approved until it is.')));
+    }
+  }
+
   if (planSnapshot) {
+    // The plan gets a sheet of its own, turned sideways, at the biggest size it
+    // will go. Everything that explains it goes with it.
+    b.push(planPage(planSnapshot,
+      'Rooms, duct routes and equipment positions as marked up in NAC AI HVAC Designer. ' +
+      'Duct colour is SIZE, never zone: ø400 magenta · ø350 purple · ø300 green · ø250 amber · ' +
+      'ø200 blue · return dashed grey. Line weight follows diameter. Every size is also ' +
+      'written on its run, so the drawing does not depend on colour alone.'));
     b.push(h2('Floor plan overlay'));
-    b.push(image(planSnapshot,
-      'Rooms, duct routes and equipment positions as marked up in NAC AI HVAC Designer.'));
-    // A duct drawing nobody can read the lines on is decoration.
-    b.push(note('LEGEND — heavy yellow: main trunk · blue: branch · pale blue: final ' +
-      'connection · orange: return air. Line weight follows duct diameter. Yellow dot: ' +
-      'take-off or Y piece. Bow-tie: reducer. Green square: zone damper.'));
     if (d.autoRoute?.generated) {
       b.push(note(AUTO_ROUTE_NOTICE));
       b.push(note('This layout was generated automatically at ' +
@@ -111,6 +143,36 @@ export function internalReportDoc(design, { planSnapshot = null } = {}) {
         'trusses, bulkheads, beams, inaccessible roof zones or existing services. Route ' +
         'positions are a first-pass design suggestion and must be confirmed on site.'));
     }
+  }
+
+  if (equipmentInset) {
+    // ── THE EQUIPMENT AREA, ENLARGED ──────────────────────────────────────
+    //
+    // At whole-house scale the fan coil, its two plenums and five collars are
+    // about a centimetre of paper. This is the crop an installer sets the unit
+    // from, so it prints large and says exactly what is in it.
+    b.push(h2('Equipment arrangement'));
+    b.push(inset(equipmentInset,
+      'RETURN PLENUM → FAN COIL → SUPPLY PLENUM, enlarged from the plan above.'));
+    const mains = (d.network?.sections || []).filter(s => s.role === 'main' && !s.parentId);
+    b.push(bullets([
+      'Return plenum fitted to the fan-coil intake face, carrying ' +
+        ((d.returnComponents?.ducts || []).length || d.returnDesign?.returnCount || 0) +
+        ' × ø' + (d.returnDesign?.ductDiameterMm || 400) + ' return inlet collars.',
+      'Fan-coil body: ' + (u ? u.brandName + ' ' + u.model : 'unit not selected') + '.',
+      'Supply plenum fitted to the fan-coil discharge face, carrying ' +
+        mains.length + ' × ø' + (mains[0]?.diameterMm || 400) + ' outlet collars.',
+      'Return-air arrows point TOWARD the fan coil; supply-air arrows point AWAY from it.',
+      mains.length
+        ? 'Supply mains off the plenum: ' + mains.map(m =>
+            'Main ' + m.mainKey + ' ø' + m.diameterMm + ' ' + m.airflowLs + ' L/s').join(' · ')
+        : 'No supply mains have been routed.',
+      'Each main terminates at its own BTO. Main C feeds BTO-C, which is downstream of ' +
+        'the main and is not bolted to the plenum.',
+      'The return path never joins a supply main, a supply plenum or any BTO. Where a ' +
+        'return crosses a supply duct the lower run is broken and bridged — that is a ' +
+        'crossing, not a connection.'
+    ]));
   }
 
   b.push(h2('Room schedule'));
@@ -380,7 +442,9 @@ export function docText(doc) {
     else if (blk.t === 'kv') blk.items.forEach(i => out.push(i[0], i[1], i[2]));
     else if (blk.t === 'table') { blk.cols.forEach(c => out.push(c.label)); blk.rows.forEach(r => out.push(...r)); }
     else if (blk.t === 'bullets') out.push(...blk.items);
-    else if (blk.t === 'image') out.push(blk.caption);
+    else if (blk.t === 'image' || blk.t === 'planpage' || blk.t === 'inset') {
+      out.push(blk.caption);
+    }
   }
   return out.filter(Boolean).join('\n');
 }

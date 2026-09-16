@@ -12,7 +12,7 @@ import { round } from './units.mjs';
 import { sizableRooms, blockedRooms, totalConditionedArea,
          deriveBoundariesFromPrintedSizes } from './rooms.mjs';
 import { calibrationRequirement, deriveCalibrationFromRooms } from './calibration.mjs';
-import { classificationSummary, isConditionedRoom } from './classify.mjs';
+import { classificationSummary, isConditionedRoom, isExcludedRoom } from './classify.mjs';
 import { roomLoad, systemLoad, describeAssumptions } from './loads.mjs';
 import { selectEquipment, selectZoneController } from './equipment.mjs';
 import { calculateAirflow } from './airflow.mjs';
@@ -249,7 +249,12 @@ export function runPipeline(design, ctx = {}) {
     const tree = useAreaRouter ? measureTree(buildAreaTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
       layout: d.layout || {}, zones: zonesForRouting,
-      mainConfig: effectiveMainConfig
+      mainConfig: effectiveMainConfig,
+      // WHERE A FITTING MAY NOT BE SET. The router only ever sees the rooms
+      // cleared for sizing, so the bathrooms, the ensuite, the laundry and the
+      // garage are invisible to it — and those are exactly the ceilings a BTO
+      // must not be moved into when the 2.0 m rule pushes it off an outlet.
+      avoidRooms: (d.rooms || []).filter(r => isExcludedRoom(r) && r.boundaryPx)
     }, { settings, calibration: d.calibration }), d.calibration, { settings })
     : measureTree(buildNacTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,

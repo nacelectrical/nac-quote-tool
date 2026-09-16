@@ -50,7 +50,11 @@ async function makeAndRead(kind) {
     // The real plan snapshot, exactly as the Reports button passes it.
     const snap = window.nacDesigner.viewer?.snapshot() || null;
     window.__snapMime = (/^data:([^;,]+)/.exec(snap || '') || [])[1] || 'none';
-    const built = R.buildReportPdf(window.nacDesigner.design, kind, { logo: null, planSnapshot: snap });
+    // The equipment inset goes in the same way the Reports button passes it.
+    const inset = window.nacDesigner.viewer?.equipmentInset() || null;
+    window.__insetMime = (/^data:([^;,]+)/.exec(inset || '') || [])[1] || 'none';
+    const built = R.buildReportPdf(window.nacDesigner.design, kind,
+      { logo: null, planSnapshot: snap, equipmentInset: inset });
     const pdfjs = window.pdfjsLib;
     pdfjs.GlobalWorkerOptions.workerSrc = '/designer/vendor/pdf.worker.min.js';
     const doc = await pdfjs.getDocument({ data: built.bytes.slice() }).promise;
@@ -79,8 +83,24 @@ console.log('\n[internal] DOWNLOAD INTERNAL HVAC DESIGN PDF');
 const I = await makeAndRead('internal');
 const itext = I.pages.map(p => p.text).join('\n');
 say('it is a PDF pdf.js can open', I.numPages >= 1, I.numPages + ' pages, ' + Math.round(I.size / 1024) + ' KB');
-say('A4 pages', I.pages.every(p => p.w === 595 && p.h === 842), I.pages[0].w + '×' + I.pages[0].h);
+// A4 EITHER WAY UP. The floor plan gets its own LANDSCAPE sheet — a house plan
+// is wider than it is tall, and squeezed onto a portrait page the duct sizes
+// stop being readable. Every other page stays portrait.
+const portrait = I.pages.filter(p => p.w === 595 && p.h === 842);
+const landscape = I.pages.filter(p => p.w === 842 && p.h === 595);
+say('every page is A4, portrait or landscape',
+  portrait.length + landscape.length === I.pages.length,
+  I.pages.map(p => p.w + '×' + p.h).join(' '));
+say('the floor plan has a landscape sheet of its own', landscape.length === 1,
+  landscape.length + ' landscape page(s)');
+say('everything else is portrait', portrait.length === I.pages.length - 1,
+  portrait.length + ' portrait page(s)');
+say('page 1 opens with the summary', /DESIGN SUMMARY/i.test(I.pages[0].text));
 say('every line sits inside the margins', I.overflow.length === 0, I.overflow.slice(0, 3).join(' | ') || 'clean');
+say('the equipment inset is embedded and described',
+  /EQUIPMENT ARRANGEMENT/i.test(itext) && /RETURN PLENUM/i.test(itext) &&
+  /SUPPLY PLENUM/i.test(itext),
+  'inset source ' + (await p.evaluate(() => window.__insetMime)));
 say('it carries the NAC identity', /NAC Electrical/.test(itext) && /97 636 392 982/.test(itext));
 say('it is titled the internal sheet', /Internal HVAC Design Sheet/.test(itext));
 say('it carries the bill of materials', /BILL OF MATERIALS/i.test(itext));

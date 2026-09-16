@@ -451,7 +451,7 @@ export function drawFlexDesign(ctx, view) {
     })
     .sort((a, b) => b.widthPx - a.widthPx);
 
-  // ── THE EQUIPMENT ANCHORS ───────────────────────────────────────────────
+  // ── THE EQUIPMENT ASSEMBLY ──────────────────────────────────────────────
   //
   // SUPPLY AND RETURN ARE TWO SEPARATE AIR PATHS AND THE DRAWING HAS TO SAY SO.
   //
@@ -460,11 +460,16 @@ export function drawFlexDesign(ctx, view) {
   // ducts met at one point and the return looked plumbed into the supply — Nick:
   // "That is unacceptable even if the underlying data model is separate."
   //
-  // So the drawing puts the SUPPLY PLENUM on the discharge side and the RETURN
-  // BOX on the return side, a visible gap apart, and re-anchors each run to the
-  // box it actually belongs to. The sides are not hardcoded: the plenum goes
-  // along the mean bearing of the mains and the box along the mean bearing of
-  // the returns, so they separate correctly whichever way round a job is built.
+  // So the drawing builds the real arrangement — RETURN PLENUM → FCU → SUPPLY
+  // PLENUM, three boxes bolted together — and anchors each duct to ITS OWN
+  // COLLAR on the right box. Three mains leave three separate ø400 supply
+  // collars; two returns land on two separate ø400 return collars. No duct
+  // shares an endpoint with another and no return endpoint exists anywhere on
+  // the supply side of the unit.
+  //
+  // The sides are not hardcoded: the assembly axis comes from the mean bearing
+  // of the mains, snapped to a quarter turn so the unit sits square on the
+  // sheet, and the return plenum is the opposite face by construction.
   //
   // THIS IS GEOMETRY FOR THE EYE ONLY. Lengths, pressure, airflow and the
   // schedule all come from the engine and are untouched — the last few pixels of
@@ -482,6 +487,7 @@ export function drawFlexDesign(ctx, view) {
     const supplyRuns = runs.filter(r => r.symbolRole === 'main' && atUnit(r.screen[0]));
     const retRuns = runs.filter(r => r.symbolRole === 'return' &&
       (atUnit(r.screen[r.screen.length - 1]) || atUnit(r.screen[0])));
+    if (!supplyRuns.length && !retRuns.length) return null;
 
     const outward = (run) => {
       const a = atUnit(run.screen[0]) ? run.screen : run.screen.slice().reverse();
@@ -489,37 +495,166 @@ export function drawFlexDesign(ctx, view) {
       return Math.atan2(q.y - u.y, q.x - u.x);
     };
     const supplyBearing = meanBearing(supplyRuns.map(outward));
-    let returnBearing = meanBearing(retRuns.map(outward));
-    // If the two sides came out nearly on top of each other, force them apart:
-    // the point of the exercise is that they are unmistakably separate.
-    if (supplyBearing !== null && returnBearing !== null) {
-      let d = Math.abs(((returnBearing - supplyBearing + Math.PI) % (Math.PI * 2)) - Math.PI);
-      if (d < Math.PI / 2) returnBearing = supplyBearing + Math.PI;
-    }
-    const GAP = 30;                       // centre of each box from the unit
-    const off = (a, r) => ({ x: u.x + Math.cos(a) * r, y: u.y + Math.sin(a) * r });
-    return {
-      u,
-      supplyAt: supplyBearing === null ? null : off(supplyBearing, GAP),
-      returnAt: returnBearing === null ? null : off(returnBearing, GAP),
-      supplyBearing, returnBearing, supplyRuns, retRuns, atUnit
+    const returnBearing = meanBearing(retRuns.map(outward));
+    // THE UNIT IS DRAWN AT THE SIZE IT IS.
+    //
+    // A fixed 46 px body was two thirds of a metre at one zoom and three and a
+    // half at another, and at whole-house zoom the assembly swallowed Main C's
+    // fitting whole. A ducted fan coil is about 1.25 m long and 0.6 m deep, so
+    // where the plan has a scale the symbol is drawn to it — clamped at both
+    // ends, because a symbol too small to read is no more use than one that
+    // covers the house.
+    const ppm = (pxPerMm || 0) * (view.scale || 1);
+    const sized = (mm, lo, hi) => ppm ? Math.max(lo, Math.min(hi, mm * ppm)) : (lo + hi) / 2;
+    const widest = (list) => list.reduce((n, r) => Math.max(n, r.widthPx || 0), 8);
+    const geom = SYM.equipmentAssembly({
+      at: u,
+      supplyBearing: supplyBearing !== null ? supplyBearing
+        : (returnBearing !== null ? returnBearing + Math.PI : 0),
+      supplyCollars: supplyRuns.length,
+      returnCollars: retRuns.length,
+      fcuW: sized(1250, 28, 58), fcuH: sized(600, 15, 32),
+      // Pitch and collar width from the ducts that actually land on each face.
+      supplyPitch: widest(supplyRuns) + 1, returnPitch: widest(retRuns) + 1,
+      supplyCollarWidth: Math.max(7, widest(supplyRuns) + 1.5),
+      returnCollarWidth: Math.max(7, widest(retRuns) + 1.5)
+    });
+
+    // ONE DUCT, ONE COLLAR, AND THEY DO NOT CROSS EACH OTHER GETTING THERE.
+    //
+    // Each run is ranked by how far ACROSS the assembly axis it leaves, and the
+    // collars are ranked the same way along the face. Pairing the two in order
+    // means the duct heading furthest one way takes the collar furthest that
+    // way — which is what stops three mains leaving one plenum and immediately
+    // swapping over each other.
+    const assign = (list, collars) => {
+      const acr = (run) => {
+        const b = outward(run);
+        return Math.cos(b) * geom.across.x + Math.sin(b) * geom.across.y;
+      };
+      const order = list.map((r, i) => ({ r, i, k: acr(r) }))
+        .sort((a, b) => a.k - b.k || a.i - b.i);
+      const seats = collars.slice().sort((a, b) => a.across - b.across);
+      // KEYED ON THE RUN OBJECT, NOT ON ITS id. The route overlay does not give
+      // every run an id, so three mains keyed by `undefined` collapsed into one
+      // entry and all three came out of the same collar — which is exactly the
+      // single shared endpoint this whole arrangement exists to abolish.
+      const out = new Map();
+      order.forEach((entry, n) => { if (seats[n]) out.set(entry.r, seats[n]); });
+      return out;
     };
+    const supplySeat = assign(supplyRuns, geom.supply.collars);
+    const returnSeat = assign(retRuns, geom.return.collars);
+
+    // Anything inside the assembly's own footprint is a point the router put at
+    // the unit's centre. Dropping those before re-anchoring is what keeps a
+    // re-anchored run from doubling back through the fan coil to reach a collar.
+    const insideAssembly = (pt) => {
+      const b = geom.bounds;
+      return pt.x >= b.x - 2 && pt.x <= b.x + b.w + 2
+          && pt.y >= b.y - 2 && pt.y <= b.y + b.h + 2;
+    };
+
+    return { u, geom, supplyRuns, retRuns, supplySeat, returnSeat, atUnit,
+             insideAssembly, supplyBearing, returnBearing,
+             supplyAt: { x: geom.supply.x, y: geom.supply.y },
+             returnAt: { x: geom.return.x, y: geom.return.y } };
   })();
 
-  // Re-anchor: a main starts at the supply plenum, a return ends at the return
-  // box. Nothing else moves.
+  // Re-anchor: a main starts at its own supply collar, a return ends at its own
+  // return collar. Nothing else moves.
   if (equip) {
+    const tipOf = (seat) => ({
+      x: seat.x + Math.cos(seat.angle) * SYM.ASSEMBLY.collarLength,
+      y: seat.y + Math.sin(seat.angle) * SYM.ASSEMBLY.collarLength });
     for (const r of equip.supplyRuns) {
-      if (equip.supplyAt) r.screen = [equip.supplyAt, ...r.screen.slice(1)];
+      const seat = equip.supplySeat.get(r);
+      if (!seat) continue;
+      const tip = tipOf(seat);
+      const rest = r.screen.filter(pt => !equip.insideAssembly(pt));
+      let tail = rest.length ? rest : r.screen.slice(1);
+      const lead = SYM.routeOutOfAssembly(equip.geom, tip, seat.angle, tail[0], 12, r.widthPx);
+      // WHEN THE RUN HAD TO GO ROUND, IT DOES NOT DOUBLE BACK.
+      //
+      // The router's own sweep still approaches from the fan coil's centre. Kept
+      // after a diversion, the run went out round the unit and then turned back
+      // along that sweep — which put Main C's inlet collar on the north-west
+      // face of BTO-C, seven pixels from a RETURN collar, reading as the two
+      // being plumbed together. Once the route has gone round, it goes straight
+      // to the fitting from where it got to.
+      if (lead.length > 1) tail = [tail[tail.length - 1]];
+      r.screen = [tip, ...lead, ...tail];
+      r.collar = seat;
     }
     for (const r of equip.retRuns) {
-      if (!equip.returnAt) continue;
-      if (equip.atUnit(r.screen[r.screen.length - 1])) {
-        r.screen = [...r.screen.slice(0, -1), equip.returnAt];
-      } else {
-        r.screen = [equip.returnAt, ...r.screen.slice(1)];
+      const seat = equip.returnSeat.get(r);
+      if (!seat) continue;
+      const tip = tipOf(seat);
+      const toUnitEnd = Math.hypot(r.screen[r.screen.length - 1].x - equip.u.x,
+                                   r.screen[r.screen.length - 1].y - equip.u.y)
+                      < Math.hypot(r.screen[0].x - equip.u.x, r.screen[0].y - equip.u.y);
+      const rest = r.screen.filter(pt => !equip.insideAssembly(pt));
+      const tail = rest.length ? rest
+        : (toUnitEnd ? r.screen.slice(0, -1) : r.screen.slice(1));
+      const lead = SYM.routeOutOfAssembly(equip.geom, tip, seat.angle,
+                                          toUnitEnd ? tail[tail.length - 1] : tail[0],
+                                          12, r.widthPx);
+      r.screen = toUnitEnd
+        ? [...tail, ...lead.slice().reverse(), tip]
+        : [tip, ...lead, ...tail];
+      r.collar = seat;
+    }
+  }
+
+  // ── THE BTO BODIES, BEFORE A SINGLE DUCT IS DRAWN ───────────────────────
+  //
+  // Nick: "Duct lines must stop at the collar face, not run through the body."
+  // That cannot be done after the fact — the run has to be trimmed BEFORE it is
+  // stroked, so the fitting geometry is worked out here and the ducts are cut
+  // back to their collar tips. It also means the collar count and directions
+  // come off the topology rather than off a guess: a five-port BTO ends up with
+  // five outlet collars pointing where its five ducts go, and they can be
+  // counted off the sheet.
+  const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 14;
+  const btoDraws = [];
+  for (const m of (markers || [])) {
+    if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
+    // A TAKE-OFF SYMBOL IS SUPPLY-ONLY. Two return ducts meeting at the fan coil
+    // look, geometrically, exactly like a manifold, and a marker that drifted
+    // onto the return path used to get a BTO symbol drawn over the grille. It is
+    // not a take-off: air goes the other way, there is no spigot and nobody
+    // orders one. Anything flagged as return is skipped here whatever its type.
+    if (m.airSide === 'return' || m.isReturn || m.role === 'return') continue;
+    const at = toScreen(m);
+    const outs = [], outRuns = [];
+    let inletAngle = null, inletMm = null, inletRun = null;
+    for (const run of runs) {
+      if (run.symbolRole === 'return') continue;
+      const a = run.screen[0], z = run.screen[run.screen.length - 1];
+      if (near(a, at)) {
+        const q = run.screen[1] || z;
+        outs.push(Math.atan2(q.y - a.y, q.x - a.x));
+        outRuns.push(run);
+      } else if (near(z, at)) {
+        const q = run.screen[run.screen.length - 2] || a;
+        inletAngle = Math.atan2(q.y - z.y, q.x - z.x);
+        inletMm = run.diameterMm ?? null;
+        inletRun = run;
       }
     }
+    if (!outs.length && inletAngle === null) continue;
+    const g = SYM.btoGeometry({ at, inletAngle, outletAngles: outs,
+                                inletMm, outletMm: outRuns.map(r => r.diameterMm ?? null),
+                                scale: Math.max(0.85, Math.min(1.35, view.scale || 1)) });
+    // Cut each duct back to the collar face it lands on.
+    outRuns.forEach((run, i) => {
+      const c = g.outlets[i];
+      if (c) run.screen = [c.tip, ...run.screen.slice(1)];
+    });
+    if (inletRun && g.inlet) {
+      inletRun.screen = [...inletRun.screen.slice(0, -1), g.inlet.tip];
+    }
+    btoDraws.push({ marker: m, geometry: g });
   }
 
   // ── WHERE THE TWO SYSTEMS CROSS ─────────────────────────────────────────
@@ -548,7 +683,17 @@ export function drawFlexDesign(ctx, view) {
     // Which way the air is going — toward the unit, the opposite of everything
     // else on the sheet.
     if (view.flowArrows !== false) {
-      const toUnit = equip ? equip.atUnit(run.screen[run.screen.length - 1]) : true;
+      // WHICH END IS THE UNIT, AFTER RE-ANCHORING. `atUnit` tested a 26 px
+      // radius around the fan coil's centre, which was true when every return
+      // ended there — it now ends on a collar 35 px out, so the test came back
+      // false and every arrow on the sheet pointed the wrong way. The honest
+      // question is which END is nearer the assembly, and that stays true
+      // however far the collars sit from the centre.
+      const toUnit = equip
+        ? Math.hypot(run.screen[run.screen.length - 1].x - equip.u.x,
+                     run.screen[run.screen.length - 1].y - equip.u.y)
+          < Math.hypot(run.screen[0].x - equip.u.x, run.screen[0].y - equip.u.y)
+        : true;
       SYM.drawFlowArrow(ctx, run.screen, { fraction: 0.55, reverse: !toUnit,
                                            colour: SYM.RETURN_COLOUR, size: 6 });
       SYM.drawFlowArrow(ctx, run.screen, { fraction: 0.85, reverse: !toUnit,
@@ -588,19 +733,22 @@ export function drawFlexDesign(ctx, view) {
   // happily sit in it — which is how a size label came to clip an outlet by a
   // pixel and a half even with the placer working correctly.
   if (equip) {
-    ledger.reserve(equip.u.x, equip.u.y, 70, 38);                      // fan coil + FCU text
-    if (equip.supplyAt) ledger.reserve(equip.supplyAt.x, equip.supplyAt.y, 36, 48);
-    if (equip.returnAt) ledger.reserve(equip.returnAt.x, equip.returnAt.y, 36, 46);
+    // THE WHOLE ASSEMBLY, IN ONE BOX, WITH ROOM FOR ITS OWN LABELS. Nick:
+    // "Reserve enough space around the assembly for labels before routing
+    // ducts." Three separate reservations for three boxes left the seams
+    // between them unclaimed, and a duct size settled in one of them.
+    const b = equip.geom.bounds;
+    ledger.reserve(b.cx, b.cy, b.w + 26, b.h + 26);
   } else if (plenum && plenum.x !== undefined) {
     const u0 = toScreen(plenum);
     ledger.reserve(u0.x, u0.y, 70, 38);
   }
-  for (const m of (markers || [])) {
-    if (m.type === 'bto' || m.bto) {
-      if (m.airSide === 'return' || m.isReturn) continue;
-      const at0 = toScreen(m);
-      ledger.reserve(at0.x, at0.y, 42, 38);                            // BTO body + collars
-    }
+  // The BTO bodies book exactly what they occupy — body plus the longest collar
+  // in every direction — rather than a guessed rectangle. The geometry is
+  // already worked out, so there is nothing left to estimate.
+  for (const { geometry } of btoDraws) {
+    ledger.reserve(geometry.at.x, geometry.at.y,
+                   geometry.clearPx * 2 + 6, geometry.clearPx * 2 + 6);
   }
   for (const o of (outlets || [])) {
     const at0 = toScreen(o);
@@ -609,7 +757,10 @@ export function drawFlexDesign(ctx, view) {
   for (const d of (dampers || [])) {
     if (d.airSide === 'return' || d.isReturn || d.role === 'return') continue;
     const at0 = toScreen(d);
-    ledger.reserve(at0.x, at0.y, 28, 36);                              // blade + motor
+    // BODY + ACTUATOR + SHAFT. It must be at least as big as what the symbol
+    // books for itself later (`reach` + 6, up to 46 px) — reserving less leaves
+    // an unclaimed ring at the moment labels are placed, and a label sits in it.
+    ledger.reserve(at0.x, at0.y, 46, 46);
   }
   // Return grilles sit at the far end of each return run.
   for (const r of runs.filter(x => x.symbolRole === 'return')) {
@@ -622,54 +773,34 @@ export function drawFlexDesign(ctx, view) {
 
   // ── 3. Fittings ─────────────────────────────────────────────────────────
   //
-  // COLLAR DIRECTIONS COME OFF THE TOPOLOGY, NOT OFF A GUESS. Nick: "The number
-  // and direction of collars should reflect the actual topology." So for each
-  // fitting we find the runs that actually start there and the run that feeds
-  // it, and draw one collar down each of those bearings. A five-port BTO ends
-  // up with five outlet collars pointing where its five ducts go, which means
-  // the ports can be counted off the sheet.
-  const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 14;
-  const bearingsAt = (screenAt) => {
-    const out = [];
-    let inlet = null;
-    for (const run of runs) {
-      if (run.symbolRole === 'return') continue;
-      const a = run.screen[0], z = run.screen[run.screen.length - 1];
-      if (near(a, screenAt)) {
-        const q = run.screen[1] || z;
-        out.push(Math.atan2(q.y - a.y, q.x - a.x));
-      } else if (near(z, screenAt)) {
-        const q = run.screen[run.screen.length - 2] || a;
-        inlet = Math.atan2(q.y - z.y, q.x - z.x);
-      }
-    }
-    return { inlet, out };
-  };
-
-  for (const m of (markers || [])) {
-    if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
-    // A TAKE-OFF SYMBOL IS SUPPLY-ONLY. Two return ducts meeting at the fan coil
-    // look, geometrically, exactly like a manifold, and a marker that drifted
-    // onto the return path used to get a BTO symbol drawn over the grille. It is
-    // not a take-off: air goes the other way, there is no spigot and nobody
-    // orders one. Anything flagged as return is skipped here whatever its type.
-    if (m.airSide === 'return' || m.isReturn || m.role === 'return') continue;
-    const at = toScreen(m);
-    const b = bearingsAt(at);
-    SYM.drawBto(ctx, at, {
-      inletAngle: b.inlet, outletAngles: b.out,
-      angle: (m.angle ?? 0),
+  // The bodies and their collars were worked out before the ducts were stroked,
+  // so every run already stops at the collar face it lands on. All that is left
+  // is to put the metal on top of those roots and label it.
+  for (const { marker: m, geometry } of btoDraws) {
+    SYM.drawBto(ctx, geometry.at, {
+      geometry,
       // ONE LINE, NOT THREE. `BTO-C · 400-350-350` is the brief's own format
       // and says what the fitting is and what it is made of in a single strip.
       // Stacking the identity, the spec and the airflow put fifteen labels on a
       // five-fitting drawing. The airflow joins it only at full detail, because
       // the schedule carries it anyway.
       label: view.labelFittings === false ? null
-        : (m.btoLabel && m.btoSpec ? m.btoLabel + ' \u00b7 ' + m.btoSpec
+        : (m.btoLabel && m.btoSpec ? m.btoLabel + ' · ' + m.btoSpec
            : (m.btoLabel || null)),
       spec: null,
       flow: view.labelFittings === false || view.labelDetail !== 'full' ? null
         : (m.inletAirflowLs ? SYM.LABEL.flow(m.inletAirflowLs) : null),
+      // CLOSE-ZOOM DETAIL, per collar: the size it is, the air it carries and
+      // the zone it feeds. Only at full detail — at whole-house zoom five
+      // fittings' worth of this would bury the plan.
+      detail: view.labelFittings === false || view.labelDetail !== 'full' ? null
+        : geometry.outlets.map((c, i) => {
+            const port = (m.btoPorts || [])[i] || null;
+            const bits = [c.diameterMm ? SYM.LABEL.size(c.diameterMm) : null,
+                          port?.airflowLs != null ? SYM.LABEL.flow(port.airflowLs) : null,
+                          port?.zone || null].filter(Boolean);
+            return bits.length ? { index: i, text: bits.join(' · ') } : null;
+          }).filter(Boolean),
       selected: view.selectedId === m.id,
       warning: !!m.warning,
       ledger
@@ -713,8 +844,32 @@ export function drawFlexDesign(ctx, view) {
     // NEVER ON A RETURN. A zone damper on the return does not balance a room,
     // it starves the fan coil, and one drawn there would be one fitted there.
     if (d.airSide === 'return' || d.isReturn || d.role === 'return') return;
-    SYM.drawZoneDamper(ctx, toScreen(d), {
-      angle: d.angle ?? 0,
+    const at = toScreen(d);
+    // THE SYMBOL SITS IN THE DUCT, SO IT TAKES THE DUCT'S OWN DIRECTION AND
+    // WIDTH — measured off the run it is actually fitted in, at the point it is
+    // fitted, rather than trusting an angle stored when the damper was placed.
+    // On a swept ø250 final that angle is only right at one point on the curve.
+    const host = runs.find(r => r.id === d.sectionId && r.symbolRole !== 'return')
+      || runs.filter(r => r.symbolRole !== 'return')
+             .map(r => ({ r, k: Math.min(...r.screen.map(p => Math.hypot(p.x - at.x, p.y - at.y))) }))
+             .sort((a, b) => a.k - b.k)[0]?.r || null;
+    const tangent = (() => {
+      if (!host) return d.angle ?? 0;
+      let bi = 0, bk = Infinity;
+      host.screen.forEach((p, n) => {
+        const k = Math.hypot(p.x - at.x, p.y - at.y);
+        if (k < bk) { bk = k; bi = n; }
+      });
+      const a = host.screen[Math.max(0, bi - 1)];
+      const z = host.screen[Math.min(host.screen.length - 1, bi + 1)];
+      return (a === z) ? (d.angle ?? 0) : Math.atan2(z.y - a.y, z.x - a.x);
+    })();
+    SYM.drawZoneDamper(ctx, at, {
+      angle: tangent,
+      ductWidthPx: host?.widthPx ?? null,
+      diameterMm: d.diameterMm ?? host?.diameterMm ?? null,
+      pxPerMm: pxPerMm || 0,
+      scale: Math.max(0.85, Math.min(1.35, view.scale || 1)),
       colour: d.colour || '#1D7A48',
       // `ZM-3 · BEDROOMS` — the motor's own number and the zone it closes.
       label: view.labelDampers === false ? null
@@ -749,51 +904,19 @@ export function drawFlexDesign(ctx, view) {
     });
   });
 
-  // THE FAN COIL SITS SQUARE ON THE SHEET. Turning it to face its mains
-  // produced a rotated square with a cross through it, which reads as a
-  // diamond — a symbol nobody uses — rather than as a unit.
+  // ── THE EQUIPMENT, AS ONE ASSEMBLED ARRANGEMENT ─────────────────────────
   //
-  // Three separate things at the unit, and they are drawn as three things: the
-  // FAN COIL, the SUPPLY PLENUM on its discharge with one collar per main, and
-  // the RETURN BOX on the other side with one collar per return duct. Drawing
-  // them as one box is what let a reader think the returns came off the same
-  // fitting as the mains.
+  // RETURN PLENUM → FCU → SUPPLY PLENUM, drawn from the geometry that already
+  // anchored every duct. Three separate things, bolted together, each with the
+  // collars of the ducts that really land on it — so the supply plenum shows one
+  // ø400 spigot per main and the return plenum shows one ø400 inlet per return
+  // duct, and neither can show the other's.
   if (equip) {
-    const { u, supplyAt, returnAt } = equip;
-    // Each box carries the collars of the ducts that really land on it, taken
-    // from the re-anchored geometry — so the supply plenum shows one spigot per
-    // main and the return box shows one inlet per return duct, and neither can
-    // show the other's.
-    const bearingsFrom = (at, list, fromStart) => list.map(r => {
-      const pts = fromStart ? r.screen : r.screen.slice().reverse();
-      const q = pts.find(pt => Math.hypot(pt.x - at.x, pt.y - at.y) > 12) || pts[pts.length - 1];
-      return Math.atan2(q.y - at.y, q.x - at.x);
-    });
-
-    if (view.showReturnBox !== false && returnAt && equip.retRuns.length) {
-      SYM.drawReturnBox(ctx, returnAt, {
-        inletAngles: bearingsFrom(returnAt, equip.retRuns, false),
-        w: 14, h: 24,
-        // The label points at the box, on the far side from the fan coil, so it
-        // can never be read as belonging to a BTO or a duct passing nearby.
-        labelSide: Math.cos(equip.returnBearing ?? Math.PI) < 0 ? 'left' : 'right',
-        label: view.labelEquipment === false ? null : 'RETURN BOX',
-        selected: view.selectedId === 'returnBox',
-        ledger });
-    }
-    if (supplyAt && equip.supplyRuns.length) {
-      SYM.drawSupplyPlenum(ctx, supplyAt, {
-        spigotAngles: bearingsFrom(supplyAt, equip.supplyRuns, true),
-        w: 13, h: 26,
-        labelSide: Math.cos(equip.supplyBearing ?? 0) < 0 ? 'left' : 'right',
-        label: view.labelEquipment === false ? null : 'SUPPLY PLENUM',
-        selected: view.selectedId === 'supplyPlenum',
-        ledger });
-    }
-    SYM.drawFanCoil(ctx, u, {
-      label: 'FCU',
-      model: view.labelEquipment === false ? null : (view.unitModel || null),
-      selected: view.selectedId === 'plenum',
+    SYM.drawEquipmentAssembly(ctx, equip.geom, {
+      unitModel: view.labelEquipment === false ? null : (view.unitModel || null),
+      labels: view.labelEquipment !== false,
+      returnLabel: view.showReturnBox === false ? null : 'RETURN PLENUM',
+      selectedId: view.selectedId,
       ledger
     });
   }
@@ -919,14 +1042,52 @@ export function drawFlexDesign(ctx, view) {
   // on screen — which is precisely the thing that has to be checked: that no
   // return duct ends where a supply duct begins.
   return {
-    equipment: equip ? {
-      fanCoil: { x: equip.u.x, y: equip.u.y },
-      supplyPlenum: equip.supplyAt ? { x: equip.supplyAt.x, y: equip.supplyAt.y } : null,
-      returnBox: equip.returnAt ? { x: equip.returnAt.x, y: equip.returnAt.y } : null,
-      separationPx: (equip.supplyAt && equip.returnAt)
-        ? Math.hypot(equip.supplyAt.x - equip.returnAt.x, equip.supplyAt.y - equip.returnAt.y)
-        : null
-    } : null,
+    // ── WHAT THE DRAWING ACTUALLY PUT ON THE SHEET ──────────────────────
+    //
+    // The model has always been right about the supply and the return being
+    // separate; the DRAWING is what had to be proved. So the renderer hands
+    // back the arrangement it built — face positions, collar points, body
+    // sizes — and the regression tests assert against that rather than against
+    // the engine, which would have passed either way.
+    equipment: equip ? (() => {
+      const g = equip.geom;
+      const pt = (p) => ({ x: p.x, y: p.y });
+      return {
+        angle: g.angle,
+        fanCoil: { ...pt(g.fcu), w: g.fcu.w, h: g.fcu.h },
+        supplyPlenum: { ...pt(g.supply), w: g.supply.w, h: g.supply.h,
+                        innerFace: pt(g.supply.innerFace), outerFace: pt(g.supply.outerFace),
+                        collars: g.supply.collars.map(c => ({ ...pt(c), angle: c.angle })) },
+        returnPlenum: { ...pt(g.return), w: g.return.w, h: g.return.h,
+                        innerFace: pt(g.return.innerFace), outerFace: pt(g.return.outerFace),
+                        collars: g.return.collars.map(c => ({ ...pt(c), angle: c.angle })) },
+        // Kept under its old name so the earlier separation tests still read.
+        returnBox: pt(g.return),
+        separationPx: Math.hypot(g.supply.x - g.return.x, g.supply.y - g.return.y),
+        // The gap between the two plenum bodies along the assembly axis: the
+        // FCU's own width, because they are bolted to opposite faces of it.
+        plenumGapPx: Math.hypot(g.supply.innerFace.x - g.return.innerFace.x,
+                                g.supply.innerFace.y - g.return.innerFace.y),
+        bounds: { ...g.bounds }
+      };
+    })() : null,
+    /** Every run exactly as it was stroked, so a test can prove a duct never
+     *  crosses the equipment rather than only checking its two endpoints. */
+    paths: runs.map(r => ({ role: r.symbolRole, diameterMm: r.diameterMm ?? null,
+                            destination: r.destination || null,
+                            points: r.screen.map(pt => ({ x: pt.x, y: pt.y })) })),
+    /** Every BTO body the drawing put down, with its collars. */
+    btos: btoDraws.map(({ marker, geometry }) => ({
+      id: marker.id || null, label: marker.btoLabel || marker.label || null,
+      x: geometry.at.x, y: geometry.at.y, w: geometry.w, h: geometry.h,
+      angle: geometry.angle, clearPx: geometry.clearPx,
+      inlet: geometry.inlet ? { x: geometry.inlet.root.x, y: geometry.inlet.root.y,
+                                tip: { x: geometry.inlet.tip.x, y: geometry.inlet.tip.y },
+                                angle: geometry.inlet.angle } : null,
+      collars: geometry.outlets.map(c => ({ x: c.root.x, y: c.root.y,
+                                            tip: { x: c.tip.x, y: c.tip.y },
+                                            angle: c.angle, diameterMm: c.diameterMm }))
+    })),
     supplyEnds: runs.filter(r => r.symbolRole !== 'return')
       .map(r => ({ id: r.id, role: r.symbolRole,
                    a: { x: r.screen[0].x, y: r.screen[0].y },

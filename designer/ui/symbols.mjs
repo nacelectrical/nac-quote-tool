@@ -109,7 +109,9 @@ export const LABEL = Object.freeze({
   /** `Ø400→Ø350` — both sizes, always. */
   reducer: (fromMm, toMm) => D(fromMm) + '→' + D(toMm),
   /** Airflow on its own, for the figure beside an outlet. */
-  flow: (ls) => Math.round(ls) + ' L/s'
+  flow: (ls) => Math.round(ls) + ' L/s',
+  /** A bare diameter, for close-zoom detail beside a single collar. */
+  size: (mm) => D(mm)
 });
 
 // ── Label placement ────────────────────────────────────────────────────────
@@ -296,6 +298,9 @@ function metalFill(ctx, x, y, w, h) {
   return g;
 }
 
+/** Keep a number inside a range. */
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
 function box(ctx, cx, cy, w, h, r = 2) {
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(cx - w / 2, cy - h / 2, w, h, r);
@@ -381,6 +386,366 @@ export function drawFanCoil(ctx, at, { angle = 0, w = 46, h = 26,
                        { size: 7, colour: '#4A5160', weight: 600, ledger });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE EQUIPMENT ASSEMBLY — RETURN PLENUM → FCU → SUPPLY PLENUM
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nick: "The supply and return plenums must fit neatly and realistically onto
+// the FCU. Show the equipment as one clean assembled arrangement."
+//
+// Three boxes bolted together in a line, which is what the thing in the roof
+// actually is. Everything about the arrangement follows from one axis:
+//
+//   • the FCU sits square on the sheet, so the axis snaps to the nearest
+//     quarter turn. A fan coil drawn at 37° reads as a diamond, and equipment
+//     on a mechanical sheet is drawn orthogonal;
+//   • the supply plenum's inner face is EXACTLY the FCU's discharge face and
+//     the return plenum's inner face is EXACTLY its return face — the centres
+//     are half a body apart, so there is no gap to explain and no overlap;
+//   • the two plenums are 180° apart by construction. They cannot end up on
+//     the same side, whatever the ducts do;
+//   • each plenum's height follows the FCU face and the number of collars it
+//     has to carry, so a three-collar plenum is drawn able to take three
+//     collars rather than having them drawn on top of one another;
+//   • the collars sit on the OUTER face, evenly across it, one per duct.
+//
+// It returns geometry and draws nothing. The renderer needs the collar points
+// to anchor its ducts, the report needs the bounds to frame its inset, and the
+// tests need both to prove the arrangement without reading pixels.
+export const ASSEMBLY = Object.freeze({
+  fcuW: 46, fcuH: 26,
+  supplyDepth: 15, returnDepth: 13,
+  collarPitch: 10, collarWidth: 8, collarLength: 9,
+  maxPlenumHeightFactor: 2.4
+});
+
+/** Snap a bearing to the nearest quarter turn. */
+export function snapToQuadrant(angle) {
+  return Math.round((angle || 0) / (Math.PI / 2)) * (Math.PI / 2);
+}
+
+export function equipmentAssembly({ at, supplyBearing = 0, returnBearing = null,
+                                    supplyCollars = 0, returnCollars = 0,
+                                    fcuW = ASSEMBLY.fcuW, fcuH = ASSEMBLY.fcuH,
+                                    // THE COLLARS MUST BE AT LEAST AS FAR APART AS THE
+                                    // DUCTS ARE WIDE. Three ø400 mains drawn 9 px apart
+                                    // merged into one magenta slab across the unit — the
+                                    // drawing showed a plenum with one enormous spigot.
+                                    // So the pitch comes from the widest duct that lands
+                                    // on the face, and the plenum grows to carry them.
+                                    supplyPitch = ASSEMBLY.collarPitch,
+                                    returnPitch = ASSEMBLY.collarPitch,
+                                    supplyCollarWidth = ASSEMBLY.collarWidth,
+                                    returnCollarWidth = ASSEMBLY.collarWidth } = {}) {
+  if (!at || at.x === undefined) return null;
+  // The discharge direction decides the whole arrangement. If the returns say
+  // otherwise and the two would land on the same side, the SUPPLY wins and the
+  // return goes opposite — separation is not negotiable.
+  let angle = snapToQuadrant(supplyBearing ?? 0);
+  if (returnBearing !== null && supplyBearing === null) angle = snapToQuadrant(returnBearing + Math.PI);
+  const ax = { x: Math.cos(angle), y: Math.sin(angle) };          // along, toward supply
+  const cr = { x: -Math.sin(angle), y: Math.cos(angle) };         // across the faces
+
+  // A fabricated plenum taking three ø400 spigots IS deeper than the unit face
+  // it bolts to, so the cap only applies while the collars still fit inside it.
+  const plenumHeight = (n, pitch) => Math.max(fcuH,
+    Math.min(fcuH * ASSEMBLY.maxPlenumHeightFactor, n * pitch + 8), n * pitch + 6);
+  const sH = plenumHeight(Math.max(1, supplyCollars), supplyPitch);
+  const rH = plenumHeight(Math.max(1, returnCollars), returnPitch);
+  const sD = ASSEMBLY.supplyDepth, rD = ASSEMBLY.returnDepth;
+
+  const move = (along, across) => ({
+    x: at.x + ax.x * along + cr.x * across,
+    y: at.y + ax.y * along + cr.y * across
+  });
+
+  // Centres exactly half a body beyond the FCU face: touching, never overlapping.
+  const supplyAt = move(fcuW / 2 + sD / 2, 0);
+  const returnAt = move(-(fcuW / 2 + rD / 2), 0);
+
+  const collarsOn = (n, alongFace, sign, h, width) => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const across = n === 1 ? 0 : -h / 2 + (h * (i + 1)) / (n + 1);
+      out.push({ ...move(alongFace, across), angle: sign > 0 ? angle : angle + Math.PI,
+                 index: i, across, width });
+    }
+    return out;
+  };
+
+  return {
+    angle, axis: ax, across: cr,
+    fcu: { x: at.x, y: at.y, w: fcuW, h: fcuH, angle },
+    supply: {
+      x: supplyAt.x, y: supplyAt.y, w: sD, h: sH, angle,
+      // The face the mains leave from, and the face bolted to the unit.
+      outerFace: move(fcuW / 2 + sD, 0), innerFace: move(fcuW / 2, 0),
+      collars: collarsOn(supplyCollars, fcuW / 2 + sD, +1, sH, supplyCollarWidth)
+    },
+    return: {
+      x: returnAt.x, y: returnAt.y, w: rD, h: rH, angle,
+      outerFace: move(-(fcuW / 2 + rD), 0), innerFace: move(-fcuW / 2, 0),
+      collars: collarsOn(returnCollars, -(fcuW / 2 + rD), -1, rH, returnCollarWidth)
+    },
+    /** Everything the assembly occupies, for reserving label space around it. */
+    bounds: (() => {
+      const pts = [];
+      const corners = (cx, cy, w, h) => {
+        for (const sa of [-w / 2, w / 2]) for (const sc of [-h / 2, h / 2]) {
+          pts.push({ x: cx + ax.x * sa + cr.x * sc, y: cy + ax.y * sa + cr.y * sc });
+        }
+      };
+      corners(at.x, at.y, fcuW, fcuH);
+      corners(supplyAt.x, supplyAt.y, sD + ASSEMBLY.collarLength * 2, sH);
+      corners(returnAt.x, returnAt.y, rD + ASSEMBLY.collarLength * 2, rH);
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs);
+      const y0 = Math.min(...ys), y1 = Math.max(...ys);
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0,
+               cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    })()
+  };
+}
+
+/** A point in the assembly's own frame: how far ALONG the axis, how far ACROSS. */
+export function assemblyLocal(geom, p) {
+  const dx = p.x - geom.fcu.x, dy = p.y - geom.fcu.y;
+  return { along: dx * geom.axis.x + dy * geom.axis.y,
+           across: dx * geom.across.x + dy * geom.across.y };
+}
+
+/**
+ * The solid band the three bodies occupy, in that frame, plus a clearance.
+ *
+ * The margin is not decoration. Without it Main C left its collar and ran down
+ * the sheet 1.2 px clear of the fan coil's corner — which passes a strict
+ * intersection test and reads, to anyone looking at the drawing, as a duct
+ * scraping along the side of the unit.
+ */
+export const ASSEMBLY_CLEARANCE = 4;
+
+export function assemblyBand(geom, margin = ASSEMBLY_CLEARANCE) {
+  return {
+    a0: -(geom.fcu.w / 2 + geom.return.w) - margin,
+    a1: geom.fcu.w / 2 + geom.supply.w + margin,
+    c: Math.max(geom.fcu.h, geom.supply.h, geom.return.h) / 2 + margin
+  };
+}
+
+/**
+ * Does a straight leg pass over the metal?
+ *
+ * Liang–Barsky against the band, which is an axis-aligned rectangle once the
+ * segment is in the assembly's own frame. Written in the textbook p/q form on
+ * purpose: the first attempt folded the sign convention into the caller and got
+ * one of the four boundaries backwards, so Main C ran through the fan coil and
+ * the test said it did not.
+ */
+export function assemblyBlocks(geom, p, q, margin = ASSEMBLY_CLEARANCE) {
+  const b = assemblyBand(geom, margin);
+  const A = assemblyLocal(geom, p), B = assemblyLocal(geom, q);
+  const dA = B.along - A.along, dC = B.across - A.across;
+  const ps = [-dA, dA, -dC, dC];
+  const qs = [A.along - b.a0, b.a1 - A.along, A.across + b.c, b.c - A.across];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (Math.abs(ps[i]) < 1e-9) { if (qs[i] < 0) return false; continue; }
+    const t = qs[i] / ps[i];
+    if (ps[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return t0 <= t1;
+}
+
+/** Back from the assembly's frame to the sheet. */
+export function assemblyPoint(geom, along, across) {
+  return { x: geom.fcu.x + geom.axis.x * along + geom.across.x * across,
+           y: geom.fcu.y + geom.axis.y * along + geom.across.y * across };
+}
+
+/**
+ * HOW A DUCT LEAVES ITS COLLAR WITHOUT CUTTING THROUGH THE UNIT.
+ *
+ * Every duct comes straight off its spigot for a short lead before it turns —
+ * which is how one is actually fitted, and it is also what makes the collar
+ * read as the duct's origin rather than as a mark the line happens to pass.
+ *
+ * Then the awkward case, and it is a real one on this job: Main C's fitting
+ * sits BEHIND the unit, on the return side. Drawn straight from the supply
+ * collar it went through the fan coil and past the return plenum, which says
+ * the main is plumbed into the return. So when the straight leg would cross the
+ * metal the run steps ACROSS to a clear line first, and — where that is still
+ * not enough, because the fitting is behind the far end — runs ALONG that clear
+ * line until it is past the assembly before turning in. Around the unit, the
+ * way an installer pulls it.
+ *
+ * It never adds a third turn. If two do not clear it, the fitting is inside the
+ * equipment's own footprint and no amount of drawing will make that look right;
+ * the run is left direct and the geometry is what needs fixing.
+ */
+export function routeOutOfAssembly(geom, tip, collarAngle, next, lead = 7, ductWidthPx = 0) {
+  const out = [{ x: tip.x + Math.cos(collarAngle) * lead,
+                 y: tip.y + Math.sin(collarAngle) * lead }];
+  if (!next || !assemblyBlocks(geom, out[0], next)) return out;
+
+  const band = assemblyBand(geom);
+  const here = assemblyLocal(geom, out[0]);
+  const there = assemblyLocal(geom, next);
+  const side = Math.sign(there.across) || 1;
+  // THE DUCT'S OWN WIDTH COUNTS. The band is where the metal is; a ø400 main
+  // routed to within 4 px of it still overlaps the plenum by half its own
+  // width, which on the sheet reads as the main running along the side of the
+  // box. Clear the band by the duct's half-width as well as the margin.
+  const clearAcross = side * (band.c + 8 + ductWidthPx / 2);
+  const cornerA = assemblyPoint(geom, here.along, clearAcross);
+  out.push(cornerA);
+  if (!assemblyBlocks(geom, cornerA, next)) return out;
+
+  // The second turn is only for a fitting BEHIND one end of the assembly. A
+  // target that merely grazes the side is already handled by the step across,
+  // and adding a turn for it put a right-angled kink in Main A over a third of
+  // a pixel of overlap.
+  if (there.along >= band.a0 && there.along <= band.a1) return out;
+  out.push(assemblyPoint(geom, there.along, clearAcross));
+  return out;
+}
+
+/**
+ * Draw the assembly as one arrangement: return plenum, unit, supply plenum.
+ *
+ * The two plenums use DIFFERENT symbols and different colours — the supply is
+ * galvanised metal fill in the metal outline, the return is the flat return
+ * grey — because Nick's rule is that a reader must never take one for the
+ * other, and colour alone is not enough to carry that. Each shows its interface
+ * line against the unit, so the drawing says these three are bolted together
+ * rather than merely near one another.
+ */
+export function drawEquipmentAssembly(ctx, geom, { unitModel = null, labels = true,
+                                                   supplyLabel = 'SUPPLY PLENUM',
+                                                   returnLabel = 'RETURN PLENUM',
+                                                   fcuLabel = 'FCU',
+                                                   selectedId = null,
+                                                   ledger = null } = {}) {
+  if (!geom) return null;
+  const { fcu, angle } = geom;
+  // Space for the whole arrangement AND its labels is booked before anything
+  // else on the sheet asks for room. Nick: "Reserve enough space around the
+  // assembly for labels before routing ducts."
+  if (ledger) ledger.reserve(geom.bounds.cx, geom.bounds.cy,
+                             geom.bounds.w + 16, geom.bounds.h + 16);
+
+  // ── RETURN PLENUM: return grey, flat fill, its own outline weight ────────
+  if (geom.return.collars.length) {
+    for (const c of geom.return.collars) {
+      drawCollar(ctx, c, { angle: c.angle, length: ASSEMBLY.collarLength,
+                           width: c.width ?? ASSEMBLY.collarWidth, colour: RETURN_COLOUR });
+    }
+    ctx.save();
+    ctx.translate(geom.return.x, geom.return.y);
+    ctx.rotate(angle);
+    box(ctx, 0, 0, geom.return.w, geom.return.h, 1.5);
+    ctx.fillStyle = '#E7EAEE';
+    ctx.fill();
+    ctx.lineWidth = selectedId === 'returnBox' ? 2.4 : 1.9;
+    ctx.strokeStyle = selectedId === 'returnBox' ? SELECTION_COLOUR : RETURN_COLOUR;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── SUPPLY PLENUM: galvanised metal, metal outline ──────────────────────
+  if (geom.supply.collars.length) {
+    for (const c of geom.supply.collars) {
+      drawCollar(ctx, c, { angle: c.angle, length: ASSEMBLY.collarLength,
+                           width: c.width ?? ASSEMBLY.collarWidth });
+    }
+    ctx.save();
+    ctx.translate(geom.supply.x, geom.supply.y);
+    ctx.rotate(angle);
+    box(ctx, 0, 0, geom.supply.w, geom.supply.h, 1.5);
+    ctx.fillStyle = metalFill(ctx, -geom.supply.w / 2, -geom.supply.h / 2,
+                              geom.supply.w, geom.supply.h);
+    ctx.fill();
+    ctx.lineWidth = selectedId === 'supplyPlenum' ? 2.4 : 1.8;
+    ctx.strokeStyle = selectedId === 'supplyPlenum' ? SELECTION_COLOUR : METAL_DARK;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── THE UNIT ────────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.translate(fcu.x, fcu.y);
+  ctx.rotate(angle);
+  box(ctx, 0, 0, fcu.w, fcu.h, 2.5);
+  ctx.fillStyle = metalFill(ctx, -fcu.w / 2, -fcu.h / 2, fcu.w, fcu.h);
+  ctx.fill();
+  ctx.lineWidth = selectedId === 'plenum' ? 2.6 : 1.9;
+  ctx.strokeStyle = selectedId === 'plenum' ? SELECTION_COLOUR : METAL_DARK;
+  ctx.stroke();
+  // The coil, hatched across the body.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(-fcu.w / 2 + 2, -fcu.h / 2 + 2, fcu.w - 4, fcu.h - 4);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(40,44,52,0.42)';
+  ctx.lineWidth = 1;
+  for (let x = -fcu.w / 2; x < fcu.w / 2 + fcu.h; x += 5) {
+    ctx.beginPath(); ctx.moveTo(x, -fcu.h / 2); ctx.lineTo(x - fcu.h, fcu.h / 2); ctx.stroke();
+  }
+  ctx.restore();
+  // THE INTERFACE LINES. Return face in return grey, discharge face in metal —
+  // the joint where each plenum bolts on, so the three read as one assembly.
+  ctx.lineWidth = 2.6;
+  ctx.strokeStyle = RETURN_COLOUR;
+  ctx.beginPath();
+  ctx.moveTo(-fcu.w / 2, -fcu.h / 2 + 2); ctx.lineTo(-fcu.w / 2, fcu.h / 2 - 2);
+  ctx.stroke();
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = METAL_DARK;
+  ctx.beginPath();
+  ctx.moveTo(fcu.w / 2, -fcu.h / 2 + 2); ctx.lineTo(fcu.w / 2, fcu.h / 2 - 2);
+  ctx.stroke();
+  // Which way the air goes THROUGH the unit: in at the return face, out at the
+  // discharge. Two small arrows inside the body, on the axis.
+  ctx.restore();
+  drawArrow(ctx, { x: fcu.x - Math.cos(angle) * (fcu.w * 0.22) - Math.sin(angle) * 0,
+                   y: fcu.y - Math.sin(angle) * (fcu.w * 0.22) + Math.cos(angle) * 0 },
+            angle, { colour: RETURN_COLOUR, size: 6 });
+  drawArrow(ctx, { x: fcu.x + Math.cos(angle) * (fcu.w * 0.30),
+                   y: fcu.y + Math.sin(angle) * (fcu.w * 0.30) },
+            angle, { colour: METAL_DARK, size: 6 });
+
+  // ── LABELS, ALL OUTSIDE THE BODIES, EACH ON ITS OWN LEADER ──────────────
+  //
+  // Nick: "Keep all labels outside the equipment bodies with short leader
+  // lines." They are placed ACROSS the assembly axis rather than along it, so
+  // three labels on three boxes in a row cannot stack on one another.
+  if (labels) {
+    const cr = geom.across;
+    const outward = (p, d) => ({ x: p.x + cr.x * d, y: p.y + cr.y * d });
+    if (geom.return.collars.length && returnLabel) {
+      drawLabel(ctx, returnLabel, outward({ x: geom.return.x, y: geom.return.y },
+                                          -(geom.return.h / 2 + 16)),
+                { size: 7, colour: '#3C4250', weight: 700, ledger,
+                  anchor: { x: geom.return.x, y: geom.return.y } });
+    }
+    if (geom.supply.collars.length && supplyLabel) {
+      drawLabel(ctx, supplyLabel, outward({ x: geom.supply.x, y: geom.supply.y },
+                                          geom.supply.h / 2 + 16),
+                { size: 7, colour: '#4A5160', weight: 700, ledger,
+                  anchor: { x: geom.supply.x, y: geom.supply.y } });
+    }
+    if (fcuLabel) {
+      drawLabel(ctx, fcuLabel, outward(fcu, fcu.h / 2 + 15),
+                { size: 8.5, ledger, anchor: fcu });
+    }
+    if (unitModel) {
+      drawLabel(ctx, unitModel, outward(fcu, -(fcu.h / 2 + 15)),
+                { size: 7, colour: '#4A5160', weight: 600, ledger, anchor: fcu });
+    }
+  }
+  return geom;
+}
+
 /**
  * 2. THE SUPPLY-AIR PLENUM.
  *
@@ -414,56 +779,192 @@ export function drawSupplyPlenum(ctx, at, { angle = 0, w = 16, h = 30,
                        { size: 7, colour: '#4A5160', weight: 700, ledger, anchor: at });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. THE BTO — A FABRICATED SHEET-METAL MANIFOLD
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nick, on the symbol that came before this one: "The current rounded grey BTO
+// symbol does not resemble a professional fabricated fitting… Do not draw the
+// BTO as a circle, pill, blob or generic route node."
+//
+// So it is drawn as the thing itself: a compact rectangular metal body with a
+// dark double-line outline, ONE inlet collar and one outlet collar per ACTUAL
+// port, each collar sitting on the body face where its duct leaves and pointing
+// the way that duct goes. The ducts stop at the collar faces; nothing runs
+// through the body. At whole-house zoom an installer can count the collars and
+// see which duct lands on each.
+//
+// THE GEOMETRY IS SEPARATE FROM THE DRAWING, on purpose. The renderer has to
+// trim each duct back to its collar face before it draws anything, the report's
+// inset has to frame the body, and the tests have to prove the collar count and
+// the trimming without reading pixels — all three need the numbers, not the ink.
+
+/** How big the metal is, before the collars. */
+export const BTO_BODY = Object.freeze({
+  minW: 15, maxW: 26, minH: 13, maxH: 30,
+  collarLength: 8, inletWidth: 9, outletWidth: 6.5,
+  cornerRadius: 1.2
+});
+
 /**
- * 6. THE BTO — A FABRICATED MULTI-COLLAR MANIFOLD.
+ * Where a ray leaving the centre of a rotated rectangle crosses its perimeter.
+ * This is what puts a collar on the FACE its duct leaves from rather than at an
+ * arbitrary point on a circle around the fitting.
+ */
+function rectPerimeterPoint(bearing, angle, w, h) {
+  const local = bearing - angle;
+  const dx = Math.cos(local), dy = Math.sin(local);
+  const tx = Math.abs(dx) > 1e-6 ? (w / 2) / Math.abs(dx) : Infinity;
+  const ty = Math.abs(dy) > 1e-6 ? (h / 2) / Math.abs(dy) : Infinity;
+  const t = Math.min(tx, ty);
+  const lx = dx * t, ly = dy * t;
+  return { x: Math.cos(angle) * lx - Math.sin(angle) * ly,
+           y: Math.sin(angle) * lx + Math.cos(angle) * ly };
+}
+
+/**
+ * THE FITTING'S REAL DIMENSIONS AND COLLAR POSITIONS.
  *
- * Nick, twice: "A BTO is the actual physical metal branch take-off/manifold
- * fitting", and "Do not represent it as an unexplained grey circle."
+ * The body is scaled by what it has to carry — Nick: "Scale its body according
+ * to the number and sizes of collars" — so a two-port ø350 fitting and a
+ * four-port ø250 fitting are visibly different pieces of metal. It runs ALONG
+ * the flow: the inlet enters one end, the collars come off the faces.
  *
- * So it is a metal box with ONE inlet collar and one outlet collar per port,
- * each drawn in the direction the duct actually leaves. The collar count and
- * their directions come from the topology, which means a five-port BTO looks
- * like a five-port BTO and you can count the ports off the drawing.
+ * @returns {{angle, w, h, inlet, outlets, clearPx, bounds}}
+ *   `inlet` and every entry of `outlets` carry `root` (the collar on the body
+ *   face), `tip` (the far end of the collar, where the duct begins) and the
+ *   `angle` the collar points.
+ */
+export function btoGeometry({ at, inletAngle = null, outletAngles = [],
+                              inletMm = null, outletMm = [], scale = 1 } = {}) {
+  const ports = outletAngles.length;
+  // Along the flow, sized off the inlet; across it, sized off how many collars
+  // have to fit on the faces without touching.
+  //
+  // THE CLAMP IS ON THE BODY'S OWN SIZE, NOT ON THE SCALED RESULT. Clamping
+  // afterwards meant that at 3× the body hit its ceiling while the collars kept
+  // growing, and the fitting came out as a small box with enormous diamonds
+  // stuck to it. The limits say how big the metal is; the scale says how big
+  // the drawing is, and they are different questions.
+  const w = clamp(13 + ((inletMm || 350) / 400) * 8, BTO_BODY.minW, BTO_BODY.maxW) * scale;
+  const h = clamp(10 + Math.max(0, ports - 1) * 5.5, BTO_BODY.minH, BTO_BODY.maxH) * scale;
+  // The body lies along the inlet duct. `inletAngle` points back up the duct it
+  // is fed by, so that line IS the flow line.
+  const angle = inletAngle !== null ? inletAngle
+    : (outletAngles.length ? outletAngles[0] + Math.PI : 0);
+
+  const collar = (bearing, width, len) => {
+    const root = rectPerimeterPoint(bearing, angle, w, h);
+    return {
+      angle: bearing, width, length: len,
+      root: { x: at.x + root.x, y: at.y + root.y },
+      tip: { x: at.x + root.x + Math.cos(bearing) * len,
+             y: at.y + root.y + Math.sin(bearing) * len }
+    };
+  };
+  const cl = BTO_BODY.collarLength * scale;
+  // THE INLET IS DRAWN WIDER THAN THE OUTLETS. It carries all the air the
+  // outlets share, and on this job it is a ø400 into four ø250s — a drawing
+  // where every collar is the same width says the fitting is something it isn't.
+  const inlet = inletAngle === null ? null
+    : collar(inletAngle, BTO_BODY.inletWidth * scale, cl + 1);
+  // EACH COLLAR IS THE WIDTH OF THE DUCT IT TAKES. A row of identical collars
+  // says the fitting steps every outlet to the same size, which on BTO-B —
+  // 400-300-250 — would be describing a fitting nobody is ordering.
+  const outlets = outletAngles.map((a, i) => ({
+    ...collar(a, clamp(BTO_BODY.outletWidth * ((outletMm[i] || 250) / 250),
+                       BTO_BODY.outletWidth * 0.8, BTO_BODY.inletWidth * 0.9) * scale, cl),
+    index: i,
+    diameterMm: outletMm[i] ?? null
+  }));
+
+  const reach = w / 2 + h / 2 + cl;
+  return {
+    at: { x: at.x, y: at.y }, angle, w, h, inlet, outlets,
+    inletMm: inletMm ?? null,
+    /** How far a duct must be trimmed back so it stops at the collar face. */
+    clearPx: Math.max(w, h) / 2 + cl,
+    bounds: { x: at.x - reach / 2 - w / 2, y: at.y - reach / 2 - h / 2, w: reach, h: reach,
+              cx: at.x, cy: at.y }
+  };
+}
+
+/**
+ * Draw the manifold from that geometry.
  *
- * A primary BTO and a local BTO are the SAME symbol with their own inlet and
- * outlet specification — there is no visual hierarchy between them, because
- * they are the same kind of object.
+ * A PRIMARY AND A LOCAL BTO ARE THE SAME SYMBOL. There is no visual hierarchy
+ * between them because they are the same kind of object — a body with an inlet
+ * and a row of collars — and drawing one as a smaller version of the other
+ * would invent a distinction the order does not have.
  */
 export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
-                                   w = 17, h = 12, angle = 0,
+                                   inletMm = null, outletMm = [], scale = 1,
+                                   geometry = null,
                                    label = null, spec = null, flow = null,
+                                   detail = null,
                                    ledger = null, selected = false,
                                    warning = false } = {}) {
+  const g = geometry || btoGeometry({ at, inletAngle, outletAngles, inletMm, outletMm, scale });
+  const stroke = warning ? WARNING_COLOUR : selected ? SELECTION_COLOUR : METAL_DARK;
+
   // Collars first, so the body sits over their roots and they read as sockets
-  // in the metal rather than as loose sticks.
-  if (inletAngle !== null) {
-    drawCollar(ctx, at, { angle: inletAngle, length: 9, width: 8 });
+  // punched into the metal rather than as loose sticks laid beside it.
+  for (const c of g.outlets) {
+    drawCollar(ctx, c.root, { angle: c.angle, length: c.length, width: c.width });
   }
-  for (const a of outletAngles) drawCollar(ctx, at, { angle: a, length: 8, width: 6.5 });
+  if (g.inlet) {
+    drawCollar(ctx, g.inlet.root, { angle: g.inlet.angle, length: g.inlet.length,
+                                    width: g.inlet.width });
+  }
 
   ctx.save();
-  ctx.translate(at.x, at.y);
-  ctx.rotate(angle);
-  box(ctx, 0, 0, w, h, 2.5);
-  ctx.fillStyle = metalFill(ctx, -w / 2, -h / 2, w, h);
+  ctx.translate(g.at.x, g.at.y);
+  ctx.rotate(g.angle);
+  // WHITE METAL, DARK DOUBLE LINE. The double line is what makes a small
+  // rectangle read as folded sheet rather than as a filled block, and it is the
+  // single clearest difference between this and a route node.
+  box(ctx, 0, 0, g.w, g.h, BTO_BODY.cornerRadius);
+  ctx.fillStyle = '#F7F8FA';
   ctx.fill();
-  ctx.lineWidth = selected ? 2.6 : 1.6;
-  ctx.strokeStyle = warning ? WARNING_COLOUR : selected ? SELECTION_COLOUR : METAL_DARK;
+  ctx.lineWidth = selected ? 2.4 : 1.7;
+  ctx.strokeStyle = stroke;
   ctx.stroke();
-  // The seam, so it reads as sheet metal rather than a chip.
-  ctx.beginPath();
-  ctx.moveTo(-w / 2 + 2, 0); ctx.lineTo(w / 2 - 2, 0);
-  ctx.strokeStyle = 'rgba(40,44,52,0.42)';
-  ctx.lineWidth = 1;
+  box(ctx, 0, 0, g.w - 3.4, g.h - 3.4, BTO_BODY.cornerRadius);
+  ctx.lineWidth = 0.9;
+  ctx.strokeStyle = warning ? WARNING_COLOUR : 'rgba(40,44,52,0.55)';
   ctx.stroke();
   ctx.restore();
 
-  if (ledger) ledger.reserve(at.x, at.y, w + 22, h + 22);
-  // Three lines, stacked: which fitting, what it is made of, what it carries.
-  let y = at.y - h / 2 - 12;
-  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 8.5, ledger, anchor: at }); y -= 11; }
-  if (spec) { drawLabel(ctx, spec, { x: at.x, y }, { size: 7.5, colour: '#4A5160', ledger }); y -= 10; }
-  if (flow) drawLabel(ctx, flow, { x: at.x, y }, { size: 7.5, colour: '#4A5160', ledger });
+  // The air, through the body, along the flow line — only where the body is big
+  // enough for the arrow to be legible rather than a smudge.
+  if (g.w >= 17 && g.h >= 14) {
+    drawArrow(ctx, { x: g.at.x - Math.cos(g.angle) * (g.w * 0.16),
+                     y: g.at.y - Math.sin(g.angle) * (g.w * 0.16) },
+              g.angle + Math.PI, { colour: 'rgba(40,44,52,0.5)', size: 5 });
+  }
+
+  if (ledger) ledger.reserve(g.at.x, g.at.y, g.w + 20, g.h + 20);
+  // ONE LINE BESIDE THE BODY, ON A LEADER. `BTO-C · 400-350-350` says which
+  // fitting and what it is made of; the airflow and the per-collar detail join
+  // it only at full detail, because the schedule carries them anyway.
+  let y = g.at.y - g.h / 2 - 13;
+  if (label) {
+    drawLabel(ctx, label, { x: g.at.x, y },
+              { size: 8.5, ledger, anchor: g.at, leader: true }); y -= 11;
+  }
+  if (spec) { drawLabel(ctx, spec, { x: g.at.x, y }, { size: 7.5, colour: '#4A5160', ledger, anchor: g.at }); y -= 10; }
+  if (flow) { drawLabel(ctx, flow, { x: g.at.x, y }, { size: 7.5, colour: '#4A5160', ledger, anchor: g.at }); y -= 10; }
+  // CLOSE-ZOOM DETAIL: inlet size, each collar's size, airflow and zone. Off by
+  // default — at whole-house zoom it would bury the plan — and drawn at the
+  // collar it describes so there is no question which port it belongs to.
+  for (const line of (detail || [])) {
+    const c = g.outlets[line.index];
+    if (!c) continue;
+    drawLabel(ctx, line.text,
+      { x: c.tip.x + Math.cos(c.angle) * 10, y: c.tip.y + Math.sin(c.angle) * 10 },
+      { size: 6.5, colour: '#4A5160', weight: 600, ledger, anchor: c.tip, leader: true });
+  }
+  return g;
 }
 
 /**
@@ -738,45 +1239,135 @@ export function drawReturnBox(ctx, at, { angle = 0, w = 18, h = 30,
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * 18. ZONE DAMPER AND MOTOR.
+ * 18. ZONE DAMPER AND ACTUATOR — AN INLINE MOTORISED DAMPER.
  *
- * The blade goes ACROSS the duct — a blade drawn along the duct is not a damper,
- * it is a decoration — and the motor is a small box on the side of it, because
- * that is a separate item somebody buys, fits and wires.
+ * Nick: "The current zone-damper line and floating motor square look
+ * unprofessional… Do not use a floating square or a long slash extending
+ * outside the duct."
  *
- * Never on a return. A damper there does not balance a room, it starves the fan
- * coil, so the drawing must not even suggest one.
+ * He is right about what was wrong with it. A blade drawn as a bare slash
+ * across the duct and a motor square hovering nine pixels above it are two
+ * marks that do not belong to each other — nothing said the motor drove that
+ * blade, and at whole-house zoom the slash read as a crossing.
+ *
+ * So it is drawn as the item: a short rectangular damper BODY sitting inline in
+ * the duct, its width taken from the duct it is fitted in, one clean diagonal
+ * blade inside the body, and the actuator box mounted directly ON the side of
+ * the body with a short shaft to the blade spindle. The whole thing rotates
+ * with the duct and stays centred on it, so it reads as a fitting in the run
+ * rather than an annotation beside it.
+ *
+ * NEVER ON A RETURN. A damper there does not balance a room, it starves the fan
+ * coil, so the drawing must not even suggest one — the renderer refuses return
+ * runs before it gets here, and this says so again for anyone reading it.
  */
-export function drawZoneDamper(ctx, at, { angle = 0, r = 7, colour = '#1D7A48',
+export const DAMPER = Object.freeze({
+  bodyLength: 11,          // along the duct
+  minBodyWidth: 9, maxBodyWidth: 22,
+  actuatorW: 8.5, actuatorH: 7,
+  shaft: 1.4
+});
+
+/** The body a damper of this duct size occupies, in plan pixels. */
+export function damperGeometry({ at, angle = 0, ductWidthPx = null, diameterMm = null,
+                                 pxPerMm = 0, scale = 1 } = {}) {
+  // WIDTH FOLLOWS THE DUCT. A damper is a sleeve the duct clamps onto, so a
+  // ø350 body is visibly fatter than a ø250 one — measured where the drawing
+  // knows the scale, taken from the drawn line weight where it does not.
+  // Measured UNSCALED, clamped, then scaled — same reason as the BTO body: the
+  // limits are about how big a damper is, the scale is about how big the
+  // drawing is. Clamping the scaled figure gave a ø250 damper twice the width
+  // of the ø250 duct it was fitted in.
+  const measured = (diameterMm && pxPerMm) ? diameterMm * pxPerMm : null;
+  const raw = measured ?? ((ductWidthPx ?? 10) / Math.max(0.001, scale));
+  const width = clamp(raw + 2.5, DAMPER.minBodyWidth, DAMPER.maxBodyWidth) * scale;
+  // A DAMPER SLEEVE IS LONGER THAN IT IS WIDE. A fixed 11 px length made a ø250
+  // body wider across the duct than along it, which reads as a box sitting ON
+  // the run rather than a fitting IN it — the very thing the redesign is for.
+  const len = Math.max(DAMPER.bodyLength * scale, width * 1.12);
+  return { at: { x: at.x, y: at.y }, angle, w: len, h: width,
+           actuator: { w: DAMPER.actuatorW * scale, h: DAMPER.actuatorH * scale,
+                       // Mounted on the side, its inner edge ON the body wall.
+                       offset: width / 2 + (DAMPER.actuatorH * scale) / 2 + DAMPER.shaft * scale },
+           reach: Math.max(len, width + DAMPER.actuatorH * 2 + DAMPER.shaft * 2) };
+}
+
+export function drawZoneDamper(ctx, at, { angle = 0, ductWidthPx = null, diameterMm = null,
+                                          pxPerMm = 0, scale = 1,
+                                          colour = '#1D7A48',
                                           label = null, constant = false,
+                                          geometry = null,
                                           ledger = null } = {}) {
+  const g = geometry || damperGeometry({ at, angle, ductWidthPx, diameterMm, pxPerMm, scale });
   ctx.save();
-  ctx.translate(at.x, at.y);
-  ctx.rotate(angle);
-  // The blade, across the run.
-  ctx.lineWidth = 2.6;
+  ctx.translate(g.at.x, g.at.y);
+  ctx.rotate(g.angle);
+
+  // ── THE BODY, inline and centred on the duct ────────────────────────────
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-g.w / 2, -g.h / 2, g.w, g.h, 1);
+  else ctx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = INK;
+  ctx.stroke();
+
+  // ── THE BLADE, one clean diagonal, entirely INSIDE the body ─────────────
+  const bx = g.w / 2 - 1.6, by = g.h / 2 - 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-bx, by); ctx.lineTo(bx, -by);
+  ctx.lineWidth = 1.9;
   ctx.strokeStyle = INK;
   ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(-r * 0.75, r * 0.6); ctx.lineTo(r * 0.75, -r * 0.6);
   ctx.stroke();
-  // The motor, a small square on the side of the duct.
+  // The spindle it turns on, at the centre of the body.
   ctx.beginPath();
-  ctx.rect(-4, -r - 9, 8, 8);
-  ctx.fillStyle = constant ? '#E9EBEE' : colour;
+  ctx.arc(0, 0, 1.2, 0, Math.PI * 2);
+  ctx.fillStyle = INK;
   ctx.fill();
-  ctx.lineWidth = 1.3;
-  ctx.strokeStyle = constant ? '#8A8F9A' : '#12532F';
-  ctx.stroke();
-  ctx.restore();
-  if (ledger) ledger.reserve(at.x, at.y, r * 2 + 10, r * 2 + 18);
-  if (label) drawLabel(ctx, label, { x: at.x + 17, y: at.y }, { size: 7.5, ledger, anchor: at });
-  // 19. A constant/spill zone is annotated, never implied by a motor that is
-  //     not there. A permanently open duct does not get closed by anything.
-  if (constant) {
-    drawLabel(ctx, 'CONSTANT ZONE', { x: at.x + 17, y: at.y + 11 },
-              { size: 7, colour: '#4A5160', weight: 600, ledger });
+
+  // ── THE ACTUATOR, mounted ON the body, joined by its shaft ──────────────
+  //
+  // A constant zone gets NO actuator: Nick, "Do not show a motor actuator
+  // unless one physically exists." A permanently open duct is not closed by
+  // anything, and a motor drawn there is a motor somebody orders.
+  if (!constant) {
+    const oy = -g.actuator.offset;
+    ctx.beginPath();
+    ctx.moveTo(0, -g.h / 2); ctx.lineTo(0, oy + g.actuator.h / 2);
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#12532F';
+    ctx.stroke();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-g.actuator.w / 2, oy - g.actuator.h / 2,
+                                     g.actuator.w, g.actuator.h, 1);
+    else ctx.rect(-g.actuator.w / 2, oy - g.actuator.h / 2, g.actuator.w, g.actuator.h);
+    ctx.fillStyle = colour;
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#12532F';
+    ctx.stroke();
+    // An M, so it is an actuator rather than a chip of colour.
+    ctx.font = '800 5px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, oy + 0.3);
   }
+  ctx.restore();
+
+  if (ledger) ledger.reserve(g.at.x, g.at.y, g.reach + 6, g.reach + 6);
+  // THE TEXT NEVER SITS ON THE DUCT. It goes out on a leader, placed by the
+  // same least-overlap search as every other label on the sheet.
+  const out = { x: g.at.x - Math.sin(g.angle) * (g.reach / 2 + 10),
+                y: g.at.y + Math.cos(g.angle) * (g.reach / 2 + 10) };
+  if (label) drawLabel(ctx, label, out, { size: 7.5, ledger, anchor: g.at, leader: true });
+  if (constant) {
+    drawLabel(ctx, 'CONSTANT – LOCKED OPEN',
+              { x: out.x, y: out.y + 11 },
+              { size: 7, colour: '#4A5160', weight: 600, ledger, anchor: g.at, leader: true });
+  }
+  return g;
 }
 
 /** 20. Wall controller / thermostat. */
@@ -1079,6 +1670,7 @@ export function drawLegend(ctx, at, { sizes = [], hasReturn = true,
 export const SYMBOLS = Object.freeze({
   fanCoil: drawFanCoil,
   supplyPlenum: drawSupplyPlenum,
+  equipmentAssembly: drawEquipmentAssembly,
   bto: drawBto,
   reducer: drawReducer,
   tee: drawTee,

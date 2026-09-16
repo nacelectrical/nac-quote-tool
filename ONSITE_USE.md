@@ -16,21 +16,81 @@ put handles on that same drawing for the thing you are changing:
 | **Edit routes/BTOs** | Handles on the BTO fittings, the run ends, and any point you added. |
 | **Edit rooms** | The green room boxes and the analysis workings. Only this view shows them. |
 
-## Supply and return are drawn as two separate systems
+## The equipment is drawn as one assembled arrangement
 
-The fan coil has a SUPPLY PLENUM on its discharge side and a RETURN BOX on its
-return side, a visible gap apart. Every supply main starts at the plenum; both
-return ducts end at the box; the two never share an endpoint. Return ductwork is
-dashed, in the return colour, with arrows showing the air travelling toward the
-unit. Where a supply and a return route cross, the return is broken with a gap
-and the supply bridges over it — never a junction dot, because a dot is what a
-joint looks like.
+    RETURN PLENUM  →  FAN COIL  →  SUPPLY PLENUM
+
+Three boxes bolted together, in that order, along one axis. The return plenum's
+inner face IS the fan coil's return face and the supply plenum's inner face IS
+its discharge face — no gap, no overlap, both centred on the unit, and 180°
+apart by construction so they can never end up on the same side. The unit sits
+square on the sheet: the axis comes from the mean bearing of the mains, snapped
+to a quarter turn, because a fan coil drawn at 37° reads as a diamond.
+
+The bodies are drawn at the size they are — about 1.25 m × 0.6 m for the fan
+coil, scaled off the plan's own calibration — so the assembly does not swallow
+the fittings beside it at whole-house zoom.
+
+**Each duct has its own collar.** The supply plenum carries one Ø400 collar per
+main (three on this job); the return plenum carries one Ø400 collar per return
+duct (two). Runs are matched to collars by how far across the axis they leave,
+so ducts never cross each other getting off the plenum. No supply run and no
+return run shares a coordinate with any other.
+
+Where a run's fitting sits behind the assembly — Main C's does, on this job — the
+duct leaves its collar, steps clear of the metal and goes round the unit rather
+than through it. The drawing tests check that no duct has a single point inside
+the equipment bodies.
+
+Return ductwork is dashed, in the return colour, with arrows showing the air
+travelling toward the unit. Where a supply and a return route cross, the return
+is broken with a gap and the supply bridges over it — never a junction dot,
+because a dot is what a joint looks like.
 
 The router gives every main and every return the fan coil's own centre as an
 endpoint, which drawn literally made the return look plumbed into the supply.
-The drawing re-anchors the last few pixels of each run to the box it belongs to.
-Lengths, pressure, airflow and the schedule are untouched by this — it is the
-picture that was wrong, not the design.
+The drawing re-anchors the last few pixels of each run to the collar it belongs
+to. Lengths, pressure, airflow and the schedule are untouched by this — it is
+the picture that was wrong, not the design.
+
+## The BTO and the zone damper
+
+A **BTO** is drawn as what it is: a compact sheet-metal body with square corners,
+a white fill and a dark double-line outline, one inlet collar (drawn wider) and
+one outlet collar per actual port, each collar sitting on the face its duct
+leaves from and pointing the way it goes. Duct lines stop at the collar faces;
+nothing runs through the body. The body scales with the inlet size and the
+number of collars, so `BTO-C · 400-350-350` and `BTO-C2 · 350-250-250-250` are
+visibly different pieces of metal. At normal whole-house zoom you can count the
+collars; at full label detail each collar also carries its size, airflow and
+zone.
+
+A **zone damper** is an inline motorised damper: a short rectangular body sitting
+in the duct, its width taken from the duct diameter, one clean diagonal blade
+inside the body, and the actuator box mounted on the side with a short shaft to
+the spindle. It rotates to the duct's own tangent at the point it is fitted, so
+it follows a swept run. A constant zone gets the same body labelled
+`CONSTANT – LOCKED OPEN` and **no actuator**, because a motor drawn is a motor
+ordered. A zone damper is never drawn on return ductwork.
+
+## Minimum 2.0 m from a BTO collar to its outlet
+
+`minimumBtoToOutletDuctLengthM = 2.0` in HVAC Design Settings. Every final duct
+from a BTO collar to an outlet must have a **measured routed length** of at least
+2.0 m on the calibrated plan. It is a layout rule, not a drawing offset: when a
+fitting lands too close to an outlet the FITTING moves, and the ducts, pressure,
+BOM and price are recalculated from where it ended up.
+
+The move is constrained the way an installer is constrained — inside the
+conditioned envelope, never into a bathroom, ensuite, laundry or garage, and far
+enough off the supply plenum that the main is still a main — and among the
+positions that satisfy all of that it takes the one with the smallest
+size-weighted total of main plus finals. Runs are never padded to make the
+number: a final is the same gentle bow it always was, measured honestly.
+
+If no practical compliant position exists the design raises
+`BTO_TO_OUTLET_CLEARANCE_REVIEW` as a CRITICAL warning, which blocks approval
+until the installer confirms the fitting location.
 
 Every symbol on every surface — the plan editor, Clean view, the internal report
 and the PDF — is drawn by one shared library, `designer/ui/symbols.mjs`, so they
@@ -83,11 +143,30 @@ Run from the project directory:
 node --test tests/*.test.mjs
 ```
 
-Expected result for this handoff: 787 tests, 787 passed, 0 failed.
+Expected result for this handoff: 803 tests, 803 passed, 0 failed.
 
 Browser suites live in `tools/browser-tests/`. `plan-view.mjs` covers the Plan
 tab's view modes and `drawing-separation.mjs` proves supply and return are
 drawn apart and that nothing on the sheet is written over anything else.
-`symbols.mjs` is the visual regression for the symbol library — every symbol is rendered to its own tile and checked for ink area,
-bounding box, corner fill and mean colour, so a symbol that vanishes, collapses,
-explodes or stops being distinguishable from another one is caught.
+`symbols.mjs` is the visual regression for the symbol library — every symbol is
+rendered to its own tile and checked for ink area, bounding box, corner fill and
+mean colour, so a symbol that vanishes, collapses, explodes or stops being
+distinguishable from another one is caught. It also reads the BTO, damper and
+assembly GEOMETRY directly, because ink area cannot tell a manifold from a blob:
+collar counts, collar bearings, inlet-versus-outlet widths, body scaling, the
+actuator being mounted rather than floating, and a constant zone having no
+actuator at all.
+
+`tests/bto-clearance.test.mjs` is the engine side of the 2.0 m rule: every final
+measured off the calibrated plan, no run padded, no fitting inside an outlet's
+footprint, the topology and airflow unchanged, and the review warning raised
+when no compliant position exists.
+
+## The internal PDF
+
+Page 1 is the design summary and any CRITICAL warnings — the ones that block
+approval are stated where the sheet opens, not on page seven. Page 2 is a
+dedicated **landscape** floor-plan sheet: a house plan is wider than it is tall,
+and on a portrait page the duct sizes stop being readable. Then an enlarged
+equipment-area inset, cropped from the same Clean View drawing so the two can
+never disagree, followed by the schedules and calculations.

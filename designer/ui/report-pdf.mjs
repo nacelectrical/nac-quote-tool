@@ -48,6 +48,8 @@ class Layout {
     this.y = 0;
     this.pageCount = 0;
     this.pending = null;                        // a heading waiting for its content
+    /** Which pages are sideways, so the footer is drawn to the right edge. */
+    this.landscapePages = new Set();
     this.newPage();
   }
 
@@ -256,16 +258,80 @@ class Layout {
     else this.y -= 6;
   }
 
+  /**
+   * THE FLOOR PLAN, ON ITS OWN LANDSCAPE SHEET.
+   *
+   * A4 turned sideways, the plan filling it, its caption underneath. A house
+   * plan is wider than it is tall: on a portrait page it is scaled to the
+   * narrow dimension and the ø250 written on a final becomes a smudge. This is
+   * the page that goes in somebody's hand on site, so it gets the paper.
+   */
+  planPage(src, caption) {
+    const img = dataUrlBytes(src);
+    if (!img || img.mime !== 'image/jpeg') { this.image(src, caption); return; }
+    const meta = probeJpeg(img.bytes);
+    if (!meta) { this.image(src, caption); return; }
+    const W = A4.height, H = A4.width;                  // landscape
+    this.pdf.addPage({ width: W, height: H });
+    this.pageCount++;
+    this.landscapePages.add(this.pdf.pages.length - 1);
+    const capH = caption ? 34 : 8;
+    const boxW = W - M * 2, boxH = H - M * 2 - capH - 16;
+    const scale = Math.min(boxW / meta.width, boxH / meta.height);
+    const dw = meta.width * scale, dh = meta.height * scale;
+    this.pdf.text('FLOOR PLAN — DUCT LAYOUT', M, H - M + 2,
+      { size: 9.5, bold: true, colour: BLUE });
+    this.pdf.line(M, H - M - 4, W - M, H - M - 4, { colour: YELLOW, lineWidth: 1.4 });
+    const top = H - M - 12;
+    this.pdf.image(img.bytes, M + (boxW - dw) / 2, top - dh, dw, dh);
+    if (caption) {
+      let cy = top - dh - 12;
+      for (const line of wrapText(caption, boxW, 7.5, false)) {
+        this.pdf.text(line, M, cy, { size: 7.5, colour: MUTED });
+        cy -= 10;
+      }
+    }
+    // Back to portrait for whatever follows.
+    this.pdf.addPage();
+    this.pageCount++;
+    this.y = A4.height - M;
+  }
+
+  /**
+   * An enlarged crop, printed as big as the page will take it.
+   *
+   * Unlike `image` this never shrinks to fit the gap left on the current page —
+   * the whole point of an inset is that it is bigger than the thing it came
+   * from, so it starts a page rather than being squeezed into a corner.
+   */
+  inset(src, caption) {
+    const img = dataUrlBytes(src);
+    if (!img || img.mime !== 'image/jpeg') { this.image(src, caption); return; }
+    const meta = probeJpeg(img.bytes);
+    if (!meta) { this.image(src, caption); return; }
+    const maxH = A4.height - M * 2 - 150;
+    const scale = Math.min(this.contentW / meta.width, maxH / meta.height);
+    const dw = meta.width * scale, dh = meta.height * scale;
+    this.flushHeading(dh + 16);
+    if (this.y - dh - 16 < this.bottom) this.newPage();
+    this.pdf.image(img.bytes, M + (this.contentW - dw) / 2, this.y - dh, dw, dh);
+    this.y -= dh + 6;
+    if (caption) this.paragraph(caption);
+  }
+
   /** Footer and page numbers, written once the page count is known. */
   finish() {
     this.flushHeading(0);                       // a heading with nothing after it still prints
     for (let i = 0; i < this.pdf.pages.length; i++) {
       this.pdf.current = this.pdf.pages[i];
-      this.pdf.line(M, M + 20, M + this.contentW, M + 20, { colour: RULE, lineWidth: 0.5 });
+      // A landscape sheet is wider, so its footer runs to ITS right margin —
+      // drawn at the portrait width it stopped two thirds of the way across.
+      const w = (this.pdf.pages[i].width ?? A4.width) - M * 2;
+      this.pdf.line(M, M + 20, M + w, M + 20, { colour: RULE, lineWidth: 0.5 });
       const left = this.doc.business + '  ·  ABN ' + this.doc.abn + '  ·  ' + this.doc.website;
       this.pdf.text(left, M, M + 9, { size: 7, colour: MUTED });
       const right = 'Page ' + (i + 1) + ' of ' + this.pdf.pages.length;
-      this.pdf.text(right, M + this.contentW - textWidth(right, 7, false), M + 9, { size: 7, colour: MUTED });
+      this.pdf.text(right, M + w - textWidth(right, 7, false), M + 9, { size: 7, colour: MUTED });
     }
     return this.pdf.bytes();
   }
@@ -313,6 +379,8 @@ export function renderReportPdf(doc, { logo = null } = {}) {
       case 'kv':        L.kv(blk.items); break;
       case 'table':     L.table(blk.cols, blk.rows); break;
       case 'image':     L.image(blk.src, blk.caption); break;
+      case 'planpage':  L.planPage(blk.src, blk.caption); break;
+      case 'inset':     L.inset(blk.src, blk.caption); break;
       default: break;
     }
   }

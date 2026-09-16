@@ -22,8 +22,9 @@ import { alertDialog } from './modal.mjs';
 export { internalReportDoc, customerReportDoc, REPORT_KIND, docText };
 
 /** PART 26 — INTERNAL HVAC DESIGN SHEET, as a print page. */
-export function internalReportHtml(design, { logo = null, planSnapshot = null } = {}) {
-  return reportPageHtml(internalReportDoc(design, { planSnapshot }), { logo });
+export function internalReportHtml(design, { logo = null, planSnapshot = null,
+                                             equipmentInset = null } = {}) {
+  return reportPageHtml(internalReportDoc(design, { planSnapshot, equipmentInset }), { logo });
 }
 
 /** PART 26 — CUSTOMER HVAC DESIGN SUMMARY, as a print page. */
@@ -46,10 +47,15 @@ export function openReport(html, title) {
 }
 
 /** The PDF bytes and the name to save them under. Pure — no DOM. */
-export function buildReportPdf(design, kind, { logo = null, planSnapshot = null } = {}) {
+export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
+                                               equipmentInset = null } = {}) {
+  // The customer summary gets the plan and nothing else. The equipment inset is
+  // an installer's drawing — collars, plenum faces, which main leaves which
+  // spigot — and putting it in front of a customer invites questions the
+  // summary is not written to answer.
   const doc = kind === REPORT_KIND.CUSTOMER
     ? customerReportDoc(design, { planSnapshot })
-    : internalReportDoc(design, { planSnapshot });
+    : internalReportDoc(design, { planSnapshot, equipmentInset });
   return { bytes: renderReportPdf(doc, { logo }), filename: reportFileName(doc), doc };
 }
 
@@ -60,10 +66,11 @@ export function buildReportPdf(design, kind, { logo = null, planSnapshot = null 
  * happened that did not. If the browser refuses the save, the caller is told so
  * it can offer the print path instead.
  */
-export function downloadReportPdf(design, kind, { logo = null, planSnapshot = null } = {}) {
+export function downloadReportPdf(design, kind, { logo = null, planSnapshot = null,
+                                                  equipmentInset = null } = {}) {
   let built;
   try {
-    built = buildReportPdf(design, kind, { logo, planSnapshot });
+    built = buildReportPdf(design, kind, { logo, planSnapshot, equipmentInset });
   } catch (e) {
     return { ok: false, error: 'The PDF could not be built: ' + (e.message || e) };
   }

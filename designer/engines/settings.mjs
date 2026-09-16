@@ -197,6 +197,14 @@ export const DEFAULT_SETTINGS = {
     // bands asked for are all still reported — it only changes what gets
     // fitted, and the engine says so against every duct it raises.
     minimumSupplyBranchDiameterMm: NAC.defaultMinSupplyBranchMm,
+    // THE SHORTEST FINAL DUCT THE DESIGN WILL ACCEPT, in metres, measured on
+    // the calibrated plan. A take-off collar discharges a jet; a diffuser hung
+    // straight underneath it gets that jet down its neck, which is noise, a
+    // draught and a pattern nobody can balance. Two metres is the run in which
+    // the air settles — so when a fitting lands too close to an outlet the
+    // FITTING is moved and everything downstream is recalculated. The run is
+    // never padded to make the number.
+    minimumBtoToOutletDuctLengthM: 2.0,
     junctionClusterFraction: NAC.bto.clusterFraction,
     majorBranchMinRooms: NAC.bto.minRoomsForMajorBranch,
 

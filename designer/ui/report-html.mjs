@@ -53,6 +53,11 @@ function block(blk) {
     case 'flag':      return '<div class="warnbox' + (blk.level === 'crit' ? ' crit' : '') + '"><strong>' +
                              esc(blk.text) + '</strong></div>';
     case 'bullets':   return '<ul class="bullets">' + blk.items.map(i => '<li>' + esc(i) + '</li>').join('') + '</ul>';
+    // The print page has one column and no MediaBox to turn, so a landscape
+    // plan sheet and an enlarged inset are both just a wide picture here. They
+    // stay separate BLOCK TYPES so the PDF can do the right thing with each.
+    case 'planpage':
+    case 'inset':
     case 'image':     return '<img class="planimg" src="' + esc(blk.src) + '">' +
                              (blk.caption ? '<p class="note">' + esc(blk.caption) + '</p>' : '');
     case 'kv':        return '<div class="kv">' + blk.items.map(i =>
