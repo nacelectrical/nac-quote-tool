@@ -36,6 +36,9 @@ const p = await ctx.newPage();
 p.on('pageerror', e => console.log('  PAGEERROR:', e.message));
 await p.goto('http://127.0.0.1:8777/designer.html', { waitUntil: 'domcontentloaded' });
 await p.waitForFunction(() => !!window.nacDesigner, null, { timeout: 30000 });
+// Boot has to finish before the job's settings are applied: loadConfig()
+// resolves asynchronously and overwrites them with the stored defaults.
+await p.waitForTimeout(1500);
 
 // ── Every symbol, drawn alone on a clean tile and measured ──────────────────
 
@@ -252,12 +255,26 @@ say('reducer ' + L.red, L.red === 'ø400→ø350');
 
 // ── The four view modes, on the approved design ────────────────────────────
 
-const { out } = await buildApproved();
+// THE JOB'S OWN SETTINGS GO IN WITH IT.
+//
+// `render()` re-runs the pipeline against the APP's settings, so injecting the
+// design alone silently re-derives it with NAC's defaults. This job is approved
+// with a 250 mm minimum supply branch; the shipped default is 200, and the four
+// small finals came back resized to 200 — a drawing that was internally
+// consistent and described a different design from the approved one.
+const { out, settings: jobSettings } = await buildApproved();
 out.plan = { ...(out.plan || {}), dataUrl: PLAN };
-await p.evaluate((d) => {
+await p.evaluate((payload) => {
   const a = window.nacDesigner;
-  a.design = d; a.mode = 'full'; a.tab = 'plan'; a.render();
-}, JSON.parse(JSON.stringify(out)));
+  a.design = payload.design;
+  if (payload.settings) {
+    a.settings = payload.settings;
+    a.settingsOverride = { duct: { minimumSupplyBranchDiameterMm:
+      payload.settings.duct?.minimumSupplyBranchDiameterMm } };
+  }
+  a.mode = 'full'; a.tab = 'plan'; a.render();
+}, { design: JSON.parse(JSON.stringify(out)),
+     settings: JSON.parse(JSON.stringify(jobSettings || null)) });
 await p.waitForTimeout(1400);
 
 const inkOfCanvas = () => p.evaluate(() => {
