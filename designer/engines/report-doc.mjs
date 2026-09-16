@@ -42,7 +42,8 @@ const pageBreak = () => ({ t: 'pagebreak' });
  * actually carries the one page that does not work. A PDF carries a MediaBox
  * per page, so this block turns itself sideways and nothing else changes.
  */
-const planPage = (src, caption) => ({ t: 'planpage', src, caption: caption || '' });
+const planPage = (src, caption, legend) =>
+  ({ t: 'planpage', src, caption: caption || '', legend: legend || null });
 /** An enlarged crop of the equipment area, printed at a size you can read. */
 const inset = (src, caption) => ({ t: 'inset', src, caption: caption || '' });
 
@@ -82,6 +83,8 @@ function header(design, title, kind) {
 
 /** THE INTERNAL HVAC DESIGN SHEET — the full working, NAC only. */
 export function internalReportDoc(design, { planSnapshot = null,
+                                            planPlate = null,
+                                            planLegend = null,
                                             equipmentInset = null } = {}) {
   const d = design;
   const load = d.systemLoad, u = d.selectedUnit;
@@ -130,11 +133,15 @@ export function internalReportDoc(design, { planSnapshot = null,
   if (planSnapshot) {
     // The plan gets a sheet of its own, turned sideways, at the biggest size it
     // will go. Everything that explains it goes with it.
-    b.push(planPage(planSnapshot,
+    // `planPlate` is the drawing WITHOUT the key baked into it, and `planLegend`
+    // is the key on its own — captured apart so the landscape page can set the
+    // drawing to the full height of the paper and stand the key beside it.
+    b.push(planPage(planPlate || planSnapshot,
       'Rooms, duct routes and equipment positions as marked up in NAC AI HVAC Designer. ' +
       'Duct colour is SIZE, never zone: ø400 magenta · ø350 purple · ø300 green · ø250 amber · ' +
       'ø200 blue · return dashed grey. Line weight follows diameter. Every size is also ' +
-      'written on its run, so the drawing does not depend on colour alone.'));
+      'written on its run, so the drawing does not depend on colour alone.',
+      planPlate ? planLegend : null));
     b.push(h2('Floor plan overlay'));
     if (d.autoRoute?.generated) {
       b.push(note(AUTO_ROUTE_NOTICE));

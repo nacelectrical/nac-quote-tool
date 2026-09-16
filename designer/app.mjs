@@ -28,7 +28,7 @@ import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport,
-         downloadReportPdf, REPORT_KIND } from './ui/reports.mjs';
+         downloadReportPdf, REPORT_KIND, loadPdfFonts } from './ui/reports.mjs';
 import { confirmDialog, alertDialog, formDialog, pickDialog, linkDialog } from './ui/modal.mjs';
 
 import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
@@ -570,8 +570,16 @@ export class DesignerApp {
         lines: i.blocking.map(x => x.title)
       });
     }
+    // The embedded faces, before anything is laid out — `textWidth` measures
+    // with whichever font will actually be drawn, so the wait has to happen
+    // before the document is built rather than after.
+    await loadPdfFonts();
     const opts = { logo: document.querySelector('.brand img')?.src || null,
                    planSnapshot: this.viewer?.snapshot({ clean: true, legend: true }) || null,
+                   // The same drawing without the key, and the key on its own,
+                   // so the landscape sheet can give the plan its full height.
+                   planPlate: this.viewer?.snapshot({ clean: true, legend: false }) || null,
+                   planLegend: this.viewer?.legendStrip() || null,
                    // The enlarged equipment crop, taken from the same Clean View
                    // drawing so the inset and the plan can never disagree.
                    equipmentInset: this.viewer?.equipmentInset() || null };
@@ -2925,7 +2933,10 @@ export class DesignerApp {
   // ── Reports (PART 26) ─────────────────────────────────────────────────────
 
   async showReportMenu() {
+    await loadPdfFonts();
     const snapshot = this.viewer?.snapshot({ clean: true, legend: true }) || null;
+    const plate = this.viewer?.snapshot({ clean: true, legend: false }) || null;
+    const planLegend = this.viewer?.legendStrip() || null;
     const inset = this.viewer?.equipmentInset() || null;
     const logo = document.querySelector('.brand img')?.src || null;
     const which = await pickDialog({
@@ -2944,7 +2955,8 @@ export class DesignerApp {
       ]
     });
     if (!which) return;
-    const opts = { logo, planSnapshot: snapshot, equipmentInset: inset };
+    const opts = { logo, planSnapshot: snapshot, planPlate: plate, planLegend,
+                   equipmentInset: inset };
 
     if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
     if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');

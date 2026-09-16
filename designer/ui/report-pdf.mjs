@@ -266,7 +266,7 @@ class Layout {
    * narrow dimension and the ø250 written on a final becomes a smudge. This is
    * the page that goes in somebody's hand on site, so it gets the paper.
    */
-  planPage(src, caption) {
+  planPage(src, caption, legend) {
     const img = dataUrlBytes(src);
     if (!img || img.mime !== 'image/jpeg') { this.image(src, caption); return; }
     const meta = probeJpeg(img.bytes);
@@ -275,6 +275,51 @@ class Layout {
     this.pdf.addPage({ width: W, height: H });
     this.pageCount++;
     this.landscapePages.add(this.pdf.pages.length - 1);
+
+    // ── THE PLAN GETS THE HEIGHT; EVERYTHING ELSE GOES IN A COLUMN ──────────
+    //
+    // Nick: "The landscape page has excessive unused white space. Increase the
+    // floor-plan drawing by approximately 25–35%… Move the zone schedule, duct
+    // legend and symbol legend into a compact aligned side column."
+    //
+    // A house plan taller than it is wide is HEIGHT-bound on a landscape sheet:
+    // widening the picture does nothing, because it is already far short of the
+    // width. So every band that used to eat height — the page heading across the
+    // top, the caption across the foot, the key baked into the same bitmap — is
+    // moved into the column beside it, where the sheet has width going spare.
+    const key = legend ? dataUrlBytes(legend) : null;
+    const keyMeta = (key && key.mime === 'image/jpeg') ? probeJpeg(key.bytes) : null;
+    if (keyMeta) {
+      const ML = 24;                                 // this page's own margin
+      const footerTop = M + 20;
+      const bottom = footerTop + 6;
+      const top = H - ML;
+      const boxH = top - bottom;
+      const colW = 200, gap = 16;
+      const planW = W - ML * 2 - colW - gap;
+      const scale = Math.min(planW / meta.width, boxH / meta.height);
+      const dw = meta.width * scale, dh = meta.height * scale;
+      this.pdf.image(img.bytes, ML + (planW - dw) / 2, top - dh, dw, dh);
+
+      const cx = W - ML - colW;
+      let cy = top;
+      this.pdf.text('FLOOR PLAN — DUCT LAYOUT', cx, cy - 9,
+                    { size: 9.5, bold: true, colour: BLUE });
+      this.pdf.line(cx, cy - 15, cx + colW, cy - 15, { colour: YELLOW, lineWidth: 1.4 });
+      cy -= 27;
+      const kh = colW * keyMeta.height / keyMeta.width;
+      this.pdf.image(key.bytes, cx, cy - kh, colW, kh);
+      cy -= kh + 14;
+      for (const line of wrapText(caption || '', colW, 6.8, false)) {
+        if (cy < bottom) break;
+        this.pdf.text(line, cx, cy, { size: 6.8, colour: MUTED });
+        cy -= 8.6;
+      }
+      this.pdf.addPage();                            // back to portrait
+      this.pageCount++;
+      this.y = A4.height - M;
+      return;
+    }
     // THE CAPTION HAS ITS ROOM RESERVED BEFORE THE PICTURE IS SIZED.
     //
     // A fixed 34 pt allowance was a guess at how many lines the caption would
@@ -394,7 +439,7 @@ export function renderReportPdf(doc, { logo = null } = {}) {
       case 'kv':        L.kv(blk.items); break;
       case 'table':     L.table(blk.cols, blk.rows); break;
       case 'image':     L.image(blk.src, blk.caption); break;
-      case 'planpage':  L.planPage(blk.src, blk.caption); break;
+      case 'planpage':  L.planPage(blk.src, blk.caption, blk.legend); break;
       case 'inset':     L.inset(blk.src, blk.caption); break;
       default: break;
     }

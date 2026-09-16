@@ -236,15 +236,33 @@ export function createPlanViewer(container, opts = {}) {
       // sheet, so a symbol in the legend is by construction the symbol on the
       // drawing — a hand-kept key eventually describes a drawing that moved on.
       if (state.showLegend) {
-        const sizes = [...new Set(Object.values(state.routes || {})
-          .filter(r => r.role !== 'return' && r.diameterMm)
-          .map(r => r.diameterMm))].sort((a, b) => b - a);
         const r0 = wrap.getBoundingClientRect();
-        SYMBOLS.drawLegend(ctx, { x: 14, y: r0.height - 214 }, {
-          sizes,
-          hasReturn: Object.values(state.routes || {}).some(r => r.role === 'return'),
+        // ONE COLUMN, TOP-ALIGNED, ON A REPORT. Pinned to the bottom of the
+        // canvas the key sat a long way under the zone schedule, and the crop
+        // had to span from one to the other — a tall empty strip of column that
+        // the landscape page then scaled up along with the drawing.
+        const legendY = state.paperBackground
+          ? Math.min(r0.height - 214, (state.scheduleBottomY ?? 0) + 12)
+          : r0.height - 214;
+        // THREE PANELS, ONE COLUMN, ONE LEFT EDGE. Nick: "Move the zone
+        // schedule, duct legend and symbol legend into a compact aligned side
+        // column." The duct sizes already have their own key directly under the
+        // schedule, so this panel carries the SYMBOLS only — printing them
+        // twice is what made the column tall enough to set the plan's scale.
+        const lx = state.paperBackground ? (state.scheduleX ?? 14) : 14;
+        const lw = state.paperBackground
+          ? Math.max(150, Math.min(210, state.scheduleW ?? 178)) : 178;
+        const dim = SYMBOLS.drawLegend(ctx, { x: lx, y: legendY }, {
+          sizes: [],
+          hasReturn: false,
+          width: lw,
+          title: 'SYMBOLS',
           outletType: state.outletType || 'square'
         });
+        if (dim) {
+          state.labelBoxes.push({ x: lx, y: legendY, w: dim.width, h: dim.height,
+                                  kind: 'schedule' });
+        }
       }
       // EDITING HANDLES SIT ON TOP OF THE CLEAN DRAWING, NOT INSTEAD OF IT.
       //
@@ -445,7 +463,16 @@ export function createPlanViewer(container, opts = {}) {
     });
     ctx.restore();
     state.labelBoxes.push({ x: box.x, y: box.y, w, h, kind: 'schedule' });
-    drawSizeKey(box.x, box.y + h + 10, w);
+    // Where the column starts and how wide it is, so the duct key and the
+    // symbol key line up on it instead of each choosing their own left edge.
+    state.scheduleX = box.x;
+    state.scheduleW = w;
+    const keyBottom = drawSizeKey(box.x, box.y + h + 10, w);
+    // Where the title block ends, so the symbol key can sit straight under it
+    // rather than being pinned to the bottom of whatever the canvas happens to
+    // be. On a report that tall empty strip of column was scaled up along with
+    // the drawing.
+    state.scheduleBottomY = keyBottom ?? (box.y + h + 10);
   }
 
   /**
@@ -501,6 +528,7 @@ export function createPlanViewer(container, opts = {}) {
     }
     ctx.restore();
     state.labelBoxes.push({ x, y, w, h, kind: 'schedule' });
+    return y + h;
   }
 
   // A zone's name on the schedule is the room it covers when it covers one, and
@@ -1480,6 +1508,53 @@ export function createPlanViewer(container, opts = {}) {
       const restoreAll = () => { state.paperBackground = prior.paper; restore(); if (!clean) draw(); };
       try { return snapshotNow(type, quality); } finally { restoreAll(); }
     },
+    /**
+     * THE TITLE BLOCK ON ITS OWN, so the plan does not have to share a bitmap.
+     *
+     * Captured together, the column and the drawing become one picture whose
+     * shape is neither the column's nor the plan's — and a landscape page then
+     * scales that shape to fit, which means the drawing is sized by how tall the
+     * key happens to be. Captured apart, the plan can be set to the full height
+     * of the paper and the key placed beside it.
+     */
+    legendStrip({ type = 'image/jpeg', quality = 0.94 } = {}) {
+      const prior = { mode: state.mode, designView: state.designView,
+                      showAnalysis: state.showAnalysis, showRooms: state.showRooms,
+                      handles: state.handles, legend: state.showLegend,
+                      paper: state.paperBackground };
+      state.mode = MODES.VIEW; state.designView = true;
+      state.showAnalysis = false; state.showRooms = false; state.handles = [];
+      state.showLegend = true; state.paperBackground = true;
+      draw();
+      try {
+        const boxes = (state.labelBoxes || []).filter(b => b.kind === 'schedule');
+        if (!boxes.length) return null;
+        const x0 = Math.min(...boxes.map(b => b.x)) - 6;
+        const y0 = Math.min(...boxes.map(b => b.y)) - 6;
+        const x1 = Math.max(...boxes.map(b => b.x + b.w)) + 6;
+        const y1 = Math.max(...boxes.map(b => b.y + b.h)) + 6;
+        if (!(x1 - x0 > 30 && y1 - y0 > 30)) return null;
+        const dpr = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
+        const out = document.createElement('canvas');
+        out.width = Math.round((x1 - x0) * dpr);
+        out.height = Math.round((y1 - y0) * dpr);
+        const c = out.getContext('2d');
+        c.fillStyle = '#FFFFFF';
+        c.fillRect(0, 0, out.width, out.height);
+        c.drawImage(canvas, x0 * dpr, y0 * dpr, (x1 - x0) * dpr, (y1 - y0) * dpr,
+                    0, 0, out.width, out.height);
+        return out.toDataURL(type, quality);
+      } catch (e) {
+        return null;
+      } finally {
+        Object.assign(state, { mode: prior.mode, designView: prior.designView,
+                               showAnalysis: prior.showAnalysis, showRooms: prior.showRooms,
+                               handles: prior.handles, showLegend: prior.legend,
+                               paperBackground: prior.paper });
+        draw();
+      }
+    },
+
     /** The raw capture, with the view exactly as it stands. */
     snapshotRaw({ type = 'image/jpeg', quality = 0.92 } = {}) {
       return snapshotNow(type, quality);
@@ -1556,10 +1631,84 @@ export function createPlanViewer(container, opts = {}) {
    * grown to take in any duct, symbol or label that reaches outside it, and the
    * legend and zone schedule in their corners.
    */
+  /**
+   * THE RECTANGLE THAT ACTUALLY HAS INK IN IT.
+   *
+   * The image rectangle is not the drawing. A builder's sheet carries white
+   * margins all round, and on the landscape page that white was scaled up along
+   * with everything else — the plan was drawn as tall as the paper allowed and
+   * then a fifth of that height was the sheet's own blank border.
+   *
+   * So the canvas is scanned for anything that is not the paper background. It
+   * runs once, on a capture, over a few million pixels, and it is the difference
+   * between a drawing an installer can read at arm's length and one they cannot.
+   */
+  function inkBounds() {
+    try {
+      const w = canvas.width, h = canvas.height;
+      const px = ctx.getImageData(0, 0, w, h).data;
+      const dpr = w / Math.max(1, canvas.clientWidth || w);
+      // INK, NOT "ANYTHING THAT IS NOT PURE WHITE".
+      //
+      // A first/last off-white pixel rule hands the sheet to whatever the
+      // builder drew out in the margins. On this plan that is a pale landscaping
+      // strip down the right edge and the ghost of a title-block border down the
+      // left: between them they were about a fifth of the captured width, and on
+      // a landscape page the drawing was scaled down to make room for them.
+      const cols = new Int32Array(w), rows = new Int32Array(h);
+      let total = 0;
+      for (let y = 0; y < h; y++) {
+        const row = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          const i = row + x * 4;
+          const v = px[i] < px[i + 1] ? (px[i] < px[i + 2] ? px[i] : px[i + 2])
+                                      : (px[i + 1] < px[i + 2] ? px[i + 1] : px[i + 2]);
+          if (v > 200) continue;
+          cols[x]++; rows[y]++; total++;
+        }
+      }
+      if (!total) return null;
+      // THE DRAWING IS THE BIG BLOCK OF INK.
+      //
+      // Lines carrying ink are grouped into runs; runs separated by less than a
+      // clear gutter are one run; the heaviest run is the drawing. Sheet
+      // furniture sits beyond a white gutter and carries a fraction of the ink,
+      // so it drops out — while an outside wall at the edge of the house does
+      // not, because there is no gutter between it and the rest of the plan.
+      const span = (counts, n, cross) => {
+        // A line counts as inked on its own ink, never on how much ink the
+        // drawing has elsewhere: a share-of-total floor threw away the garage,
+        // which is mostly white, along with the sheet's margins.
+        const floor = Math.max(2, Math.round(cross * 0.005));
+        const gutter = Math.max(14, Math.round(n * 0.02));
+        let best = null, cur = null, blank = 0;
+        const close = () => {
+          if (cur && (!best || cur.ink > best.ink)) best = cur;
+          cur = null; blank = 0;
+        };
+        for (let i = 0; i < n; i++) {
+          if (counts[i] >= floor) {
+            if (!cur) cur = { a: i, b: i, ink: 0 };
+            cur.b = i; cur.ink += counts[i]; blank = 0;
+          } else if (cur && ++blank > gutter) close();
+        }
+        close();
+        return best ? [best.a, best.b] : [0, n - 1];
+      };
+      const [x0, x1] = span(cols, w, h);
+      const [y0, y1] = span(rows, h, w);
+      if (!(x1 > x0 && y1 > y0)) return null;
+      return { x: x0 / dpr, y: y0 / dpr,
+               w: (x1 - x0) / dpr, h: (y1 - y0) / dpr };
+    } catch (e) { return null; }
+  }
+
   function drawnBounds() {
     if (!state.image) return null;
-    const a = toScreen({ x: 0, y: 0 });
-    const b = toScreen({ x: state.image.naturalWidth, y: state.image.naturalHeight });
+    const ink = inkBounds();
+    const a = ink ? { x: ink.x, y: ink.y } : toScreen({ x: 0, y: 0 });
+    const b = ink ? { x: ink.x + ink.w, y: ink.y + ink.h }
+                  : toScreen({ x: state.image.naturalWidth, y: state.image.naturalHeight });
     let box = { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
                 x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
     const take = (x0, y0, x1, y1) => {
@@ -1567,8 +1716,19 @@ export function createPlanViewer(container, opts = {}) {
       box.x1 = Math.max(box.x1, x1); box.y1 = Math.max(box.y1, y1);
     };
     for (const bx of (state.drawn?.boxes || [])) take(bx.x0, bx.y0, bx.x1, bx.y1);
-    if (state.showLegend) take(8, 0, 260, canvas.clientHeight || 0);
-    const pad = 14;
+    // The title block is captured separately for a report, so it must not drag
+    // the plan's own crop out to meet it. Asked for WITH the legend, it is part
+    // of the picture and is taken in explicitly — the ink rule above keeps only
+    // the heaviest block of ink, and the column sits across a white gutter from
+    // the drawing, which is exactly what that rule is there to throw away.
+    for (const b of (state.labelBoxes || [])) {
+      if (b.kind !== 'schedule') continue;
+      if (state.showLegend) take(b.x, b.y, b.x + b.w, b.y + b.h);
+      else if (state.paperBackground && box.x0 < b.x + b.w) {
+        box.x0 = Math.max(box.x0, b.x + b.w + 8);
+      }
+    }
+    const pad = 10;
     const w = canvas.clientWidth || canvas.width, h = canvas.clientHeight || canvas.height;
     return { x: Math.max(0, box.x0 - pad), y: Math.max(0, box.y0 - pad),
              w: Math.min(w, box.x1 + pad) - Math.max(0, box.x0 - pad),

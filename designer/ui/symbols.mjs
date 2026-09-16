@@ -999,14 +999,14 @@ export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
   ctx.stroke();
   ctx.restore();
 
-  // The air, through the body, along the flow line — only where the body is big
-  // enough for the arrow to be legible rather than a smudge.
-  if (g.w >= 17 && g.h >= 14) {
-    drawArrow(ctx, { x: g.at.x - Math.cos(g.angle) * (g.w * 0.16),
-                     y: g.at.y - Math.sin(g.angle) * (g.w * 0.16) },
-              g.angle + Math.PI, { colour: 'rgba(40,44,52,0.5)',
-                                   size: 5 * Math.min(2.6, Math.max(1, z * 0.7)) });
-  }
+  // NOTHING IS DRAWN INSIDE THE BODY.
+  //
+  // There used to be a small airflow arrow in there. Nick: "no arrow, route
+  // point or electrical-style mark inside the body" — and he is right about why
+  // it was wrong. A rectangle with a mark in the middle of it is the schematic
+  // for a switch, and at plan zoom that mark was the most visible thing about
+  // the fitting. The body is sheet metal; what it carries is written beside it
+  // and read off the collars.
 
   if (ledger) ledger.reserve(g.at.x, g.at.y, g.w + 20, g.h + 20);
   // ONE LINE BESIDE THE BODY, ON A LEADER. `BTO-C · 400-350-350` says which
@@ -1344,6 +1344,10 @@ export const DAMPER = Object.freeze({
   lengthRatio: 1.55
 });
 
+/** The width the duct itself is stroked at — the same call the renderer makes. */
+const ductWidthPx0 = (mm, pxPerMm, scale) =>
+  ductWidthPx(mm || 250, pxPerMm || 0, { role: 'final', scale: scale || 1 });
+
 /** The body a damper of this duct size occupies, in plan pixels. */
 export function damperGeometry({ at, angle = 0, ductWidthPx = null, diameterMm = null,
                                  pxPerMm = 0, scale = 1 } = {}) {
@@ -1354,13 +1358,27 @@ export function damperGeometry({ at, angle = 0, ductWidthPx = null, diameterMm =
   // limits are about how big a damper is, the scale is about how big the
   // drawing is. Clamping the scaled figure gave a ø250 damper twice the width
   // of the ø250 duct it was fitted in.
-  const measured = (diameterMm && pxPerMm) ? diameterMm * pxPerMm : null;
-  const raw = measured ?? ((ductWidthPx ?? 10) / Math.max(0.001, scale));
-  const width = clamp(raw + 2.5, DAMPER.minBodyWidth, DAMPER.maxBodyWidth) * scale;
-  // A DAMPER SLEEVE IS LONGER THAN IT IS WIDE. A fixed 11 px length made a ø250
-  // body wider across the duct than along it, which reads as a box sitting ON
-  // the run rather than a fitting IN it — the very thing the redesign is for.
-  const len = Math.max(DAMPER.bodyLength * scale, width * DAMPER.lengthRatio);
+  // THE CASING IS NEVER WIDER THAN THE DUCT IT IS FITTED IN.
+  //
+  // It used to be the duct plus 2.5, which on a ø250 final made a sleeve
+  // visibly fatter than the run — a box sitting ON the duct rather than a
+  // fitting IN it, and at plan zoom a fat short box with a diagonal through it
+  // is a diamond. The casing now takes the duct's own width, with a floor only
+  // so it does not vanish at a whole-house zoom.
+  // THE CASING IS THE WIDTH OF THE DUCT AS DRAWN, and that last clause is the
+  // one that matters. It used to be computed from the raw diameter, while the
+  // duct beside it is stroked at `ductWidthPx` — which applies the final run's
+  // lighter line weight — so the sleeve came out half as wide again as the run
+  // it was fitted in. A box sitting ON the duct rather than a fitting IN it,
+  // and at plan zoom a fat short box with a diagonal through it is a diamond.
+  //
+  // Taking the drawn width makes the casing a white break in the coloured run,
+  // which is what an inline damper looks like on a mechanical sheet.
+  const drawn = ductWidthPx ?? ductWidthPx0(diameterMm, pxPerMm, scale);
+  const width = Math.max(5.5, Math.min(DAMPER.maxBodyWidth * scale, drawn));
+  // AND IT IS LONGER THAN IT IS WIDE. A casing as long as it is wide is a
+  // square, and a square turned to follow a duct is a diamond.
+  const len = Math.max(DAMPER.bodyLength * scale * 0.8, width * DAMPER.lengthRatio);
   return { at: { x: at.x, y: at.y }, angle, w: len, h: width,
            actuator: { w: DAMPER.actuatorW * scale, h: DAMPER.actuatorH * scale,
                        // Mounted on the side, its inner edge ON the body wall.

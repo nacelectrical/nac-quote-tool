@@ -18,13 +18,43 @@ import { internalReportDoc, customerReportDoc, REPORT_KIND, docText } from '../e
 import { reportPageHtml } from './report-html.mjs';
 import { renderReportPdf, reportFileName } from './report-pdf.mjs';
 import { alertDialog } from './modal.mjs';
+import { setPdfFonts, pdfFontsEmbedded } from './pdf-writer.mjs';
+import { FONT_FILES } from './pdf-fonts.mjs';
 
 export { internalReportDoc, customerReportDoc, REPORT_KIND, docText };
 
+/**
+ * FETCH THE TWO FACES SO THE PDF CAN CARRY THEM.
+ *
+ * `buildReportPdf` is synchronous — it is called from a click handler and from
+ * tests — so it cannot wait for a font. This is the one place that does the
+ * waiting, and it is idempotent: call it at boot and again before generating,
+ * and the second call resolves from the same promise.
+ *
+ * If either face fails to load the writer stays on base-14 Helvetica. A
+ * document that looks less good is better than a document that does not exist,
+ * and `pdfFontsEmbedded()` says which one came out.
+ */
+let fontLoad = null;
+export function loadPdfFonts() {
+  if (fontLoad) return fontLoad;
+  const get = (file) => fetch('/designer/vendor/fonts/' + file)
+    .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status + ' ' + file)))
+    .then(b => new Uint8Array(b));
+  fontLoad = Promise.all([get(FONT_FILES.regular), get(FONT_FILES.bold)])
+    .then(([regular, bold]) => { setPdfFonts({ regular, bold }); return true; })
+    .catch(() => { fontLoad = null; return false; });    // let a later call retry
+  return fontLoad;
+}
+export { pdfFontsEmbedded };
+
 /** PART 26 — INTERNAL HVAC DESIGN SHEET, as a print page. */
 export function internalReportHtml(design, { logo = null, planSnapshot = null,
+                                             planPlate = null, planLegend = null,
                                              equipmentInset = null } = {}) {
-  return reportPageHtml(internalReportDoc(design, { planSnapshot, equipmentInset }), { logo });
+  return reportPageHtml(
+    internalReportDoc(design, { planSnapshot, planPlate, planLegend, equipmentInset }),
+    { logo });
 }
 
 /** PART 26 — CUSTOMER HVAC DESIGN SUMMARY, as a print page. */
@@ -48,6 +78,7 @@ export function openReport(html, title) {
 
 /** The PDF bytes and the name to save them under. Pure — no DOM. */
 export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
+                                               planPlate = null, planLegend = null,
                                                equipmentInset = null } = {}) {
   // The customer summary gets the plan and nothing else. The equipment inset is
   // an installer's drawing — collars, plenum faces, which main leaves which
@@ -55,7 +86,7 @@ export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
   // summary is not written to answer.
   const doc = kind === REPORT_KIND.CUSTOMER
     ? customerReportDoc(design, { planSnapshot })
-    : internalReportDoc(design, { planSnapshot, equipmentInset });
+    : internalReportDoc(design, { planSnapshot, planPlate, planLegend, equipmentInset });
   return { bytes: renderReportPdf(doc, { logo }), filename: reportFileName(doc), doc };
 }
 
@@ -67,10 +98,12 @@ export function buildReportPdf(design, kind, { logo = null, planSnapshot = null,
  * it can offer the print path instead.
  */
 export function downloadReportPdf(design, kind, { logo = null, planSnapshot = null,
+                                                  planPlate = null, planLegend = null,
                                                   equipmentInset = null } = {}) {
   let built;
   try {
-    built = buildReportPdf(design, kind, { logo, planSnapshot, equipmentInset });
+    built = buildReportPdf(design, kind,
+                           { logo, planSnapshot, planPlate, planLegend, equipmentInset });
   } catch (e) {
     return { ok: false, error: 'The PDF could not be built: ' + (e.message || e) };
   }
