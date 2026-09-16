@@ -264,15 +264,18 @@ const inkOfCanvas = () => p.evaluate(() => {
   const cv = document.querySelector('canvas');
   const c = cv.getContext('2d');
   const px = c.getImageData(0, 0, cv.width, cv.height).data;
-  let ink = 0;
+  let ink = 0, cyan = 0;
   const colours = new Set();
   for (let i = 0; i < px.length; i += 4) {
     const r = px[i], g = px[i + 1], b = px[i + 2];
+    // The editing cyan, #13C7DC — counted separately because it is the one
+    // thing that should differ between Clean view and an edit mode.
+    if (Math.abs(r - 0x13) < 40 && Math.abs(g - 0xC7) < 40 && Math.abs(b - 0xDC) < 40) cyan++;
     if (r > 246 && g > 246 && b > 246) continue;
     ink++;
     colours.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
   }
-  return { ink, colours: colours.size };
+  return { ink, cyan, colours: colours.size };
 });
 const setView = async (v) => { await p.evaluate(k => window.nacDesigner.setPlanView(k), v);
                                await p.waitForTimeout(700); };
@@ -283,10 +286,17 @@ for (const v of ['clean', 'outlets', 'routes', 'rooms']) {
   await setView(v);
   modes[v] = await inkOfCanvas();
   say(v + ' renders a drawing', modes[v].ink > 5000,
-    modes[v].ink + 'px ink, ' + modes[v].colours + ' colours');
+    modes[v].ink + 'px ink, ' + modes[v].cyan + 'px cyan, ' + modes[v].colours + ' colours');
 }
-say('Edit routes adds handles to Clean view', modes.routes.ink > modes.clean.ink,
-  modes.clean.ink + ' → ' + modes.routes.ink);
+// TOTAL INK IS THE WRONG MEASURE FOR THIS. A handle is a white disc with a
+// cyan ring, so adding one to the drawing can REDUCE ink where it covers a
+// duct. What actually distinguishes an edit mode is the editing colour.
+say('Clean view has no editing colour at all', modes.clean.cyan === 0,
+  modes.clean.cyan + 'px cyan');
+say('Edit routes adds cyan handles to the same drawing', modes.routes.cyan > 40,
+  modes.clean.cyan + ' -> ' + modes.routes.cyan + 'px cyan');
+say('Edit outlets adds them too', modes.outlets.cyan > 40,
+  modes.outlets.cyan + 'px cyan');
 say('Edit rooms is a different drawing again', modes.rooms.ink !== modes.clean.ink,
   modes.clean.ink + ' vs ' + modes.rooms.ink);
 

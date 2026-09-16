@@ -16,6 +16,22 @@ put handles on that same drawing for the thing you are changing:
 | **Edit routes/BTOs** | Handles on the BTO fittings, the run ends, and any point you added. |
 | **Edit rooms** | The green room boxes and the analysis workings. Only this view shows them. |
 
+## Supply and return are drawn as two separate systems
+
+The fan coil has a SUPPLY PLENUM on its discharge side and a RETURN BOX on its
+return side, a visible gap apart. Every supply main starts at the plenum; both
+return ducts end at the box; the two never share an endpoint. Return ductwork is
+dashed, in the return colour, with arrows showing the air travelling toward the
+unit. Where a supply and a return route cross, the return is broken with a gap
+and the supply bridges over it — never a junction dot, because a dot is what a
+joint looks like.
+
+The router gives every main and every return the fan coil's own centre as an
+endpoint, which drawn literally made the return look plumbed into the supply.
+The drawing re-anchors the last few pixels of each run to the box it belongs to.
+Lengths, pressure, airflow and the schedule are untouched by this — it is the
+picture that was wrong, not the design.
+
 Every symbol on every surface — the plan editor, Clean view, the internal report
 and the PDF — is drawn by one shared library, `designer/ui/symbols.mjs`, so they
 cannot visually disagree about what is being installed. Sizes are colour-coded
@@ -70,7 +86,8 @@ node --test tests/*.test.mjs
 Expected result for this handoff: 787 tests, 787 passed, 0 failed.
 
 Browser suites live in `tools/browser-tests/`. `plan-view.mjs` covers the Plan
-tab's view modes and `symbols.mjs` is the visual regression for the symbol
-library — every symbol is rendered to its own tile and checked for ink area,
+tab's view modes and `drawing-separation.mjs` proves supply and return are
+drawn apart and that nothing on the sheet is written over anything else.
+`symbols.mjs` is the visual regression for the symbol library — every symbol is rendered to its own tile and checked for ink area,
 bounding box, corner fill and mean colour, so a symbol that vanishes, collapses,
 explodes or stops being distinguishable from another one is caught.

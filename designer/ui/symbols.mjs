@@ -124,61 +124,154 @@ export function createLabelLedger() {
     boxes,
     reset() { boxes.length = 0; },
     /** Reserve a rectangle a symbol occupies, so no label can be put on it. */
-    reserve(x, y, w, h) { boxes.push({ x0: x - w / 2, x1: x + w / 2,
-                                       y0: y - h / 2, y1: y + h / 2 }); },
+    reserve(x, y, w, h, weight = 3) { boxes.push({ x0: x - w / 2, x1: x + w / 2,
+                                                   y0: y - h / 2, y1: y + h / 2,
+                                                   weight, symbol: true }); },
     hits(b) {
       return boxes.some(o => b.x0 < o.x1 && o.x0 < b.x1 && b.y0 < o.y1 && o.y0 < b.y1);
     },
-    add(b) { boxes.push(b); }
+    /**
+     * TOTAL area this box would cover, in square px — the score a label is
+     * placed by. A boolean "does it hit anything" cannot choose between a
+     * candidate that clips one corner and one that sits squarely on the fan
+     * coil, and on a crowded sheet every candidate hits something.
+     */
+    overlap(b) {
+      let n = 0;
+      for (const o of boxes) {
+        const w = Math.min(b.x1, o.x1) - Math.max(b.x0, o.x0);
+        const h = Math.min(b.y1, o.y1) - Math.max(b.y0, o.y0);
+        // A reserved SYMBOL costs more to cover than another label: a label can
+        // be read around, a fitting drawn over is a fitting you cannot see.
+        if (w > 0 && h > 0) n += w * h * (o.weight || 1);
+      }
+      return n;
+    },
+    add(b) { boxes.push(b); },
+    /** Everything already on the sheet, for a caller that wants to measure. */
+    all() { return boxes.slice(); }
   };
 }
 
-/** Where a label may step to, in order of preference, as [dx, dy] screen px. */
-const LABEL_OFFSETS = [
-  [0, 0], [0, -13], [0, 13], [0, -26], [0, 26],
-  [-34, 0], [34, 0], [-34, -13], [34, -13], [-34, 13], [34, 13],
-  [0, -39], [0, 39], [-62, 0], [62, 0],
-  // A WIDER RING, because a label that finds nowhere is a label nobody reads.
-  // The first pass ran out of room in the fan-coil cluster and BTO-C's spec was
-  // left at the origin, where the unit was then drawn straight over the top of
-  // it. Better a label further from its symbol than no label at all.
-  [-62, -26], [62, -26], [-62, 26], [62, 26],
-  [0, -54], [0, 54], [-92, 0], [92, 0],
-  [-92, -34], [92, -34], [-92, 34], [92, 34],
-  [0, -70], [0, 70]
-];
+/**
+ * Where a label may step to, nearest first.
+ *
+ * Generated rather than listed so the ring widens evenly: a label that cannot
+ * sit beside its symbol keeps looking outwards in rings rather than jumping to
+ * an arbitrary far corner. Nearest-first matters because the chosen position is
+ * scored on overlap and ties are broken by distance — a label should end up as
+ * close to the thing it names as the crowding allows.
+ */
+const LABEL_OFFSETS = (() => {
+  const out = [[0, 0]];
+  for (const r of [14, 22, 30, 40, 52, 66, 82, 100, 122, 148, 178]) {
+    // Twenty bearings per ring rather than twelve. A coarse ring leaves gaps
+    // that a label cannot reach, and on a crowded sheet the best it could do
+    // was clip the corner of an outlet by a pixel and a half. Resolution is
+    // cheap here — this is a few hundred rectangle tests per frame.
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2;
+      out.push([Math.round(Math.cos(a) * r * 1.35), Math.round(Math.sin(a) * r * 0.78)]);
+    }
+  }
+  return out;
+})();
 
 /**
- * A label with a translucent backing, offset clear of anything already placed.
+ * How far a label may sit from its symbol before it needs a leader line.
  *
- * `avoidPlanText` is why the backing exists: a builder's floor plan already has
- * its own room names printed on it, and Nick was explicit that a design label
- * must never be dropped on top of one. The backing makes the label readable
- * over whatever is underneath, and the ledger keeps design labels off each
- * other and off every symbol.
+ * Beyond this the tie between a label and the thing it names stops being
+ * obvious, and a reader has to guess which fitting `BTO-C · 400-350-350`
+ * belongs to. A thin leader removes the guess.
+ */
+export const LEADER_THRESHOLD_PX = 26;
+
+/** Overlap area between two boxes, in square px. Zero when they miss. */
+function overlapArea(a, b) {
+  const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  return (w > 0 && h > 0) ? w * h : 0;
+}
+
+/**
+ * A label, placed where it covers least, with a leader when it has to go far.
+ *
+ * THE CHANGE FROM "FIRST FREE SPOT" TO "LEAST OVERLAP". The old placer took the
+ * first candidate that hit nothing, and if every candidate hit something it gave
+ * up and dropped the label at the origin — on top of the symbol. On a crowded
+ * sheet that is exactly when a label matters most. Scoring every candidate and
+ * taking the smallest overlap means the worst case is a label that clips a
+ * corner of something, not one written across a fan coil.
+ *
+ * Obstacles are everything already on the sheet: the fan coil, the plenum, the
+ * return box, every BTO, every outlet, every other label, and the plan's own
+ * printed room names where they have been registered.
  */
 export function drawLabel(ctx, text, at, opts = {}) {
-  const { size = 11, colour = INK, ledger = null, weight = 700,
-          backing = 'rgba(255,255,255,0.93)', align = 'center' } = opts;
+  const { size = 8.5, colour = INK, ledger = null, weight = 700,
+          backing = 'rgba(255,255,255,0.9)', leader = true,
+          padX = 5, padY = 3,
+          // WHERE THE LEADER POINTS, which is not always where the search
+          // starts. A plenum label begins its search beside the box so it does
+          // not have to walk far — but the leader must point at the BOX, or it
+          // ends up indicating a patch of empty ceiling and the reader has to
+          // guess which component the label belongs to. Nick, on exactly this:
+          // "Move the RETURN BOX label so it points directly to the actual
+          // return box — not to BTO-A or a nearby duct."
+          anchor = null } = opts;
   if (!text) return null;
   ctx.save();
   ctx.font = weight + ' ' + size + 'px -apple-system, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const w = ctx.measureText(text).width + 8;
-  const h = size + 6;
+  const w = ctx.measureText(text).width + padX * 2;
+  const h = size + padY * 2;
 
-  let px = at.x, py = at.y;
+  let best = { x: at.x, y: at.y, score: Infinity, dist: 0 };
   if (ledger) {
     for (const [dx, dy] of LABEL_OFFSETS) {
       const b = { x0: at.x + dx - w / 2, x1: at.x + dx + w / 2,
                   y0: at.y + dy - h / 2, y1: at.y + dy + h / 2 };
-      if (!ledger.hits(b)) { px = at.x + dx; py = at.y + dy; ledger.add(b); break; }
+      const score = ledger.overlap(b);
+      const dist = Math.hypot(dx, dy);
+      // OVERLAP DOMINATES ABSOLUTELY; DISTANCE ONLY BREAKS TIES.
+      //
+      // Adding the two put them in the same currency, so a clear spot forty
+      // pixels further away lost to one that clipped an outlet by twelve square
+      // pixels. Any overlap at all must be worse than any distance, or the
+      // placer will keep buying a shorter leader with somebody else's symbol.
+      const total = score * 10000 + dist;
+      if (total < best.score) best = { x: at.x + dx, y: at.y + dy, score: total,
+                                       dist, box: b, raw: score };
+      if (score === 0) break;                     // nothing better than clear
     }
+    if (best.box) ledger.add(best.box);
   }
+  const px = best.x, py = best.y;
+
+  // A LEADER, when the label had to go looking for room.
+  const tip = anchor || at;
+  const leaderLen = Math.hypot(px - tip.x, py - tip.y);
+  if (leader && leaderLen > LEADER_THRESHOLD_PX) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(40,46,60,0.55)';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    // Stop at the edge of the label box rather than under it.
+    const ang = Math.atan2(py - tip.y, px - tip.x);
+    ctx.lineTo(px - Math.cos(ang) * (w / 2 + 1), py - Math.sin(ang) * (h / 2 + 1));
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(40,46,60,0.75)';
+    ctx.fill();
+    ctx.restore();
+  }
+
   if (backing) {
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(px - w / 2, py - h / 2, w, h, 3);
+    if (ctx.roundRect) ctx.roundRect(px - w / 2, py - h / 2, w, h, 2.5);
     else ctx.rect(px - w / 2, py - h / 2, w, h);
     ctx.fillStyle = backing;
     ctx.fill();
@@ -186,7 +279,7 @@ export function drawLabel(ctx, text, at, opts = {}) {
   ctx.fillStyle = colour;
   ctx.fillText(text, px, py);
   ctx.restore();
-  return { x: px, y: py, w, h };
+  return { x: px, y: py, w, h, overlap: best.raw ?? 0, leader: leaderLen > LEADER_THRESHOLD_PX };
 }
 
 // ── Shared metal fill ──────────────────────────────────────────────────────
@@ -283,9 +376,9 @@ export function drawFanCoil(ctx, at, { angle = 0, w = 46, h = 26,
   ctx.restore();
 
   if (ledger) ledger.reserve(at.x, at.y, w + 22, h + 8);
-  drawLabel(ctx, label, { x: at.x, y: at.y + h / 2 + 11 }, { size: 10.5, ledger });
-  if (model) drawLabel(ctx, model, { x: at.x, y: at.y + h / 2 + 24 },
-                       { size: 8.5, colour: '#4A5160', weight: 600, ledger });
+  drawLabel(ctx, label, { x: at.x, y: at.y + h / 2 + 10 }, { size: 8.5, ledger, anchor: at });
+  if (model) drawLabel(ctx, model, { x: at.x, y: at.y + h / 2 + 21 },
+                       { size: 7, colour: '#4A5160', weight: 600, ledger });
 }
 
 /**
@@ -318,7 +411,7 @@ export function drawSupplyPlenum(ctx, at, { angle = 0, w = 16, h = 30,
   // three labels stacked below the unit land on top of one another.
   if (label) drawLabel(ctx, label, { x: at.x + (labelSide === 'left' ? -1 : 1) * (w / 2 + 44),
                                      y: at.y - h / 2 - 4 },
-                       { size: 8.5, colour: '#4A5160', weight: 700, ledger });
+                       { size: 7, colour: '#4A5160', weight: 700, ledger, anchor: at });
 }
 
 /**
@@ -368,9 +461,9 @@ export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
   if (ledger) ledger.reserve(at.x, at.y, w + 22, h + 22);
   // Three lines, stacked: which fitting, what it is made of, what it carries.
   let y = at.y - h / 2 - 12;
-  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 10.5, ledger }); y -= 12; }
-  if (spec) { drawLabel(ctx, spec, { x: at.x, y }, { size: 9, colour: '#4A5160', ledger }); y -= 11; }
-  if (flow) drawLabel(ctx, flow, { x: at.x, y }, { size: 9, colour: '#4A5160', ledger });
+  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 8.5, ledger, anchor: at }); y -= 11; }
+  if (spec) { drawLabel(ctx, spec, { x: at.x, y }, { size: 7.5, colour: '#4A5160', ledger }); y -= 10; }
+  if (flow) drawLabel(ctx, flow, { x: at.x, y }, { size: 7.5, colour: '#4A5160', ledger });
 }
 
 /**
@@ -605,8 +698,8 @@ export function drawReturnGrilleSymbol(ctx, at, { w = 22, h = 15, angle = 0,
   ctx.restore();
   if (ledger) ledger.reserve(at.x, at.y, w + 8, h + 8);
   let y = at.y + h / 2 + 11;
-  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 9.5, colour: '#3C4250', ledger }); y += 11; }
-  if (duct) drawLabel(ctx, duct, { x: at.x, y }, { size: 9, colour: '#4A5160', weight: 600, ledger });
+  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 7.5, colour: '#3C4250', ledger, anchor: at }); y += 10; }
+  if (duct) drawLabel(ctx, duct, { x: at.x, y }, { size: 7, colour: '#4A5160', weight: 600, ledger });
 }
 
 /**
@@ -637,7 +730,7 @@ export function drawReturnBox(ctx, at, { angle = 0, w = 18, h = 30,
   if (ledger) ledger.reserve(at.x, at.y, w + 18, h + 16);
   if (label) drawLabel(ctx, label, { x: at.x + (labelSide === 'right' ? 1 : -1) * (w / 2 + 38),
                                      y: at.y - h / 2 - 4 },
-                       { size: 8.5, colour: '#3C4250', ledger });
+                       { size: 7, colour: '#3C4250', ledger, anchor: at });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -677,12 +770,12 @@ export function drawZoneDamper(ctx, at, { angle = 0, r = 7, colour = '#1D7A48',
   ctx.stroke();
   ctx.restore();
   if (ledger) ledger.reserve(at.x, at.y, r * 2 + 10, r * 2 + 18);
-  if (label) drawLabel(ctx, label, { x: at.x + 20, y: at.y }, { size: 9, ledger });
+  if (label) drawLabel(ctx, label, { x: at.x + 17, y: at.y }, { size: 7.5, ledger, anchor: at });
   // 19. A constant/spill zone is annotated, never implied by a motor that is
   //     not there. A permanently open duct does not get closed by anything.
   if (constant) {
-    drawLabel(ctx, 'CONSTANT ZONE', { x: at.x + 20, y: at.y + 12 },
-              { size: 8.5, colour: '#4A5160', weight: 600, ledger });
+    drawLabel(ctx, 'CONSTANT ZONE', { x: at.x + 17, y: at.y + 11 },
+              { size: 7, colour: '#4A5160', weight: 600, ledger });
   }
 }
 
@@ -1008,3 +1101,112 @@ export const SYMBOLS = Object.freeze({
   roomBoundary: drawRoomBoundary,
   legend: drawLegend
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUPPLY AND RETURN CROSSING — A BRIDGE, NEVER A JOINT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nick: "If a supply and return route cross on the plan: show a proper
+// crossing/bridge symbol; create a visible gap in the lower duct; do not draw a
+// junction dot."
+//
+// This matters more than it looks. Two ducts crossing in plan and two ducts
+// joined look identical if the lines simply overlap, and the one thing this
+// drawing must never suggest is that return air enters the supply system. A gap
+// in the lower run is the drafting convention that says "these pass, they do not
+// meet", and it costs nothing to draw.
+
+/** Where two polylines cross, in screen space. */
+export function findCrossings(aPts, bPts) {
+  const hits = [];
+  if (!aPts || !bPts || aPts.length < 2 || bPts.length < 2) return hits;
+  const side = (o, p, q) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  for (let i = 1; i < aPts.length; i++) {
+    const a0 = aPts[i - 1], a1 = aPts[i];
+    for (let j = 1; j < bPts.length; j++) {
+      const b0 = bPts[j - 1], b1 = bPts[j];
+      const d1 = side(a0, a1, b0), d2 = side(a0, a1, b1);
+      const d3 = side(b0, b1, a0), d4 = side(b0, b1, a1);
+      if (((d1 > 0) === (d2 > 0)) || ((d3 > 0) === (d4 > 0))) continue;
+      const t = d3 / (d3 - d4);
+      hits.push({ x: a0.x + (a1.x - a0.x) * t, y: a0.y + (a1.y - a0.y) * t,
+                  angle: Math.atan2(a1.y - a0.y, a1.x - a0.x) });
+    }
+  }
+  return hits;
+}
+
+/**
+ * Break a polyline around a set of points, returning the pieces to draw.
+ *
+ * The gap is what makes the crossing readable, so it is cut out of the LOWER
+ * duct — the one drawn first — and the upper run passes over it unbroken.
+ */
+export function breakAround(pts, breaks, gapPx) {
+  if (!pts || pts.length < 2 || !breaks?.length) return [pts];
+  const pieces = [];
+  let current = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    // Any break that falls on this segment, in order along it.
+    const onSeg = breaks
+      .map(k => ({ k, t: ((k.x - a.x) * (b.x - a.x) + (k.y - a.y) * (b.y - a.y)) / (segLen * segLen) }))
+      .filter(o => o.t > 0 && o.t < 1 &&
+        Math.hypot(a.x + (b.x - a.x) * o.t - o.k.x, a.y + (b.y - a.y) * o.t - o.k.y) < 2)
+      .sort((x, y) => x.t - y.t);
+    for (const o of onSeg) {
+      const half = gapPx / segLen / 2;
+      const t0 = Math.max(0, o.t - half), t1 = Math.min(1, o.t + half);
+      current.push({ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 });
+      pieces.push(current);
+      current = [{ x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }];
+    }
+    current.push(b);
+  }
+  pieces.push(current);
+  return pieces.filter(pc => pc.length >= 2);
+}
+
+/** The little hop over a crossing, drawn on the upper run. */
+export function drawCrossingBridge(ctx, at, { angle = 0, r = 6,
+                                              colour = 'rgba(30,34,48,0.8)' } = {}) {
+  ctx.save();
+  ctx.translate(at.x, at.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, Math.PI, 0);
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = colour;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * An airflow arrow on a duct — which way the air is actually going.
+ *
+ * Return air travels TOWARD the fan coil, which is the opposite of everything
+ * else on the sheet, and an arrow is the only thing that says so without a
+ * sentence. `fraction` is how far along the run to put it.
+ */
+export function drawFlowArrow(ctx, pts, { fraction = 0.5, colour = RETURN_COLOUR,
+                                          size = 6, reverse = false } = {}) {
+  if (!pts || pts.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  let want = total * fraction, run = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    if (run + L >= want) {
+      const t = L ? (want - run) / L : 0;
+      const at = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      let ang = Math.atan2(b.y - a.y, b.x - a.x);
+      if (reverse) ang += Math.PI;
+      drawArrow(ctx, at, ang, { colour, size });
+      return at;
+    }
+    run += L;
+  }
+  return null;
+}

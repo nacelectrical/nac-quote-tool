@@ -186,7 +186,7 @@ export function createPlanViewer(container, opts = {}) {
     // the SETUP view — room boxes, handles, calibration marks — which is a
     // different job and stays as it is.
     if (state.designView && !state.showAnalysis) {
-      drawFlexDesign(ctx, {
+      state.drawn = drawFlexDesign(ctx, {
         routes: state.routes,
         outlets: state.outlets,
         markers: state.markers,
@@ -908,26 +908,26 @@ export function createPlanViewer(container, opts = {}) {
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_TOUCH_R, 0, Math.PI * 2); ctx.fill();
       }
 
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#0c0c24';
+      // ONE EDITING COLOUR ACROSS THE WHOLE APPLICATION.
+      //
+      // These were their own yellows and blues, which meant "you are editing
+      // this" was said three different ways depending on which mode you were
+      // in — and none of them matched the cyan the outlet handles use. Nick's
+      // palette: "Selected editing item: bright cyan highlight." A locked node
+      // keeps its own grey and its bar, because locked is a different statement
+      // from editable and must not read as cyan.
       if (h.locked) {
-        // A locked node is a square with a bar through it: it reads as fixed,
-        // and it reads that way in a roof space on a dim iPad screen.
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0c0c24';
         ctx.fillStyle = '#8f98b5';
         ctx.beginPath(); ctx.rect(p.x - r, p.y - r, r * 2, r * 2); ctx.fill(); ctx.stroke();
         ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.moveTo(p.x - r * 0.55, p.y); ctx.lineTo(p.x + r * 0.55, p.y); ctx.stroke();
-      } else if (h.kind === 'junction') {
-        ctx.fillStyle = active ? '#ffe680' : '#F5C200';
-        ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.15, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      } else if (h.kind === 'end') {
-        ctx.fillStyle = active ? '#ffffff' : '#8fd0ff';
-        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       } else {
-        ctx.fillStyle = active ? '#ffffff' : '#5fa8ff';
-        ctx.beginPath();
-        ctx.rect(p.x - r * 0.8, p.y - r * 0.8, r * 1.6, r * 1.6);
-        ctx.fill(); ctx.stroke();
+        // A junction — which on this design is a BTO — gets a slightly larger
+        // grab point, because it moves a fitting rather than a bend.
+        SYMBOLS.drawEditHandle(ctx, p,
+          { r: h.kind === 'junction' ? r * 1.15 : r * 0.9 });
       }
       ctx.restore();
     }
