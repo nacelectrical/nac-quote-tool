@@ -500,7 +500,13 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
         message: row.label + ' has no boundary on the plan, so it could not be routed to.' });
       continue;
     }
-    const qty = outletsByRoom.get(row.roomId)?.quantity ?? 1;
+    // A ROOM ON SPILL AIR GETS NO DUCT. It keeps its load and its floor area —
+    // it is conditioned — but the outlet design gave it no outlet, so routing
+    // to it would put a duct in the roof that nobody asked for and nobody
+    // installs. Defaulting the quantity to 1 for a room with no outlet row was
+    // running a flex to the study at zero litres a second.
+    const qty = outletsByRoom.get(row.roomId)?.quantity ?? (outlets ? 0 : 1);
+    if (!qty || row.spillOnly || !(row.adjustedLs > 0)) continue;
     const b = room.boundaryPx;
     for (let i = 0; i < qty; i++) {
       const manual = layout['outlet_' + row.roomId + '_' + i];
@@ -846,9 +852,53 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
       const legal = only.taps.every(t =>
         takeOffAllowedOn(finalSizeForAirflow(t.outlet.airflowLs), tail.sizeMm));
       if (!only.direct && legal) {
+        // ONE MANIFOLD ON THE MAIN, NOT THREE SADDLES.
+        //
+        // The wing's runs stop being a separate branch duct, but they do NOT
+        // become three unrelated take-offs strung along the main: an installer
+        // sets one multi-spigot BTO and runs three flexes off it. So every tap
+        // moves to the SAME point on the stretch, which is what makes the BTO
+        // layer see one fitting with three ports instead of three collars.
+        const at = only.taps[Math.floor(only.taps.length / 2)];
+        for (const t of only.taps) { t.alongIndex = at.alongIndex; t.at = at.at;
+                                     t.run = dist(t.at, t.outlet); }
         tail.clusters = only.taps.map(t => ({ cluster: { direct: true, taps: [t] },
                                               ci: tail.clusters[0].ci }));
       }
+    }
+
+    // ── ONE MANIFOLD, NOT A ROW OF SADDLES ─────────────────────────────────
+    //
+    // Nick: "Avoid long mains with fake sequential BTO points." Take-offs that
+    // land within a couple of metres of one another on the same stretch are ONE
+    // fabricated body with several spigots — that is what a BTO is. So their
+    // tap points are brought together, up to the number of spigots a body
+    // carries; past that the next group is a second fitting further along.
+    //
+    // Nothing is moved across the house to achieve it: the span is a real
+    // distance along the duct, and outlets further apart than that stay on
+    // their own collars.
+    for (const stretch of stretches) {
+      const singles = stretch.clusters.filter(c => c.cluster.direct);
+      if (singles.length < 2) continue;
+      const taps = singles.map(c => c.cluster.taps[0]).sort((a, b) => a.alongIndex - b.alongIndex);
+      const spanPx = opts.calibration?.mmPerPixel
+        ? BTO_RULES.sharedTakeOffSpanM * 1000 / opts.calibration.mmPerPixel
+        : Math.max(footprint.w, footprint.h) * 0.14;
+      let group = [];
+      const flush = () => {
+        if (group.length < 2) { group = []; return; }
+        const at = group[Math.floor(group.length / 2)];
+        for (const t of group) { t.alongIndex = at.alongIndex; t.at = at.at;
+                                 t.run = dist(t.at, t.outlet); }
+        group = [];
+      };
+      for (const t of taps) {
+        if (group.length && (group.length >= BTO_RULES.maxPortsPerFitting ||
+            dist(group[0].at, t.at) > spanPx)) flush();
+        group.push(t);
+      }
+      flush();
     }
 
     let prevId = null;

@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
          QUOTED_SEPARATELY } from './materials.mjs';
+import { btoBomLines } from './bto.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -142,9 +143,15 @@ export function buildBillOfMaterials(design, opts = {}) {
   // ── Ductwork ───────────────────────────────────────────────────────────────
   const byDiameter = {};
   const fittingCounts = {};
+  // A RUN OFF A BTO DOES NOT ALSO NEED A SADDLE COLLAR. The spigot it leaves
+  // is part of the manifold. Counting both bought twelve butterfly take-offs
+  // AND four fittings for the same eleven connections.
+  const onAManifold = new Set((design.btos || [])
+    .flatMap(b => b.ports.map(p => p.sectionId).filter(Boolean)));
   for (const s of (design.network?.sections || [])) {
     if (s.lengthM) byDiameter[s.diameterMm] = round((byDiameter[s.diameterMm] || 0) + s.lengthM, 2);
     for (const f of (s.fittings || [])) {
+      if (f.type === 'takeoff' && onAManifold.has(s.id)) continue;
       fittingCounts[f.type] = (fittingCounts[f.type] || 0) + f.quantity;
     }
   }
@@ -179,6 +186,19 @@ export function buildBillOfMaterials(design, opts = {}) {
       note: 'Where a main or major duct steps down. A take-off to outlet size is not a reducer.' });
   }
 
+  // ── PHYSICAL BRANCH TAKE-OFFS ───────────────────────────────────────────
+  // The fittings are real metal with a part number. They are counted off the
+  // derived BTO entities — one line per inlet size and port count, because a
+  // 400 three-port body and a 300 two-port body are different things to order.
+  for (const row of btoBomLines(design.btos || [])) {
+    items.push({ ...line('bto_fitting', row.quantity, ctx), category: 'ductwork',
+      diameterMm: row.inletDiameterMm,
+      label: row.label + (row.portCount === 1 ? '' : 's'),
+      portCount: row.portCount,
+      fittings: row.fittings,
+      note: 'Multi-spigot branch take-off. Not a saddle collar and not one per outlet.' });
+  }
+
   const totalDuctM = design.network?.totalDuctLengthM || 0;
   if (totalDuctM > 0) {
     // One support roughly every 1.5 m of flex, per manufacturer install guidance.
@@ -204,8 +224,21 @@ export function buildBillOfMaterials(design, opts = {}) {
 
   // ── Return air ─────────────────────────────────────────────────────────────
   if (design.returnDesign) {
+    // THE GRILLE ON THE ORDER IS THE GRILLE ON THE DRAWING. The catalogue rate
+    // is for one standard size; when the design specifies another — 600 x 400
+    // here — the line has to say so, or the drawing and the order describe two
+    // different pieces of metal.
+    const spec = design.returnDesign.returns?.[0];
+    const sizeText = spec ? spec.grilleWidthMm + ' x ' + spec.grilleHeightMm + ' mm' : null;
     const grille = line('return_grille', design.returnDesign.returnCount, ctx);
-    items.push({ ...grille, category: 'return' });
+    const sameAsRate = !sizeText || grille.label.includes(sizeText.replace(' mm', ''));
+    items.push({ ...grille, category: 'return',
+      designedSize: sizeText,
+      label: sizeText ? 'Return air grille and filter ' + sizeText : grille.label,
+      note: sameAsRate ? undefined
+        : 'Design calls for ' + sizeText + '. Rate shown is the catalogue\u2019s ' +
+          'standard grille — confirm the price for this size.',
+      rateIsForAnotherSize: !sameAsRate });
     // MMEM supply the grille and filter as one item. Only add a separate filter
     // line if the grille rate in use does not already cover it.
     if (!resolveCost('return_grille', ctx).includesFilter) {

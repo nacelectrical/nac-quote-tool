@@ -49,10 +49,30 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     detectedDimensions: [],         // DetectedDimension[]
     chains: [],                     // DimensionChain[]
     walls: [],                      // PlanWall[]
+    // WALLS THE JOB HAS TAKEN OUT. A renovation leaves the old partitions
+    // printed on the sheet the estimator uploaded; the duct has to be routed
+    // through the house as it WILL BE, not as it was drawn. Each entry names
+    // the partition and records that it is no longer an obstacle — it is never
+    // erased from `walls`, because the drawing still shows it and somebody has
+    // to be able to see why it was ignored.
+    demolishedWalls: [],            // { id, label, between, x0,y0,x1,y1, reason, approvedBy }
     openings: [],                   // windows / doors / sliders
     interpretation: null,           // raw AI reader output, kept for audit
 
     // ── Rooms & loads ────────────────────────────────────────────────────────
+    // ── Equipment and outlet placement, and who is responsible for it ──────
+    // Rooms served by spill air: conditioned and loaded, but no outlet, no duct.
+    spillRoomIds: [],
+    spillIntoRoomIds: null,         // null = spread across every other room
+    spillAllocations: [],
+    outletPositionSources: {},      // roomId -> 'plan_detected' | 'estimator_placed'
+
+    fanCoilStatus: null,            // 'assumed' | 'estimator' | 'approved'
+    fanCoilApprovedBy: null,
+    placement: null,                // assessPlacement() result — preview vs final
+    btos: [],                       // physical BTO fittings
+    btoValidation: null,
+
     rooms: [],                      // DesignRoom[] (each carries a RoomMeasurement)
     roomLoads: [],                  // RoomLoad[]
     systemLoad: null,

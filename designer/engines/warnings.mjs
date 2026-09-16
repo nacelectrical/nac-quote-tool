@@ -16,6 +16,11 @@ export function _resetWarningIds() { _seq = 0; }
 
 function normalise(w, area) {
   return {
+    // Anything the raiser attached travels with the warning. A capacity
+    // mismatch carries BOTH figures and the fact that it blocks approval; a
+    // normaliser that dropped them would leave the estimator reading a
+    // sentence with no numbers behind it.
+    ...w,
     id: w.id || ('w' + (++_seq)),
     code: w.code || 'UNSPECIFIED',
     severity: w.severity || SEVERITY.INFO,
@@ -136,9 +141,21 @@ export function collectWarnings(design, opts = {}) {
   // ── Cross-cutting checks ───────────────────────────────────────────────────
   if (design.selectedUnit && design.systemLoad) {
     const ratio = design.selectedUnit.capacityKw / design.systemLoad.designKw;
+    // BOTH FIGURES SURVIVE. The calculated load is never trimmed to agree with
+    // a unit somebody chose by hand, and a hand-chosen unit is never quietly
+    // presented as capacity-approved. Nick chose a 16 kW head against a 23 kW
+    // calculated load deliberately; the job can be designed and drawn, but it
+    // cannot be signed off until a person has looked at the gap.
     if (ratio < 0.95) out.push(normalise({ code: 'SYSTEM_UNDERSIZED', severity: SEVERITY.CRITICAL,
-      message: 'Selected ' + design.selectedUnit.capacityKw + ' kW unit is below the ' +
-        design.systemLoad.designKw + ' kW design load.' }, 'equipment'));
+      blocksFinalApproval: true,
+      calculatedDesignLoadKw: design.systemLoad.designKw,
+      selectedCapacityKw: design.selectedUnit.capacityKw,
+      shortfallKw: Math.round((design.systemLoad.designKw - design.selectedUnit.capacityKw) * 100) / 100,
+      message: 'Selected equipment capacity is below the current calculated design load. ' +
+        'Installer review/manual equipment override required. \u2014 ' +
+        design.selectedUnit.capacityKw + ' kW selected against a ' +
+        design.systemLoad.designKw + ' kW calculated design load (' +
+        Math.round((1 - ratio) * 100) + '% short).' }, 'equipment'));
     if (ratio > 1.30) out.push(normalise({ code: 'SYSTEM_SIGNIFICANTLY_OVERSIZED', severity: SEVERITY.WARNING,
       message: 'Selected ' + design.selectedUnit.capacityKw + ' kW unit is ' +
         Math.round((ratio - 1) * 100) + '% above the ' + design.systemLoad.designKw + ' kW design load.' }, 'equipment'));

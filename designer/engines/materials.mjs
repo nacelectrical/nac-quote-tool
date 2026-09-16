@@ -172,6 +172,13 @@ export const MATERIAL_CATALOGUE = {
   // These defaults are the mid-range item; the estimator can swap the line.
   takeoff:          fromAccessory('MMAB9',   'Butterfly take-off (B9)'),
   takeoff_double:   fromAccessory('MMADB6',  'Double butterfly take-off (DB6)'),
+  // THE PHYSICAL BTO MANIFOLD. A fabricated multi-spigot body, not a saddle
+  // collar: it is what the mains actually terminate at. Priced off the double
+  // take-off until NAC gives the real fabrication rate, and flagged so the
+  // rate audit can see it is a placeholder rather than a supplier price.
+  bto_fitting:      { ...fromAccessory('MMADB6', 'BTO branch take-off manifold'),
+                      unit: 'each', placeholderRate: true,
+                      rateNote: 'Placeholder \u2014 confirm NAC\u2019s fabricated BTO rate.' },
   y_piece:          fromAccessory('MMADY14', 'Y-piece (Y4 / DY14)'),
   zone_cable:       { ...fromAccessory('MMADZ15', 'Zone cable lead (15 m)'), unit: 'each',
                       cost: findAccessory('MMADZ15').cost, pack: null },

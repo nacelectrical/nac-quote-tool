@@ -31,7 +31,12 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
       const notes = [];
       const warnings = [];
 
-      if (ratio < E.undersizeWarnRatio) warnings.push({ code: 'SYSTEM_UNDERSIZED', severity: 'WARNING',
+      // The cross-cutting check in warnings.mjs raises the one the estimator
+      // reads, with both figures and the review instruction on it. This one is
+      // kept against the CANDIDATE so the selection list can show it, and is
+      // marked so the two do not print as two separate problems.
+      if (ratio < E.undersizeWarnRatio) warnings.push({ code: 'SYSTEM_UNDERSIZED',
+        severity: 'WARNING', perCandidate: true,
         message: m.kw + ' kW is below the ' + round(designKw, 2) + ' kW design load.' });
       if (ratio > E.oversizeWarnRatio) warnings.push({ code: 'SYSTEM_SIGNIFICANTLY_OVERSIZED', severity: 'CHECK',
         message: m.kw + ' kW is ' + round((ratio - 1) * 100, 0) + '% above the design load — expect short cycling and poor humidity control.' });

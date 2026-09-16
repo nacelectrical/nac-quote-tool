@@ -105,10 +105,27 @@ export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
   if (role === 'final') {
     const byPractice = finalSizeForAirflow(flow);
     const byVelocity = usable.find(d => velocity(d, flow) <= band.max) ?? Math.max(...usable);
-    const chosenMm = Math.min(Math.max(byPractice, byVelocity), Math.max(...usable));
+    const calculatedMm = Math.min(Math.max(byPractice, byVelocity), Math.max(...usable));
+
+    // THE INSTALLER'S MINIMUM IS APPLIED LAST, AND IT IS OWNED UP TO.
+    //
+    // A crew that will not run anything under a 250 gets a 250, but the engine
+    // must never then report that the maths asked for one. The size the
+    // calculation produced, the size that was fitted, and the reason they
+    // differ are all carried out of here, so a 45 L/s bedroom on a 250 reads as
+    // "the installer's minimum" and not as engineering.
+    const floorMm = Math.min(D.minimumSupplyBranchDiameterMm ?? min,
+                             Math.max(...usable));
+    const chosenMm = Math.max(calculatedMm, floorMm);
+    const raisedByMinimum = chosenMm > calculatedMm;
     const v = velocity(chosenMm, flow);
     return {
       diameterMm: chosenMm,
+      calculatedDiameterMm: calculatedMm,
+      raisedByMinimum,
+      minimumAppliedMm: raisedByMinimum ? floorMm : null,
+      calculatedVelocityMs: round(velocity(calculatedMm, flow), 2),
+      sizeBasis: raisedByMinimum ? 'installer_minimum' : 'calculated',
       velocityMs: round(v, 2),
       withinMax: v <= band.max,
       withinPreferred: v >= band.preferredMin && v <= band.preferred,
@@ -118,8 +135,13 @@ export function selectDiameter(airflowLs, role = 'branch', opts = {}) {
       overCapacity: v > band.max,
       carryLimitLs: round(ductAreaM2(chosenMm) * band.max * 1000, 0),
       idealDiameterMm: round(idealDiameterMm(flow, band.preferred), 0),
-      reason: 'NAC fits a ' + chosenMm + ' mm final at ' + round(flow, 0) + ' L/s per outlet' +
-        (byVelocity > byPractice ? ', raised by the velocity check' : '') + '. ' + rule,
+      reason: raisedByMinimum
+        ? 'The calculation gave a ' + calculatedMm + ' mm final at ' + round(flow, 0) +
+          ' L/s. Fitted at ' + chosenMm + ' mm because the installer minimum for a ' +
+          'supply branch on this design is ' + floorMm + ' mm \u2014 NOT because the ' +
+          'airflow required it.'
+        : 'NAC fits a ' + chosenMm + ' mm final at ' + round(flow, 0) + ' L/s per outlet' +
+          (byVelocity > byPractice ? ', raised by the velocity check' : '') + '. ' + rule,
       considered: usable.map(d => ({ diameterMm: d, velocityMs: round(velocity(d, flow), 2),
         withinMax: velocity(d, flow) <= band.max,
         withinPreferred: velocity(d, flow) >= band.preferredMin && velocity(d, flow) <= band.preferred }))

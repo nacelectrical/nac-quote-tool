@@ -204,6 +204,20 @@ export const FINAL_FLEX = Object.freeze({
 /** The smallest duct AUTO DESIGN will choose for ANY run, trunk included. */
 export const AUTO_MIN_DIAMETER_MM = 200;
 
+/**
+ * THE SMALLEST DUCT AN INSTALLER WILL RUN TO AN OUTLET.
+ *
+ * Not physics — install practice, and it varies by crew and by job. On the
+ * Dungannon Court sheet the smallest supply run is a 250, on a 65 L/s bedroom
+ * that the velocity band would put on a 200.
+ *
+ * It is a SETTING, not a constant: `settings.duct.minimumSupplyBranchDiameterMm`
+ * overrides it per design. The default stays at the ladder minimum so no
+ * existing job silently changes size; a job that wants NAC's 250 standard sets
+ * it, and the engine then has to say WHY every raised duct was raised.
+ */
+export const DEFAULT_MIN_SUPPLY_BRANCH_MM = AUTO_MIN_DIAMETER_MM;
+
 /** Everything NAC stocks. 450 and 500 are absent: NAC never run them. */
 export const STOCKED_DIAMETERS_MM = Object.freeze([100, 125, 150, 200, 250, 300, 350, 400]);
 export const MAX_DIAMETER_MM = 400;
@@ -307,6 +321,21 @@ export const BTO = Object.freeze({
    * of branches that made the drawing unreadable.
    */
   clusterFraction: 0.12,
+  /**
+   * HOW MANY SPIGOTS ONE FABRICATED BODY CARRIES.
+   * Dungannon's largest is three. Past that the run chains onto a second
+   * fitting rather than sprouting a fourth spigot.
+   */
+  maxPortsPerFitting: 3,
+  /**
+   * HOW FAR APART TWO TAKE-OFFS CAN BE AND STILL SHARE ONE FITTING.
+   *
+   * Nick: "Avoid long mains with fake sequential BTO points." Outlets that come
+   * off the same stretch within a couple of metres of one another are not four
+   * saddles strung along a duct — an installer sets ONE manifold and runs the
+   * flexes off it. Beyond this they are genuinely separate fittings.
+   */
+  sharedTakeOffSpanM: 2.5,
   /** What every BTO must record. Asserted by the regression tests. */
   requiredFields: Object.freeze(['parentDiameterMm', 'branchDiameterMm', 'branchAirflowLs', 'serves'])
 });
@@ -896,6 +925,7 @@ export const NAC_DUCT_DESIGN_STANDARD = Object.freeze({
                          EXCLUDED_BANNER }),
   finalFlex: FINAL_FLEX,
   autoMinDiameterMm: AUTO_MIN_DIAMETER_MM,
+  defaultMinSupplyBranchMm: DEFAULT_MIN_SUPPLY_BRANCH_MM,
   stockedDiametersMm: STOCKED_DIAMETERS_MM,
   maxDiameterMm: MAX_DIAMETER_MM,
   branchMinMm: BRANCH_MIN_MM,

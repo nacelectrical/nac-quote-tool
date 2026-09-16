@@ -20,6 +20,8 @@ import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
+import { deriveBtos, validateBtos, btoBomLines } from './bto.mjs';
+import { assessPlacement } from './placement.mjs';
 import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
@@ -162,10 +164,46 @@ export function runPipeline(design, ctx = {}) {
     settings, selectedUnit: d.selectedUnit, overridesByRoomId: d.airflowOverrides || {}
   });
 
+  // ── 4b. SPILL ROOMS ───────────────────────────────────────────────────────
+  //
+  // A room that is open to the space beside it does not always get its own
+  // outlet. The study on a renovated open plan is the case: it is conditioned,
+  // it keeps its floor area and its heat load, and it is served by air spilling
+  // in from the room it opens onto. What it must NOT have is an outlet or a
+  // duct run of its own.
+  //
+  // So its airflow is not deleted — that would quietly shrink the system — it
+  // is REDISTRIBUTED across the rooms it spills from, and the move is recorded
+  // so the schedule can say where the air went.
+  d.spillAllocations = [];
+  const spillIds = new Set(d.spillRoomIds || []);
+  if (spillIds.size) {
+    const rows = d.airflow.rows || [];
+    const donors = rows.filter(r => !spillIds.has(r.roomId) &&
+      (d.spillIntoRoomIds ? d.spillIntoRoomIds.includes(r.roomId) : true));
+    const donorTotal = donors.reduce((n, r) => n + (r.adjustedLs || 0), 0);
+    for (const r of rows) {
+      if (!spillIds.has(r.roomId) || !donorTotal) continue;
+      const moved = r.adjustedLs || 0;
+      d.spillAllocations.push({ roomId: r.roomId, label: r.label, airflowLs: moved,
+        intoRoomIds: donors.map(x => x.roomId),
+        reason: r.label + ' is open to the space beside it and takes spill air. Its ' +
+                moved + ' L/s is carried by the outlets it spills from; it gets no ' +
+                'outlet and no duct of its own.' });
+      r.spillOnly = true;
+      r.spilledLs = moved;
+      r.adjustedLs = 0;
+      const factor = (donorTotal + moved) / donorTotal;
+      for (const dn of donors) dn.adjustedLs = Math.round((dn.adjustedLs || 0) * factor);
+    }
+  }
+
   // ── 5. Outlets (PART 15) ──────────────────────────────────────────────────
-  d.outlets = designOutlets(included, d.airflow.rows, {
-    settings, overridesByRoomId: d.outletOverrides || {}
-  });
+  d.outlets = designOutlets(included.filter(r => !spillIds.has(r.id)),
+    (d.airflow.rows || []).filter(r => !spillIds.has(r.roomId)), {
+      settings, overridesByRoomId: d.outletOverrides || {},
+      outletPositionSourceByRoomId: d.outletPositionSources || {}
+    });
 
   // ── 6. Ducts (PART 16/17) + AUTO ROUTING ──────────────────────────────────
   //
@@ -325,6 +363,24 @@ export function runPipeline(design, ctx = {}) {
                                     zones: d.zones })
     : [];
 
+  // ── 8c. THE PHYSICAL BRANCH TAKE-OFFS ────────────────────────────────────
+  // A BTO is a fitting somebody buys and lifts into a roof, not a number stuck
+  // on an outlet. They are DERIVED from the sized network — wherever two or
+  // more runs leave the same duct at the same place — so the drawing, the
+  // schedule and the order all read one object.
+  d.btos = d.network?.routed ? deriveBtos(d.network) : [];
+  d.btoValidation = validateBtos(d.btos);
+  if (!d.btoValidation.ok) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.failures.map(f => ({
+      code: 'BTO_' + f.code, severity: 'CRITICAL', message: f.message }))];
+  }
+
+  // ── 8d. PLACEMENT STATUS ─────────────────────────────────────────────────
+  // A design may be PREVIEWED from an assumed fan-coil position. It may not be
+  // FINALISED from one. The unit decides every duct length in the job, so a
+  // guess at where it sits is a guess at the whole design.
+  d.placement = assessPlacement(d);
+
   // ── 9. Static pressure (PART 21) ──────────────────────────────────────────
   d.pressure = estimateStaticPressure({
     network: d.network, returnDesign: d.returnDesign, outlets: d.outlets,
@@ -357,6 +413,8 @@ export function runPipeline(design, ctx = {}) {
     network: d.network,
     outlets: d.outlets,
     zones: d.zones,
+    // The physical take-off fittings are real metal on the order.
+    btos: d.btos,
     returnDesign: d.returnDesign,
     refrigerantPipeM: d.refrigerantPipeM ?? 8,
     drainPipeM: d.drainPipeM ?? 6,

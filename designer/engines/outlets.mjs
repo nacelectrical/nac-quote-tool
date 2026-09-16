@@ -211,10 +211,20 @@ export function designRoomOutlets(room, airflowLs, opts = {}) {
 export function designOutlets(rooms, airflowRows, opts = {}) {
   const byId = new Map((rooms || []).map(r => [r.id, r]));
   const overrides = opts.overridesByRoomId || {};
+  // WHERE AN OUTLET POSITION CAME FROM, kept for the audit trail. A mark read
+  // off the uploaded sheet and a position an estimator typed are both valid and
+  // are NOT the same thing: one is evidence, the other is a decision. Reporting
+  // a typed position as a detected mark would be the tool claiming it saw
+  // something it did not.
+  const placedBy = opts.outletPositionSourceByRoomId || {};
   const results = (airflowRows || []).map(a => {
     const room = byId.get(a.roomId) || { id: a.roomId, label: a.label };
     const ov = overrides[a.roomId] || {};
-    const base = designRoomOutlets(room, a.adjustedLs, { ...opts, type: ov.type });
+    const positionSource = placedBy[a.roomId]
+      || (room.outletPositionSource || (room.manualOutlets ? 'estimator_placed' : 'auto_derived'));
+    const base = { ...designRoomOutlets(room, a.adjustedLs, { ...opts, type: ov.type }),
+                   positionSource,
+                   positionIsManual: positionSource === 'estimator_placed' };
     if (ov.quantity) {
       const qty = Number(ov.quantity);
       return {

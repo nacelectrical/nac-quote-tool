@@ -79,6 +79,17 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
           manual: true }
       : (candidates.find(c => c.grossAreaM2 >= requiredGrossAreaM2) || candidates[candidates.length - 1]);
 
+    // GROSS FACE VELOCITY IS A FACT. EFFECTIVE FREE-AREA VELOCITY IS NOT,
+    // unless the grille's manufacturer has published its free area.
+    //
+    // The 0.72 ratio in settings is an ASSUMPTION carried over from generic
+    // practice, not a data sheet. Reporting a free-area velocity off it and
+    // calling it a result is the kind of invented number this tool must never
+    // produce — so both figures are given, and the derived one is marked
+    // unverified until somebody enters the real free area.
+    const freeAreaVerified = !!R.grilleFreeAreaRatioVerified;
+    const grossFaceVelocity = chosen.grossAreaM2 > 0
+      ? (perReturnLs / 1000) / chosen.grossAreaM2 : Infinity;
     const faceVelocity = chosen.freeAreaM2 > 0 ? (perReturnLs / 1000) / chosen.freeAreaM2 : Infinity;
     const rWarnings = [];
     if (faceVelocity > R.maxGrilleFaceVelocityMs) {
@@ -86,13 +97,28 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
         message: 'Return ' + (i + 1) + ': ' + round(faceVelocity, 2) + ' m/s face velocity exceeds the ' +
           R.maxGrilleFaceVelocityMs + ' m/s limit — expect noise.' });
     }
+    if (!freeAreaVerified) {
+      rWarnings.push({ code: 'RETURN_FREE_AREA_UNVERIFIED', severity: 'CHECK',
+        message: 'Return ' + (i + 1) + ': gross face velocity is ' + round(grossFaceVelocity, 2) +
+          ' m/s on ' + round(chosen.grossAreaM2, 3) + ' m² gross. The effective free-area ' +
+          'velocity of ' + round(faceVelocity, 2) + ' m/s assumes a ' +
+          Math.round(R.grilleFreeAreaRatio * 100) + '% free area — UNVERIFIED. Enter the ' +
+          'grille manufacturer\u2019s free area to confirm it.' });
+    }
     returns.push({
       index: i + 1,
+      id: 'R' + (i + 1),
       airflowLs: round(perReturnLs, 0),
       grilleWidthMm: chosen.widthMm,
       grilleHeightMm: chosen.heightMm,
       grilleSize: chosen.widthMm + ' × ' + chosen.heightMm + ' mm',
+      grossAreaM2: round(chosen.grossAreaM2, 3),
+      grossFaceVelocityMs: round(grossFaceVelocity, 2),
+      freeAreaRatio: R.grilleFreeAreaRatio,
+      freeAreaRatioSource: freeAreaVerified ? 'manufacturer' : 'assumed \u2014 not manufacturer data',
       freeAreaM2: round(chosen.freeAreaM2, 3),
+      effectiveFreeAreaVelocityMs: round(faceVelocity, 2),
+      freeAreaVerified,
       faceVelocityMs: round(faceVelocity, 2),
       manual: !!chosen.manual,
       warnings: rWarnings

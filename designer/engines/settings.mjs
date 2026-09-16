@@ -192,6 +192,11 @@ export const DEFAULT_SETTINGS = {
     },
     branchMinMm: NAC.branchMinMm,
     autoMinDiameterMm: NAC.autoMinDiameterMm,
+    // THE INSTALLER'S OWN MINIMUM for a run to an outlet. Raising it never
+    // changes the calculation — the airflow, the velocity and the size the
+    // bands asked for are all still reported — it only changes what gets
+    // fitted, and the engine says so against every duct it raises.
+    minimumSupplyBranchDiameterMm: NAC.defaultMinSupplyBranchMm,
     junctionClusterFraction: NAC.bto.clusterFraction,
     majorBranchMinRooms: NAC.bto.minRoomsForMajorBranch,
 
@@ -221,6 +226,10 @@ export const DEFAULT_SETTINGS = {
     maxFilterFaceVelocityMs: 1.5,
     // Free area of a typical return grille core.
     grilleFreeAreaRatio: 0.72,
+    // The ratio above is a generic ASSUMPTION, not a data sheet. Set this true
+    // only when the figure has been taken from the grille manufacturer, and the
+    // engine will stop marking the free-area velocity unverified.
+    grilleFreeAreaRatioVerified: false,
     standardGrilleSizesMm: [
       [400, 400], [500, 400], [600, 400], [600, 500],
       [700, 500], [800, 500], [900, 600], [1000, 600], [1200, 600]
