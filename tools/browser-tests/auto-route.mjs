@@ -128,10 +128,38 @@ const armSet = new Set(chain.map(c => c.arm));
 say('the plenum feeds mains, not one run per room',
   armSet.size >= 2 && armSet.size <= 3 && chain.length < a.segments,
   armSet.size + ' main(s): ' + [...armSet].join(', ') + ', ' + chain.length + ' main/trunk runs');
-say('the trunk actually reduces across the house',
-  a.trunkSizes[a.trunkSizes.length - 1] < a.trunkSizes[0],
-  a.trunkSizes[0] + ' → ' + a.trunkSizes[a.trunkSizes.length - 1]);
-say('reducers were recorded to buy', a.reducers > 0, a.reducers + ' reducers');
+// NO MAIN IS REDUCED BEFORE ITS BTO.
+//
+// These two used to assert the opposite: that the trunk steps down across the
+// house and that reducers get bought. That was the old chained-trunk model,
+// where one main ran the length of the house shedding air at each take-off.
+// The approved installer-area design does not work that way — each main runs at
+// its full diameter from the plenum to its own area's BTO and sheds nothing on
+// the way, because it has nothing to shed until it gets there. So a main that
+// reduced before its fitting would now be the fault, and the assertions are
+// turned round to catch that instead.
+const mainStretches = chain.reduce((acc, c) => {
+  (acc[c.arm || '-'] ||= []).push(c); return acc;
+}, {});
+const splitMains = Object.entries(mainStretches).filter(([, runs]) => runs.length > 1);
+say('no main is cut into stretches before its BTO', splitMains.length === 0,
+  splitMains.map(([k, runs]) => k + '=' + runs.length + ' stretches').join(', ') ||
+  Object.keys(mainStretches).length + ' main(s), one stretch each');
+say('every main runs at one diameter from the plenum to its fitting',
+  new Set(a.trunkSizes).size === 1,
+  a.trunkSizes.join(' / '));
+
+// A reducer is bought when, and only when, the network records a real one. On
+// this design there are none, and buying one anyway would put a fitting on the
+// order that nobody installs.
+const realReducers = await p.evaluate(() =>
+  (window.nacDesigner.design.network?.sections || []).filter(s => s.reducerFrom).length);
+say('the order buys exactly the reducers the design contains',
+  a.reducers === realReducers,
+  a.reducers + ' bought, ' + realReducers + ' in the design');
+say('and none is invented where a main never reduces',
+  realReducers > 0 || a.reducers === 0,
+  realReducers + ' real reduction(s)');
 
 // ── 4. It is on the plan, with the sizes on it ──────────────────────────────
 STEP('The layout is drawn on the plan with its diameters');
