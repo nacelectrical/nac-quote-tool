@@ -1010,7 +1010,8 @@ export function routeConfidence({ design, tree, score } = {}) {
  * sized by the return design (from the unit's required return size), never by
  * anything worked out here, and where there are two returns both are routed.
  */
-export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = [] } = {}) {
+export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = [],
+                                    calibration = null } = {}) {
   const unit = (layout.indoorUnit?.x !== undefined) ? layout.indoorUnit
              : (layout.plenum?.x !== undefined ? layout.plenum : null);
   if (!unit) {
@@ -1023,6 +1024,29 @@ export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = []
   const count = returnDesign?.returnCount || 1;
   const routes = [];
   const warnings = [];
+
+  // ── TWO RETURNS ARE TWO DUCTS, ALL THE WAY TO THE PLENUM ────────────────
+  //
+  // Nick: "R1 must remain its own ø400 duct from R1 grille to return-plenum
+  // collar 1… They may terminate on the same return plenum but must not merge
+  // before it."
+  //
+  // Squaring both returns onto the unit's own centre line gave them a SHARED
+  // vertical leg — R1 ran (402,782)→(402,596) and R2 ran (402,940)→(402,596),
+  // so one lay exactly on top of the other for the whole approach. That is not
+  // a drawing problem: the model said the two ducts occupied the same metres of
+  // ceiling, and every length measured along that leg was measured twice.
+  //
+  // So each return gets its own LANE — a line parallel to the approach, offset
+  // by the collar pitch on the return plenum — and turns in to the unit only at
+  // the very end, which is where its own collar is. Two ø400 flexes run side by
+  // side in a hallway in exactly this way.
+  const ppm = calibration?.pixelsPerMm || 0;
+  const ductMm = returnDesign?.duct?.diameterMm || 400;
+  // Duct plus a working gap, in plan pixels. With no scale there is nothing to
+  // convert, so the lanes fall back to a fraction of the run and still separate.
+  const lanePitchPx = ppm ? (ductMm + 200) * ppm : 18;
+  const laneOf = (i) => (i - (count - 1) / 2) * lanePitchPx;
 
   for (let i = 0; i < count; i++) {
     const key = i === 0 ? 'returnGrille' : 'returnGrille_' + (i + 1);
@@ -1047,10 +1071,33 @@ export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = []
       continue;
     }
     routes.push({ id: i === 0 ? 'return' : 'return_' + (i + 1),
-                  points: orthogonal({ x: grille.x, y: grille.y }, unit), assumed: false });
+                  lane: round(laneOf(i), 1),
+                  points: count > 1
+                    ? ownLane({ x: grille.x, y: grille.y }, unit, laneOf(i))
+                    : orthogonal({ x: grille.x, y: grille.y }, unit),
+                  assumed: false });
   }
 
   return { generated: routes.length > 0, routes, warnings, notice: AUTO_ROUTE_NOTICE };
+}
+
+/**
+ * The same square route, but on this duct's OWN lane — and it ENDS there.
+ *
+ * Across on the grille's line to the lane, then up the lane to the plenum. The
+ * run stops at the lane rather than turning in to the unit's centre, because
+ * the lane IS this duct's collar on the return plenum: two ø400 inlets 600 mm
+ * apart straddle a plenum face that has to be about 1.2 m wide to take them.
+ *
+ * Turning both in to the centre was the last thing making them share metal —
+ * the two final legs were collinear, one lying on the other for its whole
+ * length. Ending on the lane means the two routes have no point in common at
+ * all, which is the thing being asserted.
+ */
+function ownLane(from, to, offsetPx) {
+  if (!offsetPx) return orthogonal(from, to);
+  const laneX = to.x + offsetPx;
+  return dedupePoints([from, { x: laneX, y: from.y }, { x: laneX, y: to.y }]);
 }
 
 /** Two legs, square — the way duct actually runs. */

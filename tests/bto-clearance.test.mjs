@@ -276,3 +276,105 @@ test('the approved job needs no clearance review — every fitting found a home'
   assert.deepEqual(out.autoRoute.btoClearanceReviews, []);
   assert.equal(out.autoRoute.minBtoToOutletDuctLengthM, 2.0);
 });
+
+// ── The return air is its own system, and a BTO is never set in it ──────────
+
+/** Distance from a point to a polyline. */
+const toPath = (p, pts) => {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy;
+    let t = l2 < 1e-9 ? 0 : ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    best = Math.min(best, Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t)));
+  }
+  return best;
+};
+
+test('R1 and R2 are two independent routes that share no duct segment', () => {
+  const routes = out.returnRoutes || [];
+  assert.equal(routes.length, 2, 'expected two return routes, got ' + routes.length);
+  const [a, b] = routes;
+  // Every point of each route, measured against the OTHER route. They meet only
+  // at the fan coil, where each takes its own collar on the return plenum — so
+  // away from the unit they must never come together.
+  const unit = out.layout.indoorUnit || out.layout.plenum;
+  const awayFromUnit = (pts) => pts.filter(q =>
+    Math.hypot(q.x - unit.x, q.y - unit.y) / PPM > 1500);
+  for (const q of awayFromUnit(a.points)) {
+    const m = toPath(q, b.points) / PPM / 1000;
+    assert.ok(m > 0.3, 'R1 runs within ' + m.toFixed(2) + ' m of R2 at ' +
+      Math.round(q.x) + ',' + Math.round(q.y));
+  }
+  for (const q of awayFromUnit(b.points)) {
+    const m = toPath(q, a.points) / PPM / 1000;
+    assert.ok(m > 0.3, 'R2 runs within ' + m.toFixed(2) + ' m of R1');
+  }
+});
+
+test('each return duct is its own ø400 run from its own grille', () => {
+  const ducts = out.returnComponents.ducts;
+  assert.equal(ducts.length, 2);
+  assert.equal(new Set(ducts.map(x => x.id)).size, 2, 'the two ducts share an id');
+  for (const x of ducts) assert.equal(x.diameterMm, 400);
+  const grilles = out.returnComponents.grilles;
+  assert.equal(grilles.length, 2);
+  assert.equal(new Set(grilles.map(g => g.x + ',' + g.y)).size, 2,
+    'both grilles are in the same place');
+});
+
+test('the return plenum takes both ducts on separate inlets, and is not a BTO', () => {
+  const plenum = out.returnComponents.plenum;
+  assert.ok(plenum, 'no return plenum');
+  assert.equal(plenum.inletCount, 2);
+  assert.equal(plenum.inletDiameterMm, 400);
+  assert.equal(out.componentCounts.returnBtos, 0);
+  assert.equal(out.componentCounts.returnJunctions, 0,
+    'a junction between R1 and R2 would be a merge');
+});
+
+/**
+ * The clearance a supply take-off must keep from a return duct, in metres.
+ *
+ * It is the sum of three real things: the ø400 return's own radius (0.20 m),
+ * the half-width of a fabricated take-off body (about 0.30 m) and a gap
+ * somebody can get a hand into (0.15 m). Not a round number chosen to look
+ * generous — an earlier 1.0 m version pushed BTO-C2 far enough off the bedroom
+ * wing to buy three and a half extra metres of flex, which is a real cost for a
+ * drawing problem the label placer already solves.
+ */
+const RETURN_CLEARANCE_M = 0.65;
+
+test('no supply take-off is set in the return-air corridor', () => {
+  // A BTO is supply metal. One set in the corridor the return flexes occupy is
+  // a clash in the roof, and on the drawing it reads as a take-off plumbed into
+  // the return — which is what moved BTO-C.
+  const routes = (out.returnRoutes || []).map(r => r.points);
+  const btos = out.autoRoute.nodes.filter(n => n.type === 'bto');
+  for (const bto of btos) {
+    for (const pts of routes) {
+      const m = toPath(bto, pts) / PPM / 1000;
+      assert.ok(m >= RETURN_CLEARANCE_M - 0.01,
+        bto.label + ' is ' + m.toFixed(2) + ' m from a return duct — a ø400 return and a ' +
+        'fabricated take-off body cannot share that');
+    }
+  }
+});
+
+test('BTO-C is clear of the return and still downstream of a measured Main C', () => {
+  const c = sections.find(s => s.role === 'main' && s.mainKey === 'C');
+  assert.ok(c.lengthM >= 1.69, 'Main C shortened to ' + c.lengthM + ' m');
+  const btoC = out.autoRoute.nodes.find(n => n.type === 'bto' && n.label === 'BTO-C');
+  assert.ok(btoC, 'BTO-C is missing');
+  const unit = out.layout.indoorUnit || out.layout.plenum;
+  // Clear of the return plenum body: the unit is about 1.25 m long and the
+  // plenum and its collars add roughly another 0.5 m, so anything inside about
+  // 1.2 m of the unit centre is ON the equipment.
+  const fromUnit = Math.hypot(btoC.x - unit.x, btoC.y - unit.y) / PPM / 1000;
+  assert.ok(fromUnit > 1.3, 'BTO-C is ' + fromUnit.toFixed(2) + ' m from the unit centre');
+  for (const r of (out.returnRoutes || [])) {
+    const m = toPath(btoC, r.points) / PPM / 1000;
+    assert.ok(m >= RETURN_CLEARANCE_M - 0.01, 'BTO-C is ' + m.toFixed(2) + ' m from ' + r.id);
+  }
+});

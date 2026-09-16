@@ -233,6 +233,26 @@ export function internalReportDoc(design, { planSnapshot = null,
         (d.network.junctionCount || 0) + ' junction(s) and ' + (d.network.reducerCount || 0) +
         ' reducer(s) are in this system.'));
     }
+    // THE FABRICATED PLENUM, SCHEDULED. It is the one piece of metal on this
+    // job that is made to a drawing rather than bought off a shelf, so it gets
+    // its own row — and the row, the BOM line, the fabrication warning and the
+    // symbol on the plan all read the same record.
+    if (d.supplyPlenum) {
+      b.push(kv([
+        ['Supply plenum', d.supplyPlenum.kind === 'widened'
+          ? 'FABRICATED TRANSITION' : 'Flush to the discharge',
+          d.supplyPlenum.description],
+        ['Discharge flange', d.supplyPlenum.flangeWidthMm
+          ? d.supplyPlenum.flangeWidthMm + ' × ' + d.supplyPlenum.flangeHeightMm + ' mm' : '—',
+          'the fan-coil face the plenum bolts to'],
+        ['Collar face', d.supplyPlenum.bodyWidthMm + ' mm',
+          d.supplyPlenum.kind === 'widened'
+            ? d.supplyPlenum.wideningMm + ' mm wider than the flange'
+            : 'same width as the flange'],
+        ['Collars', d.supplyPlenum.collarCount + ' × ø' + d.supplyPlenum.collarDiameterMm,
+          d.supplyPlenum.collarRowMm + ' mm of collar plus gaps, in one row']
+      ]));
+    }
   }
 
   if (d.returnDesign) {

@@ -671,7 +671,12 @@ export class DesignerApp {
       returnGrilles: (d.returnComponents?.grilles || []).map(g => ({
         id: g.id, widthMm: g.widthMm, heightMm: g.heightMm, airflowLs: g.airflowLs })),
       outletType: (d.outlets?.rows || [])[0]?.outletType
-        || d.outletTypeOverride || 'square'
+        || d.outletTypeOverride || 'square',
+      // HOW THE SUPPLY PLENUM IS MADE. The drawing showed three ø400 collars
+      // crammed into the unit's own width while the report beside it warned
+      // that they need 1320 mm across a 1152 mm discharge. One record, read by
+      // both, so the sheet cannot contradict itself.
+      supplyPlenum: d.supplyPlenum || null
     });
     this.viewer.setPlenum(d.layout?.indoorUnit || d.layout?.plenum || d.autoRoute?.plenum || null);
     // DESIGN view is the installer's drawing; ANALYSIS is the estimator's

@@ -38,6 +38,56 @@ import { collectWarnings, summarise } from './warnings.mjs';
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
 
 /**
+ * The corridors the return-air flexes will occupy, as keep-out segments.
+ *
+ * ROUTED BY THE SAME FUNCTION THAT WILL DRAW THEM. An earlier version guessed
+ * the shape — first a straight line from grille to unit, then a square corner
+ * on the unit's own centre — and both guesses were wrong in the same expensive
+ * way: they reported BTO-C2 comfortably clear of R2 while the duct that
+ * actually got drawn passed within 0.4 m of it. `buildReturnRoutes` is pure and
+ * needs only the layout and the scale, so there is nothing to guess.
+ *
+ * The half-width is the duct's radius plus the half-width of a fabricated
+ * take-off body plus a working clearance — a metre or so, because a label on a
+ * leader needs more room than the metal does.
+ */
+function returnCorridors(d) {
+  const ppm = d.calibration?.pixelsPerMm || 0;
+  if (!ppm) return [];
+  const layout = d.layout || {};
+  const unit = layout.indoorUnit || layout.plenum || d.autoRoute?.plenum || null;
+  if (!unit || unit.x === undefined) return [];
+  // How many returns there will be: whatever has been placed, which is what the
+  // return router will find too. The return DESIGN is settled later in this
+  // pipeline, so it cannot be asked yet.
+  let placed = 0;
+  for (let i = 0; i < 8; i++) {
+    const g = layout['returnGrille' + (i === 0 ? '' : '_' + (i + 1))];
+    if (g && g.x !== undefined) placed = i + 1;
+  }
+  if (!placed) return [];
+  const ductMm = d.returnDesign?.duct?.diameterMm || 400;
+  const routed = buildReturnRoutes({
+    layout: { ...layout, indoorUnit: unit },
+    returnDesign: { returnCount: placed, duct: { diameterMm: ductMm } },
+    rooms: [], calibration: d.calibration });
+  // The duct's own radius plus the half-width of a fabricated take-off body
+  // plus a working gap: enough that the two pieces of metal do not share
+  // ceiling and somebody can reach both. Wider than this starts buying duct —
+  // at 900 mm it pushed BTO-C2 three and a half metres of flex away from the
+  // bedrooms it feeds, which is a real cost for a drawing problem the label
+  // placer already solves.
+  const halfWidthPx = (ductMm / 2 + 450) * ppm;
+  const out = [];
+  for (const r of (routed.routes || [])) {
+    for (let i = 1; i < r.points.length; i++) {
+      out.push({ a: r.points[i - 1], b: r.points[i], halfWidthPx });
+    }
+  }
+  return out;
+}
+
+/**
  * Run every deterministic stage over a design and return the updated design.
  * Safe to call after any edit — it is a full recompute, so the UI never has to
  * track which stages went stale.
@@ -254,7 +304,14 @@ export function runPipeline(design, ctx = {}) {
       // cleared for sizing, so the bathrooms, the ensuite, the laundry and the
       // garage are invisible to it — and those are exactly the ceilings a BTO
       // must not be moved into when the 2.0 m rule pushes it off an outlet.
-      avoidRooms: (d.rooms || []).filter(r => isExcludedRoom(r) && r.boundaryPx)
+      avoidRooms: (d.rooms || []).filter(r => isExcludedRoom(r) && r.boundaryPx),
+      // WHERE THE RETURN AIR WILL RUN. The return routes are designed later in
+      // this pipeline, but the grilles and the unit are already placed, so the
+      // corridor between them is known now — and a supply take-off set in it
+      // would clash in the roof and, on the drawing, read as a BTO plumbed into
+      // the return. BTO-C was landing a few centimetres off the return
+      // plenum's own collar for exactly this reason.
+      avoidSegments: returnCorridors(d)
     }, { settings, calibration: d.calibration }), d.calibration, { settings })
     : measureTree(buildNacTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
@@ -348,8 +405,10 @@ export function runPipeline(design, ctx = {}) {
           if (!retLayout.indoorUnit && !retLayout.plenum && d.autoRoute?.plenum) {
             retLayout.plenum = d.autoRoute.plenum;
           }
+          // The scale, so each return's own lane is a real distance from the
+          // next rather than a number of pixels that means nothing.
           return buildReturnRoutes({ layout: retLayout, returnDesign: d.returnDesign,
-                                     rooms: included });
+                                     rooms: included, calibration: d.calibration });
         })();
     if (ret.generated) {
       const measured = measureTree({ segments: ret.routes.map(r => ({ ...r, role: 'return' })) },
@@ -452,6 +511,16 @@ export function runPipeline(design, ctx = {}) {
     manualOverride: !!d.supplyMainConfig,
     areaNames: mainSections.map(s => (s.serves || []).join(' / '))
   }, { settings });
+  // ONE RECORD OF HOW THE PLENUM IS MADE, read by the drawing, the schedule,
+  // the BOM line and the warning — so they cannot describe four different
+  // pieces of metal.
+  d.supplyPlenum = d.supplySpigots?.plenum?.arrangement
+    ? { ...d.supplySpigots.plenum.arrangement,
+        flangeWidthMm: d.supplySpigots.plenum.flangeWidthMm ?? null,
+        flangeHeightMm: d.supplySpigots.plenum.flangeHeightMm ?? null,
+        collarCount: d.supplySpigots.plenum.collarCount ?? mainSections.length,
+        collarDiameterMm: d.supplySpigots.plenum.collarDiameterMm ?? null }
+    : null;
   if (d.supplySpigots) {
     d.routeWarnings = [...(d.routeWarnings || []),
       ...d.supplySpigots.blockers.map(b => ({ ...b, code: 'SUPPLY_' + b.code })),
@@ -520,6 +589,9 @@ export function runPipeline(design, ctx = {}) {
     zones: d.zones,
     // The physical take-off fittings are real metal on the order.
     btos: d.btos,
+    // How the supply plenum is actually made, so the order line describes the
+    // same fabricated piece the drawing shows.
+    supplyPlenum: d.supplyPlenum,
     returnDesign: d.returnDesign,
     refrigerantPipeM: d.refrigerantPipeM ?? 8,
     drainPipeM: d.drainPipeM ?? 6,

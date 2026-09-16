@@ -125,10 +125,39 @@ export function checkPlenumCapacity({ count, diameterMm, unit }) {
   const flangeAreaM2 = (heightMm / 1000) * (widthMm / 1000);
   const collarAreaM2 = count * areaM2(diameterMm);
   const fitsInOneRow = rowMm <= widthMm;
+  // ── WHAT THE SHEET METAL SHOP ACTUALLY MAKES ────────────────────────────
+  //
+  // The note has always said "the plenum must be fabricated WIDER than the
+  // unit, or the collars split across two faces" — but nothing downstream read
+  // it, so the drawing went on showing three collars crammed into the unit's
+  // own width and contradicted the warning printed beside it.
+  //
+  // NAC's standing choice is the widened transition: one box, one row of
+  // collars, nothing to get wrong on site. It is recorded here so the drawing,
+  // the schedule, the BOM line and the warning all describe the same piece of
+  // metal, and so an installer who wants the two-face version can override one
+  // field rather than argue with four places.
+  const sideMm = 60;
+  const arrangement = fitsInOneRow ? {
+    kind: 'flush',
+    bodyWidthMm: widthMm, bodyHeightMm: heightMm, collarRowMm: Math.round(rowMm),
+    description: 'Plenum flush to the ' + widthMm + ' mm discharge, ' + count +
+      ' × ø' + diameterMm + ' collars in one row.'
+  } : {
+    kind: 'widened',
+    bodyWidthMm: Math.round(rowMm + sideMm * 2), bodyHeightMm: heightMm,
+    collarRowMm: Math.round(rowMm),
+    wideningMm: Math.round(rowMm + sideMm * 2 - widthMm),
+    description: 'Fabricated transition plenum: ' + widthMm + ' mm throat on the discharge ' +
+      'flange, widening to ' + Math.round(rowMm + sideMm * 2) + ' mm across the collar face ' +
+      'to carry ' + count + ' × ø' + diameterMm + ' in one row.'
+  };
   return {
     verified: true,
     flangeText: text, flangeHeightMm: heightMm, flangeWidthMm: widthMm,
     collarRowMm: Math.round(rowMm),
+    collarCount: count, collarDiameterMm: diameterMm,
+    arrangement,
     flangeAreaM2: Math.round(flangeAreaM2 * 1000) / 1000,
     collarAreaM2: Math.round(collarAreaM2 * 1000) / 1000,
     areaRatio: Math.round(collarAreaM2 / flangeAreaM2 * 100) / 100,
@@ -138,9 +167,9 @@ export function checkPlenumCapacity({ count, diameterMm, unit }) {
       ? count + ' × ø' + diameterMm + ' collars need ' + Math.round(rowMm) +
         ' mm across a ' + widthMm + ' mm discharge — they sit in one row.'
       : count + ' × ø' + diameterMm + ' collars need ' + Math.round(rowMm) +
-        ' mm across a ' + widthMm + ' mm discharge. The plenum must be fabricated WIDER ' +
-        'than the unit, or the collars split across two faces. Confirm with the sheet ' +
-        'metal shop before ordering.'
+        ' mm across a ' + widthMm + ' mm discharge, so they do not fit the flange. ' +
+        arrangement.description + ' Drawn, scheduled and ordered that way. Confirm the ' +
+        'widened dimension with the sheet metal shop before fabricating.'
   };
 }
 

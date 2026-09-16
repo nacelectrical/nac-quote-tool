@@ -405,6 +405,12 @@ export function drawZoneBadge(ctx, at, { index, colour }) {
  * ducts heaviest first so a main never paints over the final beside it, then
  * the fittings, then the text on top of all of it.
  */
+/**
+ * The clear gap the drawing keeps between two parallel return ducts, on top of
+ * their own width. Two runs that touch read as one run.
+ */
+const RETURN_SEPARATION_PX = 14;
+
 export function drawFlexDesign(ctx, view) {
   const { routes, outlets, markers, plenum, zoneFillByRoomId, rooms, dampers,
           toScreen, pxPerMm, labelDetail } = view;
@@ -513,9 +519,19 @@ export function drawFlexDesign(ctx, view) {
         : (returnBearing !== null ? returnBearing + Math.PI : 0),
       supplyCollars: supplyRuns.length,
       returnCollars: retRuns.length,
-      fcuW: sized(1250, 28, 58), fcuH: sized(600, 15, 32),
+      fcuW: sized(1250, 28, 58),
+      // THE DISCHARGE FACE IS THE REAL ONE WHERE THE DESIGN KNOWS IT. The
+      // plenum's throat is that face, so a flange the design has on file is
+      // what the taper starts from rather than a nominal unit depth.
+      fcuH: sized(view.supplyPlenum?.flangeWidthMm || 600, 15, 32),
       // Pitch and collar width from the ducts that actually land on each face.
-      supplyPitch: widest(supplyRuns) + 1, returnPitch: widest(retRuns) + 1,
+      // The RETURN pitch is deliberately wider than the ducts. Two ø400 returns
+      // pitched a whisker apart ran down the same corridor overlapping each
+      // other and read as one dashed spine — Nick: "The PDF still makes R1 and
+      // R2 appear to merge into one dashed central return spine." A clear gap
+      // between them is what makes two ducts look like two ducts.
+      supplyPitch: widest(supplyRuns) + 1,
+      returnPitch: widest(retRuns) + RETURN_SEPARATION_PX,
       supplyCollarWidth: Math.max(7, widest(supplyRuns) + 1.5),
       returnCollarWidth: Math.max(7, widest(retRuns) + 1.5)
     });
@@ -586,6 +602,19 @@ export function drawFlexDesign(ctx, view) {
       r.screen = [tip, ...lead, ...tail];
       r.collar = seat;
     }
+    // ── R1 AND R2 STAY TWO DUCTS THE WHOLE WAY ──────────────────────────
+    //
+    // The router sends both returns to the fan coil's own centre, so their
+    // approaches lie on top of one another and the drawing showed one wide
+    // dashed run with a second hiding under it. Re-anchoring the last point to
+    // separate collars fixed the ENDS and nothing else.
+    //
+    // So each return is shifted sideways onto its own collar's line for the
+    // whole of its approach, and eased back onto the router's route as it
+    // nears its grille — which is where it has to be, because the grille is a
+    // real hole in a real ceiling. Two ø400 flexes run side by side in a
+    // hallway in exactly this way; the offset is about 350 mm on this plan.
+    const easeFrom = SYM.ASSEMBLY.collarLength * 3 + 40;
     for (const r of equip.retRuns) {
       const seat = equip.returnSeat.get(r);
       if (!seat) continue;
@@ -599,9 +628,19 @@ export function drawFlexDesign(ctx, view) {
       const lead = SYM.routeOutOfAssembly(equip.geom, tip, seat.angle,
                                           toUnitEnd ? tail[tail.length - 1] : tail[0],
                                           12, r.widthPx);
+      // The grille end is fixed; everything between it and the collar slides
+      // across onto this duct's own line, easing off over the last stretch.
+      const grille = toUnitEnd ? tail[0] : tail[tail.length - 1];
+      const across = equip.geom.across;
+      const shifted = tail.map(pt => {
+        const d = Math.hypot(pt.x - grille.x, pt.y - grille.y);
+        const f = Math.max(0, Math.min(1, (d - easeFrom * 0.35) / easeFrom));
+        return { x: pt.x + across.x * seat.across * f,
+                 y: pt.y + across.y * seat.across * f };
+      });
       r.screen = toUnitEnd
-        ? [...tail, ...lead.slice().reverse(), tip]
-        : [tip, ...lead, ...tail];
+        ? [...shifted, ...lead.slice().reverse(), tip]
+        : [tip, ...lead, ...shifted];
       r.collar = seat;
     }
   }

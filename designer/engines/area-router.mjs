@@ -295,6 +295,16 @@ function insideRect(p, r, margin = 0) {
       && p.y >= r.y + margin && p.y <= r.y + r.h - margin;
 }
 
+/** Distance from a point to a line segment. */
+function distToSegment(p, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  if (len2 < 1e-9) return dist(p, a);
+  let t = ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+}
+
 /**
  * MOVE THE FITTING UNTIL EVERY RUN OFF IT IS A REAL DUCT.
  *
@@ -323,6 +333,15 @@ export function placeFittingClear(want, members, opts = {}) {
   const minFinalPx = opts.minFinalPx > 0 ? opts.minFinalPx : 0;
   const footprint = opts.footprint || null;
   const avoid = opts.avoid || [];
+  // CORRIDORS A SUPPLY FITTING MUST NOT BE SET IN — the return-air runs.
+  //
+  // A BTO is supply-air metal. Setting one in the corridor the return flexes
+  // occupy is wrong twice over: it is a clash in the roof, and on the drawing
+  // it puts a take-off body against a return duct, which is exactly the
+  // "BTO-C appears to connect to return air" that this is here to stop. The
+  // corridor is taken from the grille to the fan coil, because that is where
+  // the return will run whatever route it is finally given.
+  const avoidSegments = opts.avoidSegments || [];
   const plenum = opts.plenum || null;
   const minMainPx = opts.minMainPx > 0 ? opts.minMainPx : 0;
   const weightOf = opts.weightOf || (() => 1);
@@ -333,6 +352,9 @@ export function placeFittingClear(want, members, opts = {}) {
     if (footprint && !insideRect(p, footprint, margin)) return false;
     if (plenum && minMainPx > 0 && dist(p, plenum) < minMainPx - 1e-6) return false;
     for (const r of avoid) if (insideRect(p, r, -margin)) return false;
+    for (const seg of avoidSegments) {
+      if (distToSegment(p, seg.a, seg.b) < seg.halfWidthPx) return false;
+    }
     return true;
   };
   const compliant = (p) => members.every(o => finalRunLengthPx(p, o) >= minFinalPx - 1e-6);
@@ -345,7 +367,14 @@ export function placeFittingClear(want, members, opts = {}) {
     .map(o => ({ id: o.id, label: o.roomLabel, lengthPx: finalRunLengthPx(p, o) }))
     .filter(r => r.lengthPx < minFinalPx - 1e-6);
 
-  if (!members.length || minFinalPx <= 0) {
+  // A FITTING WITH NO LENGTH MINIMUM IS STILL NOT ALLOWED ANYWHERE.
+  //
+  // This used to return immediately when `minFinalPx` was zero, which is the
+  // case for a staged main's fitting — it feeds arms, not outlets. So BTO-C
+  // skipped the keep-out checks entirely and stayed 0.92 m off the R2 return
+  // corridor. The length minimum and the practical constraints are two separate
+  // questions and only the first of them can be absent.
+  if (!members.length && !avoidSegments.length && !avoid.length) {
     return { at: want, moved: false, compliant: true, shortfalls: [] };
   }
   if (practical(want) && compliant(want)) {
@@ -358,8 +387,10 @@ export function placeFittingClear(want, members, opts = {}) {
   // minimum, which is past the far side of any outlet that could be forcing the
   // move.
   const spread = members.reduce((n, o) => Math.max(n, dist(want, o)), 0);
-  const maxR = Math.max(minFinalPx * 3, spread * 1.6, 40);
-  const step = Math.max(2, minFinalPx / 12);
+  // How far a keep-out could push the fitting, so the sweep reaches past it.
+  const keepOut = avoidSegments.reduce((n, sg) => Math.max(n, sg.halfWidthPx), 0);
+  const maxR = Math.max(minFinalPx * 3, spread * 1.6, keepOut * 2.5, 40);
+  const step = Math.max(2, Math.max(minFinalPx, keepOut) / 12);
   const BEARINGS = 96;
   let best = null, bestCost = Infinity;
   const consider = (p) => {
@@ -467,7 +498,8 @@ export function planAreaFittings(outlets, plenum, opts = {}) {
  * area's primary fitting.
  */
 export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, zones = null,
-                                    mainConfig = null, avoidRooms = [] } = {}, opts = {}) {
+                                    mainConfig = null, avoidRooms = [],
+                                    avoidSegments = [] } = {}, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const warnings = [];
   const roomsById = new Map((rooms || []).map(r => [r.id, r]));
@@ -583,6 +615,8 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
   // fitting that has to go somewhere awkward raises the review instead.
   const avoidBoxes = (avoidRooms || [])
     .map(r => r?.boundaryPx).filter(b => b && b.w > 0 && b.h > 0);
+  const avoidRuns = (avoidSegments || [])
+    .filter(s => s?.a && s?.b && s.halfWidthPx > 0);
   // The same size weighting the median uses, so the search and the target it
   // refines agree about what a metre of duct costs.
   const finalWeight = (o) =>
@@ -606,13 +640,27 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
     const minMainPx = pxPerMm
       ? (opts.minMainRunMm ?? MIN_MAIN_RUN_MM) * pxPerMm
       : (opts.minMainRunPx ?? 0);
+    // A STAGED MAIN'S FITTING FEEDS ARMS, NOT OUTLETS, so the 2.0 m rule does
+    // not apply to it — but it is still a piece of supply metal that must not
+    // be set in the return-air corridor or in a wet area. BTO-C was landing a
+    // few centimetres off the return plenum's own collar.
     const plan = staged
-      ? { at: clampInto(clearOfPlenum(clearOfOutlets(geometricMedian([
-          { ...plenum, w: mainMm / 250 },
-          ...arms.map(a => ({ ...centroid(a.members),
-            w: a.members.reduce((n, o) => n + o.airflowLs, 0) / 100 }))
-        ]), members, MIN_FITTING_TO_OUTLET_PX),
-          plenum, airflowCentroid(members), minMainPx), footprint), direct: [] }
+      ? (() => {
+          const want = clampInto(clearOfPlenum(clearOfOutlets(geometricMedian([
+            { ...plenum, w: mainMm / 250 },
+            ...arms.map(a => ({ ...centroid(a.members),
+              w: a.members.reduce((n, o) => n + o.airflowLs, 0) / 100 }))
+          ]), members, MIN_FITTING_TO_OUTLET_PX),
+            plenum, airflowCentroid(members), minMainPx), footprint);
+          const set = placeFittingClear(want, arms.map(a => ({
+            id: a.key, roomLabel: a.label || a.key,
+            airflowLs: a.members.reduce((n, o) => n + o.airflowLs, 0),
+            ...centroid(a.members) })), {
+              minFinalPx: 0,                        // arms have no outlet minimum
+              footprint, avoid: avoidBoxes, avoidSegments: avoidRuns,
+              plenum, minMainPx, mainWeight: mainMm / 250 });
+          return { at: set.at, direct: [] };
+        })()
       : { ...planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm }),
           at: undefined };
     if (!staged) {
@@ -621,7 +669,8 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
                              footprint);
       // EVERY FINAL OFF THIS FITTING IS A REAL DUCT, OR THE FITTING MOVES.
       const set = placeFittingClear(want, members, {
-        minFinalPx, footprint, avoid: avoidBoxes, plenum, minMainPx,
+        minFinalPx, footprint, avoid: avoidBoxes, avoidSegments: avoidRuns,
+        plenum, minMainPx,
         weightOf: finalWeight, mainWeight: mainMm / 250 });
       plan.at = set.at;
       plan.direct = base.direct;
@@ -676,7 +725,7 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
         // 2.0 m rule bites hardest: on the approved job BTO-C1 sat 0.46 m off
         // the Foyer diffuser and BTO-C2 0.46 m off Bedroom 4.
         const set = placeFittingClear(base.at, arm.members, {
-          minFinalPx, footprint, avoid: avoidBoxes,
+          minFinalPx, footprint, avoid: avoidBoxes, avoidSegments: avoidRuns,
           plenum: plan.at, minMainPx: 0,
           weightOf: finalWeight, mainWeight: armMm / 250 });
         const local = { ...base, at: set.at };

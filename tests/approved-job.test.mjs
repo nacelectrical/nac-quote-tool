@@ -443,9 +443,31 @@ test('the plenum collar check uses real manufacturer flange data', () => {
   assert.equal(p.flangeText, '245 x 1152');
   assert.equal(p.collarRowMm, 1320);
   assert.equal(p.fitsInOneRow, false);
-  assert.match(p.note, /fabricated WIDER than the unit/);
   assert.ok(out.routeWarnings.some(w => w.code === 'SUPPLY_PLENUM_COLLARS_DO_NOT_FIT_ONE_ROW'),
     'the fabrication problem was not surfaced');
+  // THE WARNING NAMES THE PIECE OF METAL, not just the problem. It used to say
+  // "the plenum must be fabricated WIDER than the unit, or the collars split
+  // across two faces" and stop there — while the drawing beside it went on
+  // showing three ø400 collars crammed into the 1152 mm discharge. The
+  // arrangement is now decided, recorded once, and read by the drawing, the
+  // schedule, the BOM line and this note.
+  assert.equal(p.arrangement.kind, 'widened');
+  assert.equal(p.arrangement.collarRowMm, 1320);
+  assert.equal(p.arrangement.bodyWidthMm, 1440);
+  assert.equal(p.arrangement.wideningMm, 288);
+  assert.match(p.note, /1152 mm throat/);
+  assert.match(p.note, /widening to 1440 mm/);
+  assert.deepEqual(out.supplyPlenum.arrangement, undefined, 'the record was double-wrapped');
+  assert.equal(out.supplyPlenum.kind, 'widened');
+  assert.equal(out.supplyPlenum.flangeWidthMm, 1152);
+  assert.equal(out.supplyPlenum.collarCount, 3);
+  assert.equal(out.supplyPlenum.collarDiameterMm, 400);
+  // And the order describes the same fabricated piece.
+  const line = out.bom.items.find(i => /supply plenum/i.test(i.label));
+  assert.ok(line, 'no supply plenum on the order');
+  assert.match(line.label, /Fabricated transition supply plenum/);
+  assert.match(line.label, /1152 mm throat widening to 1440 mm/);
+  assert.match(line.label, /3 × ø400 collars in one row/);
 });
 
 test('the spigot count is recommended even when the installer set it', () => {

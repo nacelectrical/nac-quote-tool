@@ -188,6 +188,94 @@ for (const path of D.paths) {
 say('no duct has a point inside the equipment bodies', throughMetal.length === 0,
   throughMetal.join(', ') || 'none');
 
+// ── 2c. R1 and R2 are two ducts, not one spine ──────────────────────────────
+STEP('[2c] R1 and R2 stay separate the whole way to two separate collars');
+const rPaths = D.paths.filter(p => p.role === 'return');
+say('there are exactly two return routes drawn', rPaths.length === 2,
+  rPaths.length + ' return path(s)');
+// A shared SEGMENT, not a shared endpoint: any point of one route lying on the
+// other's line means the two have merged into one dashed spine, which is what
+// this is here to stop.
+const segDist = (p, a, b) => {
+  const vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy;
+  if (l2 < 1e-9) return dist(p, a);
+  let t = ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+};
+const pathGap = (A, B) => {
+  let worst = Infinity;
+  for (const q of A.points) {
+    for (let i = 1; i < B.points.length; i++) {
+      worst = Math.min(worst, segDist(q, B.points[i - 1], B.points[i]));
+    }
+  }
+  return worst;
+};
+if (rPaths.length === 2) {
+  // Measured along the shared corridor only: both routes legitimately converge
+  // ON the plenum, and the collars are what keeps those ends apart.
+  const away = (p) => ({ ...p, points: p.points.filter(q =>
+    dist(q, E.fanCoil) > Math.max(E.supplyPlenum.h, E.returnPlenum.h)) });
+  const gapAll = Math.min(pathGap(rPaths[0], rPaths[1]), pathGap(rPaths[1], rPaths[0]));
+  const gapCorridor = Math.min(pathGap(away(rPaths[0]), rPaths[1]),
+                               pathGap(away(rPaths[1]), rPaths[0]));
+  say('R1 and R2 share no point of duct anywhere', gapAll > 4,
+    'closest approach ' + gapAll.toFixed(1) + ' px');
+  // Each ø400 is about 14 px wide here, so the two must be more than that apart
+  // to show a gap rather than one fat run with a seam.
+  say('they stay visibly apart along the shared corridor', gapCorridor > 14,
+    'corridor separation ' + gapCorridor.toFixed(1) + ' px');
+  const seats = rPaths.map(p => {
+    const ends = [p.points[0], p.points[p.points.length - 1]];
+    for (const e of ends) { const i = nearestCollar(e, RP.collars); if (i >= 0) return i; }
+    return -1;
+  });
+  say('they terminate at DIFFERENT return-plenum collars',
+    seats[0] !== seats[1] && seats.every(i => i >= 0),
+    'collar ' + seats.join(' and collar '));
+  const c0 = RP.collars[seats[0]], c1 = RP.collars[seats[1]];
+  say('and those two collars are at different coordinates',
+    c0 && c1 && dist(c0, c1) > 8, c0 && c1 ? P(c0) + ' vs ' + P(c1) : 'missing');
+  say('no supply fitting sits on either return path',
+    D.btos.every(b => rPaths.every(rp => {
+      let k = Infinity;
+      for (let i = 1; i < rp.points.length; i++) {
+        k = Math.min(k, segDist({ x: b.x, y: b.y }, rp.points[i - 1], rp.points[i]));
+      }
+      return k > b.clearPx + 6;
+    })),
+    D.btos.map(b => {
+      let k = Infinity;
+      for (const rp of rPaths) for (let i = 1; i < rp.points.length; i++) {
+        k = Math.min(k, segDist({ x: b.x, y: b.y }, rp.points[i - 1], rp.points[i]));
+      }
+      return b.label + ' ' + Math.round(k) + 'px';
+    }).join(', '));
+}
+
+// ── 2d. The supply plenum is the fabricated piece the report describes ──────
+STEP('[2d] The supply plenum is drawn as the piece of metal the order buys');
+const plenumRec = await p.evaluate(() => window.nacDesigner.design.supplyPlenum || null);
+say('the design recorded how the plenum is made', !!plenumRec,
+  plenumRec && plenumRec.kind);
+if (plenumRec) {
+  say('three ø400 collars do not fit the discharge flange, so it is a transition',
+    plenumRec.kind === 'widened',
+    plenumRec.collarRowMm + ' mm of collar across a ' + plenumRec.flangeWidthMm + ' mm flange');
+  // The DRAWING has to agree: the collar face must be wider than the throat.
+  say('the drawn plenum widens beyond the FCU discharge face',
+    SP.h > E.fanCoil.h + 1,
+    'collar face ' + SP.h.toFixed(1) + ' px vs throat ' + E.fanCoil.h.toFixed(1) + ' px');
+  say('and it still bolts flat to that face',
+    Math.abs(along(SP.innerFace) - E.fanCoil.w / 2) < 0.5);
+  const widenRatio = SP.h / E.fanCoil.h;
+  const realRatio = plenumRec.bodyWidthMm / plenumRec.flangeWidthMm;
+  say('the drawn widening is in proportion to the fabricated one',
+    Math.abs(widenRatio - realRatio) < realRatio * 0.6,
+    'drawn ×' + widenRatio.toFixed(2) + ' vs specified ×' + realRatio.toFixed(2));
+}
+
 STEP('[3] Supply and return share no endpoint at all');
 const shared = [];
 for (const s of D.supplyEnds) {

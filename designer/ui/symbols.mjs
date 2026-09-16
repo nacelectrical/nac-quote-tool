@@ -315,17 +315,36 @@ function box(ctx, cx, cy, w, h, r = 2) {
  * face, and it never gets a label or a number of its own.
  */
 export function drawCollar(ctx, at, { angle = 0, length = 7, width = 7,
-                                      colour = METAL_DARK } = {}) {
+                                      colour = METAL_DARK, bead = true } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
   ctx.rotate(angle);
+  const h = width / 2;
+  // Light metal behind the neck, so a duct line ends ON it rather than behind
+  // it, and the plan underneath does not show through the fitting.
   ctx.beginPath();
-  ctx.rect(0, -width / 2, length, width);
-  ctx.fillStyle = '#DDE0E4';
+  ctx.rect(0, -h, length, width);
+  ctx.fillStyle = '#E9ECF0';
   ctx.fill();
-  ctx.lineWidth = 1.2;
+  // TWO PARALLEL WALLS, OPEN AT THE BODY END. A filled rectangle rotated to an
+  // arbitrary duct bearing reads as a DIAMOND — Nick, on the fitting it was
+  // stuck to: "no diamond". A neck drawn as two walls and an open throat reads
+  // as a spigot at any angle, because the two long lines are parallel to the
+  // duct that plugs into it.
+  ctx.lineWidth = 1.25;
   ctx.strokeStyle = colour;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(0, -h); ctx.lineTo(length, -h);
+  ctx.moveTo(0, h);  ctx.lineTo(length, h);
   ctx.stroke();
+  // The bead at the open end, where the flex clamps on.
+  if (bead) {
+    ctx.lineWidth = 1.9;
+    ctx.beginPath();
+    ctx.moveTo(length, -h); ctx.lineTo(length, h);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -415,6 +434,8 @@ export function drawFanCoil(ctx, at, { angle = 0, w = 46, h = 26,
 export const ASSEMBLY = Object.freeze({
   fcuW: 46, fcuH: 26,
   supplyDepth: 15, returnDepth: 13,
+  /** How far the fabricated transition runs before the collar face. */
+  taperDepth: 11,
   collarPitch: 10, collarWidth: 8, collarLength: 9,
   maxPlenumHeightFactor: 2.4
 });
@@ -452,7 +473,22 @@ export function equipmentAssembly({ at, supplyBearing = 0, returnBearing = null,
     Math.min(fcuH * ASSEMBLY.maxPlenumHeightFactor, n * pitch + 8), n * pitch + 6);
   const sH = plenumHeight(Math.max(1, supplyCollars), supplyPitch);
   const rH = plenumHeight(Math.max(1, returnCollars), returnPitch);
-  const sD = ASSEMBLY.supplyDepth, rD = ASSEMBLY.returnDepth;
+  // A PLENUM THAT HAS TO TAKE MORE COLLAR THAN THE UNIT IS WIDE IS A TRANSITION.
+  //
+  // The design already warns about it in words: "3 × ø400 collars need 1320 mm
+  // across a 1152 mm discharge. The plenum must be fabricated WIDER than the
+  // unit, or the collars split across two faces." Drawing three collars crammed
+  // into the unit's own width contradicts that warning on the same sheet.
+  //
+  // So when the collar row does not fit the discharge, the body is drawn as
+  // what the sheet metal shop actually makes: a THROAT the size of the
+  // discharge flange, a TAPER out to the width the collars need, and a HEAD
+  // carrying the collars. It still bolts flat to the discharge face — the
+  // throat IS that face.
+  const widened = sH > fcuH + 0.5;
+  const sD = widened ? ASSEMBLY.supplyDepth + ASSEMBLY.taperDepth : ASSEMBLY.supplyDepth;
+  const taper = widened ? ASSEMBLY.taperDepth : 0;
+  const rD = ASSEMBLY.returnDepth;
 
   const move = (along, across) => ({
     x: at.x + ax.x * along + cr.x * across,
@@ -478,8 +514,17 @@ export function equipmentAssembly({ at, supplyBearing = 0, returnBearing = null,
     fcu: { x: at.x, y: at.y, w: fcuW, h: fcuH, angle },
     supply: {
       x: supplyAt.x, y: supplyAt.y, w: sD, h: sH, angle,
+      /** How the metal is made: flush to the flange, or a widened transition. */
+      widened, throatH: fcuH, taperDepth: taper, headDepth: sD - taper,
       // The face the mains leave from, and the face bolted to the unit.
       outerFace: move(fcuW / 2 + sD, 0), innerFace: move(fcuW / 2, 0),
+      /** The outline, in order, for drawing and for testing the shape. */
+      outline: widened
+        ? [move(fcuW / 2, -fcuH / 2), move(fcuW / 2 + taper, -sH / 2),
+           move(fcuW / 2 + sD, -sH / 2), move(fcuW / 2 + sD, sH / 2),
+           move(fcuW / 2 + taper, sH / 2), move(fcuW / 2, fcuH / 2)]
+        : [move(fcuW / 2, -sH / 2), move(fcuW / 2 + sD, -sH / 2),
+           move(fcuW / 2 + sD, sH / 2), move(fcuW / 2, sH / 2)],
       collars: collarsOn(supplyCollars, fcuW / 2 + sD, +1, sH, supplyCollarWidth)
     },
     return: {
@@ -658,16 +703,30 @@ export function drawEquipmentAssembly(ctx, geom, { unitModel = null, labels = tr
       drawCollar(ctx, c, { angle: c.angle, length: ASSEMBLY.collarLength,
                            width: c.width ?? ASSEMBLY.collarWidth });
     }
+    // Drawn from its own outline, so a widened transition looks like the piece
+    // of metal it is rather than a rectangle with a caption.
+    const o = geom.supply.outline;
     ctx.save();
-    ctx.translate(geom.supply.x, geom.supply.y);
-    ctx.rotate(angle);
-    box(ctx, 0, 0, geom.supply.w, geom.supply.h, 1.5);
-    ctx.fillStyle = metalFill(ctx, -geom.supply.w / 2, -geom.supply.h / 2,
+    ctx.beginPath();
+    ctx.moveTo(o[0].x, o[0].y);
+    for (let i = 1; i < o.length; i++) ctx.lineTo(o[i].x, o[i].y);
+    ctx.closePath();
+    ctx.fillStyle = metalFill(ctx, geom.supply.x - geom.supply.w / 2,
+                              geom.supply.y - geom.supply.h / 2,
                               geom.supply.w, geom.supply.h);
     ctx.fill();
     ctx.lineWidth = selectedId === 'supplyPlenum' ? 2.4 : 1.8;
     ctx.strokeStyle = selectedId === 'supplyPlenum' ? SELECTION_COLOUR : METAL_DARK;
     ctx.stroke();
+    // The fold line where the taper meets the head — what makes it read as
+    // fabricated sheet rather than a shape.
+    if (geom.supply.widened) {
+      ctx.beginPath();
+      ctx.moveTo(o[1].x, o[1].y); ctx.lineTo(o[4].x, o[4].y);
+      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = 'rgba(40,44,52,0.45)';
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

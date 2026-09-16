@@ -37,6 +37,28 @@ duct (two). Runs are matched to collars by how far across the axis they leave,
 so ducts never cross each other getting off the plenum. No supply run and no
 return run shares a coordinate with any other.
 
+**The supply plenum is a fabricated transition where it has to be.** Three Ø400
+collars need 1320 mm of face; this unit's discharge flange is 1152 mm. So the
+plenum is a 1152 mm throat on the flange, tapering out to a 1440 mm collar face
+— and that one record is read by the drawing, the ductwork schedule, the BOM
+line and the fabrication warning, so the sheet cannot contradict itself. It
+still bolts flat to the discharge face; the throat IS that face.
+
+**R1 and R2 are two ducts the whole way.** Each return runs from its own grille,
+across on the grille's line to its OWN lane, then up that lane to its own collar
+on the return plenum — 600 mm apart, which is what two Ø400 flexes side by side
+in a hallway actually measure. They share no point of duct and there is no
+junction between them. Squaring both onto the unit's centre line used to give
+them a shared vertical leg, so one lay exactly on top of the other and every
+metre of that leg was measured twice.
+
+**A supply take-off is never set in the return corridor.** A BTO must stay
+0.65 m clear of any return duct — the Ø400's radius, the half-width of a
+fabricated take-off body, and a gap somebody can get a hand into. The keep-out
+is routed by the same function that draws the returns, so it is the real
+corridor rather than a guess: an earlier straight-line guess reported BTO-C2
+comfortably clear of R2 while the duct that got drawn passed within 0.4 m of it.
+
 Where a run's fitting sits behind the assembly — Main C's does, on this job — the
 duct leaves its collar, steps clear of the metal and goes round the unit rather
 than through it. The drawing tests check that no duct has a single point inside
@@ -56,9 +78,11 @@ the picture that was wrong, not the design.
 ## The BTO and the zone damper
 
 A **BTO** is drawn as what it is: a compact sheet-metal body with square corners,
-a white fill and a dark double-line outline, one inlet collar (drawn wider) and
-one outlet collar per actual port, each collar sitting on the face its duct
-leaves from and pointing the way it goes. Duct lines stop at the collar faces;
+a white fill and a dark double-line outline, one inlet NECK (drawn wider) and one
+outlet neck per actual port, each sitting on the face its duct leaves from and
+pointing the way it goes. A neck is two parallel walls and a bead at the open
+end, not a filled tile — a filled rectangle rotated to an arbitrary duct bearing
+reads as a diamond, which is what the symbol was being mistaken for. Duct lines stop at the collar faces;
 nothing runs through the body. The body scales with the inlet size and the
 number of collars, so `BTO-C · 400-350-350` and `BTO-C2 · 350-250-250-250` are
 visibly different pieces of metal. At normal whole-house zoom you can count the
@@ -143,7 +167,7 @@ Run from the project directory:
 node --test tests/*.test.mjs
 ```
 
-Expected result for this handoff: 803 tests, 803 passed, 0 failed.
+Expected result for this handoff: 808 tests, 808 passed, 0 failed.
 
 Browser suites live in `tools/browser-tests/`. `plan-view.mjs` covers the Plan
 tab's view modes and `drawing-separation.mjs` proves supply and return are

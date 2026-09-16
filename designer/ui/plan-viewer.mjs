@@ -216,6 +216,9 @@ export function createPlanViewer(container, opts = {}) {
         // model under the FCU, the real grille sizes on the return symbols, and
         // the outlet type the design actually selected.
         unitModel: state.unitModel || null,
+        // The fabricated arrangement, so the symbol is the piece of metal the
+        // schedule, the BOM and the warning all describe.
+        supplyPlenum: state.supplyPlenum || null,
         returnGrilles: state.returnGrilles || [],
         outletType: state.outletType || 'square',
         selectedId: state.selectedId || null
@@ -860,17 +863,16 @@ export function createPlanViewer(container, opts = {}) {
         ctx.lineTo(s.x + 6, s.y - 5); ctx.lineTo(s.x - 6, s.y + 5);
         ctx.closePath(); ctx.fill(); ctx.stroke();
       } else if (m.type === 'bto') {
-        // A BRANCH TAKE-OFF, drawn the way one appears on a duct layout: a
-        // small solid collar on the main with the branch leaving it. Small
-        // enough that fifteen of them do not swamp the plan, dark enough that
-        // an installer can count them at a glance.
-        ctx.fillStyle = '#F5C200'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(s.x, s.y - 5);
-        ctx.lineTo(s.x + 5, s.y);
-        ctx.lineTo(s.x, s.y + 5);
-        ctx.lineTo(s.x - 5, s.y);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
+        // A BRANCH TAKE-OFF IS A PIECE OF SHEET METAL, NOT A DIAMOND.
+        //
+        // This drew a yellow diamond, which is the shape Nick objected to — "no
+        // diamond" — and it is also a ROUTE NODE drawn over the body, which the
+        // brief rules out. The setup view is not the installer drawing, but a
+        // symbol that means one thing on one view and another on the next is
+        // worse than either. So it is the library's manifold here too, at the
+        // small end of its range.
+        SYMBOLS.drawBto(ctx, s, {
+          inletAngle: m.angle ?? Math.PI, outletAngles: [0], scale: 0.85 });
       } else if (m.type === 'damper') {
         ctx.fillStyle = '#3fbf6f'; ctx.strokeStyle = '#0c0c24'; ctx.lineWidth = 1.2;
         ctx.beginPath();
@@ -1391,10 +1393,11 @@ export function createPlanViewer(container, opts = {}) {
      * particular job's equipment actually is", and the symbols are useless as
      * a shared library if each surface has to remember to pass them separately.
      */
-    setEquipment({ unitModel, returnGrilles, outletType } = {}) {
+    setEquipment({ unitModel, returnGrilles, outletType, supplyPlenum } = {}) {
       if (unitModel !== undefined) state.unitModel = unitModel;
       if (returnGrilles !== undefined) state.returnGrilles = returnGrilles || [];
       if (outletType !== undefined) state.outletType = outletType;
+      if (supplyPlenum !== undefined) state.supplyPlenum = supplyPlenum || null;
       draw();
     },
     /** Highlight one item in cyan — the thing under the finger. */

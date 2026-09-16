@@ -171,7 +171,22 @@ export function buildBillOfMaterials(design, opts = {}) {
   Object.entries(fittingCounts).forEach(([type, qty]) => {
     const key = fittingMap[type];
     if (!key) return;                             // bends are part of the flex run
-    items.push({ ...line(key, qty, ctx), category: 'ductwork' });
+    const row = { ...line(key, qty, ctx), category: 'ductwork' };
+    // THE SUPPLY PLENUM IS ORDERED AS IT IS DRAWN. A generic "supply plenum"
+    // line against a drawing that shows a 1152 → 1440 mm fabricated transition
+    // is a line the sheet metal shop cannot make. The arrangement is recorded
+    // once in the design and read here, so the order and the sheet agree.
+    if (type === 'supply_plenum' && design.supplyPlenum) {
+      const a = design.supplyPlenum;
+      row.airSide = 'supply';
+      row.label = (a.kind === 'widened'
+        ? 'Fabricated transition supply plenum — ' + a.flangeWidthMm + ' mm throat widening to ' +
+          a.bodyWidthMm + ' mm'
+        : 'Supply plenum — ' + a.bodyWidthMm + ' mm flush to the discharge') +
+        ', ' + a.collarCount + ' × ø' + a.collarDiameterMm + ' collars in one row';
+      row.note = a.description;
+    }
+    items.push(row);
   });
 
   // THE NAC BOM RULE: the order follows the REAL topology. A reducer is only
