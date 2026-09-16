@@ -123,8 +123,31 @@ export function internalReportDoc(design, { planSnapshot = null,
       d.pressure && !d.pressure.checkCompleted ? d.pressure.statusLabel
         : d.pressure?.unitAvailableStaticPa ? 'of ' + d.pressure.unitAvailableStaticPa + ' Pa available'
         : 'unit ESP not on file'],
-    ['Plan calibration', d.calibration ? nn(d.calibration.pixelsPerMm, 5) + ' px/mm' : 'NOT CALIBRATED']
+    ['Plan calibration', d.calibration ? nn(d.calibration.pixelsPerMm, 5) + ' px/mm' : 'NOT CALIBRATED'],
+    // THE RULES THIS JOB WAS DESIGNED TO, ON THE JOB'S OWN SHEET. They travel
+    // with the design, so an installer opening it in six months gets the sizes
+    // it was approved with — and can see which of them are this job's own.
+    ['Minimum supply branch', d.designRules
+      ? 'ø' + d.designRules.minimumSupplyBranchDiameterMm : '—',
+      d.designRules?.source?.minimumSupplyBranchDiameterMm === 'design'
+        ? 'set on this job' : 'application default'],
+    ['Minimum BTO-to-outlet run', d.designRules
+      ? nn(d.designRules.minimumBtoToOutletDuctLengthM, 1) + ' m' : '—',
+      d.designRules?.source?.minimumBtoToOutletDuctLengthM === 'design'
+        ? 'set on this job' : 'application default']
   ]));
+
+  // ── CAN THIS BE QUOTED? SAID ON PAGE ONE ────────────────────────────────
+  //
+  // The internal sheet is always produced; a customer quote is not. Whoever is
+  // holding this needs to know which of the two they have before they get to
+  // the costing on the last page.
+  if (d.quoteGate && !d.quoteGate.ok) {
+    b.push(flag('warn', 'CUSTOMER QUOTE BLOCKED — ' + d.quoteGate.summary + ' ' +
+      d.quoteGate.blockers.map(x => x.code).join(', ') + '. This internal design sheet ' +
+      'is complete and may be used; the customer quote cannot be finalised or issued ' +
+      'until the pricing below is resolved.'));
+  }
 
   // ── PAGE 1 CARRIES THE THINGS THAT STOP THE JOB ─────────────────────────
   //
@@ -285,6 +308,79 @@ export function internalReportDoc(design, { planSnapshot = null,
         ['Collars', d.supplyPlenum.collarCount + ' × ø' + d.supplyPlenum.collarDiameterMm,
           d.supplyPlenum.collarRowMm + ' mm of collar plus gaps, in one row']
       ]));
+    }
+  }
+
+  // ── THE BTO FABRICATION SCHEDULE ────────────────────────────────────────
+  //
+  // What the sheet-metal shop makes. Every collar, what goes through it and
+  // where it goes — enough to cut the metal from without opening the drawing.
+  // Nick: "BTO branch take-off Ø400 — 3 ports is insufficient."
+  const btoRows = d.schedules?.bto || [];
+  if (btoRows.length) {
+    b.push(h2('BTO fabrication schedule'));
+    b.push(table(
+      [{ label: 'BTO', w: 0.8 }, { label: 'Configuration', w: 2.2 },
+       { label: 'Inlet (L/s)', r: true }, { label: 'Collars', r: true },
+       { label: 'Body (mm)', w: 1.4 }, { label: 'Dimensions', w: 1.3 },
+       { label: 'Configuration key', w: 1.8 }, { label: 'Price', w: 1.2 }],
+      btoRows,
+      r => [r.id, r.shapeText, r.inletAirflowLs, r.outletCollarCount,
+            r.bodyText || '—',
+            r.dimensionsVerified ? 'Verified' : 'DERIVED — review',
+            r.configKey,
+            r.priceStatus === 'VERIFIED'
+              ? '$' + Number(r.cost).toFixed(2) + (r.quoteRef ? ' · ' + r.quoteRef : '')
+              : r.priceStatus]));
+    // EVERY COLLAR, BY DESTINATION. The table above says what the fitting IS;
+    // this says what each spigot is for, which is what gets it connected to the
+    // right room in a roof at four in the afternoon.
+    for (const r of btoRows) {
+      b.push(bullets([r.id + ' — ' + r.shapeText + ', ' + r.inletAirflowLs + ' L/s in:',
+                      ...r.collarLines]));
+    }
+    const review = d.schedules?.btoNeedingFabricationReview || [];
+    if (review.length) {
+      b.push(note('Body dimensions for ' + review.join(', ') + ' are DERIVED from the ' +
+        'collars this design chose, not taken from a fabricator\u2019s standard body. They ' +
+        'are a proposal to be confirmed before the metal is cut — they are not verified ' +
+        'dimensions and must not be ordered as though they were.'));
+    }
+    const noPrice = d.schedules?.btoNeedingPrice || [];
+    if (noPrice.length) {
+      b.push(flag('crit', 'CRITICAL — ' + noPrice.join(', ') + ' have no confirmed price for ' +
+        'their exact configuration. A ø400 three-port and a ø350 three-port are different ' +
+        'fittings; neither can be priced off the other. The customer quote is blocked until ' +
+        'a fabricator\u2019s rate is entered against each configuration key.'));
+    }
+  }
+
+  // ── THE MOTORISED ZONE-DAMPER SCHEDULE ──────────────────────────────────
+  //
+  // Every motor on the job, at the size of the duct it is fitted in. There is
+  // no manual balancing damper on this schedule because there is none on the
+  // job: the design balances with duct size and motorised zone control.
+  const damperRows = d.schedules?.zoneDampers || [];
+  if (damperRows.length) {
+    b.push(h2('Motorised zone dampers'));
+    b.push(table(
+      [{ label: 'ID', w: 0.6 }, { label: 'Zone', w: 1.6 }, { label: 'Duct section', w: 1.8 },
+       { label: 'ø (mm)', r: true }, { label: 'Airflow (L/s)', r: true },
+       { label: 'Velocity (m/s)', r: true }, { label: 'Actuator' },
+       { label: 'SKU' }, { label: 'Cost', r: true }],
+      damperRows,
+      r => [r.id, r.zone, r.ductSection, r.diameterMm, r.airflowLs, r.velocityMs,
+            r.actuator, r.sku || '—',
+            r.cost === null || r.cost === undefined ? r.priceStatus : '$' + Number(r.cost).toFixed(2)]));
+    b.push(note('A motorised zone damper is the diameter of the duct it is fitted in. ' +
+      'Change the duct size on site and the damper, its symbol, this schedule, its part ' +
+      'number and its price all change with it. No manual balancing dampers are used on ' +
+      'this design.'));
+    const mismatch = d.schedules?.damperSizeMismatches || [];
+    if (mismatch.length) {
+      b.push(flag('crit', 'CRITICAL — ' + mismatch.join(', ') + ' are set to a diameter that ' +
+        'does not match the duct they sit in. A damper that does not match its duct cannot ' +
+        'be installed.'));
     }
   }
 
