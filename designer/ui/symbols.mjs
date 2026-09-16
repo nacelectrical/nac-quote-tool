@@ -939,7 +939,7 @@ export function btoGeometry({ at, inletAngle = null, outletAngles = [],
 
   const reach = w / 2 + h / 2 + cl;
   return {
-    at: { x: at.x, y: at.y }, angle, w, h, inlet, outlets,
+    at: { x: at.x, y: at.y }, angle, w, h, inlet, outlets, scale,
     inletMm: inletMm ?? null,
     /** How far a duct must be trimmed back so it stops at the collar face. */
     clearPx: Math.max(w, h) / 2 + cl,
@@ -982,15 +982,20 @@ export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
   // WHITE METAL, DARK DOUBLE LINE. The double line is what makes a small
   // rectangle read as folded sheet rather than as a filled block, and it is the
   // single clearest difference between this and a route node.
+  const z = g.scale || 1;
   box(ctx, 0, 0, g.w, g.h, BTO_BODY.cornerRadius);
   ctx.fillStyle = '#F7F8FA';
   ctx.fill();
-  ctx.lineWidth = selected ? 2.4 : 1.7;
+  ctx.lineWidth = (selected ? 2.4 : 1.7) * Math.min(2, Math.max(1, z * 0.6));
   ctx.strokeStyle = stroke;
   ctx.stroke();
-  box(ctx, 0, 0, g.w - 3.4, g.h - 3.4, BTO_BODY.cornerRadius);
-  ctx.lineWidth = 0.9;
-  ctx.strokeStyle = warning ? WARNING_COLOUR : 'rgba(40,44,52,0.55)';
+  // THE SECOND LINE SCALES WITH THE BODY. A fixed 3.4 px inset is a clear
+  // double line on an 18 px body and an invisible hairline on a 156 px one —
+  // so at the zoom where somebody is checking the fitting, the one detail that
+  // says "folded sheet" disappeared.
+  box(ctx, 0, 0, g.w - 3.4 * z, g.h - 3.4 * z, BTO_BODY.cornerRadius);
+  ctx.lineWidth = 0.9 * Math.min(2, Math.max(1, z * 0.6));
+  ctx.strokeStyle = warning ? WARNING_COLOUR : 'rgba(40,44,52,0.7)';
   ctx.stroke();
   ctx.restore();
 
@@ -999,7 +1004,8 @@ export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
   if (g.w >= 17 && g.h >= 14) {
     drawArrow(ctx, { x: g.at.x - Math.cos(g.angle) * (g.w * 0.16),
                      y: g.at.y - Math.sin(g.angle) * (g.w * 0.16) },
-              g.angle + Math.PI, { colour: 'rgba(40,44,52,0.5)', size: 5 });
+              g.angle + Math.PI, { colour: 'rgba(40,44,52,0.5)',
+                                   size: 5 * Math.min(2.6, Math.max(1, z * 0.7)) });
   }
 
   if (ledger) ledger.reserve(g.at.x, g.at.y, g.w + 20, g.h + 20);
@@ -1324,7 +1330,18 @@ export const DAMPER = Object.freeze({
   bodyLength: 11,          // along the duct
   minBodyWidth: 9, maxBodyWidth: 22,
   actuatorW: 8.5, actuatorH: 7,
-  shaft: 1.4
+  shaft: 1.4,
+  /**
+   * HOW MUCH LONGER THAN WIDE THE CASING IS.
+   *
+   * A casing the same length as its width is a SQUARE, and a square rotated to
+   * follow a duct is a diamond — which is exactly what Nick saw: "The zone
+   * damper still looks like a diamond across the duct." A real inline damper
+   * sleeve is visibly longer than the duct is wide, and a long rectangle turned
+   * to any angle still reads as a rectangle because its two long sides are
+   * parallel to the run it sits in.
+   */
+  lengthRatio: 1.55
 });
 
 /** The body a damper of this duct size occupies, in plan pixels. */
@@ -1343,10 +1360,13 @@ export function damperGeometry({ at, angle = 0, ductWidthPx = null, diameterMm =
   // A DAMPER SLEEVE IS LONGER THAN IT IS WIDE. A fixed 11 px length made a ø250
   // body wider across the duct than along it, which reads as a box sitting ON
   // the run rather than a fitting IN it — the very thing the redesign is for.
-  const len = Math.max(DAMPER.bodyLength * scale, width * 1.12);
+  const len = Math.max(DAMPER.bodyLength * scale, width * DAMPER.lengthRatio);
   return { at: { x: at.x, y: at.y }, angle, w: len, h: width,
            actuator: { w: DAMPER.actuatorW * scale, h: DAMPER.actuatorH * scale,
                        // Mounted on the side, its inner edge ON the body wall.
+                       // HARD AGAINST THE WALL. The shaft is a visible stub, not
+                       // a gap: an actuator floating clear of its damper is two
+                       // marks that do not belong to one another.
                        offset: width / 2 + (DAMPER.actuatorH * scale) / 2 + DAMPER.shaft * scale },
            reach: Math.max(len, width + DAMPER.actuatorH * 2 + DAMPER.shaft * 2) };
 }
@@ -1362,18 +1382,29 @@ export function drawZoneDamper(ctx, at, { angle = 0, ductWidthPx = null, diamete
   ctx.translate(g.at.x, g.at.y);
   ctx.rotate(g.angle);
 
-  // ── THE BODY, inline and centred on the duct ────────────────────────────
+  // ── THE CASING, inline and centred on the duct ──────────────────────────
+  //
+  // Square corners and a heavier outline than the blade. A rounded rectangle at
+  // small sizes loses its corners to antialiasing and comes back as a blob;
+  // corners are what say "sheet metal sleeve" rather than "marker".
   ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(-g.w / 2, -g.h / 2, g.w, g.h, 1);
-  else ctx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
+  ctx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
   ctx.fillStyle = '#FFFFFF';
   ctx.fill();
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.7;
   ctx.strokeStyle = INK;
+  ctx.stroke();
+  // The two flanges where it clamps into the run — the detail that makes it
+  // read as a fitting IN the duct rather than a box sitting on it.
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-g.w / 2 + 1.8, -g.h / 2); ctx.lineTo(-g.w / 2 + 1.8, g.h / 2);
+  ctx.moveTo(g.w / 2 - 1.8, -g.h / 2);  ctx.lineTo(g.w / 2 - 1.8, g.h / 2);
+  ctx.strokeStyle = 'rgba(29,34,48,0.45)';
   ctx.stroke();
 
   // ── THE BLADE, one clean diagonal, entirely INSIDE the body ─────────────
-  const bx = g.w / 2 - 1.6, by = g.h / 2 - 1.6;
+  const bx = g.w / 2 - 3.4, by = g.h / 2 - 1.8;
   ctx.beginPath();
   ctx.moveTo(-bx, by); ctx.lineTo(bx, -by);
   ctx.lineWidth = 1.9;

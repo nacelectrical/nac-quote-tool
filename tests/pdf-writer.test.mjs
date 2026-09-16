@@ -163,3 +163,73 @@ test('a greyscale JPEG is declared as greyscale, not forced to RGB', () => {
   d.image(grey, 0, 0, 10, 10);
   assert.match(asText(d.bytes()), /\/ColorSpace \/DeviceGray/);
 });
+
+// ── The typography defects Nick reported in a real reader ───────────────────
+//
+// "excessive spacing between letters; merged words such as headings; bullet
+// points appearing as ?". All three have one cause between them: the document
+// told the reader almost nothing about the font it was laid out with, so the
+// reader supplied its own answer.
+
+test('the bullet is a bullet, not a question mark', () => {
+  // U+2022 is not in Latin-1, so the `code >= 160` shortcut never saw it and
+  // with no WinAnsi entry it fell through to the unknown-glyph fallback. Every
+  // bulleted list in the internal sheet opened with `?`.
+  const doc = new PdfDoc({ title: 't' });
+  doc.addPage();
+  doc.text('• item', 40, 700, { size: 9 });
+  const pdf = new TextDecoder('latin1').decode(doc.bytes());
+  assert.ok(pdf.includes('\\225'), 'the bullet was not encoded as WinAnsi 0x95');
+  assert.ok(!/\(\?\\?\s*item\)/.test(pdf), 'the bullet still printed as a question mark');
+  assert.ok(textWidth('•', 10) > 0, 'the bullet has no width');
+});
+
+test('both fonts declare the widths the document was laid out with', () => {
+  // A base-14 font needs no /Widths, and that is the problem: a reader with no
+  // Helvetica substitutes another font and lays every line out on ITS metrics.
+  // The result is letters too far apart or words running together — correct in
+  // one viewer and wrong in the next.
+  const doc = new PdfDoc({ title: 't' });
+  doc.addPage();
+  doc.text('x', 40, 700, {});
+  const pdf = new TextDecoder('latin1').decode(doc.bytes());
+  const dicts = pdf.match(/<< \/Type \/Font[^>]*>>/g) || [];
+  assert.equal(dicts.length, 2, 'expected a regular and a bold font');
+  for (const d of dicts) {
+    assert.match(d, /\/Encoding \/WinAnsiEncoding/);
+    assert.match(d, /\/FirstChar 32/);
+    assert.match(d, /\/LastChar 255/);
+    const widths = /\/Widths \[([^\]]+)\]/.exec(d);
+    assert.ok(widths, 'no /Widths array');
+    const list = widths[1].trim().split(/\s+/).map(Number);
+    assert.equal(list.length, 224, 'the widths array is the wrong length');
+    assert.ok(list.every(n => Number.isFinite(n) && n > 0), 'a width is missing');
+  }
+});
+
+test('the declared width of a glyph is the width the layout measured with', () => {
+  // The two have to agree or the array makes things worse rather than better.
+  const doc = new PdfDoc({ title: 't' });
+  doc.addPage();
+  doc.text('x', 40, 700, {});
+  const pdf = new TextDecoder('latin1').decode(doc.bytes());
+  const dicts = pdf.match(/<< \/Type \/Font[^>]*>>/g);
+  const widthsOf = (d) => /\/Widths \[([^\]]+)\]/.exec(d)[1].trim().split(/\s+/).map(Number);
+  const reg = widthsOf(dicts[0]), bold = widthsOf(dicts[1]);
+  const at = (code) => code - 32;
+  for (const [ch, code] of [['W', 87], ['i', 105], [' ', 32], ['•', 0x95],
+                            ['ø', 0xF8], ['·', 0xB7], ['—', 0x97]]) {
+    assert.equal(reg[at(code)], Math.round(textWidth(ch, 1000, false)),
+      'regular width disagrees for ' + ch);
+    assert.equal(bold[at(code)], Math.round(textWidth(ch, 1000, true)),
+      'bold width disagrees for ' + ch);
+  }
+});
+
+test('the diameter sign is measured correctly in bold', () => {
+  // It reached the page through the Latin-1 shortcut but was MEASURED at the
+  // fallback 556 in both faces, where Helvetica-Bold's oslash is 611 — so every
+  // bold line carrying a duct size was laid out fractionally narrow.
+  assert.equal(Math.round(textWidth('ø', 1000, true)), 611);
+  assert.equal(Math.round(textWidth('ø', 1000, false)), 556);
+});

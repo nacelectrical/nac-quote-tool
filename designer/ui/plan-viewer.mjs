@@ -153,7 +153,14 @@ export function createPlanViewer(container, opts = {}) {
   function draw() {
     const r = wrap.getBoundingClientRect();
     ctx.clearRect(0, 0, r.width, r.height);
-    ctx.fillStyle = '#0a0a1c';
+    // A REPORT PAGE IS PAPER, NOT AN APP WINDOW.
+    //
+    // On screen the space around the plan is the app's own dark chrome, which is
+    // right there and wrong everywhere else: embedded in the PDF it printed a
+    // black band down a third of the landscape sheet and made the drawing
+    // smaller to fit inside it. During a report capture the background is white,
+    // so what goes on the page is a drawing on paper.
+    ctx.fillStyle = state.paperBackground ? '#FFFFFF' : '#0a0a1c';
     ctx.fillRect(0, 0, r.width, r.height);
 
     if (!state.image) {
@@ -1449,7 +1456,9 @@ export function createPlanViewer(container, opts = {}) {
       // estimator does not lose their place for having pressed Download.
       const prior = { mode: state.mode, designView: state.designView,
                       showAnalysis: state.showAnalysis, showRooms: state.showRooms,
-                      handles: state.handles, legend: state.showLegend };
+                      handles: state.handles, legend: state.showLegend,
+                      paper: state.paperBackground };
+      state.paperBackground = true;
       if (clean) {
         state.mode = MODES.VIEW;
         state.designView = true;
@@ -1463,10 +1472,13 @@ export function createPlanViewer(container, opts = {}) {
         if (!clean) return;
         Object.assign(state, { mode: prior.mode, designView: prior.designView,
                                showAnalysis: prior.showAnalysis, showRooms: prior.showRooms,
-                               handles: prior.handles, showLegend: prior.legend });
+                               handles: prior.handles, showLegend: prior.legend,
+                               paperBackground: prior.paper });
         draw();
       };
-      try { return snapshotNow(type, quality); } finally { restore(); }
+      // The paper background is restored even when `clean` was not asked for.
+      const restoreAll = () => { state.paperBackground = prior.paper; restore(); if (!clean) draw(); };
+      try { return snapshotNow(type, quality); } finally { restoreAll(); }
     },
     /** The raw capture, with the view exactly as it stands. */
     snapshotRaw({ type = 'image/jpeg', quality = 0.92 } = {}) {
@@ -1490,13 +1502,15 @@ export function createPlanViewer(container, opts = {}) {
     equipmentInset({ type = 'image/jpeg', quality = 0.94, pad = 150, zoom = 2.4 } = {}) {
       const prior = { mode: state.mode, designView: state.designView,
                       showAnalysis: state.showAnalysis, showRooms: state.showRooms,
-                      handles: state.handles, legend: state.showLegend };
+                      handles: state.handles, legend: state.showLegend,
+                      paper: state.paperBackground };
       state.mode = MODES.VIEW;
       state.designView = true;
       state.showAnalysis = false;
       state.showRooms = false;
       state.handles = [];
       state.showLegend = false;              // a legend inside a crop is noise
+      state.paperBackground = true;
       draw();
       try {
         const b = state.drawn?.equipment?.bounds;
@@ -1522,11 +1536,44 @@ export function createPlanViewer(container, opts = {}) {
       } finally {
         Object.assign(state, { mode: prior.mode, designView: prior.designView,
                                showAnalysis: prior.showAnalysis, showRooms: prior.showRooms,
-                               handles: prior.handles, showLegend: prior.legend });
+                               handles: prior.handles, showLegend: prior.legend,
+                               paperBackground: prior.paper });
         draw();
       }
     }
   };
+
+  /**
+   * THE PLAN, NOT A PHOTOGRAPH OF THE APP.
+   *
+   * The canvas is whatever shape the browser window is, and the viewer paints
+   * the space around the plan in the app's own dark chrome. Embedded whole,
+   * that dark surround took roughly half of the landscape sheet and the drawing
+   * was scaled down to fit inside it — on the one page an installer actually
+   * carries.
+   *
+   * So the capture is trimmed to what was drawn: the plan image's own rectangle,
+   * grown to take in any duct, symbol or label that reaches outside it, and the
+   * legend and zone schedule in their corners.
+   */
+  function drawnBounds() {
+    if (!state.image) return null;
+    const a = toScreen({ x: 0, y: 0 });
+    const b = toScreen({ x: state.image.naturalWidth, y: state.image.naturalHeight });
+    let box = { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
+                x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
+    const take = (x0, y0, x1, y1) => {
+      box.x0 = Math.min(box.x0, x0); box.y0 = Math.min(box.y0, y0);
+      box.x1 = Math.max(box.x1, x1); box.y1 = Math.max(box.y1, y1);
+    };
+    for (const bx of (state.drawn?.boxes || [])) take(bx.x0, bx.y0, bx.x1, bx.y1);
+    if (state.showLegend) take(8, 0, 260, canvas.clientHeight || 0);
+    const pad = 14;
+    const w = canvas.clientWidth || canvas.width, h = canvas.clientHeight || canvas.height;
+    return { x: Math.max(0, box.x0 - pad), y: Math.max(0, box.y0 - pad),
+             w: Math.min(w, box.x1 + pad) - Math.max(0, box.x0 - pad),
+             h: Math.min(h, box.y1 + pad) - Math.max(0, box.y0 - pad) };
+  }
 
   function snapshotNow(type, quality) {
       // No plan, or a canvas that was never laid out because the Plan tab has
@@ -1535,6 +1582,20 @@ export function createPlanViewer(container, opts = {}) {
       // Nothing is better than nothing pretending to be something.
     if (!state.image) return null;
     if (canvas.width < 80 || canvas.height < 80) return null;
-    try { return canvas.toDataURL(type, quality); } catch (e) { return null; }
+    try {
+      const b = drawnBounds();
+      if (!b || !(b.w > 40 && b.h > 40)) return canvas.toDataURL(type, quality);
+      const dpr = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
+      const out = document.createElement('canvas');
+      out.width = Math.round(b.w * dpr);
+      out.height = Math.round(b.h * dpr);
+      const c = out.getContext('2d');
+      // White behind it: a JPEG has no alpha, and a report page is paper.
+      c.fillStyle = '#FFFFFF';
+      c.fillRect(0, 0, out.width, out.height);
+      c.drawImage(canvas, b.x * dpr, b.y * dpr, b.w * dpr, b.h * dpr,
+                  0, 0, out.width, out.height);
+      return out.toDataURL(type, quality);
+    } catch (e) { return null; }
   }
 }

@@ -437,6 +437,14 @@ say('the actuator is mounted ON the body, not floating',
 // a blade at all rather than a slash sticking out of a hairline.
 say('the body is large enough for the blade to sit inside it',
   dmp.g250.w > 4 && dmp.g250.h > 4, dmp.g250.w.toFixed(1) + '×' + dmp.g250.h.toFixed(1));
+// A CASING AS LONG AS IT IS WIDE IS A SQUARE, AND A SQUARE TURNED TO FOLLOW A
+// DUCT IS A DIAMOND. Nick: "The zone damper still looks like a diamond across
+// the duct." A casing visibly longer than the duct is wide reads as a
+// rectangle at every angle, because its two long sides stay parallel to the run.
+say('the casing is visibly longer than it is wide',
+  dmp.g250.w / dmp.g250.h >= 1.4 && dmp.g350.w / dmp.g350.h >= 1.4,
+  'ø250 ' + (dmp.g250.w / dmp.g250.h).toFixed(2) + '×, ø350 ' +
+  (dmp.g350.w / dmp.g350.h).toFixed(2) + '×');
 // COUNT THE ACTUATOR, NOT THE INK. Total ink says the opposite of the truth
 // here: the constant tile carries the words CONSTANT – LOCKED OPEN, which are
 // more ink than the little green box they replace. The actuator's own colour is

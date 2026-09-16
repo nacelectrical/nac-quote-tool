@@ -70,7 +70,10 @@ async function makeAndRead(kind) {
         if (x < 38) overflow.push(n + ': (left) ' + it.str);
       }
       pages.push({ w: Math.round(vp.width), h: Math.round(vp.height),
-                   text: items.map(i => i.str).join(' ') });
+                   text: items.map(i => i.str).join(' '),
+                   // PDF user space, origin bottom-left — so a bigger y is
+                   // higher up the page.
+                   items: items.map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5] })) });
     }
     const info = (await doc.getMetadata()).info;
     return { numPages: doc.numPages, pages, overflow, info,
@@ -101,6 +104,23 @@ say('the equipment inset is embedded and described',
   /EQUIPMENT ARRANGEMENT/i.test(itext) && /RETURN PLENUM/i.test(itext) &&
   /SUPPLY PLENUM/i.test(itext),
   'inset source ' + (await p.evaluate(() => window.__insetMime)));
+// ── THE TYPOGRAPHY DEFECTS, READ BACK OUT OF THE FILE ──────────────────────
+say('no bullet printed as a question mark', !/\?\s+(Return|Supply|Fan-coil|Each|The)/.test(itext),
+  (itext.match(/\?[^\n]{0,40}/g) || []).slice(0, 2).join(' | ') || 'none');
+say('the bullet character survived into the text layer', /\u2022/.test(itext),
+  (itext.match(/\u2022/g) || []).length + ' bullet(s)');
+// THE LANDSCAPE CAPTION MUST CLEAR THE FOOTER. Both are drawn near the bottom
+// of the same page, and a fixed allowance for a caption that wrapped to two
+// lines put the second one across the footer rule.
+const land = I.pages.find(p => p.w === 842);
+say('the floor-plan page has both a caption and a footer',
+  /Duct colour is SIZE/.test(land.text) && /Page 2 of/.test(land.text));
+const capBottom = land.items.filter(i => /Duct colour is SIZE|follows diameter/.test(i.str))
+  .reduce((n, i) => Math.min(n, i.y), Infinity);
+const footTop = land.items.filter(i => /nacelectrical\.com\.au|Page \d+ of/.test(i.str))
+  .reduce((n, i) => Math.max(n, i.y), -Infinity);
+say('the caption sits clear above the footer', capBottom - footTop >= 8,
+  'caption bottom ' + capBottom.toFixed(1) + ' pt, footer top ' + footTop.toFixed(1) + ' pt');
 say('it carries the NAC identity', /NAC Electrical/.test(itext) && /97 636 392 982/.test(itext));
 say('it is titled the internal sheet', /Internal HVAC Design Sheet/.test(itext));
 say('it carries the bill of materials', /BILL OF MATERIALS/i.test(itext));

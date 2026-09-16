@@ -89,8 +89,10 @@ visibly different pieces of metal. At normal whole-house zoom you can count the
 collars; at full label detail each collar also carries its size, airflow and
 zone.
 
-A **zone damper** is an inline motorised damper: a short rectangular body sitting
-in the duct, its width taken from the duct diameter, one clean diagonal blade
+A **zone damper** is an inline motorised damper: a short rectangular casing
+sitting in the duct, at least 1.55× longer than the duct is wide — a casing as
+long as it is wide is a square, and a square turned to follow a duct is a
+diamond — its width taken from the duct diameter, one clean diagonal blade
 inside the body, and the actuator box mounted on the side with a short shaft to
 the spindle. It rotates to the duct's own tangent at the point it is fitted, so
 it follows a swept run. A constant zone gets the same body labelled
@@ -167,7 +169,7 @@ Run from the project directory:
 node --test tests/*.test.mjs
 ```
 
-Expected result for this handoff: 808 tests, 808 passed, 0 failed.
+Expected result for this handoff: 812 tests, 812 passed, 0 failed.
 
 Browser suites live in `tools/browser-tests/`. `plan-view.mjs` covers the Plan
 tab's view modes and `drawing-separation.mjs` proves supply and return are
@@ -187,6 +189,33 @@ footprint, the topology and airflow unchanged, and the review warning raised
 when no compliant position exists.
 
 ## The internal PDF
+
+**The document declares the font metrics it was laid out with.** A base-14 font
+needs no `/Widths` array, and that is exactly the problem: a reader with no
+Helvetica substitutes another font and lays every line out on *its* metrics, so
+the same file looks right in one viewer and comes back with letters spaced too
+far apart or words running together in the next. Both faces now carry
+`/FirstChar`, `/LastChar` and the full width array, and those numbers are the
+same AFM widths `textWidth` measures with.
+
+Two glyph defects went with it. The bullet, U+2022, had no WinAnsi entry, so
+every bulleted list opened with `?`. And the middot — which is in every duct
+label, every BTO spec and every page footer — was being *measured* at 556 units
+when it is 278, because the Latin-1 shortcut ran before the table that knows the
+real width. Every line carrying one had been laid out against a width that was
+not its own.
+
+**The plan page is a drawing on paper.** During a report capture the viewer
+paints its background white instead of the app's dark chrome, and the capture is
+trimmed to what was actually drawn. Embedded whole, the dark surround took about
+a third of the landscape sheet and the drawing was scaled down to fit inside it.
+
+**The caption cannot land on the footer.** Its lines are measured first and the
+picture gets what is left, with the caption anchored to the footer rule rather
+than to the bottom of the image. A fixed allowance was a guess at how many lines
+the caption would wrap to; it wrapped to two and the second went across the
+rule.
+
 
 Page 1 is the design summary and any CRITICAL warnings — the ones that block
 approval are stated where the sheet opens, not on page seven. Page 2 is a

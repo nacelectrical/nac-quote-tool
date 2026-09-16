@@ -53,15 +53,55 @@ function parseWidths(spec) {
 }
 const WIDTHS = { regular: parseWidths(W_REG), bold: parseWidths(W_BOLD) };
 
+/**
+ * THE DOCUMENT DECLARES THE WIDTHS IT WAS LAID OUT WITH.
+ *
+ * A base-14 font needs no /Widths array — a reader is entitled to use its own
+ * metrics for Helvetica. That is precisely the problem: when a reader has no
+ * Helvetica it substitutes something else, lays the line out on THAT font's
+ * widths, and the result is letters spaced too far apart or words running into
+ * one another, because every glyph lands where a different font would have put
+ * it. It renders correctly in one viewer and badly in the next, which is how a
+ * document can look fine here and wrong on the estimator's iPad.
+ *
+ * Writing the array removes the choice. The widths below are the same AFM
+ * numbers `textWidth` measures with, so what the layout assumed and what the
+ * reader is told are the same thing by construction.
+ */
+function widthsEntry(bold) {
+  const base = WIDTHS[bold ? 'bold' : 'regular'];
+  const w = base.slice();
+  // The high range is WinAnsi, not Latin-1 metrics, so the glyphs this document
+  // actually uses up there are set from the same table `textWidth` reads.
+  for (const [ch, spec] of Object.entries(WINANSI)) {
+    if (!spec) continue;
+    w[spec[0]] = spec[bold ? 2 : 1];
+  }
+  const first = 32, last = 255;
+  return ' /FirstChar ' + first + ' /LastChar ' + last +
+         ' /Widths [' + w.slice(first, last + 1).join(' ') + ']';
+}
+
 // The non-ASCII characters the NAC documents actually contain, with their
 // WinAnsi byte and width. Anything not listed falls back to an ASCII stand-in.
 const WINANSI = {
+  // THE BULLET WAS MISSING AND IT PRINTED AS A QUESTION MARK.
+  //
+  // Every bulleted list in the internal sheet opened with `?`. U+2022 is not in
+  // Latin-1, so the `code >= 160` shortcut never saw it, and with no entry here
+  // it fell through to the unknown-glyph fallback. WinAnsi has it at 0x95.
+  '•': [0x95, 350, 350],
   '—': [0x97, 1000, 1000], '–': [0x96, 556, 556], '·': [0xB7, 278, 278],
   '²': [0xB2, 333, 333], '³': [0xB3, 333, 333], '°': [0xB0, 400, 400],
   '…': [0x85, 1000, 1000], '‘': [0x91, 222, 238], '’': [0x92, 222, 238],
   '“': [0x93, 333, 500], '”': [0x94, 333, 500], '×': [0xD7, 584, 584],
   '±': [0xB1, 584, 584], '£': [0xA3, 556, 556], '©': [0xA9, 737, 737],
   '½': [0xBD, 834, 834], '¼': [0xBC, 834, 834], 'é': [0xE9, 556, 556],
+  // The diameter sign is on every duct label in the document. It reached the
+  // page through the Latin-1 shortcut but was MEASURED at the fallback 556 in
+  // both faces, where Helvetica-Bold's oslash is 611 — so every bold line
+  // carrying a size was laid out fractionally narrow.
+  'ø': [0xF8, 556, 611], 'Ø': [0xD8, 778, 778],
   'Δ': null, 'Ω': null                              // no WinAnsi byte — spelled out below
 };
 const ASCII_FALLBACK = { 'Δ': 'd', 'Ω': 'ohm', '→': '->', '≤': '<=', '≥': '>=', '≈': '~', ' ': ' ' };
@@ -72,9 +112,21 @@ export function textWidth(text, size, bold = false) {
   let total = 0;
   for (const ch of String(text)) {
     const code = ch.codePointAt(0);
-    if (code < 256 && code >= 32) { total += w[code]; continue; }
+    // THE NAMED GLYPHS ARE CONSULTED FIRST, AND THAT ORDER IS THE WHOLE POINT.
+    //
+    // The `code < 256` shortcut came first and returned `w[code]`, but that
+    // table only holds real AFM widths for 32..126 — everything above it is the
+    // 556 fallback `parseWidths` fills the array with. So every glyph in the
+    // high range was measured at 556 whatever it really is, and the WinAnsi
+    // entry underneath, which knows the real number, was unreachable.
+    //
+    // The middot is the one that mattered. It is 278 units wide and was being
+    // measured at 556 — twice its size — and it appears in every duct label,
+    // every BTO spec and the footer of every page. Every line carrying one was
+    // laid out against a width that was not its own.
     const win = WINANSI[ch];
     if (win) { total += win[bold ? 2 : 1]; continue; }
+    if (code >= 32 && code < 256) { total += w[code]; continue; }
     const alt = ASCII_FALLBACK[ch];
     if (alt) { total += textWidth(alt, 1000, bold); continue; }   // already in 1/1000 units
     total += w[63];                                  // '?' — an unknown glyph still takes room
@@ -249,9 +301,11 @@ export class PdfDoc {
       pageIds.map(id => id + ' 0 R').join(' ') + '] >>\n'); endObj();
 
     startObj(3);
-    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n'); endObj();
+    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding' +
+         widthsEntry(false) + ' >>\n'); endObj();
     startObj(4);
-    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n'); endObj();
+    push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding' +
+         widthsEntry(true) + ' >>\n'); endObj();
 
     startObj(5);
     push('<< /Title (' + pdfString(this.meta.title) + ') /Author (' + pdfString(this.meta.author) +

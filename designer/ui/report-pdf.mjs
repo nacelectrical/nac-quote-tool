@@ -275,20 +275,35 @@ class Layout {
     this.pdf.addPage({ width: W, height: H });
     this.pageCount++;
     this.landscapePages.add(this.pdf.pages.length - 1);
-    const capH = caption ? 34 : 8;
-    const boxW = W - M * 2, boxH = H - M * 2 - capH - 16;
+    // THE CAPTION HAS ITS ROOM RESERVED BEFORE THE PICTURE IS SIZED.
+    //
+    // A fixed 34 pt allowance was a guess at how many lines the caption would
+    // wrap to. It wrapped to two, the picture was scaled to fill everything
+    // above the guess, and the second line was written straight across the
+    // footer rule. So the lines are measured first and the picture gets what is
+    // left — which is the only order in which the two cannot collide.
+    const boxW = W - M * 2;
+    const capLines = caption ? wrapText(caption, boxW, 7.5, false) : [];
+    const CAP_LEAD = 10, CAP_GAP = 12;
+    const footerTop = M + 20;                       // the rule the footer sits on
+    const capH = capLines.length ? capLines.length * CAP_LEAD + CAP_GAP : 0;
+    const headH = 20;
+    const boxH = H - M - headH - (footerTop + 10) - capH;
     const scale = Math.min(boxW / meta.width, boxH / meta.height);
     const dw = meta.width * scale, dh = meta.height * scale;
     this.pdf.text('FLOOR PLAN — DUCT LAYOUT', M, H - M + 2,
       { size: 9.5, bold: true, colour: BLUE });
     this.pdf.line(M, H - M - 4, W - M, H - M - 4, { colour: YELLOW, lineWidth: 1.4 });
-    const top = H - M - 12;
+    const top = H - M - headH + 8;
     this.pdf.image(img.bytes, M + (boxW - dw) / 2, top - dh, dw, dh);
-    if (caption) {
-      let cy = top - dh - 12;
-      for (const line of wrapText(caption, boxW, 7.5, false)) {
+    if (capLines.length) {
+      // Anchored to the FOOTER, not to the bottom of the picture: wherever the
+      // picture ends up, the last line of the caption sits a clear 10 pt above
+      // the rule.
+      let cy = footerTop + 10 + (capLines.length - 1) * CAP_LEAD;
+      for (const line of capLines) {
         this.pdf.text(line, M, cy, { size: 7.5, colour: MUTED });
-        cy -= 10;
+        cy -= CAP_LEAD;
       }
     }
     // Back to portrait for whatever follows.

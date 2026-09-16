@@ -222,7 +222,10 @@ export function internalReportDoc(design, { planSnapshot = null,
       [{ label: 'Run' }, { label: 'Serves', w: 2 }, { label: 'Role' }, { label: 'Feeds from' },
        { label: 'Airflow (L/s)', r: true }, { label: 'Diameter (mm)', r: true },
        { label: 'Velocity (m/s)', r: true }, { label: 'Length (m)', r: true },
-       { label: 'Δp (Pa)', r: true }, { label: 'Reducer' }],
+       // SPELLED OUT, NOT A GREEK DELTA. WinAnsi has no Δ, so every PDF reader
+       // got an ASCII stand-in and the column read "dp (Pa)" — which is not a
+       // thing. The words cost four characters and mean what they say.
+       { label: 'Pressure drop (Pa)', r: true }, { label: 'Reducer' }],
       d.network.sections,
       r => [r.id, r.destination, r.role, r.parentId || '—', r.airflowLs, r.diameterMm,
             r.velocityMs, r.lengthM || '—', r.pressureDropPa,
