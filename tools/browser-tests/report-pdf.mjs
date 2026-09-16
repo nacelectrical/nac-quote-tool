@@ -190,6 +190,25 @@ say('the column carries the page title, so the drawing keeps the full height',
 say('the plan and the key are two separate pictures on that sheet',
   grow.after.x + grow.after.w < 842 - 24,
   'plan ends at ' + (grow.after.x + grow.after.w).toFixed(0) + ' pt of 842');
+// ── NO PAGE IS THROWN AWAY ────────────────────────────────────────────────
+//
+// Nick: "Page 5 is mostly blank. Allow tables to continue naturally so the
+// internal report does not contain an unnecessarily empty page." A hard break
+// before every major section did that — the room loads ran a few rows onto a
+// fresh page and the break after threw the rest of it away.
+const filled = I.pages.map((pg, i) => {
+  const rows = pg.items.filter(it => !/^Page \d+ of|NAC Electrical|nacelectrical/.test(it.str));
+  const top = rows.reduce((n, it) => Math.max(n, it.y), 0);
+  const bot = rows.reduce((n, it) => Math.min(n, it.y), Infinity);
+  return { page: i + 1, items: rows.length, span: rows.length ? top - bot : 0,
+           landscape: pg.w === 842 };
+});
+const sparse = filled.filter(f => !f.landscape && f.items > 0 && f.items < 40 &&
+                                  f.span < 200 && f.page < I.pages.length);
+say('no page in the middle of the document is nearly empty', sparse.length === 0,
+  sparse.length ? sparse.map(f => 'page ' + f.page + ': ' + f.items + ' lines over ' +
+    Math.round(f.span) + ' pt').join(' | ')
+  : filled.map(f => f.items).join('/') + ' lines per page');
 say('it carries the NAC identity', /NAC Electrical/.test(itext) && /97 636 392 982/.test(itext));
 say('it is titled the internal sheet', /Internal HVAC Design Sheet/.test(itext));
 say('it carries the bill of materials', /BILL OF MATERIALS/i.test(itext));

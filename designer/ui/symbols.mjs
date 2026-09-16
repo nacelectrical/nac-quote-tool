@@ -930,11 +930,26 @@ export function drawSupplyPlenum(ctx, at, { angle = 0, w = 16, h = 30,
 // inset has to frame the body, and the tests have to prove the collar count and
 // the trimming without reading pixels — all three need the numbers, not the ink.
 
-/** How big the metal is, before the collars. */
+/**
+ * HOW BIG THE METAL IS, BEFORE THE NECKS.
+ *
+ * `minW/maxW` is the DEPTH, along the flow. `minH/maxH` is the COLLAR FACE,
+ * across it. They are deliberately far apart, and that is the whole point:
+ * the old body worked out at 21 x 21 for BTO-A — a square, with a second
+ * rectangle drawn inside it. Nick, twice: "The current BTO still resembles a
+ * small electrical junction box." A square with a concentric inner rectangle IS
+ * the plan symbol for a junction box. A branch take-off is a SHALLOW box with a
+ * WIDE collar face, so the face grows with the collar count and the depth stays
+ * modest, and the result cannot be mistaken for a square at any rotation.
+ */
 export const BTO_BODY = Object.freeze({
-  minW: 15, maxW: 26, minH: 13, maxH: 30,
-  collarLength: 8, inletWidth: 9, outletWidth: 6.5,
-  cornerRadius: 1.2
+  minW: 11, maxW: 19,                   // depth, along the flow
+  minH: 17, maxH: 34,                   // collar face, across it
+  collarLength: 9.5, inletWidth: 9, outletWidth: 6,
+  /** Where the folded end flanges are drawn, in from each short edge. */
+  seamInset: 2.8,
+  /** The collar ring: how far behind the open face the crimp line sits. */
+  crimpInset: 2.6
 });
 
 /**
@@ -967,7 +982,14 @@ function rectPerimeterPoint(bearing, angle, w, h) {
  *   `angle` the collar points.
  */
 export function btoGeometry({ at, inletAngle = null, outletAngles = [],
-                              inletMm = null, outletMm = [], scale = 1 } = {}) {
+                              inletMm = null, outletMm = [], scale = 1,
+                              // WHEN THE DRAWING KNOWS ITS SCALE, EVERY NECK IS
+                              // THE WIDTH OF THE DUCT THAT PLUGS INTO IT.
+                              // Sized off body units instead, a ø400 main at
+                              // plan scale is drawn wider than the ø400 spigot
+                              // it lands on — the duct swallows the collar and
+                              // there is nothing left to count.
+                              pxPerMm = 0 } = {}) {
   const ports = outletAngles.length;
   // Along the flow, sized off the inlet; across it, sized off how many collars
   // have to fit on the faces without touching.
@@ -977,8 +999,14 @@ export function btoGeometry({ at, inletAngle = null, outletAngles = [],
   // growing, and the fitting came out as a small box with enormous diamonds
   // stuck to it. The limits say how big the metal is; the scale says how big
   // the drawing is, and they are different questions.
-  const w = clamp(13 + ((inletMm || 350) / 400) * 8, BTO_BODY.minW, BTO_BODY.maxW) * scale;
-  const h = clamp(10 + Math.max(0, ports - 1) * 5.5, BTO_BODY.minH, BTO_BODY.maxH) * scale;
+  //
+  // DEPTH FROM THE INLET, FACE FROM THE COLLAR COUNT. Nick: "Scale the manifold
+  // body according to its collar count" and "The installer must be able to
+  // count the collars without reading the label." A two-port fitting and a
+  // three-port fitting are now different pieces of metal by the width of a
+  // whole collar, and neither is square.
+  const w = clamp(10 + ((inletMm || 350) / 400) * 7, BTO_BODY.minW, BTO_BODY.maxW) * scale;
+  const h = clamp(11 + ports * 6.5, BTO_BODY.minH, BTO_BODY.maxH) * scale;
   // The body lies along the inlet duct. `inletAngle` points back up the duct it
   // is fed by, so that line IS the flow line.
   const angle = inletAngle !== null ? inletAngle
@@ -994,17 +1022,28 @@ export function btoGeometry({ at, inletAngle = null, outletAngles = [],
     };
   };
   const cl = BTO_BODY.collarLength * scale;
+  // A spigot is a sleeve the flex clamps OVER, so it is drawn a shade proud of
+  // the duct that lands on it. With no scale to work from — a legend tile, a
+  // symbol sheet — it falls back to body units in proportion to the diameter.
+  const neckWidth = (mm, role, fallback) => (pxPerMm
+    ? ductWidthPx(mm || 250, pxPerMm, { role, scale }) + 1.6 * scale
+    : fallback * scale);
   // THE INLET IS DRAWN WIDER THAN THE OUTLETS. It carries all the air the
   // outlets share, and on this job it is a ø400 into four ø250s — a drawing
   // where every collar is the same width says the fitting is something it isn't.
   const inlet = inletAngle === null ? null
-    : collar(inletAngle, BTO_BODY.inletWidth * scale, cl + 1);
+    : collar(inletAngle, neckWidth(inletMm, 'main', BTO_BODY.inletWidth), cl + 1);
   // EACH COLLAR IS THE WIDTH OF THE DUCT IT TAKES. A row of identical collars
   // says the fitting steps every outlet to the same size, which on BTO-B —
   // 400-300-250 — would be describing a fitting nobody is ordering.
   const outlets = outletAngles.map((a, i) => ({
-    ...collar(a, clamp(BTO_BODY.outletWidth * ((outletMm[i] || 250) / 250),
-                       BTO_BODY.outletWidth * 0.8, BTO_BODY.inletWidth * 0.9) * scale, cl),
+    // ø250 → 6.0, ø300 → 7.2, ø350 → 8.4, against a ø400 inlet at 9.0. Nick:
+    // "different collar widths for Ø250, Ø300 and Ø350 where practical". On
+    // BTO-B — 400-300-250 — the two outlets must not be the same neck, because
+    // a fitting with two identical necks is a different fitting to order.
+    ...collar(a, neckWidth(outletMm[i], 'final',
+                clamp(BTO_BODY.outletWidth * ((outletMm[i] || 250) / 250),
+                      BTO_BODY.outletWidth * 0.8, BTO_BODY.inletWidth * 0.95)), cl),
     index: i,
     diameterMm: outletMm[i] ?? null
   }));
@@ -1018,6 +1057,59 @@ export function btoGeometry({ at, inletAngle = null, outletAngles = [],
     bounds: { x: at.x - reach / 2 - w / 2, y: at.y - reach / 2 - h / 2, w: reach, h: reach,
               cx: at.x, cy: at.y }
   };
+}
+
+/**
+ * ONE NECK, WITH ITS COLLAR.
+ *
+ * Nick: "one inlet neck entering the body; the correct number of outlet necks
+ * leaving it; a short circular collar line on every neck; connected ducts
+ * ending at the collar face."
+ *
+ * A collar is a round ring of spiral clamped to the end of the spigot. Seen
+ * from above on a plan it is a LINE ACROSS THE NECK — so it is drawn as two:
+ * the heavy bead at the open face, where the flex lands, and a lighter crimp
+ * line just behind it. Those two lines at the end of every neck are what make
+ * the count readable without the label: five necks, five collars.
+ *
+ * The neck itself is two parallel walls with the throat left open at the body
+ * end. That matters at an angle — two long lines parallel to the duct read as a
+ * spigot at any bearing, where a closed rectangle turned off-axis reads as a
+ * diamond.
+ */
+function btoNeck(ctx, c, stroke, z) {
+  const h = c.width / 2, L = c.length;
+  ctx.save();
+  ctx.translate(c.root.x, c.root.y);
+  ctx.rotate(c.angle);
+  // Light metal behind it, starting slightly inside the body so there is no
+  // hairline of plan showing between the neck and the box it comes out of.
+  ctx.beginPath();
+  ctx.rect(-1.5, -h, L + 1.5, c.width);
+  ctx.fillStyle = '#E4E8ED';
+  ctx.fill();
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = Math.max(1, 1.25 * Math.min(2, z));
+  ctx.strokeStyle = stroke;
+  ctx.beginPath();
+  ctx.moveTo(0, -h); ctx.lineTo(L, -h);
+  ctx.moveTo(0, h);  ctx.lineTo(L, h);
+  ctx.stroke();
+  // THE COLLAR RING. Heavy at the face — this is where the duct stops — with
+  // the crimp behind it.
+  ctx.lineWidth = Math.max(1.5, 2.1 * Math.min(2, z));
+  ctx.beginPath();
+  ctx.moveTo(L, -h); ctx.lineTo(L, h);
+  ctx.stroke();
+  const crimp = Math.min(L - 1, BTO_BODY.crimpInset * Math.min(2.2, z));
+  if (crimp > 1) {
+    ctx.lineWidth = Math.max(0.7, 0.95 * Math.min(2, z));
+    ctx.strokeStyle = 'rgba(40,44,52,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(L - crimp, -h); ctx.lineTo(L - crimp, h);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /**
@@ -1038,47 +1130,52 @@ export function drawBto(ctx, at, { inletAngle = null, outletAngles = [],
   const g = geometry || btoGeometry({ at, inletAngle, outletAngles, inletMm, outletMm, scale });
   const stroke = warning ? WARNING_COLOUR : selected ? SELECTION_COLOUR : METAL_DARK;
 
-  // Collars first, so the body sits over their roots and they read as sockets
-  // punched into the metal rather than as loose sticks laid beside it.
-  for (const c of g.outlets) {
-    drawCollar(ctx, c.root, { angle: c.angle, length: c.length, width: c.width });
-  }
-  if (g.inlet) {
-    drawCollar(ctx, g.inlet.root, { angle: g.inlet.angle, length: g.inlet.length,
-                                    width: g.inlet.width });
-  }
+  const z = g.scale || 1;
+  // NECKS FIRST, so the body sits over their roots and each one reads as a
+  // spigot punched through the metal rather than a stick laid beside it.
+  for (const c of g.outlets) btoNeck(ctx, c, stroke, z);
+  if (g.inlet) btoNeck(ctx, g.inlet, stroke, z);
 
   ctx.save();
   ctx.translate(g.at.x, g.at.y);
   ctx.rotate(g.angle);
-  // WHITE METAL, DARK DOUBLE LINE. The double line is what makes a small
-  // rectangle read as folded sheet rather than as a filled block, and it is the
-  // single clearest difference between this and a route node.
-  const z = g.scale || 1;
-  box(ctx, 0, 0, g.w, g.h, BTO_BODY.cornerRadius);
-  ctx.fillStyle = '#F7F8FA';
+  // ── THE BODY: A PLAIN RECTANGLE OF GALVANISED SHEET ─────────────────────
+  //
+  // Square corners, the same metal fill as the fan coil and the two plenums —
+  // because it is the same material, made in the same shop, and the sheet is
+  // what an installer is looking for.
+  //
+  // What is NOT here matters as much. No rounded corners, no concentric inner
+  // rectangle, no fill of flat white: those three together are the plan symbol
+  // for an electrical junction box, and they are what Nick kept seeing. The
+  // only lines inside the outline are the two end flanges, which run ACROSS the
+  // box parallel to the collar face — the folded returns of a fabricated
+  // take-off, not the lid of a box.
+  ctx.beginPath();
+  ctx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
+  ctx.fillStyle = metalFill(ctx, -g.w / 2, -g.h / 2, g.w, g.h);
   ctx.fill();
   ctx.lineWidth = (selected ? 2.4 : 1.7) * Math.min(2, Math.max(1, z * 0.6));
   ctx.strokeStyle = stroke;
+  ctx.lineJoin = 'miter';
   ctx.stroke();
-  // THE SECOND LINE SCALES WITH THE BODY. A fixed 3.4 px inset is a clear
-  // double line on an 18 px body and an invisible hairline on a 156 px one —
-  // so at the zoom where somebody is checking the fitting, the one detail that
-  // says "folded sheet" disappeared.
-  box(ctx, 0, 0, g.w - 3.4 * z, g.h - 3.4 * z, BTO_BODY.cornerRadius);
-  ctx.lineWidth = 0.9 * Math.min(2, Math.max(1, z * 0.6));
-  ctx.strokeStyle = warning ? WARNING_COLOUR : 'rgba(40,44,52,0.7)';
-  ctx.stroke();
+  const seam = Math.min(g.w / 2 - 0.6, BTO_BODY.seamInset * Math.min(2.2, z));
+  if (seam > 0.8) {
+    ctx.lineWidth = Math.max(0.7, 0.9 * Math.min(2, z));
+    ctx.strokeStyle = warning ? WARNING_COLOUR : 'rgba(40,44,52,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(-g.w / 2 + seam, -g.h / 2); ctx.lineTo(-g.w / 2 + seam, g.h / 2);
+    ctx.moveTo(g.w / 2 - seam, -g.h / 2);  ctx.lineTo(g.w / 2 - seam, g.h / 2);
+    ctx.stroke();
+  }
   ctx.restore();
 
   // NOTHING IS DRAWN INSIDE THE BODY.
   //
-  // There used to be a small airflow arrow in there. Nick: "no arrow, route
-  // point or electrical-style mark inside the body" — and he is right about why
-  // it was wrong. A rectangle with a mark in the middle of it is the schematic
-  // for a switch, and at plan zoom that mark was the most visible thing about
-  // the fitting. The body is sheet metal; what it carries is written beside it
-  // and read off the collars.
+  // No arrow, no route point, no centre dot, no mark of any kind. A rectangle
+  // with something in the middle of it is a schematic for a device; this is a
+  // piece of metal. What it carries is written beside it and counted off the
+  // necks.
 
   if (ledger) ledger.reserve(g.at.x, g.at.y, g.w + 20, g.h + 20);
   // ONE LINE BESIDE THE BODY, ON A LEADER. `BTO-C · 400-350-350` says which
@@ -1399,10 +1496,12 @@ export function drawReturnBox(ctx, at, { angle = 0, w = 18, h = 30,
  * runs before it gets here, and this says so again for anyone reading it.
  */
 export const DAMPER = Object.freeze({
-  bodyLength: 11,          // along the duct
+  bodyLength: 13,          // along the duct
   minBodyWidth: 9, maxBodyWidth: 22,
-  actuatorW: 8.5, actuatorH: 7,
-  shaft: 1.4,
+  actuatorW: 8, actuatorH: 6.5,
+  /** How far the end flange marks stand proud of the casing, each side. */
+  flangeProud: 1.6,
+  shaft: 0,                // the actuator sits ON the wall; the shaft is inside
   /**
    * HOW MUCH LONGER THAN WIDE THE CASING IS.
    *
@@ -1413,7 +1512,7 @@ export const DAMPER = Object.freeze({
    * to any angle still reads as a rectangle because its two long sides are
    * parallel to the run it sits in.
    */
-  lengthRatio: 1.55
+  lengthRatio: 2.1
 });
 
 /** The width the duct itself is stroked at — the same call the renderer makes. */
@@ -1450,20 +1549,27 @@ export function damperGeometry({ at, angle = 0, ductWidthPx = null, diameterMm =
   const width = Math.max(5.5, Math.min(DAMPER.maxBodyWidth * scale, drawn));
   // AND IT IS LONGER THAN IT IS WIDE. A casing as long as it is wide is a
   // square, and a square turned to follow a duct is a diamond.
-  const len = Math.max(DAMPER.bodyLength * scale * 0.8, width * DAMPER.lengthRatio);
-  return { at: { x: at.x, y: at.y }, angle, w: len, h: width,
+  // AND IT IS TWICE AS LONG AS IT IS WIDE. Nick, twice: "the zone damper still
+  // looks like a diamond" / "a diagonal route marker". At 1.55x the casing was
+  // still stubby enough that, turned to a duct bearing with a blade across it,
+  // the eye read one diagonal lozenge. At 2.1x the two long walls are
+  // unmistakably parallel to the run they sit in, at every angle.
+  const len = Math.max(DAMPER.bodyLength * scale, width * DAMPER.lengthRatio);
+  return { at: { x: at.x, y: at.y }, angle, w: len, h: width, scale,
            actuator: { w: DAMPER.actuatorW * scale, h: DAMPER.actuatorH * scale,
-                       // Mounted on the side, its inner edge ON the body wall.
-                       // HARD AGAINST THE WALL. The shaft is a visible stub, not
-                       // a gap: an actuator floating clear of its damper is two
-                       // marks that do not belong to one another.
-                       offset: width / 2 + (DAMPER.actuatorH * scale) / 2 + DAMPER.shaft * scale },
-           reach: Math.max(len, width + DAMPER.actuatorH * 2 + DAMPER.shaft * 2) };
+                       // TOUCHING THE CASING WALL, with no gap at all. Nick:
+                       // "small actuator box physically touching one side;
+                       // short actuator shaft connected to the blade." So the
+                       // shaft is not a stub out in the open between two
+                       // objects — it is INSIDE the casing, running from the
+                       // blade's spindle out to the wall the motor is bolted
+                       // to, which is where the shaft of a real damper is.
+                       offset: width / 2 + (DAMPER.actuatorH * scale) / 2 },
+           reach: Math.max(len, width + DAMPER.actuatorH * scale * 2) };
 }
 
 export function drawZoneDamper(ctx, at, { angle = 0, ductWidthPx = null, diameterMm = null,
                                           pxPerMm = 0, scale = 1,
-                                          colour = '#1D7A48',
                                           label = null, constant = false,
                                           geometry = null,
                                           ledger = null } = {}) {
@@ -1472,40 +1578,51 @@ export function drawZoneDamper(ctx, at, { angle = 0, ductWidthPx = null, diamete
   ctx.translate(g.at.x, g.at.y);
   ctx.rotate(g.angle);
 
-  // ── THE CASING, inline and centred on the duct ──────────────────────────
+  // ── THE CASING: A SHORT SLEEVE IN THE LINE OF THE DUCT ──────────────────
   //
-  // Square corners and a heavier outline than the blade. A rounded rectangle at
-  // small sizes loses its corners to antialiasing and comes back as a blob;
-  // corners are what say "sheet metal sleeve" rather than "marker".
+  // Square corners, white inside, twice as long as the duct is wide. The duct
+  // runs into one end and out of the other: the sleeve is a break in the
+  // coloured run, not a box parked on top of it.
+  const z = g.scale || 1;
   ctx.beginPath();
   ctx.rect(-g.w / 2, -g.h / 2, g.w, g.h);
   ctx.fillStyle = '#FFFFFF';
   ctx.fill();
-  ctx.lineWidth = 1.7;
+  ctx.lineWidth = Math.max(1.3, 1.7 * Math.min(2, z));
   ctx.strokeStyle = INK;
-  ctx.stroke();
-  // The two flanges where it clamps into the run — the detail that makes it
-  // read as a fitting IN the duct rather than a box sitting on it.
-  ctx.lineWidth = 1.1;
-  ctx.beginPath();
-  ctx.moveTo(-g.w / 2 + 1.8, -g.h / 2); ctx.lineTo(-g.w / 2 + 1.8, g.h / 2);
-  ctx.moveTo(g.w / 2 - 1.8, -g.h / 2);  ctx.lineTo(g.w / 2 - 1.8, g.h / 2);
-  ctx.strokeStyle = 'rgba(29,34,48,0.45)';
+  ctx.lineJoin = 'miter';
+  ctx.lineCap = 'butt';
   ctx.stroke();
 
-  // ── THE BLADE, one clean diagonal, entirely INSIDE the body ─────────────
-  const bx = g.w / 2 - 3.4, by = g.h / 2 - 1.8;
+  // ── THE TWO BOUNDARY LINES ACROSS THE DUCT ──────────────────────────────
+  //
+  // Nick: "two short casing boundary lines across the duct". They stand a
+  // little proud of the sleeve on both sides, which is what a flanged fitting
+  // clamped into a run looks like on a mechanical sheet — and it is the detail
+  // that stops a plain rectangle reading as a marker laid on the line.
+  const proud = DAMPER.flangeProud * Math.min(2.2, z);
+  ctx.lineWidth = Math.max(1.4, 1.9 * Math.min(2, z));
+  ctx.strokeStyle = INK;
   ctx.beginPath();
-  ctx.moveTo(-bx, by); ctx.lineTo(bx, -by);
-  ctx.lineWidth = 1.9;
+  ctx.moveTo(-g.w / 2, -g.h / 2 - proud); ctx.lineTo(-g.w / 2, g.h / 2 + proud);
+  ctx.moveTo(g.w / 2, -g.h / 2 - proud);  ctx.lineTo(g.w / 2, g.h / 2 + proud);
+  ctx.stroke();
+
+  // ── THE BLADE, one line on its spindle, well inside the sleeve ──────────
+  //
+  // Set at a fixed lean rather than drawn corner to corner. Corner to corner in
+  // a short casing IS the diagonal Nick kept reading as a route marker; a blade
+  // that spans the duct and stops short of both walls is a damper blade part
+  // way open, which is the thing being drawn.
+  const half = Math.min(g.h / 2 - 1.2, g.w / 2 - 1.6);
+  const lean = 0.52;                              // ~30° off across the duct
+  ctx.beginPath();
+  ctx.moveTo(-half * Math.sin(lean), half * Math.cos(lean));
+  ctx.lineTo(half * Math.sin(lean), -half * Math.cos(lean));
+  ctx.lineWidth = Math.max(1.4, 1.9 * Math.min(2, z));
   ctx.strokeStyle = INK;
   ctx.lineCap = 'round';
   ctx.stroke();
-  // The spindle it turns on, at the centre of the body.
-  ctx.beginPath();
-  ctx.arc(0, 0, 1.2, 0, Math.PI * 2);
-  ctx.fillStyle = INK;
-  ctx.fill();
 
   // ── THE ACTUATOR, mounted ON the body, joined by its shaft ──────────────
   //
@@ -1514,25 +1631,37 @@ export function drawZoneDamper(ctx, at, { angle = 0, ductWidthPx = null, diamete
   // anything, and a motor drawn there is a motor somebody orders.
   if (!constant) {
     const oy = -g.actuator.offset;
+    // THE SHAFT, INSIDE THE CASING, FROM THE BLADE TO THE WALL. This is the
+    // piece that says the motor turns THIS blade. It used to be drawn in the
+    // gap outside the sleeve, between two things that were not touching.
     ctx.beginPath();
-    ctx.moveTo(0, -g.h / 2); ctx.lineTo(0, oy + g.actuator.h / 2);
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = '#12532F';
+    ctx.moveTo(0, 0); ctx.lineTo(0, -g.h / 2);
+    ctx.lineWidth = Math.max(1.2, 1.5 * Math.min(2, z));
+    ctx.strokeStyle = INK;
+    ctx.lineCap = 'butt';
     ctx.stroke();
+    // THE ACTUATOR, BOLTED FLAT TO THAT WALL. Nick: "remove the separate green
+    // `M` marker." A coloured chip with a letter in it beside the duct is an
+    // annotation; a small motor can sitting hard on the casing is the fitting.
+    // It is in the damper's own frame, so it turns with the duct and stays
+    // upright relative to the body.
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-g.actuator.w / 2, oy - g.actuator.h / 2,
-                                     g.actuator.w, g.actuator.h, 1);
-    else ctx.rect(-g.actuator.w / 2, oy - g.actuator.h / 2, g.actuator.w, g.actuator.h);
-    ctx.fillStyle = colour;
+    ctx.rect(-g.actuator.w / 2, oy - g.actuator.h / 2, g.actuator.w, g.actuator.h);
+    ctx.fillStyle = '#5B6270';
     ctx.fill();
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = '#12532F';
+    ctx.lineWidth = Math.max(1, 1.2 * Math.min(2, z));
+    ctx.strokeStyle = INK;
     ctx.stroke();
-    // An M, so it is an actuator rather than a chip of colour.
-    ctx.font = '800 5px -apple-system, system-ui, sans-serif';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('M', 0, oy + 0.3);
+    // A ribbed face, so it reads as a motor body rather than a filled block.
+    ctx.lineWidth = Math.max(0.6, 0.8 * Math.min(2, z));
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    for (let i = -1; i <= 1; i++) {
+      const x = i * g.actuator.w * 0.24;
+      ctx.moveTo(x, oy - g.actuator.h / 2 + g.actuator.h * 0.22);
+      ctx.lineTo(x, oy + g.actuator.h / 2 - g.actuator.h * 0.22);
+    }
+    ctx.stroke();
   }
   ctx.restore();
 
@@ -1838,10 +1967,17 @@ export function drawLegend(ctx, at, { sizes = [], hasReturn = true,
   };
   row((cx, cy) => drawOutletSymbol(ctx, { x: cx, y: cy }, { type: outletType, r: 6 }),
       'SUPPLY OUTLET');
-  row((cx, cy) => drawBto(ctx, { x: cx, y: cy }, { w: 15, h: 10 }), 'BTO FITTING');
+  // THE KEY SHOWS THE FITTING, NOT A BOX. `{ w, h }` are not arguments drawBto
+  // takes, so the legend drew a body with no necks at all — a plain rectangle,
+  // which is the one thing the symbol must never look like. It now draws a real
+  // one-in, three-out manifold, from the same geometry the sheet uses.
+  row((cx, cy) => drawBto(ctx, { x: cx, y: cy },
+        { inletAngle: Math.PI, outletAngles: [0.5, 0, -0.5],
+          inletMm: 400, outletMm: [250, 250, 250], scale: 0.62 }), 'BTO FITTING');
   row((cx, cy) => drawReturnGrilleSymbol(ctx, { x: cx, y: cy }, { w: 18, h: 12 }),
       'RETURN GRILLE');
-  row((cx, cy) => drawZoneDamper(ctx, { x: cx, y: cy }, { r: 6 }), 'ZONE DAMPER');
+  row((cx, cy) => drawZoneDamper(ctx, { x: cx, y: cy },
+        { angle: 0, ductWidthPx: 8, scale: 1 }), 'ZONE DAMPER');
   ctx.restore();
   return { width, height };
 }

@@ -1591,10 +1591,44 @@ export function createPlanViewer(container, opts = {}) {
         const b = state.drawn?.equipment?.bounds;
         if (!state.image || !b) return null;
         const dpr = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
-        const x = Math.max(0, (b.cx - b.w / 2 - pad) * dpr);
-        const y = Math.max(0, (b.cy - b.h / 2 - pad) * dpr);
-        const w = Math.min(canvas.width - x, (b.w + pad * 2) * dpr);
-        const h = Math.min(canvas.height - y, (b.h + pad * 2) * dpr);
+        // ── NO LABEL MAY BE CUT BY THE EDGE OF THE PICTURE ──────────────
+        //
+        // Nick: "The equipment inset currently clips the Kitchen outlet label
+        // on the left, the Lounge label on the right, parts of BTO-A and BTO-C1
+        // ... No label may be cut by the image boundary."
+        //
+        // A fixed pad around the assembly cannot know that, because a label
+        // sits wherever the placer found room. So the window starts at the pad
+        // and then GROWS to swallow whole any label it has caught part of —
+        // twice, because swallowing one can bring the edge up against another.
+        // Half a label is worse than no label: `· 400-250-250-250` with the
+        // name cut off is a spec an installer cannot match to a fitting.
+        let box = { x0: b.cx - b.w / 2 - pad, y0: b.cy - b.h / 2 - pad,
+                    x1: b.cx + b.w / 2 + pad, y1: b.cy + b.h / 2 + pad };
+        const labels = (state.labelBoxes || [])
+          .filter(l => l.kind !== 'schedule')
+          .map(l => ({ x0: l.x, y0: l.y, x1: l.x + l.w, y1: l.y + l.h }))
+          .concat((state.drawn?.boxes || [])
+            .filter(k => !k.symbol)
+            .map(k => ({ x0: k.x0, y0: k.y0, x1: k.x1, y1: k.y1 })));
+        const M2 = 4;                       // a hair of white outside the text
+        for (let pass = 0; pass < 3; pass++) {
+          let grew = false;
+          for (const l of labels) {
+            const touches = l.x0 < box.x1 && box.x0 < l.x1 &&
+                            l.y0 < box.y1 && box.y0 < l.y1;
+            if (!touches) continue;
+            if (l.x0 - M2 < box.x0) { box.x0 = l.x0 - M2; grew = true; }
+            if (l.y0 - M2 < box.y0) { box.y0 = l.y0 - M2; grew = true; }
+            if (l.x1 + M2 > box.x1) { box.x1 = l.x1 + M2; grew = true; }
+            if (l.y1 + M2 > box.y1) { box.y1 = l.y1 + M2; grew = true; }
+          }
+          if (!grew) break;
+        }
+        const x = Math.max(0, box.x0 * dpr);
+        const y = Math.max(0, box.y0 * dpr);
+        const w = Math.min(canvas.width - x, (box.x1 - box.x0) * dpr);
+        const h = Math.min(canvas.height - y, (box.y1 - box.y0) * dpr);
         if (!(w > 20 && h > 20)) return null;
         const out = document.createElement('canvas');
         out.width = Math.round(w * zoom);

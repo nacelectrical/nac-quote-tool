@@ -458,6 +458,9 @@ export function renderReportPdf(doc, { logo = null } = {}) {
     switch (blk.t) {
       case 'h2':        L.heading(blk.text); break;
       case 'pagebreak': if (L.y < A4.height - M - 80) L.newPage(); break;
+      // Break only when what is left of the page cannot hold the section's
+      // heading and the first few rows of its table.
+      case 'softbreak': if (L.y - L.bottom < (blk.min || 170)) L.newPage(); break;
       case 'note':      L.paragraph(blk.text); break;
       case 'flag':      L.flag(blk.level, blk.text); break;
       case 'bullets':   L.bullets(blk.items); break;

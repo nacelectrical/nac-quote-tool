@@ -684,14 +684,29 @@ export function drawFlexDesign(ctx, view) {
     if (!outs.length && inletAngle === null) continue;
     const g = SYM.btoGeometry({ at, inletAngle, outletAngles: outs,
                                 inletMm, outletMm: outRuns.map(r => r.diameterMm ?? null),
-                                scale: Math.max(0.85, Math.min(1.35, view.scale || 1)) });
-    // Cut each duct back to the collar face it lands on.
+                                scale: Math.max(0.85, Math.min(1.35, view.scale || 1)),
+                                // So every neck matches the duct drawn into it.
+                                pxPerMm: pxPerMm || 0 });
+    // CUT EACH DUCT BACK TO THE COLLAR FACE IT LANDS ON — allowing for the fact
+    // that a run is STROKED, not plotted. Flex is drawn with a round cap on a
+    // casing three points wider than the line, so a run that ENDS on the collar
+    // face is drawn half its own width past it: at plan scale the ø400 main
+    // swelled over the spigot and the body behind it, and there was nothing
+    // left to count. Backing the endpoint off by that half-width puts the
+    // VISIBLE end of the duct on the collar face, which is where it is.
+    const capOf = (run) => ((run.widthPx || 8) + 3) / 2;
     outRuns.forEach((run, i) => {
       const c = g.outlets[i];
-      if (c) run.screen = [c.tip, ...run.screen.slice(1)];
+      if (!c) return;
+      const back = capOf(run);
+      run.screen = [{ x: c.tip.x + Math.cos(c.angle) * back,
+                      y: c.tip.y + Math.sin(c.angle) * back }, ...run.screen.slice(1)];
     });
     if (inletRun && g.inlet) {
-      inletRun.screen = [...inletRun.screen.slice(0, -1), g.inlet.tip];
+      const back = capOf(inletRun);
+      inletRun.screen = [...inletRun.screen.slice(0, -1),
+                         { x: g.inlet.tip.x + Math.cos(g.inlet.angle) * back,
+                           y: g.inlet.tip.y + Math.sin(g.inlet.angle) * back }];
     }
     btoDraws.push({ marker: m, geometry: g });
   }
@@ -812,6 +827,15 @@ export function drawFlexDesign(ctx, view) {
     const at0 = toScreen(o);
     ledger.reserve(at0.x, at0.y, 26, 26);                              // diffuser
   }
+  // A CROSSING IS A SYMBOL, AND NOTHING IS WRITTEN ACROSS IT. Nick: "Move only
+  // BTO-C's label — not its physical fitting — farther right or upward so it
+  // does not sit across the return crossing." The hop is the one place on the
+  // sheet where the reader has to see that two ducts pass rather than join, and
+  // a label lying over it takes that away.
+  for (const c of crossings) {
+    const r = (c.hopR ?? 6) * 2 + 10;
+    ledger.reserve(c.x, c.y, r, r);
+  }
   for (const d of (dampers || [])) {
     if (d.airSide === 'return' || d.isReturn || d.role === 'return') continue;
     const at0 = toScreen(d);
@@ -928,7 +952,6 @@ export function drawFlexDesign(ctx, view) {
       diameterMm: d.diameterMm ?? host?.diameterMm ?? null,
       pxPerMm: pxPerMm || 0,
       scale: Math.max(0.85, Math.min(1.35, view.scale || 1)),
-      colour: d.colour || '#1D7A48',
       // `ZM-3 · BEDROOMS` — the motor's own number and the zone it closes.
       label: view.labelDampers === false ? null
         : SYM.LABEL.zoneMotor(d.motorNumber ?? (i + 1), d.zoneLabel || d.label || null),

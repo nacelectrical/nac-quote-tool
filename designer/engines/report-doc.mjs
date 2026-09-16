@@ -34,6 +34,20 @@ const bullets = (items) => ({ t: 'bullets', items: items.map(String) });
 const image   = (src, caption) => ({ t: 'image', src, caption: caption || '' });
 const pageBreak = () => ({ t: 'pagebreak' });
 /**
+ * START A NEW PAGE ONLY IF THERE IS NOT ENOUGH LEFT OF THIS ONE.
+ *
+ * Nick: "Page 5 is mostly blank. Allow tables to continue naturally so the
+ * internal report does not contain an unnecessarily empty page."
+ *
+ * A hard break before each major section did that: the room loads ran five rows
+ * onto a fresh page, the break after it threw the rest of that page away, and
+ * the sheet carried a sheet of paper with five numbers on it. A section only
+ * needs its own page when what is left of this one cannot hold its heading and
+ * the first few rows — so that is the question asked, instead of breaking every
+ * time regardless.
+ */
+const softBreak = (min = 170) => ({ t: 'softbreak', min });
+/**
  * A FLOOR PLAN ON ITS OWN LANDSCAPE SHEET.
  *
  * Nick: "A dedicated landscape floor-plan page." A house plan is wider than it
@@ -186,7 +200,9 @@ export function internalReportDoc(design, { planSnapshot = null,
   b.push(table(
     [{ label: 'Room', w: 2.2 }, { label: 'Width (m)', r: true }, { label: 'Length (m)', r: true },
      { label: 'Area (m²)', r: true }, { label: 'Ceiling (m)', r: true }, { label: 'Cond.' },
-     { label: 'Source', w: 1.8 }, { label: 'Confidence', r: true }, { label: 'Status' }],
+     { label: 'Source', w: 1.8 },
+     // Wide enough for the word. At the default it broke as CONFIDENC / E.
+     { label: 'Confidence', r: true, w: 1.35 }, { label: 'Status' }],
     d.rooms || [],
     r => [r.label, r.widthMm ? (r.widthMm / 1000).toFixed(2) : '—',
           r.lengthMm ? (r.lengthMm / 1000).toFixed(2) : '—', nn(r.areaSqM, 2),
@@ -205,7 +221,7 @@ export function internalReportDoc(design, { planSnapshot = null,
   }
 
   if (d.airflow) {
-    b.push(pageBreak());
+    b.push(softBreak());
     b.push(h2('Airflow'));
     b.push(table(
       [{ label: 'Room', w: 2.2 }, { label: 'Load (W)', r: true }, { label: 'Recommended (L/s)', r: true },
@@ -249,9 +265,16 @@ export function internalReportDoc(design, { planSnapshot = null,
     // symbol on the plan all read the same record.
     if (d.supplyPlenum) {
       b.push(kv([
+        // A SUMMARY CARD IS A SUMMARY. The engine's full description is three
+        // lines long and lost its last clause to the bottom of the box; the
+        // whole sentence is on the BILL OF MATERIALS line and in the
+        // fabrication warning, which is where somebody ordering it reads it.
         ['Supply plenum', d.supplyPlenum.kind === 'widened'
           ? 'FABRICATED TRANSITION' : 'Flush to the discharge',
-          d.supplyPlenum.description],
+          d.supplyPlenum.kind === 'widened'
+            ? d.supplyPlenum.flangeWidthMm + ' mm throat widening to ' +
+              d.supplyPlenum.bodyWidthMm + ' mm'
+            : 'no transition needed'],
         ['Discharge flange', d.supplyPlenum.flangeWidthMm
           ? d.supplyPlenum.flangeWidthMm + ' × ' + d.supplyPlenum.flangeHeightMm + ' mm' : '—',
           'the fan-coil face the plenum bolts to'],
@@ -307,7 +330,7 @@ export function internalReportDoc(design, { planSnapshot = null,
     if (d.pressure.disclaimer) b.push(note(d.pressure.disclaimer));
   }
 
-  b.push(pageBreak());
+  b.push(softBreak());
   b.push(h2('Design assumptions'));
   b.push(table(
     [{ label: 'Assumption', w: 2 }, { label: 'Value' }, { label: 'Source', w: 2 }],
@@ -330,7 +353,7 @@ export function internalReportDoc(design, { planSnapshot = null,
   }
 
   if (d.bom) {
-    b.push(pageBreak());
+    b.push(softBreak());
     b.push(h2('Bill of materials'));
     b.push(table(
       [{ label: 'Category' }, { label: 'Item', w: 3 }, { label: 'Qty', r: true }, { label: 'Unit' },

@@ -377,10 +377,35 @@ say('the inlet is drawn wider than the outlet collars',
   btoGeo.A.inletWidth > Math.max(...btoGeo.A.outletWidths),
   'inlet ' + btoGeo.A.inletWidth + ' vs outlets ' + btoGeo.A.outletWidths.join('/'));
 say('the body is compact enough not to cover the plan',
-  btoGeo.A.w <= 26 && btoGeo.A.h <= 30 && btoGeo.C2.w <= 26 && btoGeo.C2.h <= 30,
+  btoGeo.A.w <= 19 && btoGeo.A.h <= 34 && btoGeo.C2.w <= 19 && btoGeo.C2.h <= 34,
   'A ' + btoGeo.A.w.toFixed(0) + '×' + btoGeo.A.h.toFixed(0) +
   ', C2 ' + btoGeo.C2.w.toFixed(0) + '×' + btoGeo.C2.h.toFixed(0));
-say('the body is big enough to identify', btoGeo.A.w >= 15 && btoGeo.A.h >= 13);
+say('the body is big enough to identify', btoGeo.A.w >= 11 && btoGeo.A.h >= 17);
+// A SHALLOW BOX WITH A WIDE COLLAR FACE — NEVER A SQUARE.
+//
+// Nick, twice: "The current BTO still resembles a small electrical junction
+// box." A square with a second rectangle drawn inside it IS the plan symbol for
+// one, and the old body worked out at 21 x 21 for BTO-A. A take-off is not
+// square, so neither is the symbol, at any rotation.
+say('the body is never square — the collar face is much wider than the depth',
+  btoGeo.A.h / btoGeo.A.w >= 1.6 && btoGeo.C.h / btoGeo.C.w >= 1.3,
+  'A ' + (btoGeo.A.h / btoGeo.A.w).toFixed(2) + ':1, C ' +
+  (btoGeo.C.h / btoGeo.C.w).toFixed(2) + ':1');
+// EVERY NECK IS THE WIDTH OF ITS OWN DUCT. Nick: "different collar widths for
+// Ø250, Ø300 and Ø350 where practical."
+const btoNecks = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const g = SYM.btoGeometry({ at: { x: 200, y: 200 }, inletAngle: Math.PI,
+    outletAngles: [0.5, 0, -0.5], inletMm: 400, outletMm: [350, 300, 250],
+    pxPerMm: 0.0566667 });
+  return { widths: g.outlets.map(o => o.width), inlet: g.inlet.width };
+});
+say('a ø350 neck is wider than a ø300, and a ø300 wider than a ø250',
+  btoNecks.widths[0] > btoNecks.widths[1] && btoNecks.widths[1] > btoNecks.widths[2],
+  btoNecks.widths.map(w => w.toFixed(1)).join(' > '));
+say('and the ø400 inlet is the widest neck on the fitting',
+  btoNecks.inlet > Math.max(...btoNecks.widths),
+  'inlet ' + btoNecks.inlet.toFixed(1) + ' vs ' + btoNecks.widths[0].toFixed(1));
 say('the body scales with the number of collars',
   btoGeo.C2.h > btoGeo.C.h, 'three-port ' + btoGeo.C2.h.toFixed(1) +
   ' vs two-port ' + btoGeo.C.h.toFixed(1));
@@ -445,29 +470,51 @@ say('the casing is visibly longer than it is wide',
   dmp.g250.w / dmp.g250.h >= 1.4 && dmp.g350.w / dmp.g350.h >= 1.4,
   'ø250 ' + (dmp.g250.w / dmp.g250.h).toFixed(2) + '×, ø350 ' +
   (dmp.g350.w / dmp.g350.h).toFixed(2) + '×');
-// COUNT THE ACTUATOR, NOT THE INK. Total ink says the opposite of the truth
-// here: the constant tile carries the words CONSTANT – LOCKED OPEN, which are
-// more ink than the little green box they replace. The actuator's own colour is
-// the only thing that answers the question actually being asked.
+// LOOK WHERE THE ACTUATOR IS, AND NOWHERE ELSE.
+//
+// Counting a colour over the whole tile cannot answer this. The motor can is
+// #5B6270 and the CONSTANT – LOCKED OPEN caption is #4A5160 — and those two are
+// collinear with white, so the antialiasing on the caption passes exactly
+// through the can's colour. So the test asks the geometry where the actuator
+// would be and counts ink INSIDE that rectangle: many on a motorised zone, none
+// on a locked-open one. Nick: "Do not show a motor actuator unless one
+// physically exists."
 const actuatorPixels = await p.evaluate(async () => {
   const SYM = await import('/designer/ui/symbols.mjs');
+  const g = SYM.damperGeometry({ at: { x: 60, y: 60 }, angle: 0,
+                                 ductWidthPx: 10, scale: 1 });
+  // Drawn at angle 0, the actuator sits straight above the centre.
+  const x0 = Math.round(60 - g.actuator.w / 2 + 1), x1 = Math.round(60 + g.actuator.w / 2 - 1);
+  const y0 = Math.round(60 - g.actuator.offset - g.actuator.h / 2 + 1);
+  // Stop two rows short of the casing: the motor is bolted flat to that wall,
+  // so the wall's own stroke lands inside the actuator's rectangle and would be
+  // counted as a motor that is not there.
+  const y1 = Math.round(60 - g.actuator.offset + g.actuator.h / 2) - 2;
   const count = (opts) => {
     const cv = document.createElement('canvas');
     cv.width = 120; cv.height = 120;
     const c = cv.getContext('2d');
     c.fillStyle = '#FFFFFF'; c.fillRect(0, 0, 120, 120);
-    SYM.drawZoneDamper(c, { x: 60, y: 60 }, opts);
+    SYM.drawZoneDamper(c, { x: 60, y: 60 }, { angle: 0, ductWidthPx: 10, scale: 1, ...opts });
     const px = c.getImageData(0, 0, 120, 120).data;
-    let n = 0;
-    for (let i = 0; i < px.length; i += 4) {
-      // The actuator green, #1D7A48, and the darker outline around it.
-      if (px[i] < 90 && px[i + 1] > 70 && px[i + 1] < 160 && px[i + 2] < 110 &&
-          px[i + 1] > px[i] + 25 && px[i + 1] > px[i + 2] + 15) n++;
+    let inBox = 0, green = 0;
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 120; x++) {
+        const i = (y * 120 + x) * 4;
+        const r = px[i], gg = px[i + 1], bl = px[i + 2];
+        const ink = r < 235 || gg < 235 || bl < 235;
+        if (ink && x >= x0 && x <= x1 && y >= y0 && y <= y1) inBox++;
+        if (gg > r + 25 && gg > bl + 20 && gg > 60 && gg < 180) green++;
+      }
     }
-    return n;
+    return { inBox, green };
   };
-  return { motorised: count({ label: 'ZM-1 · Z3' }), constant: count({ constant: true }) };
+  const m = count({ label: 'ZM-1 \u00b7 Z3' }), k = count({ constant: true });
+  return { motorised: m.inBox, constant: k.inBox, green: m.green,
+           box: [x0, y0, x1, y1] };
 });
+say('nothing green is left on the damper', actuatorPixels.green === 0,
+  actuatorPixels.green + ' green px');
 say('a motorised zone draws an actuator', actuatorPixels.motorised > 20,
   actuatorPixels.motorised + ' actuator px');
 say('a constant zone draws the same body with NO actuator',

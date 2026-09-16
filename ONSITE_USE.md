@@ -125,6 +125,33 @@ cannot visually disagree about what is being installed. Sizes are colour-coded
 dashed grey) AND labelled, because colour must never be the only cue on a
 greyscale print.
 
+**The BTO is a manifold, and the count is on the necks.** A branch take-off is
+a shallow box with a wide collar face, so the symbol is too: the depth comes
+from the inlet size, the face from how many collars have to fit on it, and the
+body is never square at any rotation — a square with a second rectangle drawn
+inside it is the plan symbol for an electrical junction box, and that is exactly
+what the earlier version kept being read as. Each neck is drawn at the width of
+the duct that plugs into it (ø250 6.0, ø300 7.2, ø350 8.4 against a ø400 inlet
+at 9.0, or the real drawn widths where the plan's calibration is known), with a
+heavy bead at the open face and a crimp line behind it — the collar, seen from
+above. Nothing is drawn inside the body: no arrow, no route point, no dot.
+
+**A run is stroked, not plotted.** Flex is drawn with a round cap on a casing
+three points wider than the line, so a run that ENDS on a collar face is drawn
+half its own width past it. At plan scale the ø400 main swelled over the spigot
+and the body behind it and there was nothing left to count, so each run is
+backed off by that half-width and the VISIBLE end of the duct lands on the
+collar face.
+
+**The zone damper is a sleeve in the line of the duct.** Twice as long as the
+duct is wide — at 1.55x it was still stubby enough to read as one diagonal
+lozenge — with a boundary line standing proud at each end, one blade on its
+spindle set at a fixed lean rather than corner to corner, and the actuator
+bolted flat to the casing wall with no gap at all. The shaft runs INSIDE the
+casing from the blade to that wall, which is where the shaft of a real damper
+is. There is no green chip and no `M`: the zone number goes outside on a leader,
+as `ZM-1 · Z3`.
+
 **Text stays off the ductwork, and on its own side of the system.** A duct is a
 line, not a rectangle: the bounding box of one diagonal run covers a quarter of
 the house, so runs were never booked against label placement at all and
@@ -243,6 +270,19 @@ pale landscaping strip down one edge and the ghost of a title-block border down
 the other. It now groups inked lines into runs, joins runs separated by less
 than a clear gutter, and keeps the heaviest: the drawing is the big block of
 ink, and anything across a white gutter from it is the sheet's own furniture.
+
+**The equipment inset cuts no label in half.** A fixed pad around the assembly
+cannot know where a label ended up, because the placer puts it wherever there
+was room. So the window starts at the pad and then GROWS to swallow whole any
+label it has caught part of — half a label is worse than none, since
+`· 400-250-250-250` with the name cut off is a spec nobody can match to a
+fitting.
+
+**No page is thrown away.** A hard break before each major section meant the
+room loads ran a few rows onto a fresh page and the break after it discarded the
+rest. A section now takes its own page only when what is left of this one cannot
+hold its heading and the first few rows. A table row is never split across
+pages: the whole row moves.
 
 **A heading wraps; it does not get cut off.** Clipped to its column the
 ductwork schedule read `DIAMETE...`, `VELOCIT...` and `PRESSUR...` — headings

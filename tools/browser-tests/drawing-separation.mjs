@@ -440,6 +440,60 @@ say('and the gap cut in the return is the full width of that hop',
   hops.every(h => h.gap && Math.abs(h.gap - h.r * 2) < 0.01),
   hops.map(h => 'gap=' + (h.gap ? h.gap.toFixed(1) : '-')).join(' '));
 
+// ── 11. The equipment inset does not cut a label in half ───────────────────
+//
+// Nick: "The equipment inset currently clips the Kitchen outlet label on the
+// left, the Lounge label on the right, parts of BTO-A and BTO-C1 labels ... No
+// label may be cut by the image boundary." A fixed pad around the assembly
+// cannot know where a label ended up, so the window grows to swallow whole
+// anything it has caught part of. This measures the window it settled on.
+STEP('[11] No label is cut by the edge of the equipment inset');
+const insetFit = await p.evaluate(() => {
+  const v = window.nacDesigner.viewer;
+  const before = (window.nacDesigner.viewer.state.drawn?.boxes || []).length;
+  const url = v.equipmentInset();
+  if (!url) return null;
+  const st = window.nacDesigner.viewer.state;
+  const b = st.drawn?.equipment?.bounds;
+  const labels = (st.drawn?.boxes || []).filter(k => !k.symbol);
+  return { ok: !!url, before, labels: labels.length, bounds: !!b,
+           win: st.__lastInsetWindow || null };
+});
+say('the inset was captured', !!insetFit && insetFit.ok);
+// The window is re-derived here from the same inputs, so the assertion is on
+// the rule rather than on a number copied out of it.
+const clipped = await p.evaluate(() => {
+  const st = window.nacDesigner.viewer.state;
+  const b = st.drawn?.equipment?.bounds;
+  if (!b) return null;
+  const pad = 150, M2 = 4;
+  let box = { x0: b.cx - b.w / 2 - pad, y0: b.cy - b.h / 2 - pad,
+              x1: b.cx + b.w / 2 + pad, y1: b.cy + b.h / 2 + pad };
+  const labels = (st.labelBoxes || []).filter(l => l.kind !== 'schedule')
+    .map(l => ({ x0: l.x, y0: l.y, x1: l.x + l.w, y1: l.y + l.h }))
+    .concat((st.drawn?.boxes || []).filter(k => !k.symbol)
+      .map(k => ({ x0: k.x0, y0: k.y0, x1: k.x1, y1: k.y1 })));
+  for (let pass = 0; pass < 3; pass++) {
+    let grew = false;
+    for (const l of labels) {
+      if (!(l.x0 < box.x1 && box.x0 < l.x1 && l.y0 < box.y1 && box.y0 < l.y1)) continue;
+      if (l.x0 - M2 < box.x0) { box.x0 = l.x0 - M2; grew = true; }
+      if (l.y0 - M2 < box.y0) { box.y0 = l.y0 - M2; grew = true; }
+      if (l.x1 + M2 > box.x1) { box.x1 = l.x1 + M2; grew = true; }
+      if (l.y1 + M2 > box.y1) { box.y1 = l.y1 + M2; grew = true; }
+    }
+    if (!grew) break;
+  }
+  // Any label that the window touches but does not contain is a cut label.
+  const cut = labels.filter(l =>
+    l.x0 < box.x1 && box.x0 < l.x1 && l.y0 < box.y1 && box.y0 < l.y1 &&
+    (l.x0 < box.x0 || l.y0 < box.y0 || l.x1 > box.x1 || l.y1 > box.y1));
+  return { cut: cut.length, inside: labels.length, box };
+});
+say('every label the inset touches, it contains whole',
+  clipped && clipped.cut === 0,
+  clipped ? clipped.cut + ' cut of ' + clipped.inside + ' label(s) on the sheet' : 'no bounds');
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'}`);
 await b.close();
 process.exit(failures ? 1 : 0);

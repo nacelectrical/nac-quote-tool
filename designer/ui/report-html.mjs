@@ -53,6 +53,10 @@ function block(blk) {
   switch (blk.t) {
     case 'h2':        return '<h2>' + esc(blk.text) + '</h2>';
     case 'pagebreak': return '<div class="pagebreak"></div>';
+    // A print page has no page counter to ask, so a soft break is simply
+    // nothing: the browser already flows the section onto the next sheet when
+    // it will not fit.
+    case 'softbreak': return '';
     case 'note':      return '<p class="note">' + esc(blk.text) + '</p>';
     case 'flag':      return '<div class="warnbox' + (blk.level === 'crit' ? ' crit' : '') + '"><strong>' +
                              esc(blk.text) + '</strong></div>';
