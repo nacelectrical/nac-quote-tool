@@ -26,6 +26,7 @@ import { isConditionedRoom } from './classify.mjs';
 import { mainSupplyCount, ROUTING, DRAWING, BTO as BTO_RULES } from './nac-standard.mjs';
 import { round } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
+import { isReturnSection } from './bto.mjs';
 
 /** Stamped on every auto-generated route. Never remove it from a route. */
 export const AUTO_ROUTE_NOTICE = ROUTING.notice;
@@ -1076,7 +1077,10 @@ export function placeZoneDampers(network, { zoneOverrides = {}, zones = null } =
   // design that nobody drew.
   const alwaysOpen = new Set((zones?.zones || [])
     .filter(z => z.alwaysOpen).map(z => z.name));
-  const sections = network?.sections || [];
+  // SUPPLY ONLY. A zone damper on the return does not balance a room — it
+  // starves the fan coil — so the return side is dropped here rather than being
+  // relied on to have no zone set on it.
+  const sections = (network?.sections || []).filter(s => !isReturnSection(s));
   const byId = new Map(sections.map(s => [s.id, s]));
   const kids = new Map();
   for (const s of sections) {

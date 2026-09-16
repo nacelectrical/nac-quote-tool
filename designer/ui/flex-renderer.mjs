@@ -430,6 +430,12 @@ export function drawFlexDesign(ctx, view) {
   // ── 3. Fittings ─────────────────────────────────────────────────────────
   for (const m of (markers || [])) {
     if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
+    // A TAKE-OFF SYMBOL IS SUPPLY-ONLY. Two return ducts meeting at the fan coil
+    // look, geometrically, exactly like a manifold, and a marker that drifted
+    // onto the return path used to get a BTO symbol drawn over the grille. It is
+    // not a take-off: air goes the other way, there is no spigot and nobody
+    // orders one. Anything flagged as return is skipped here whatever its type.
+    if (m.airSide === 'return' || m.isReturn || m.role === 'return') continue;
     drawTakeOff(ctx, toScreen(m), { angle: (m.angle ?? 0) + Math.PI / 2 });
   }
   for (const o of (outlets || [])) drawOutlet(ctx, toScreen(o), { colour: '#3b4358' });
@@ -438,6 +444,9 @@ export function drawFlexDesign(ctx, view) {
   // that zone and nothing else — a motor somebody buys, fits and wires, so it
   // belongs on the drawing at the place they fit it.
   for (const d of (dampers || [])) {
+    // NEVER ON A RETURN. A zone damper on the return does not balance a room,
+    // it starves the fan coil, and one drawn there would be one fitted there.
+    if (d.airSide === 'return' || d.isReturn || d.role === 'return') continue;
     drawDamper(ctx, toScreen(d), d.angle ?? 0,
       { colour: d.colour || '#1d7a48', label: d.zoneLabel || d.label || null });
   }

@@ -77,7 +77,19 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     fanCoilStatus: null,            // 'assumed' | 'estimator' | 'approved'
     fanCoilApprovedBy: null,
     placement: null,                // assessPlacement() result — preview vs final
-    btos: [],                       // physical BTO fittings
+    /** The return side as its own typed entities — never supply, never a BTO. */
+  returnComponents: null,
+  /** Proof that the two sides did not get mixed up. */
+  returnSeparation: null,
+  /**
+   * FIVE COUNTS THAT ARE NOT THE SAME COUNT, and four more on the return.
+   * Supply spigots, main ducts, BTO fittings, BTO ports and outlets are
+   * different quantities that had been drifting into one another; return
+   * grilles, ducts and boxes are a separate system again, and returnBtos is
+   * carried explicitly because it is always zero.
+   */
+  componentCounts: null,
+  btos: [],                       // physical BTO fittings
     btoValidation: null,
 
     rooms: [],                      // DesignRoom[] (each carries a RoomMeasurement)

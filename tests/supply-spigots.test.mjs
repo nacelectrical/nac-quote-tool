@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recommendedSupplySpigotCount, validateSupplySpigots, checkPlenumCapacity,
          spigotVelocity, SPIGOT_RULE } from '../designer/engines/supply-spigots.mjs';
-import { formInstallerAreas, planAreaFittings, splitInTwo } from '../designer/engines/area-router.mjs';
-import { MAX_PORTS_PER_BTO } from '../designer/engines/bto.mjs';
+import { formInstallerAreas, planAreaFittings, splitInTwo, geometricMedian,
+         MIN_FITTING_TO_OUTLET_PX } from '../designer/engines/area-router.mjs';
 
 const UNIT = { model: 'FDYAN160AV1', supplyFlangeText: '245 x 1152', availableStaticPa: 160 };
 
@@ -36,15 +36,54 @@ test('past twelve outlets the table stops and a calculation starts', () => {
   assert.equal(r.requiresFreshCalculation, true);
   assert.equal(r.fromTable, false);
   assert.equal(r.basis, 'calculated');
-  assert.ok(r.byAirflow >= 0 && r.byFittings > 0);
+  assert.ok(r.byAirflow > 0, 'airflow did not contribute to the calculation');
   assert.match(r.reason, /past the 12-outlet table/);
 });
 
-test('a big thirteen-outlet job is not left sitting on three', () => {
-  // Twenty outlets cannot be reached by three chains of three-port fittings.
-  const r = recommendedSupplySpigotCount(20, { systemAirflowLs: 1600 });
-  assert.ok(r.count > 3, 'twenty outlets still returned ' + r.count);
-  assert.equal(r.byFittings, Math.ceil(20 / ((MAX_PORTS_PER_BTO - 1) + MAX_PORTS_PER_BTO)));
+test('past the table, a thin calculation says it is thin instead of bluffing', () => {
+  // Thirty outlets on 900 L/s comes back as two spigots on airflow alone. That
+  // is arithmetically true and practically useless, so it is flagged.
+  const bare = recommendedSupplySpigotCount(30, { systemAirflowLs: 900 });
+  assert.equal(bare.provisional, true);
+  assert.ok(bare.inputsMissing.includes('installer area count'));
+  assert.match(bare.reason, /PROVISIONAL/);
+  // Given the real inputs it stops being provisional and answers properly.
+  const full = recommendedSupplySpigotCount(30, { systemAirflowLs: 900,
+    installerAreaCount: 5, maxCollarsPerBody: 6 });
+  assert.equal(full.provisional, false);
+  assert.equal(full.count, 5);
+  assert.equal(full.byCollarSpace, 5);
+  assert.deepEqual(full.inputsMissing, []);
+});
+
+test('a big job is raised by real constraints, not by a fitting limit', () => {
+  // 1600 L/s DOES fit two ø400 inside the velocity band, so airflow alone does
+  // not raise this — and the old chain-reach term that used to is gone. What
+  // raises it is the installer areas the job actually has.
+  const airflowOnly = recommendedSupplySpigotCount(20, { systemAirflowLs: 1600 });
+  assert.equal(airflowOnly.byAirflow, 2);
+  assert.equal(airflowOnly.provisional, true, 'a bare figure must not look authoritative');
+
+  const withAreas = recommendedSupplySpigotCount(20, { systemAirflowLs: 1600,
+    installerAreaCount: 4, maxCollarsPerBody: 6 });
+  assert.equal(withAreas.count, 4, 'twenty outlets over four areas is four mains');
+  assert.equal(withAreas.byAreas, 4);
+});
+
+test('airflow past what the chosen size carries still raises the count on its own', () => {
+  const r = recommendedSupplySpigotCount(20, { systemAirflowLs: 3200 });
+  assert.ok(r.byAirflow >= 4, '3200 L/s cannot go down fewer than four ø400');
+  assert.ok(r.count >= 4);
+});
+
+test('fitting port count never drives the spigot count', () => {
+  // This used to divide the outlets by the reach of a chain of three-port
+  // fittings, which only made sense while three was a rule and chaining was the
+  // way past it. Neither is true, so it contributes nothing.
+  const r = recommendedSupplySpigotCount(30, { systemAirflowLs: 900 });
+  assert.equal(r.byFittings, 0);
+  assert.doesNotMatch(r.reason, /3-port|three-port|chain/);
+  assert.match(r.reason, /one BTO serves its area/);
 });
 
 test('a high-airflow job raises the count even with eight outlets', () => {
@@ -179,19 +218,60 @@ test('a heavy open plan is split rather than left on one main', () => {
   assert.ok(Math.max(...flows) < 600, 'one main still carries the whole open plan');
 });
 
-test('the fitting plan never exceeds the port limit and never doubles back', () => {
+test('an area gets ONE fitting with every outlet direct off it', () => {
   const plenum = { x: 400, y: 600 };
   const outlets = [pt(200, 600, 60), pt(260, 520, 60), pt(210, 410, 113), pt(400, 430, 67)];
   const plan = planAreaFittings(outlets, plenum);
-  // primary keeps at most maxPorts - 1 when it has to carry on
-  assert.ok(plan.direct.length <= MAX_PORTS_PER_BTO - 1 || !plan.onward);
-  assert.ok(plan.onward, 'four outlets should need a second fitting');
-  // and the primary serves the half NEAREST the plenum, so the spur runs away
-  // from the unit rather than back past it
-  const dPrimary = Math.hypot(plan.at.x - plenum.x, plan.at.y - plenum.y);
-  const dSecondary = Math.hypot(plan.onward.at.x - plenum.x, plan.onward.at.y - plenum.y);
-  assert.ok(dSecondary > dPrimary,
-    'the secondary fitting is closer to the unit than the primary — that is backtracking');
+  assert.equal(plan.onward, null, 'a secondary fitting was planned');
+  assert.equal(plan.direct.length, 4, 'four outlets must all hang off the one body');
+});
+
+test('the median beats the centroid — one far outlet does not drag the fitting', () => {
+  // Three outlets bunched, one a long way off. The centroid is pulled a third
+  // of the way to the outlier; the geometric median stays with the bunch, and
+  // the summed distance it minimises IS the total flex length.
+  const pts = [{ x: 200, y: 600 }, { x: 210, y: 610 }, { x: 205, y: 590 }, { x: 900, y: 600 }];
+  const med = geometricMedian(pts);
+  const centroid = { x: pts.reduce((n, p) => n + p.x, 0) / pts.length,
+                     y: pts.reduce((n, p) => n + p.y, 0) / pts.length };
+  const total = (at) => pts.reduce((n, p) => n + Math.hypot(at.x - p.x, at.y - p.y), 0);
+  assert.ok(total(med) < total(centroid), 'the median is no shorter than the centroid');
+  assert.ok(Math.hypot(med.x - 205, med.y - 600) < 30, 'the median chased the outlier');
+  assert.ok(Math.hypot(centroid.x - 205, centroid.y - 600) > 100,
+    'the centroid did not move, so this case proves nothing');
+});
+
+test('the ø400 main is what the weighting keeps short', () => {
+  const plenum = { x: 400, y: 600 };
+  const outlets = [pt(150, 1000, 45), pt(400, 1100, 45), pt(650, 1000, 45)];
+  const mainLen = (mm) => {
+    const at = planAreaFittings(outlets, plenum, { mainDiameterMm: mm }).at;
+    return Math.hypot(at.x - plenum.x, at.y - plenum.y);
+  };
+  // The bigger the main, the more it is worth walking the fitting back toward
+  // the plenum and spending the distance on the small finals instead.
+  assert.ok(mainLen(400) < mainLen(300), 'a ø400 main did not pull the fitting in');
+  assert.ok(mainLen(300) < mainLen(250), 'a ø300 main did not pull the fitting in');
+});
+
+test('a fitting never lands on top of an outlet and emit a zero-length run', () => {
+  const plenum = { x: 400, y: 600 };
+  // A single outlet plus the plenum: the median wants to sit on one of them.
+  const outlets = [pt(300, 700, 60), pt(300, 700, 60), pt(300, 700, 60)];
+  const plan = planAreaFittings(outlets, plenum);
+  for (const o of plan.direct) {
+    assert.ok(Math.hypot(plan.at.x - o.x, plan.at.y - o.y) >= MIN_FITTING_TO_OUTLET_PX - 0.5,
+      'the fitting sits on an outlet, so that run has no length');
+  }
+});
+
+test('the fitting never lands outside the conditioned footprint', () => {
+  const plenum = { x: 400, y: 600 };
+  const outlets = [pt(120, 200, 60), pt(900, 1000, 60)];
+  const footprint = { x: 100, y: 150, w: 850, h: 900 };
+  const plan = planAreaFittings(outlets, plenum, { footprint });
+  assert.ok(plan.at.x >= footprint.x && plan.at.x <= footprint.x + footprint.w);
+  assert.ok(plan.at.y >= footprint.y && plan.at.y <= footprint.y + footprint.h);
 });
 
 test('splitInTwo splits on the line the outlets actually spread along', () => {

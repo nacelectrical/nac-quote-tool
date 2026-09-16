@@ -191,12 +191,26 @@ export function buildBillOfMaterials(design, opts = {}) {
   // derived BTO entities — one line per inlet size and port count, because a
   // 400 three-port body and a 300 two-port body are different things to order.
   for (const row of btoBomLines(design.btos || [])) {
-    items.push({ ...line('bto_fitting', row.quantity, ctx), category: 'ductwork',
+    const body = (design.btos || []).find(b => b.id === row.fittings[0])?.body || null;
+    items.push({ ...line('bto_fitting', row.quantity, ctx),
+      // SUPPLY AIR, EXPLICITLY. A return box is priced on its own lines under
+      // the return category and must never total into these.
+      category: 'ductwork', airSide: 'supply',
       diameterMm: row.inletDiameterMm,
       label: row.label + (row.portCount === 1 ? '' : 's'),
       portCount: row.portCount,
       fittings: row.fittings,
-      note: 'Multi-spigot branch take-off. Not a saddle collar and not one per outlet.' });
+      // What the sheet metal shop is actually being asked for.
+      bodyText: body?.bodyText || null,
+      collarDiametersMm: body?.collarDiametersMm || null,
+      requiredCollarRunMm: body?.requiredCollarRunMm ?? null,
+      fabricationDescription: body?.bomDescription || null,
+      dimensionsVerified: body ? body.verified : null,
+      note: 'Supply-air multi-spigot branch take-off. Not a saddle collar, not one ' +
+            'per outlet, and never a return-air component.' +
+            (body && !body.verified
+              ? ' Body size derived from the collars this design chose — confirm ' +
+                'against the fabricator\u2019s standard bodies before ordering.' : '') });
   }
 
   const totalDuctM = design.network?.totalDuctLengthM || 0;
@@ -232,7 +246,7 @@ export function buildBillOfMaterials(design, opts = {}) {
     const sizeText = spec ? spec.grilleWidthMm + ' x ' + spec.grilleHeightMm + ' mm' : null;
     const grille = line('return_grille', design.returnDesign.returnCount, ctx);
     const sameAsRate = !sizeText || grille.label.includes(sizeText.replace(' mm', ''));
-    items.push({ ...grille, category: 'return',
+    items.push({ ...grille, category: 'return', airSide: 'return',
       designedSize: sizeText,
       label: sizeText ? 'Return air grille and filter ' + sizeText : grille.label,
       note: sameAsRate ? undefined
@@ -242,9 +256,23 @@ export function buildBillOfMaterials(design, opts = {}) {
     // MMEM supply the grille and filter as one item. Only add a separate filter
     // line if the grille rate in use does not already cover it.
     if (!resolveCost('return_grille', ctx).includesFilter) {
-      items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx), category: 'return' });
+      items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx),
+        category: 'return', airSide: 'return' });
     }
-    items.push({ ...line('return_plenum', design.returnDesign.returnCount, ctx), category: 'return' });
+    // THE FAN-COIL RETURN BOX — ONE, not one per grille.
+    //
+    // This bought a "return plenum" per grille, which described a fitting on
+    // each return path. There isn't one. Both return ducts land on the SAME box
+    // on the return side of the fan coil, so that is one item, and the grille
+    // count is not the box count. Nick: "Return-air plenum/box: 1."
+    const rc = design.returnComponents;
+    items.push({ ...line('return_plenum', 1, ctx), category: 'return', airSide: 'return',
+      label: 'Fan-coil return-air plenum / box — ' +
+             (rc?.plenum?.inletCount ?? design.returnDesign.returnCount) + ' × ø' +
+             (rc?.plenum?.inletDiameterMm ?? design.returnDesign.duct?.diameterMm ?? '?') +
+             ' inlet',
+      note: 'One box on the return side of the fan coil, taking every return duct. ' +
+            'Not a BTO and not counted with the supply fittings.' });
     // The return duct is counted with the supply flex above, so it is not
     // added again here.
   }

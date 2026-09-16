@@ -6,6 +6,7 @@ import { buildApproved, APPROVED_OUTLETS, FAN_COIL, RETURN_GRILLES }
 import { PLACEMENT, OUTLET_SOURCE } from '../designer/engines/placement.mjs';
 import { selectDiameter } from '../designer/engines/ducts.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
+import { BTO_MODEL } from '../designer/engines/bto.mjs';
 
 const D = await buildApproved();
 const out = D.out;
@@ -286,18 +287,145 @@ test('no approved main is reduced before its primary fitting', () => {
   }
 });
 
-test('exactly five BTO fittings for this fixture', () => {
-  assert.equal(out.btos.length, 5);
-  assert.ok(out.btos.every(b => b.ports.length <= 3));
+// The five-fitting shape this used to assert was the old three-port ceiling
+// showing through: three ports forced BTO-1 to chain to BTO-2 and BTO-4 to
+// BTO-5 to reach the open plan and the bedroom wing. Nick: three was never a
+// universal maximum. One fitting per main, ports as the area needs.
+test('exactly three BTO fittings — one per main, none chained', () => {
+  assert.equal(out.btos.length, 3);
+  assert.equal(out.btoValidation.chained, false);
+  assert.equal(out.btoValidation.chainPorts, 0);
+  for (const b of out.btos) {
+    assert.ok(b.ports.every(p => !p.feedsBtoId), b.id + ' feeds another fitting');
+    assert.ok(b.ports.every(p => p.servesOutletId),
+      b.id + ' has a port that is not an outlet duct');
+  }
+});
+
+test('each direct main terminates at exactly one BTO', () => {
+  const mains = out.network.sections.filter(s => !s.parentId && s.role === 'main');
+  assert.equal(mains.length, 3);
+  for (const m of mains) {
+    const fittings = out.btos.filter(b => b.fedBy === m.id);
+    assert.equal(fittings.length, 1, m.id + ' has ' + fittings.length + ' fittings');
+  }
+  assert.equal(new Set(out.btos.map(b => b.fedBy)).size, 3);
+});
+
+test('BTO port counts are 4, 2 and 5 — the outlets each area actually has', () => {
+  const byMain = Object.fromEntries(out.btos.map(b => [b.fedBy, b]));
+  assert.equal(byMain.main_A.ports.length, 4);
+  assert.equal(byMain.main_B.ports.length, 2);
+  assert.equal(byMain.main_C.ports.length, 5);
+  assert.deepEqual(out.btoValidation.portCounts.slice().sort(), [2, 4, 5]);
+  assert.equal(out.btoValidation.outletPorts, 11);
+});
+
+test('the three BTO totals are 301, 265 and 233 and reconcile to 799', () => {
+  const byMain = Object.fromEntries(out.btos.map(b => [b.fedBy, b]));
+  const sum = (b) => b.ports.reduce((n, p) => n + p.airflowLs, 0);
+  assert.equal(byMain.main_A.inletAirflowLs, 301);
+  assert.equal(byMain.main_B.inletAirflowLs, 265);
+  assert.equal(byMain.main_C.inletAirflowLs, 233);
+  assert.equal(sum(byMain.main_A), 301);
+  assert.equal(sum(byMain.main_B), 265);
+  assert.equal(sum(byMain.main_C), 233);
+  assert.equal(out.btos.reduce((n, b) => n + sum(b), 0), 799);
+});
+
+test('no "main onward" port and no spur segment survives anywhere', () => {
+  for (const b of out.btos) {
+    for (const p of b.ports) {
+      assert.ok(!/onward/i.test(String(p.servesLabel || '')),
+        b.id + ' still carries an onward port: ' + p.servesLabel);
+    }
+  }
+  const spurs = out.network.sections.filter(s =>
+    /^spur_/.test(s.id) || s.role === 'branch' || /onward/i.test(String(s.destination || '')));
+  assert.deepEqual(spurs.map(s => s.id), [],
+    'the router emitted onward/spur ducts: ' + spurs.map(s => s.id).join(', '));
+});
+
+test('the removed three-port rule does not creep back and rebuild the chains', () => {
+  // Guards the actual regression: if anything reintroduces a cap of three,
+  // main_A (4 collars) and main_C (5 collars) are the fittings it would split.
+  assert.equal(BTO_MODEL.DEFAULT_PORT_CAPACITY, null,
+    'a universal BTO port maximum has come back');
+  assert.ok(out.btos.some(b => b.ports.length > 3),
+    'no fitting exceeds three ports — the old ceiling may be back in force');
+  assert.equal(out.supplySpigots.blockers.filter(b =>
+    b.code === 'BTO_OVER_PORT_LIMIT' || b.code === 'BTO_CHAINED_TO_BTO').length, 0);
 });
 
 test('the header, the schedule and the order agree on the counts', () => {
+  const c = out.componentCounts;
   const mains = out.network.sections.filter(s => !s.parentId && s.role !== 'return').length;
   assert.equal(mains, out.supplySpigots.count);
+  assert.equal(mains, c.supplyMains);
   assert.equal(mains, out.network.mainSupplyCount ?? mains);
   const ordered = out.bom.items.filter(i => i.key === 'bto_fitting')
     .reduce((n, i) => n + i.quantity, 0);
   assert.equal(ordered, out.btos.length, 'the order and the drawing disagree on fittings');
+  assert.equal(ordered, c.supplyBtos);
+  // Three mains and three BTOs, stated the same way in all three places.
+  assert.equal(c.supplyMains, 3);
+  assert.equal(c.supplyBtos, 3);
+});
+
+test('spigots, mains, fittings, ports and outlets are five separate counts', () => {
+  // Nick: "They must not be treated as interchangeable." On this job three of
+  // them happen to be 3 and two of them are 11, which is exactly the situation
+  // in which they get quietly conflated — so each is asserted from its own source.
+  const c = out.componentCounts;
+  assert.equal(c.supplySpigots, 3);
+  assert.equal(c.supplyMains, 3);
+  assert.equal(c.supplyBtos, 3);
+  assert.deepEqual(c.supplyBtoPorts, [4, 2, 5]);
+  assert.equal(c.supplyOutlets, 11);
+  assert.equal(c.returnGrilles, 2);
+  assert.equal(c.returnDucts, 2);
+  assert.equal(c.returnPlenums, 1);
+  assert.equal(c.returnBtos, 0);
+  // Each from its own source, not from one another.
+  assert.equal(c.supplySpigots, out.supplySpigots.count);
+  assert.equal(c.supplyMains,
+    out.network.sections.filter(s => !s.parentId && s.role === 'main').length);
+  assert.equal(c.supplyBtos, out.btos.length);
+  assert.equal(c.supplyOutlets,
+    out.network.sections.filter(s => s.role === 'final').length);
+  assert.equal(c.returnGrilles, out.returnDesign.returnCount);
+});
+
+test('every BTO records what the sheet metal shop has to make', () => {
+  for (const b of out.btos) {
+    const body = b.body;
+    assert.ok(body, b.id + ' has no fabrication record');
+    assert.equal(body.inletDiameterMm, b.inletDiameterMm);
+    assert.equal(body.inletAirflowLs, b.inletAirflowLs);
+    assert.equal(body.portCount, b.ports.length);
+    assert.equal(body.collarDiametersMm.length, b.ports.length);
+    assert.equal(body.collarAirflowsLs.length, b.ports.length);
+    assert.equal(body.totalOutletAirflowLs, b.inletAirflowLs);
+    assert.ok(body.bodyLengthMm > 0 && body.bodyDepthMm > 0);
+    assert.ok(body.availableCollarSpaceMm >= body.requiredCollarRunMm,
+      b.id + ' collars do not fit the body it was given');
+    assert.equal(body.fits, true, JSON.stringify(body.issues));
+    assert.match(body.bomDescription, /BTO distribution box/);
+    // Derived geometry, honestly labelled — not a claim that a part exists.
+    assert.equal(body.verified, false);
+    assert.equal(body.dimensionsSource, 'derived_from_collars');
+  }
+});
+
+test('the order describes the fittings physically, and says the size is derived', () => {
+  const lines = out.bom.items.filter(i => i.key === 'bto_fitting');
+  assert.ok(lines.length > 0);
+  for (const l of lines) {
+    assert.ok(l.bodyText, l.label + ' has no body size on the order');
+    assert.ok(Array.isArray(l.collarDiametersMm) && l.collarDiametersMm.length);
+    assert.equal(l.dimensionsVerified, false);
+    assert.match(l.note, /confirm against the fabricator/i);
+  }
 });
 
 test('the supply spigot validation runs and reconciles', () => {

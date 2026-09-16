@@ -30,14 +30,142 @@
 
 import { BTO as BTO_RULES } from './nac-standard.mjs';
 
-/** How many spigots a fabricated fitting carries before it needs a second one. */
-export const MAX_PORTS_PER_BTO = 3;
+/**
+ * NO UNIVERSAL PORT MAXIMUM.
+ *
+ * This was `MAX_PORTS_PER_BTO = 3`, taken from the Dungannon sheet because the
+ * largest fitting on it had three collars. That was an inference from one
+ * example, not a rule, and it was wrong. Nick: "Dungannon happened to use
+ * fittings with up to three connected outlets; that does not establish three as
+ * a universal maximum."
+ *
+ * The damage it did was not cosmetic. A hard three forced a five-outlet bedroom
+ * wing to be served by BTO feeding BTO, which invented secondary fittings,
+ * "main onward" ports and long serial routes. A BTO now carries as many collars
+ * as its installer area needs; what limits it is whether the metal can be made,
+ * which `btoBodyGeometry` measures and reports for installer review.
+ *
+ * Null means no cap. A job may set one where an installer has a real reason.
+ */
+export const DEFAULT_PORT_CAPACITY = BTO_RULES.portCapacity ?? null;
 
 /** Take-offs closer together than this on the same parent are ONE fitting. */
 export const BTO_MERGE_PX = 26;
 
 const dist = (a, b) => Math.hypot((b.x ?? 0) - (a.x ?? 0), (b.y ?? 0) - (a.y ?? 0));
 const round0 = (n) => Math.round(n || 0);
+
+/**
+ * IS THIS RETURN AIR? If so it can never become, feed, or be counted as a BTO.
+ *
+ * Deliberately generous about how a return identifies itself — role, NAC role,
+ * an explicit flag, or an id that names one — because the cost of missing one is
+ * a return grille drawn with a take-off symbol over it, and the cost of a false
+ * positive is a supply run that simply does not get a fitting.
+ */
+export function isReturnSection(s) {
+  if (!s) return false;
+  if (s.isReturn === true || s.supplyAir === false) return true;
+  if (s.role === 'return' || s.nacRole === 'RETURN') return true;
+  if (typeof s.airSide === 'string' && s.airSide.toLowerCase() === 'return') return true;
+  return /^return(_|$)/.test(String(s.id || ''));
+}
+
+/**
+ * THE PHYSICAL FITTING — what the sheet metal shop has to make.
+ *
+ * A distribution box is a rectangular plenum: the main lands on one end, and
+ * the outlet collars come off the two long sides and the far end. So the thing
+ * that actually limits collar count is not a number someone chose, it is
+ * whether the collars and their clamp gaps fit along the faces available, and
+ * whether each collar fits within the body depth.
+ *
+ * WHAT IS MEASURED HERE AND WHAT IS NOT. The arithmetic below is geometry from
+ * the collar sizes this design chose — it is not a fabricator's catalogue. NAC
+ * has not given me a table of standard bodies, so none is invented: the result
+ * carries `dimensionsSource: 'derived_from_collars'` and `verified: false`, and
+ * says what size the box needs to be rather than claiming a part exists. Set
+ * real bodies in settings and this reports against them instead.
+ */
+export function btoBodyGeometry(bto, opts = {}) {
+  const gap = opts.collarGapMm ?? BTO_RULES.collarGapMm ?? 60;
+  const wall = opts.wallAllowanceMm ?? BTO_RULES.bodyWallAllowanceMm ?? 25;
+  const faces = Math.max(1, opts.collarFaces ?? BTO_RULES.collarFaces ?? 3);
+  const collars = bto.ports.map(p => p.diameterMm).filter(Boolean);
+  const inlet = bto.inletDiameterMm || 0;
+
+  // Depth has to swallow the inlet and the biggest collar, plus the metal.
+  // A CONFIGURED BODY IS CHECKED AGAINST; A DERIVED ONE IS ONLY DESCRIBED.
+  // Deriving the depth from the collars and then testing the collars against it
+  // is circular — it can never fail, so it would be a check in name only. Where
+  // a job configures a real body size, that size is what the collars have to fit.
+  const maxCollar = collars.length ? Math.max(...collars) : 0;
+  const derivedDepthMm = Math.max(inlet, maxCollar) + wall * 2;
+  const configuredDepthMm = opts.bodyDepthMm ?? null;
+  const bodyDepthMm = configuredDepthMm ?? derivedDepthMm;
+
+  // Every collar needs its own diameter plus a clamp gap along a face.
+  const requiredCollarRunMm = collars.reduce((n, d) => n + d + gap, 0);
+  // Split across the faces that can take collars; the long sides are the body
+  // length, the end is the body depth, so length is what has to grow.
+  const longSides = Math.max(1, faces - 1);
+  const endFaceRunMm = faces > 1 ? bodyDepthMm : 0;
+  const runOnSidesMm = Math.max(0, requiredCollarRunMm - endFaceRunMm);
+  const derivedLengthMm = Math.max(inlet + wall * 2,
+    Math.ceil((runOnSidesMm / longSides) / 10) * 10);
+  const configuredLengthMm = opts.bodyLengthMm ?? null;
+  const bodyLengthMm = configuredLengthMm ?? derivedLengthMm;
+
+  const availableCollarSpaceMm = bodyLengthMm * longSides + endFaceRunMm;
+  const maxBodyLengthMm = opts.maxBodyLengthMm ?? null;
+
+  const issues = [];
+  // A COLLAR BIGGER THAN THE DUCT FEEDING IT. Physically the spigot would be
+  // wider than the inlet it takes air from — you cannot pull 300 out of a 250.
+  if (inlet && maxCollar > inlet) {
+    issues.push({ code: 'COLLAR_LARGER_THAN_INLET',
+      message: 'A ø' + maxCollar + ' collar comes off a ø' + inlet + ' inlet.' });
+  }
+  // Against a body the job actually configured, not one derived from the answer.
+  if (configuredDepthMm && maxCollar > configuredDepthMm) {
+    issues.push({ code: 'COLLAR_EXCEEDS_BODY_DEPTH',
+      message: 'A ø' + maxCollar + ' collar will not fit the configured ' +
+               configuredDepthMm + ' mm body depth.' });
+  }
+  if (configuredLengthMm && requiredCollarRunMm > availableCollarSpaceMm) {
+    issues.push({ code: 'COLLARS_EXCEED_AVAILABLE_SPACE',
+      message: bto.label + ' needs ' + requiredCollarRunMm + ' mm of collar run on a body ' +
+               'offering ' + availableCollarSpaceMm + ' mm.' });
+  }
+  if (maxBodyLengthMm && bodyLengthMm > maxBodyLengthMm) {
+    issues.push({ code: 'BODY_LONGER_THAN_CONFIGURED_MAXIMUM',
+      message: bto.label + ' needs a ' + bodyLengthMm + ' mm body; the configured ' +
+               'maximum is ' + maxBodyLengthMm + ' mm.' });
+  }
+  return {
+    portCount: bto.ports.length,
+    collarDiametersMm: collars,
+    collarAirflowsLs: bto.ports.map(p => p.airflowLs),
+    totalOutletAirflowLs: bto.ports.reduce((n, p) => n + (p.airflowLs || 0), 0),
+    inletDiameterMm: inlet || null,
+    inletAirflowLs: bto.inletAirflowLs,
+    bodyLengthMm, bodyDepthMm,
+    bodyText: bodyLengthMm + ' × ' + bodyDepthMm + ' × ' + bodyDepthMm + ' mm',
+    collarGapMm: gap,
+    collarFaces: faces,
+    requiredCollarRunMm,
+    availableCollarSpaceMm,
+    spareCollarSpaceMm: availableCollarSpaceMm - requiredCollarRunMm,
+    fits: issues.length === 0,
+    issues,
+    dimensionsSource: (configuredLengthMm || configuredDepthMm)
+      ? 'configured' : 'derived_from_collars',
+    verified: !!(configuredLengthMm && configuredDepthMm),
+    bomDescription: 'BTO distribution box ø' + (inlet || '?') + ' inlet — ' +
+      bto.ports.length + ' × collar (' + collars.map(d => 'ø' + d).join(', ') +
+      '), body ' + bodyLengthMm + ' × ' + bodyDepthMm + ' mm'
+  };
+}
 
 /**
  * A single fitting.
@@ -75,8 +203,15 @@ export function makeBto({ id, index, position, inletDiameterMm, inletAirflowLs,
       damper: !!p.damper
     })),
     portCount: ports.length,
+    /** Ports that end at a room outlet — the number an installer counts. */
+    outletPortCount: ports.filter(p => p.servesOutletId).length,
     zone
   };
+}
+
+/** The fitting with its fabrication record attached. */
+export function withBody(bto, opts = {}) {
+  return { ...bto, body: btoBodyGeometry(bto, opts) };
 }
 
 /** Everything downstream of a fitting adds up to what goes into it. */
@@ -102,8 +237,10 @@ export function reconcileBto(bto) {
  * used to be: it has an inlet, it has ports, it does not have more ports than
  * a fabricated body carries, every port goes somewhere, and the air adds up.
  */
-export function validateBtos(btos, { maxPorts = MAX_PORTS_PER_BTO } = {}) {
+export function validateBtos(btos, opts = {}) {
+  const maxPorts = opts.maxPorts ?? DEFAULT_PORT_CAPACITY;
   const failures = [];
+  const warnings = [];
   const ids = new Set(btos.map(b => b.id));
   for (const b of btos) {
     if (!b.inletDiameterMm) {
@@ -113,10 +250,31 @@ export function validateBtos(btos, { maxPorts = MAX_PORTS_PER_BTO } = {}) {
       failures.push({ btoId: b.id, code: 'NO_PORTS',
         message: b.id + ' has no outlet ports — a fitting with nothing on it is not a fitting.' });
     }
-    if (b.ports.length > maxPorts) {
-      failures.push({ btoId: b.id, code: 'TOO_MANY_PORTS',
-        message: b.id + ' has ' + b.ports.length + ' ports; a fabricated BTO carries at most ' +
-                 maxPorts + '. Chain a second fitting instead.' });
+    // A PORT COUNT IS NOT A FAILURE. It used to be: more than three ports failed
+    // validation, which is what drove the router to chain fittings. A cap now
+    // only exists if a job set one, and even then it is a fabrication matter for
+    // the installer to look at, not a reason to invent a second fitting.
+    if (maxPorts && b.ports.length > maxPorts) {
+      warnings.push({ btoId: b.id, code: 'PORT_COUNT_ABOVE_CONFIGURED_CAPACITY',
+        message: b.id + ' has ' + b.ports.length + ' ports against a configured capacity of ' +
+                 maxPorts + '. Installer review required — do NOT chain a second fitting.' });
+    }
+    const body = b.body || btoBodyGeometry(b, opts);
+    if (!body.fits) {
+      for (const issue of body.issues) {
+        warnings.push({ btoId: b.id, code: 'BTO_FABRICATION_FIT', detail: issue.code,
+          message: b.id + ': ' + issue.message + ' Installer review required.' });
+      }
+    }
+    // A BTO feeding another BTO is not illegal metal, but on a design that asked
+    // for one fitting per main it means the router chained where it should not
+    // have, so it is reported rather than left to be noticed in a drawing.
+    for (const p of b.ports) {
+      if (p.feedsBtoId) {
+        warnings.push({ btoId: b.id, code: 'BTO_FEEDS_BTO',
+          message: b.id + ' port ' + p.index + ' feeds ' + p.feedsBtoId +
+                   ' rather than an outlet — a chained fitting.' });
+      }
     }
     for (const p of b.ports) {
       if (!p.servesOutletId && !p.feedsBtoId && !p.feedsSectionId) {
@@ -140,13 +298,19 @@ export function validateBtos(btos, { maxPorts = MAX_PORTS_PER_BTO } = {}) {
                  r.downstreamSumLs + ' L/s out.' });
     }
   }
+  const chainPorts = btos.reduce((n, b) => n + b.ports.filter(p => p.feedsBtoId).length, 0);
   return {
     ok: failures.length === 0,
     failures,
+    warnings,
     count: btos.length,
     maxPortsUsed: btos.length ? Math.max(...btos.map(b => b.ports.length)) : 0,
+    portCounts: btos.map(b => b.ports.length),
     outletPorts: btos.reduce((n, b) => n + b.ports.filter(p => p.servesOutletId).length, 0),
-    chainPorts: btos.reduce((n, b) => n + b.ports.filter(p => p.feedsBtoId).length, 0),
+    chainPorts,
+    /** The shape Nick asked for: every fitting hangs off its own main. */
+    chained: chainPorts > 0,
+    bodies: btos.map(b => b.body || btoBodyGeometry(b, opts)),
     reconciliations: btos.map(reconcileBto)
   };
 }
@@ -159,14 +323,23 @@ export function validateBtos(btos, { maxPorts = MAX_PORTS_PER_BTO } = {}) {
  * PLACE, that is one manifold, not two saddles. A run that leaves a parent on
  * its own is a plain take-off collar and gets no fitting.
  *
- * Where a cluster would need more spigots than a body carries, the extra runs
- * are CHAINED onto a second fitting rather than crammed onto the first — which
- * is how Dungannon reaches its far bedrooms.
+ * A CLUSTER IS ONE FITTING, HOWEVER MANY RUNS LEAVE IT. This used to split a
+ * cluster across chained bodies once it passed three ports. It no longer does,
+ * at all: the collars go on one body and `btoBodyGeometry` says whether that
+ * body can be made. Nick: "Do not silently create chained BTOs as a workaround."
+ *
+ * SUPPLY ONLY. A BTO is a supply-air distribution fitting and nothing else. A
+ * return grille, a return duct and a return box are not take-offs and must
+ * never be counted, drawn or priced as one, so return sections are dropped here
+ * before anything is derived — the one place that guarantees it for every
+ * caller.
  */
 export function deriveBtos(network, opts = {}) {
-  const maxPorts = opts.maxPorts ?? MAX_PORTS_PER_BTO;
+  const maxPorts = opts.maxPorts ?? DEFAULT_PORT_CAPACITY;
   const mergePx = opts.mergePx ?? BTO_MERGE_PX;
-  const sections = (network?.sections || []).filter(s => s.points?.length >= 2);
+  const sections = (network?.sections || [])
+    .filter(s => s.points?.length >= 2)
+    .filter(s => !isReturnSection(s));
   const byId = new Map(sections.map(s => [s.id, s]));
   const outletRoom = opts.roomLabelById || new Map();
 
@@ -193,51 +366,34 @@ export function deriveBtos(network, opts = {}) {
       // ONE duct leaving a main is a collar, not a manifold. Calling it a
       // fitting is exactly the mistake this module was written to end.
       if (cluster.runs.length < 2) continue;
-      // Split across chained bodies where a single body would not carry it.
-      const groups = [];
-      const runs = cluster.runs.slice();
-      while (runs.length) {
-        const take = runs.length <= maxPorts ? maxPorts : maxPorts - 1;
-        groups.push(runs.splice(0, take));
-      }
-      let fedBy = parentId;
-      let inletMm = parent?.diameterMm ?? null;
-      groups.forEach((group, gi) => {
-        n += 1;
-        const id = 'bto_' + n;
-        const nextId = gi < groups.length - 1 ? 'bto_' + (n + 1) : null;
-        const ports = group.map(r => ({
-          sectionId: r.id,
-          diameterMm: r.diameterMm ?? null,
-          airflowLs: r.airflowLs ?? 0,
-          servesOutletId: r.outletId || null,
-          servesRoomId: r.roomId || null,
-          servesLabel: r.destination || outletRoom.get(r.roomId) || null,
-          // A run that is not a final carries on to whatever is downstream of it;
-          // the second pass below turns that into the fitting it reaches.
-          feedsSectionId: r.outletId ? null : r.id,
-          zone: r.zone || null,
-          damper: !!r.zone
-        }));
-        const carriedOn = nextId
-          ? runs.concat(groups.slice(gi + 1).flat())
-              .reduce((t, r) => t + (r.airflowLs || 0), 0)
-          : 0;
-        if (nextId) {
-          ports.push({ sectionId: null, diameterMm: inletMm, airflowLs: carriedOn,
-                       feedsBtoId: nextId, damper: false });
-        }
-        btos.push(makeBto({
-          id, index: n,
-          position: cluster.at,
-          inletDiameterMm: inletMm,
-          inletAirflowLs: ports.reduce((t, p) => t + (p.airflowLs || 0), 0),
-          fedBy,
-          ports,
-          label: 'BTO-' + n
-        }));
-        fedBy = id;
-      });
+      // ONE CLUSTER, ONE BODY. However many runs leave here, they leave from the
+      // same piece of metal. Splitting them across chained bodies at an
+      // arbitrary port count is what produced the serial routes Nick rejected.
+      n += 1;
+      const id = 'bto_' + n;
+      const inletMm = parent?.diameterMm ?? null;
+      const ports = cluster.runs.map(r => ({
+        sectionId: r.id,
+        diameterMm: r.diameterMm ?? null,
+        airflowLs: r.airflowLs ?? 0,
+        servesOutletId: r.outletId || null,
+        servesRoomId: r.roomId || null,
+        servesLabel: r.destination || outletRoom.get(r.roomId) || null,
+        // A run that is not a final carries on to whatever is downstream of it;
+        // the second pass below turns that into the fitting it reaches.
+        feedsSectionId: r.outletId ? null : r.id,
+        zone: r.zone || null,
+        damper: !!r.zone
+      }));
+      btos.push(makeBto({
+        id, index: n,
+        position: cluster.at,
+        inletDiameterMm: inletMm,
+        inletAirflowLs: ports.reduce((t, p) => t + (p.airflowLs || 0), 0),
+        fedBy: parentId,
+        ports,
+        label: 'BTO-' + n
+      }));
     }
   }
   // SECOND PASS: a port feeding a duct that itself ends at a manifold is a port
@@ -281,7 +437,11 @@ export function btoBomLines(btos) {
 }
 
 export const BTO_MODEL = Object.freeze({
-  MAX_PORTS_PER_BTO, BTO_MERGE_PX, minRoomsForMajorBranch: BTO_RULES.minRoomsForMajorBranch
+  DEFAULT_PORT_CAPACITY, BTO_MERGE_PX,
+  minRoomsForMajorBranch: BTO_RULES.minRoomsForMajorBranch,
+  /** A BTO is a supply-air fitting. There is no such thing as a return BTO. */
+  airSide: 'supply'
 });
 
-export default { makeBto, deriveBtos, validateBtos, reconcileBto, btoBomLines };
+export default { makeBto, deriveBtos, validateBtos, reconcileBto, btoBomLines,
+                 btoBodyGeometry, withBody, isReturnSection };

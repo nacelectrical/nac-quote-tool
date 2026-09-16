@@ -322,11 +322,42 @@ export const BTO = Object.freeze({
    */
   clusterFraction: 0.12,
   /**
-   * HOW MANY SPIGOTS ONE FABRICATED BODY CARRIES.
-   * Dungannon's largest is three. Past that the run chains onto a second
-   * fitting rather than sprouting a fourth spigot.
+   * HOW MANY SPIGOTS ONE FABRICATED BODY CARRIES — DELIBERATELY NOT A NUMBER.
+   *
+   * This used to read `maxPortsPerFitting: 3`, inferred from the Dungannon
+   * sheet because the largest fitting on it happened to have three collars.
+   * Nick: "Dungannon happened to use fittings with up to three connected
+   * outlets; that does not establish three as a universal maximum."
+   *
+   * He was right, and the wrong inference did real damage. A hard ceiling of
+   * three forced the router to chain BTO into BTO to get a five-outlet bedroom
+   * wing served, which manufactured secondary fittings, "main onward" ports and
+   * long serial routes that no installer would set. The cure was worse than the
+   * imaginary disease.
+   *
+   * So there is NO universal port maximum. A BTO carries the collars its
+   * installer area needs. What limits it is PHYSICAL — whether the collars fit
+   * on a body that can be fabricated and lifted — and that is measured by
+   * `btoBodyGeometry`, which reports a fabrication warning for installer review
+   * rather than silently chaining a second fitting as a workaround.
+   *
+   * A job may still set `settings.duct.btoPortCapacity` where an installer has
+   * a real reason to cap it. Null, the default, means no cap.
    */
-  maxPortsPerFitting: 3,
+  portCapacity: null,
+  /**
+   * Clear space between adjacent outlet collars on a fabricated body, so the
+   * flex clamps can actually be done up. Configurable; this is NAC's working
+   * figure, not a manufacturer's.
+   */
+  collarGapMm: 60,
+  /**
+   * Sheet-metal allowance added around the inlet to get the body depth, and the
+   * faces of a rectangular distribution box that can take outlet collars: the
+   * two long sides and the end opposite the inlet.
+   */
+  bodyWallAllowanceMm: 25,
+  collarFaces: 3,
   /**
    * HOW FAR APART TWO TAKE-OFFS CAN BE AND STILL SHARE ONE FITTING.
    *

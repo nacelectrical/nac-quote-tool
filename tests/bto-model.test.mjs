@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBto, deriveBtos, validateBtos, reconcileBto, btoBomLines,
-         MAX_PORTS_PER_BTO } from '../designer/engines/bto.mjs';
+         DEFAULT_PORT_CAPACITY, btoBodyGeometry, isReturnSection }
+  from '../designer/engines/bto.mjs';
 import { PLACEMENT, OUTLET_SOURCE, assessPlacement } from '../designer/engines/placement.mjs';
 import { selectDiameter } from '../designer/engines/ducts.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
@@ -118,23 +119,135 @@ test('every duct size reflects the airflow that section carries', () => {
   }
 });
 
-// ── 8. Max three ports, and the chain that keeps it ─────────────────────────
+// ── 8. Port count is the area's business, not a universal rule ─────────────
 
-test('no fitting carries more than three ports', () => {
-  const v = validateBtos(btos);
-  assert.ok(v.ok, JSON.stringify(v.failures));
-  assert.ok(v.maxPortsUsed <= MAX_PORTS_PER_BTO,
-    'a fitting has ' + v.maxPortsUsed + ' ports');
+test('there is no universal port maximum', () => {
+  assert.equal(DEFAULT_PORT_CAPACITY, null,
+    'a hard port ceiling is back — it was an inference from one drawing');
 });
 
-test('a fourth port is refused, not quietly fitted', () => {
-  const over = makeBto({ id: 'x', index: 1, position: { x: 0, y: 0 },
-    inletDiameterMm: 400, inletAirflowLs: 400,
-    ports: [1, 2, 3, 4].map(i => ({ sectionId: 's' + i, diameterMm: 250,
-      airflowLs: 100, servesOutletId: 'o' + i })) });
-  const v = validateBtos([over]);
-  assert.equal(v.ok, false);
-  assert.ok(v.failures.some(f => f.code === 'TOO_MANY_PORTS'));
+const fourPort = () => makeBto({ id: 'x', index: 1, position: { x: 0, y: 0 },
+  inletDiameterMm: 400, inletAirflowLs: 400,
+  ports: [1, 2, 3, 4].map(i => ({ sectionId: 's' + i, diameterMm: 250,
+    airflowLs: 100, servesOutletId: 'o' + i })) });
+
+test('a four-port fitting is valid, not a failure', () => {
+  const v = validateBtos([fourPort()]);
+  assert.equal(v.ok, true, JSON.stringify(v.failures));
+  assert.equal(v.failures.filter(f => f.code === 'TOO_MANY_PORTS').length, 0);
+});
+
+test('a five-port fitting is valid too — the bedroom wing needs one', () => {
+  const five = makeBto({ id: 'x', index: 1, position: { x: 0, y: 0 },
+    inletDiameterMm: 400, inletAirflowLs: 233,
+    ports: [50, 48, 45, 45, 45].map((ls, i) => ({ sectionId: 's' + i, diameterMm: 250,
+      airflowLs: ls, servesOutletId: 'o' + i })) });
+  const v = validateBtos([five]);
+  assert.equal(v.ok, true, JSON.stringify(v.failures));
+  assert.equal(v.maxPortsUsed, 5);
+});
+
+test('a job may still cap ports, and that is a warning for review — never a chain', () => {
+  const v = validateBtos([fourPort()], { maxPorts: 3 });
+  assert.equal(v.ok, true, 'a configured cap must not fail the design');
+  const w = v.warnings.find(x => x.code === 'PORT_COUNT_ABOVE_CONFIGURED_CAPACITY');
+  assert.ok(w, 'a configured cap was not reported at all');
+  assert.match(w.message, /do NOT chain a second fitting/);
+});
+
+// ── The physical fitting: what the sheet metal shop has to make ─────────────
+
+test('a fitting records its body, collars and collar space', () => {
+  const body = btoBodyGeometry(fourPort());
+  assert.equal(body.portCount, 4);
+  assert.deepEqual(body.collarDiametersMm, [250, 250, 250, 250]);
+  assert.deepEqual(body.collarAirflowsLs, [100, 100, 100, 100]);
+  assert.equal(body.totalOutletAirflowLs, 400);
+  assert.equal(body.inletDiameterMm, 400);
+  assert.ok(body.bodyLengthMm > 0 && body.bodyDepthMm > 0);
+  assert.ok(body.requiredCollarRunMm > 0);
+  assert.ok(body.availableCollarSpaceMm >= body.requiredCollarRunMm);
+  assert.match(body.bomDescription, /BTO distribution box/);
+  assert.match(body.bomDescription, /4 × collar/);
+});
+
+test('the body size is derived, and says so rather than claiming a part exists', () => {
+  const body = btoBodyGeometry(fourPort());
+  assert.equal(body.dimensionsSource, 'derived_from_collars');
+  assert.equal(body.verified, false);
+});
+
+test('a collar bigger than the duct feeding it is a fabrication warning, not a silent chain', () => {
+  const bad = makeBto({ id: 'x', index: 1, position: { x: 0, y: 0 },
+    inletDiameterMm: 200, inletAirflowLs: 300,
+    ports: [1, 2].map(i => ({ sectionId: 's' + i, diameterMm: 250,
+      airflowLs: 150, servesOutletId: 'o' + i })) });
+  const body = btoBodyGeometry(bad);
+  assert.equal(body.fits, false);
+  assert.ok(body.issues.some(i => i.code === 'COLLAR_LARGER_THAN_INLET'));
+  const v = validateBtos([{ ...bad, body }]);
+  assert.equal(v.ok, true, 'fabrication fit must not fail validation outright');
+  assert.ok(v.warnings.some(w => w.code === 'BTO_FABRICATION_FIT'));
+});
+
+test('collars that will not fit a configured body are reported against that body', () => {
+  const five = makeBto({ id: 'x', index: 1, position: { x: 0, y: 0 },
+    inletDiameterMm: 400, inletAirflowLs: 233,
+    ports: [50, 48, 45, 45, 45].map((ls, i) => ({ sectionId: 's' + i, diameterMm: 250,
+      airflowLs: ls, servesOutletId: 'o' + i })) });
+  const body = btoBodyGeometry(five, { bodyLengthMm: 300, bodyDepthMm: 300 });
+  assert.equal(body.dimensionsSource, 'configured');
+  assert.equal(body.verified, true);
+  assert.equal(body.fits, false);
+  assert.ok(body.issues.some(i => i.code === 'COLLARS_EXCEED_AVAILABLE_SPACE'));
+});
+
+test('a body longer than a configured maximum asks for review', () => {
+  const body = btoBodyGeometry(fourPort(), { maxBodyLengthMm: 200 });
+  assert.equal(body.fits, false);
+  assert.ok(body.issues.some(i => i.code === 'BODY_LONGER_THAN_CONFIGURED_MAXIMUM'));
+});
+
+// ── A BTO is a supply fitting. There is no such thing as a return BTO. ──────
+
+test('return sections never become BTOs', () => {
+  const net = { sections: [
+    { id: 'return', role: 'return', diameterMm: 400, airflowLs: 400,
+      points: [{x:0,y:0},{x:100,y:0}] },
+    { id: 'return_2', parentId: 'return', role: 'return', diameterMm: 400,
+      airflowLs: 400, points: [{x:50,y:0},{x:50,y:50}] },
+    { id: 'return_3', parentId: 'return', role: 'return', diameterMm: 400,
+      airflowLs: 400, points: [{x:50,y:0},{x:50,y:-50}] }
+  ] };
+  assert.deepEqual(deriveBtos(net), [],
+    'the return path was turned into a take-off fitting');
+});
+
+test('a return is recognised however it identifies itself', () => {
+  assert.equal(isReturnSection({ id: 'return' }), true);
+  assert.equal(isReturnSection({ id: 'return_2' }), true);
+  assert.equal(isReturnSection({ id: 'x', role: 'return' }), true);
+  assert.equal(isReturnSection({ id: 'x', nacRole: 'RETURN' }), true);
+  assert.equal(isReturnSection({ id: 'x', isReturn: true }), true);
+  assert.equal(isReturnSection({ id: 'x', airSide: 'return' }), true);
+  assert.equal(isReturnSection({ id: 'main_A', role: 'main' }), false);
+  assert.equal(isReturnSection({ id: 'final_x', role: 'final' }), false);
+});
+
+test('a supply fitting is never built out of mixed supply and return runs', () => {
+  const net = { sections: [
+    { id: 'main_A', role: 'main', diameterMm: 400, airflowLs: 300,
+      points: [{x:0,y:0},{x:100,y:0}] },
+    { id: 'final_a', parentId: 'main_A', role: 'final', diameterMm: 250, airflowLs: 150,
+      outletId: 'o1', points: [{x:50,y:0},{x:50,y:50}] },
+    { id: 'final_b', parentId: 'main_A', role: 'final', diameterMm: 250, airflowLs: 150,
+      outletId: 'o2', points: [{x:50,y:0},{x:50,y:-50}] },
+    { id: 'return_x', parentId: 'main_A', role: 'return', diameterMm: 400, airflowLs: 400,
+      points: [{x:50,y:0},{x:150,y:0}] }
+  ] };
+  const [bto] = deriveBtos(net);
+  assert.equal(bto.ports.length, 2, 'a return run was fitted to a supply BTO');
+  assert.ok(bto.ports.every(p => p.servesOutletId));
 });
 
 test('every port goes somewhere real', () => {
@@ -187,9 +300,9 @@ test('the Dungannon reference job is four fittings for eight outlets', () => {
     'the reference would have one fitting per outlet, which is the defect');
 });
 
-test('every Dungannon fitting reconciles and stays within three ports', () => {
+test('every Dungannon fitting reconciles, at whatever port count it used', () => {
   for (const b of DUNGANNON.btos) {
-    assert.ok(b.ports.length <= MAX_PORTS_PER_BTO, b.id + ' has ' + b.ports.length + ' ports');
+    assert.ok(b.ports.length >= 2, b.id + ' has ' + b.ports.length + ' ports');
     const sum = b.ports.reduce((n, p) => n + p.ls, 0);
     assert.ok(Math.abs(sum - b.inletLs) <= 2,
       b.id + ': ' + b.inletLs + ' in, ' + sum + ' out');

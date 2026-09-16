@@ -20,7 +20,9 @@ import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
-import { deriveBtos, validateBtos, btoBomLines } from './bto.mjs';
+import { deriveBtos, validateBtos, btoBomLines, withBody } from './bto.mjs';
+import { buildReturnComponents, validateReturnSeparation, returnComponentCounts,
+         findSupplyReturnClashes } from './return-model.mjs';
 import { buildAreaTopology } from './area-router.mjs';
 import { recommendedSupplySpigotCount, validateSupplySpigots } from './supply-spigots.mjs';
 import { assessPlacement } from './placement.mjs';
@@ -388,8 +390,39 @@ export function runPipeline(design, ctx = {}) {
   // on an outlet. They are DERIVED from the sized network — wherever two or
   // more runs leave the same duct at the same place — so the drawing, the
   // schedule and the order all read one object.
-  d.btos = d.network?.routed ? deriveBtos(d.network) : [];
+  d.btos = (d.network?.routed ? deriveBtos(d.network) : []).map(b => withBody(b));
   d.btoValidation = validateBtos(d.btos);
+  if (d.btoValidation.warnings?.length) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.warnings.map(w => ({
+      code: 'BTO_' + w.code, severity: 'WARNING', message: w.message }))];
+  }
+
+  // ── 8c-i. THE RETURN SIDE, AS ITS OWN ENTITIES ───────────────────────────
+  // A BTO is a supply-air distribution fitting and nothing else. The return has
+  // grilles, ducts and a fan-coil return box — typed separately so that a
+  // junction on the return path can never be counted, drawn or priced as a
+  // take-off, and so that neither side can pick up the other's dampers, colours
+  // or BOM category.
+  d.returnComponents = buildReturnComponents({
+    returnDesign: d.returnDesign, returnRoutes: d.returnRoutes || [], layout: d.layout || {} });
+  d.returnSeparation = validateReturnSeparation({
+    returnComponents: d.returnComponents, btos: d.btos, network: d.network });
+  // Where the two systems cross out in the roof. Reported, never hidden.
+  d.supplyReturnClashes = findSupplyReturnClashes({
+    network: d.network, returnRoutes: d.returnRoutes || [],
+    plenum: d.autoRoute?.plenum || d.layout?.plenum || d.layout?.indoorUnit || null });
+  if (d.supplyReturnClashes.count) {
+    d.routeWarnings = [...(d.routeWarnings || []), {
+      code: 'SUPPLY_RETURN_CROSSING', severity: 'CHECK',
+      message: d.supplyReturnClashes.count + ' place(s) where a supply duct crosses a ' +
+        'return duct away from the fan coil: ' +
+        d.supplyReturnClashes.clashes.map(c => c.supplyId + ' × ' + c.returnId).join(', ') +
+        '. One duct passes under the other — allow for it on site.' }];
+  }
+  if (!d.returnSeparation.ok) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.returnSeparation.failures.map(f => ({
+      code: 'RETURN_' + f.code, severity: 'CRITICAL', message: f.message }))];
+  }
 
   // ── 8c-ii. THE SUPPLY SPIGOTS ────────────────────────────────────────────
   // The count and size that actually left the plenum, checked: the fabricated
@@ -420,6 +453,23 @@ export function runPipeline(design, ctx = {}) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.failures.map(f => ({
       code: 'BTO_' + f.code, severity: 'CRITICAL', message: f.message }))];
   }
+
+  // ── 8c-iii. FIVE COUNTS THAT ARE NOT THE SAME COUNT ──────────────────────
+  // Nick: "Separate these concepts: supply-spigot count, main-duct count, BTO
+  // count, BTO port count, outlet count. They must not be treated as
+  // interchangeable." They had been drifting into one another — the header read
+  // the spigot count, the schedule counted fittings, the BOM counted collars —
+  // so they are computed once, here, each from its own source, and everything
+  // downstream reads these.
+  d.componentCounts = {
+    supplySpigots: d.supplySpigots?.count ?? mainSections.length,
+    supplyMains: mainSections.length,
+    supplyBtos: d.btos.length,
+    supplyBtoPorts: d.btos.map(b => b.ports.length),
+    supplyBtoPortTotal: d.btos.reduce((n, b) => n + b.ports.length, 0),
+    supplyOutlets: (d.network?.sections || []).filter(s => s.role === 'final').length,
+    ...returnComponentCounts(d.returnComponents)
+  };
 
   // ── 8d. PLACEMENT STATUS ─────────────────────────────────────────────────
   // A design may be PREVIEWED from an assumed fan-coil position. It may not be

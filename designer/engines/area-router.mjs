@@ -22,7 +22,6 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { isConditionedRoom } from './classify.mjs';
 import { selectDiameter } from './ducts.mjs';
-import { MAX_PORTS_PER_BTO } from './bto.mjs';
 import { finalSizeForAirflow, mainFloorForFinals, ROUTING } from './nac-standard.mjs';
 
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -120,30 +119,122 @@ export function formInstallerAreas(outletPoints, wantAreas) {
 }
 
 /**
- * The fitting tree inside one area.
+ * WHERE THE ONE FITTING FOR THIS AREA GOES.
  *
- * Up to three ports on a body. Where an area has more outlets than that, the
- * outlets are split in two on position, the PRIMARY fitting takes the half
- * nearer the plenum, and a spur carries the rest to a secondary fitting sitting
- * in the middle of them. Serving the far half from the primary is what makes a
- * duct go out to an area and come back — the backtracking this avoids.
+ * There is exactly one BTO per installer area, and every outlet in the area
+ * hangs off it. No chain, no secondary body, no "onward" port. Nick, after
+ * seeing five fittings where he wanted three:
+ *
+ *   FAN COIL -> ø400 MAIN -> ONE AREA BTO -> INDIVIDUAL OUTLET DUCTS
+ *
+ * The only question left is WHERE to set it, and the brief is explicit: the
+ * position must minimise total flex length without crossovers or backtracking.
+ * That is the geometric median of the outlets AND the plenum — the point whose
+ * summed distance to everything it connects is smallest, which is precisely the
+ * total length of the main plus all the finals. The centroid this used to
+ * return minimises the sum of SQUARED distances, which is a different and
+ * slightly wrong answer that lets one far outlet drag the fitting toward it.
+ *
+ * Weiszfeld's iteration, which converges quickly for a dozen points. Including
+ * the plenum in the set is what keeps the fitting from drifting to the far side
+ * of its area and making the main reach past outlets it then has to come back
+ * to — the backtracking rule, enforced by geometry rather than by a check.
  */
-export function planAreaFittings(outlets, plenum, maxPorts = MAX_PORTS_PER_BTO) {
-  if (outlets.length <= maxPorts) {
-    return { at: centroid(outlets), direct: outlets, onward: null };
+export function geometricMedian(points, iterations = 128) {
+  const pts = points
+    .filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y))
+    .map(p => ({ x: p.x, y: p.y, w: p.w > 0 ? p.w : 1 }));
+  if (!pts.length) return { x: 0, y: 0 };
+  if (pts.length === 1) return { x: pts[0].x, y: pts[0].y };
+  const wSum = pts.reduce((n, p) => n + p.w, 0);
+  let cx = pts.reduce((n, p) => n + p.x * p.w, 0) / wSum;
+  let cy = pts.reduce((n, p) => n + p.y * p.w, 0) / wSum;
+  for (let i = 0; i < iterations; i++) {
+    let sx = 0, sy = 0, sw = 0;
+    for (const p of pts) {
+      // Guarded so sitting exactly on a point does not divide by zero.
+      const d = Math.max(1e-6, Math.hypot(p.x - cx, p.y - cy));
+      sx += p.w * p.x / d; sy += p.w * p.y / d; sw += p.w / d;
+    }
+    const nx = sx / sw, ny = sy / sw;
+    if (Math.hypot(nx - cx, ny - cy) < 0.01) { cx = nx; cy = ny; break; }
+    cx = nx; cy = ny;
   }
-  const [A, B] = splitInTwo(outlets);
-  const near = dist(centroid(A), plenum) <= dist(centroid(B), plenum) ? A : B;
-  const far = near === A ? B : A;
-  // The primary keeps maxPorts - 1 ports, because one is spent carrying on.
-  let direct = near, rest = far;
-  if (direct.length > maxPorts - 1) {
-    const sorted = direct.slice().sort((a, b) => dist(a, plenum) - dist(b, plenum));
-    direct = sorted.slice(0, maxPorts - 1);
-    rest = sorted.slice(maxPorts - 1).concat(far);
+  return { x: cx, y: cy };
+}
+
+/**
+ * A FITTING NEVER SITS ON AN OUTLET.
+ *
+ * The median can converge onto one of its own points, and on this job it did:
+ * BTO-A landed exactly on the second Family outlet and emitted a final run of
+ * ZERO length. There is no such duct. A body in the ceiling still needs a drop
+ * to the diffuser below it, so the fitting is pushed clear of the nearest
+ * outlet, along the line between them so nothing else about the layout moves.
+ */
+function clearOfOutlets(at, outlets, minPx) {
+  let p = { ...at };
+  for (let pass = 0; pass < 8; pass++) {
+    let worst = null, worstD = Infinity;
+    for (const o of outlets) {
+      const d = Math.hypot(p.x - o.x, p.y - o.y);
+      if (d < worstD) { worstD = d; worst = o; }
+    }
+    if (!worst || worstD >= minPx) break;
+    // Directly away from it; if we are exactly on top, pick a direction.
+    const dx = worstD > 0.5 ? (p.x - worst.x) / worstD : 0;
+    const dy = worstD > 0.5 ? (p.y - worst.y) / worstD : -1;
+    p = { x: worst.x + dx * minPx, y: worst.y + dy * minPx };
   }
-  return { at: centroid(direct.concat(rest.length ? [centroid(rest)] : [])),
-           direct, onward: planAreaFittings(rest, centroid(direct), maxPorts) };
+  return p;
+}
+
+/**
+ * How far a fitting must stay from any outlet it serves, in plan pixels.
+ * Small — this only has to stop a zero-length run, not push the metal about.
+ */
+export const MIN_FITTING_TO_OUTLET_PX = 26;
+
+/** Keep a point inside a rectangle, with a margin so it is not on the line. */
+function clampInto(p, box, margin = 6) {
+  if (!box) return p;
+  return {
+    x: Math.min(Math.max(p.x, box.x + margin), box.x + box.w - margin),
+    y: Math.min(Math.max(p.y, box.y + margin), box.y + box.h - margin)
+  };
+}
+
+/**
+ * One area, one fitting, every outlet direct off it.
+ *
+ * `footprint` is the conditioned envelope. A fitting is clamped into it so a
+ * median pulled toward an outlying room cannot land outside the building and
+ * put the main through an external wall to get back in.
+ */
+export function planAreaFittings(outlets, plenum, opts = {}) {
+  const settings = opts.settings || DEFAULT_SETTINGS;
+  // WEIGHTED BY DUCT SIZE, AND THAT IS A DELIBERATE READING OF "TOTAL FLEX".
+  //
+  // Unweighted, every metre counts the same, so the fitting drifts toward the
+  // outlets and drags the ø400 main out behind it. On the bedroom side that put
+  // BTO-C well south of the hallway, spent 4.04 m of ø400 getting there, and
+  // left an 8.65 m ø250 reaching back up to the Master.
+  //
+  // Weighting each leg by its diameter says what an installer already knows: a
+  // metre of ø400 is not a metre of ø250 — it costs more, it is harder to pull
+  // and it is the duct you want short. The weighted answer costs about a metre
+  // more raw flex across this job and buys 1.6 m less ø400 and a shorter worst
+  // run, and it lands the bedroom fitting in the hallway where it belongs.
+  const weightOf = (o) => (selectDiameter(o.airflowLs, 'final', { settings }).diameterMm || 250) / 250;
+  const mainWeight = (opts.mainDiameterMm || 400) / 250;
+  const pts = outlets.map(o => ({ x: o.x, y: o.y, w: weightOf(o) }));
+  if (plenum) pts.push({ x: plenum.x, y: plenum.y, w: mainWeight });
+
+  const minSep = opts.minOutletClearancePx ?? MIN_FITTING_TO_OUTLET_PX;
+  const at = clampInto(
+    clearOfOutlets(geometricMedian(pts), outlets, minSep),
+    opts.footprint);
+  return { at, direct: outlets.slice(), onward: null };
 }
 
 /**
@@ -232,79 +323,48 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
   areas.forEach((members, ai) => {
     const letter = letters[ai];
     const areaLs = members.reduce((n, o) => n + o.airflowLs, 0);
-    const plan = planAreaFittings(members, plenum);
+    const plan = planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
 
-    // THE MAIN. Straight from the plenum to the area's primary fitting, at the
+    // THE MAIN. Straight from the plenum to the area's one fitting, at the
     // configured size, and NOT reduced on the way — it has nothing to shed
     // until it gets there.
     const mainId = 'main_' + letter;
     segments.push({
       id: mainId, parentId: null, role: 'main', nacRole: 'MAIN', mainKey: letter,
-      plenumOutlet: true, flex: true,
+      plenumOutlet: true, flex: true, airSide: 'supply',
       destination: 'Supply plenum → Main ' + letter,
       serves: [...new Set(members.map(m => m.roomLabel))],
       airflowLs: round(areaLs, 0),
       diameterMm: mainMm,
       points: sweep(plenum, plan.at, 0.08),
       rigid: false,
+      /** Exactly one BTO terminates this main. Asserted by the regression tests. */
+      terminatesAtBto: true,
       fittings: ai === 0 ? ['supply_plenum'] : []
     });
 
-    // The fitting chain inside the area.
-    let node = plan;
-    let feedId = mainId;
-    let depth = 0;
-    while (node) {
-      const here = node.at;
-      const onwardLs = node.onward
-        ? (function total(n) {
-            return n.direct.reduce((s, o) => s + o.airflowLs, 0) + (n.onward ? total(n.onward) : 0);
-          })(node.onward)
-        : 0;
-
-      for (const o of node.direct) {
-        segments.push({
-          id: 'final_' + o.id, parentId: feedId, role: 'final', nacRole: 'FINAL_FLEX',
-          mainKey: letter, flex: true, roomId: o.roomId, outletId: o.id,
-          destination: o.of > 1 ? o.roomLabel + ' outlet ' + o.index : o.roomLabel,
-          airflowLs: round(o.airflowLs, 0),
-          zone: o.zone,
-          points: sweep(here, { x: o.x, y: o.y }, 0.16),
-          fittings: ['damper_open']
-        });
-        nodes.push({ id: o.id, type: 'outlet', x: o.x, y: o.y,
-                     label: o.roomLabel, zone: o.zone });
-      }
-
-      if (node.onward) {
-        const spurId = 'spur_' + letter + '_' + (depth + 1);
-        // Sized against the finals ACTUALLY FITTED, not the ones the airflow
-        // band alone would give. With an installer minimum of 250 the band
-        // still says 200, and a spur sized off that came out a 250 feeding
-        // three 250s — a full-bore take-off.
-        const finals = (function all(n) {
-          return n.direct.map(o => selectDiameter(o.airflowLs, 'final', { settings }).diameterMm)
-            .concat(n.onward ? all(n.onward) : []);
-        })(node.onward);
-        const spurMm = Math.min(mainMm, mainFloorForFinals(
-          selectDiameter(onwardLs, 'branch', { settings }).diameterMm, finals));
-        segments.push({
-          id: spurId, parentId: feedId, role: 'branch', nacRole: 'MAJOR_BRANCH',
-          mainKey: letter, major: true, flex: true,
-          destination: 'Main ' + letter + ' — onward',
-          serves: [...new Set((function names(n) {
-            return n.direct.map(o => o.roomLabel).concat(n.onward ? names(n.onward) : []);
-          })(node.onward))],
-          airflowLs: round(onwardLs, 0),
-          diameterMm: spurMm,
-          points: sweep(here, node.onward.at, 0.1),
-          fittings: []
-        });
-        feedId = spurId;
-      }
-      node = node.onward;
-      depth += 1;
+    // EVERY OUTLET IN THE AREA, DIRECT OFF THE ONE FITTING.
+    //
+    // This was a while-loop walking a chain of fittings, emitting a "Main X —
+    // onward" spur every time the old three-port ceiling was reached. There is
+    // no chain any more, so there is no loop and no spur: the main lands on the
+    // fitting and the finals radiate off it.
+    for (const o of plan.direct) {
+      segments.push({
+        id: 'final_' + o.id, parentId: mainId, role: 'final', nacRole: 'FINAL_FLEX',
+        mainKey: letter, flex: true, airSide: 'supply', roomId: o.roomId, outletId: o.id,
+        destination: o.of > 1 ? o.roomLabel + ' outlet ' + o.index : o.roomLabel,
+        airflowLs: round(o.airflowLs, 0),
+        zone: o.zone,
+        points: sweep(plan.at, { x: o.x, y: o.y }, 0.16),
+        fittings: ['damper_open']
+      });
+      nodes.push({ id: o.id, type: 'outlet', x: o.x, y: o.y,
+                   label: o.roomLabel, zone: o.zone });
     }
+    nodes.push({ id: 'bto_' + letter, type: 'bto', airSide: 'supply',
+                 x: plan.at.x, y: plan.at.y, mainKey: letter,
+                 label: 'BTO-' + letter, ports: plan.direct.length });
   });
 
   return {

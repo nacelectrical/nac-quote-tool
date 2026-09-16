@@ -16,7 +16,7 @@
 // it rather than sitting on three forever.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
-import { MAX_PORTS_PER_BTO } from './bto.mjs';
+import { btoBodyGeometry } from './bto.mjs';
 
 export const SPIGOT_RULE = Object.freeze({
   outletsPerSpigot: 4,
@@ -48,26 +48,56 @@ export function recommendedSupplySpigotCount(outletCount, opts = {}) {
 
   // PAST TWELVE OUTLETS THE TABLE STOPS MEANING ANYTHING. What decides it then
   // is how much air one duct of the chosen size can carry inside the velocity
-  // band, and how many outlets a chain of three-port fittings can reach.
+  // band, and how many installer areas there are to serve.
   const settings = opts.settings || DEFAULT_SETTINGS;
   const band = settings.duct.velocity.main;
   const mm = opts.diameterMm || 400;
   const systemLs = Number(opts.systemAirflowLs) || 0;
   const perDuctLimitLs = areaM2(mm) * band.max * 1000;
   const byAirflow = systemLs ? Math.ceil(systemLs / perDuctLimitLs) : 0;
-  // A primary fitting plus one chained secondary reaches this many outlets.
-  const perMainOutlets = (MAX_PORTS_PER_BTO - 1) + MAX_PORTS_PER_BTO;
-  const byFittings = Math.ceil(n / perMainOutlets);
+  // CHAIN REACH IS GONE AS A DRIVER, AND NOTHING FAKE REPLACES IT.
+  //
+  // This used to divide the outlets by how many a chain of three-port fittings
+  // could reach. That only ever made sense while a fitting was capped at three
+  // ports and chaining was the way past the cap; neither is true now, so the
+  // term is removed rather than quietly rescaled.
+  //
+  // What is left is airflow, installer areas, and — where a job has configured a
+  // real fabricated body — how many collars one body can physically take. That
+  // last one is a genuine limit on how many outlets a single area BTO can serve,
+  // and it is the honest successor to the chain term: it is about metal, not
+  // about a number taken off a reference drawing.
+  const byFittings = 0;   // retired; kept so callers reading it see zero, not a stale figure
   const byAreas = Number(opts.installerAreaCount) || 0;
-  const count = Math.max(SPIGOT_RULE.minSpigots, byAirflow, byFittings, byAreas);
+  const maxCollars = Number(opts.maxCollarsPerBody) || 0;
+  const byCollarSpace = maxCollars ? Math.ceil(n / maxCollars) : 0;
+  const count = Math.max(SPIGOT_RULE.minSpigots, byAirflow, byAreas, byCollarSpace);
+
+  // BE HONEST ABOUT A THIN CALCULATION. Past the table, installer areas are the
+  // strongest input, and without them a thirty-outlet house comes back as two
+  // spigots on airflow alone — arithmetically true and practically useless. Say
+  // so rather than letting the number stand unqualified.
+  const inputsMissing = [];
+  if (!byAreas) inputsMissing.push('installer area count');
+  if (!systemLs) inputsMissing.push('system airflow');
+  if (!maxCollars) inputsMissing.push('fabricated body collar capacity');
+
   return {
     count, basis: 'calculated', fromTable: false, requiresFreshCalculation: true,
-    byAirflow, byFittings, byAreas,
+    byAirflow, byFittings, byAreas, byCollarSpace,
     perDuctLimitLs: Math.round(perDuctLimitLs),
+    inputsMissing,
+    /** True when the figure rests on airflow alone and wants an estimator's eye. */
+    provisional: inputsMissing.length > 0,
     reason: n + ' outlets is past the ' + SPIGOT_RULE.tableLimitOutlets +
       '-outlet table, so the count was calculated: ' + byAirflow + ' by airflow at ø' + mm +
-      ', ' + byFittings + ' by how many outlets a chain of ' + MAX_PORTS_PER_BTO +
-      '-port fittings reaches' + (byAreas ? ', ' + byAreas + ' by installer areas' : '') + '.'
+      (byAreas ? ', ' + byAreas + ' by installer areas' : '') +
+      (byCollarSpace ? ', ' + byCollarSpace + ' by fabricated collar capacity' : '') +
+      '. Fitting port count does not enter into it — one BTO serves its area.' +
+      (inputsMissing.length
+        ? ' PROVISIONAL: no ' + inputsMissing.join(' or ') + ' was supplied, so this ' +
+          'rests on what was. Confirm against the installer areas before ordering.'
+        : '')
   };
 }
 
@@ -174,10 +204,33 @@ export function validateSupplySpigots({ mains = [], diameterMm, unit, outletTota
       message: 'Main ' + r.key + ' is not tied to an installer area.' });
   }
 
-  // 6. port limits
-  const over = btos.filter(b => b.ports.length > MAX_PORTS_PER_BTO);
-  for (const b of over) blockers.push({ code: 'BTO_OVER_PORT_LIMIT', severity: 'CRITICAL',
-    message: b.id + ' has ' + b.ports.length + ' ports.' });
+  // 6. FABRICATION, NOT A PORT LIMIT.
+  //
+  // This was a CRITICAL blocker on any fitting with more than three ports. That
+  // number came from one reference drawing and should never have been a rule;
+  // enforcing it is what drove the router to chain fittings to get under it.
+  // What matters is whether the metal can be made, so each body is measured and
+  // a fitting that will not fit asks for installer review instead.
+  for (const b of btos) {
+    const body = b.body || btoBodyGeometry(b);
+    if (body.fits) continue;
+    warnings.push({ code: 'BTO_FABRICATION_REVIEW', severity: 'WARNING',
+      message: b.id + ' carries ' + b.ports.length + ' collars (' +
+        body.collarDiametersMm.map(d => 'ø' + d).join(', ') + ') needing ' +
+        body.requiredCollarRunMm + ' mm of collar space. ' +
+        body.issues.map(i => i.message).join(' ') +
+        ' Installer/fabrication review required — do not chain a second fitting.' });
+  }
+  // A chained fitting on a design that asked for one per main is a routing
+  // fault, and it is the fault Nick found by eye. The engine now finds it.
+  for (const b of btos) {
+    for (const p of b.ports) {
+      if (!p.feedsBtoId) continue;
+      blockers.push({ code: 'BTO_CHAINED_TO_BTO', severity: 'CRITICAL',
+        message: b.id + ' feeds ' + p.feedsBtoId + '. Each main must terminate at ' +
+                 'exactly one BTO with every outlet direct off it.' });
+    }
+  }
 
   // 7. the mains add up to the outlets
   const mainTotal = rows.reduce((n, r) => n + r.airflowLs, 0);
