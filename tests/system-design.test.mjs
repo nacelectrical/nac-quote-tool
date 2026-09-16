@@ -16,6 +16,7 @@ import { designReturnAir } from '../designer/engines/returnair.mjs';
 import { suggestZones, analyseZones } from '../designer/engines/zones.mjs';
 import { estimateStaticPressure } from '../designer/engines/pressure.mjs';
 import { buildBillOfMaterials, editBomLine } from '../designer/engines/bom.mjs';
+import { buildZoneDampers } from '../designer/engines/zone-dampers.mjs';
 import { calculateLabour, calculateCommercials, toQuoteLineItems } from '../designer/engines/costing.mjs';
 import { collectWarnings, summarise, acknowledge } from '../designer/engines/warnings.mjs';
 import { calibrate } from '../designer/engines/calibration.mjs';
@@ -514,16 +515,29 @@ function sampleDesignParts() {
     routesByRoomId: Object.fromEntries(a.rows.map((r, i) => [r.roomId, { lengthMm: 6000 + i * 500 }])) });
   const z = suggestZones(ROOMS, a);
   const ret = designReturnAir({ totalAirflowLs: a.allocatedAirflowLs, returnCount: 2, ductLengthMm: 2500 });
-  return { a, o, net, z, ret };
+  // THE BOM READS DAMPER COMPONENTS. One per closable zone, on the biggest
+  // branch that zone owns — which is where the router puts the motor — so the
+  // size on the order is the size of the duct it is fitted in.
+  const byRoom = new Map((net.sections || [])
+    .map(sec => [(/^branch_(.+)$/.exec(sec.id || '') || [])[1], sec])
+    .filter(([id]) => id));
+  const placements = z.zones.filter(x => !x.alwaysOpen).map((zone, i) => {
+    const secs = (zone.roomIds || []).map(id => byRoom.get(id)).filter(Boolean);
+    const sec = secs.sort((p, q) => (q.diameterMm || 0) - (p.diameterMm || 0))[0] || null;
+    return { id: 'damper_' + (sec?.id || zone.id || i), sectionId: sec?.id || null,
+             zone: zone.name || zone.id, roomId: zone.roomIds?.[0] ?? null };
+  });
+  const dampers = buildZoneDampers(placements, net);
+  return { a, o, net, z, ret, dampers };
 }
 
 test('the BOM is derived from the design, with quantities that trace back', () => {
-  const { o, net, z, ret } = sampleDesignParts();
+  const { o, net, z, ret, dampers } = sampleDesignParts();
   const bom = buildBillOfMaterials({
     selectedUnit: { brandName: 'Daikin', model: 'FDYQN140LCV1', capacityKw: 14, phase: '1Ph',
                     supplierCost: 6800, sellPrice: 20400 },
     controller: { name: 'Airtouch 5', cost: 1450 },
-    network: net, outlets: o, zones: z, returnDesign: ret,
+    network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers,
     refrigerantPipeM: 8, drainPipeM: 6, cableM: 12
   });
 
@@ -555,16 +569,16 @@ test('the BOM is derived from the design, with quantities that trace back', () =
 });
 
 test('placeholder material rates are declared, never passed off as NAC prices', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret });
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
   assert.ok(bom.placeholderCount > 0);
   assert.ok(bom.warnings.some(w => w.code === 'MATERIAL_PRICE_PLACEHOLDER'));
   assert.ok(bom.items.filter(i => i.priceSource === 'default_placeholder').length === bom.placeholderCount);
 });
 
 test("NAC's own material rates take over from the placeholders", () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret },
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers },
     { nacRates: { zone_motor: 189, flex_duct: { 200: 24.5 } } });
   // A flat NAC rate wins even on a line the tool sizes by diameter.
   for (const motor of bom.items.filter(i => i.key === 'zone_motor')) {
@@ -584,8 +598,8 @@ test("NAC's own material rates take over from the placeholders", () => {
 });
 
 test('a BOM line can be edited and the totals follow', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret });
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
   const i = bom.items.findIndex(x => x.key === 'zone_motor');
   const edited = editBomLine(bom, i, { unitCost: 200, quantity: 4 });
   assert.equal(edited.items[i].totalCost, 800);
@@ -828,7 +842,7 @@ test('supplier cost can come from the designer store when Price Setup has none',
 });
 
 test('the BOM reports which lines have no cost at all', () => {
-  const { o, net, z, ret } = sampleDesignParts();
+  const { o, net, z, ret, dampers } = sampleDesignParts();
   const bom = buildBillOfMaterials({
     selectedUnit: { brandName: 'Daikin', model: 'X', capacityKw: 14, phase: '1Ph', supplierCost: null },
     network: net, outlets: o, zones: z, returnDesign: ret
@@ -974,8 +988,8 @@ test('paircoil is priced per metre off the roll rate, not as a placeholder', () 
 });
 
 test('a supplier-list rate does not count as a placeholder in the BOM', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret,
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers,
     refrigerantPipeM: 8 });
   const pipe = bom.items.find(i => i.key === 'refrigerant_pipe');
   assert.equal(pipe.priceSource, 'supplier_list');

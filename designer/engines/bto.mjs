@@ -418,19 +418,159 @@ export function deriveBtos(network, opts = {}) {
   return btos;
 }
 
-/** What the order has to carry for these fittings. */
+/**
+ * BTO-A, BTO-B, BTO-C, BTO-C1, BTO-C2 — THE NAME EVERYTHING USES.
+ *
+ * The letter is the main the fitting hangs off; the suffix is the distribution
+ * arm it sits on. It used to be worked out in the drawing layer, which meant
+ * the plan said BTO-C1 and the schedule, the order and the price all said
+ * `bto_4`. Nick: "The plan drawing, component model, schedules, BOM, pricing
+ * and reports must all use the same underlying component objects. Do not
+ * maintain separate hardcoded versions that can disagree." So the name is put
+ * on the COMPONENT, once, and every surface reads it.
+ */
+export function labelBtos(btos, network) {
+  const sections = new Map((network?.sections || []).map(s => [s.id, s]));
+  // A fitting bolted to the MAIN is the main's letter. A fitting out on a
+  // DISTRIBUTION ARM takes the arm's own key — `branch_C1` is BTO-C1 — so the
+  // three fittings on Main C are BTO-C, BTO-C1 and BTO-C2 rather than three
+  // things all called BTO-C.
+  const armOf = (sec) => {
+    if (!sec || sec.role === 'main') return '';
+    const m = /_([A-Z]\d+)$/.exec(sec.id || '');
+    if (m) return m[1].slice(1);                 // `branch_C1` → `1`
+    return sec.armKey || '';
+  };
+  return (btos || []).map(b => {
+    const sec = b.fedBy ? sections.get(b.fedBy) : null;
+    const letter = sec?.mainKey || null;
+    if (!letter) return b;
+    return { ...b, label: 'BTO-' + letter + (b.armKey || armOf(sec)) };
+  });
+}
+
+/**
+ * THE EXACT CONFIGURATION, AS A PRICE-BOOK KEY.
+ *
+ * `bto_400_250_250_250`. Inlet first, then every outlet collar, largest first.
+ * This is what a fabricator quotes against: not "a ø400 three-port", which
+ * could be three 250s or a 350 and two 200s and is a different piece of metal
+ * at a different price.
+ */
+export function btoConfigKey(bto) {
+  const outs = bto.ports.map(p => p.diameterMm).filter(Boolean)
+    .sort((a, b) => b - a);
+  return 'bto_' + (bto.inletDiameterMm || 0) + (outs.length ? '_' + outs.join('_') : '');
+}
+
+/**
+ * THE KEY TWO FITTINGS MUST MATCH ON TO SHARE A BOM LINE.
+ *
+ * `400|250,250,250`. Nick: "Do not group BTOs using only inlet diameter and
+ * port count ... BTO-A and BTO-C2 must never be grouped merely because both
+ * have three outlet ports." They do not: BTO-A is `400|250,250,250` and BTO-C2
+ * is `350|250,250,250`, and those are two different orders.
+ *
+ * A configured body joins the key, because two fittings with the same collars
+ * built to different boxes are also two different orders.
+ */
+export function btoGroupKey(bto) {
+  const outs = bto.ports.map(p => p.diameterMm).filter(Boolean)
+    .sort((a, b) => a - b);
+  const body = bto.body && bto.body.dimensionsSource === 'configured'
+    ? '|' + bto.body.bodyLengthMm + 'x' + bto.body.bodyDepthMm : '';
+  return (bto.inletDiameterMm || 0) + '|' + outs.join(',') + body;
+}
+
+/** `ø400 inlet / 3 × ø250 outlets` — the shape of the fitting, in words. */
+export function btoShapeText(bto) {
+  const outs = bto.ports.map(p => p.diameterMm).filter(Boolean).sort((a, b) => b - a);
+  const groups = [];
+  for (const d of outs) {
+    const last = groups[groups.length - 1];
+    if (last && last.d === d) last.n += 1; else groups.push({ d, n: 1 });
+  }
+  const outText = groups.map(g => (g.n > 1 ? g.n + ' × ø' + g.d : 'ø' + g.d)).join(' + ');
+  return 'ø' + (bto.inletDiameterMm || '?') + ' inlet / ' + outText + ' outlet' +
+         (outs.length === 1 ? '' : 's');
+}
+
+/**
+ * EVERYTHING ABOUT ONE FITTING, IN ONE OBJECT.
+ *
+ * The plan, the site editor, the fabrication schedule, the BOM, the pricing and
+ * both reports all read THIS. Nick: "Use the same BTO and damper component
+ * objects for plan, site editor, schedules, BOM, pricing, internal report and
+ * customer quote. These outputs must not be able to disagree."
+ */
+export function btoSpec(bto, { price = null } = {}) {
+  const body = bto.body || null;
+  const derived = !body || body.dimensionsSource !== 'configured';
+  return {
+    id: bto.id,
+    label: bto.label || bto.id,
+    kind: 'bto_fitting',
+    airSide: 'supply',
+    configKey: btoConfigKey(bto),
+    groupKey: btoGroupKey(bto),
+    shapeText: btoShapeText(bto),
+    inletDiameterMm: bto.inletDiameterMm ?? null,
+    inletAirflowLs: bto.inletAirflowLs ?? null,
+    fedBy: bto.fedBy || null,
+    outletCollarCount: bto.ports.length,
+    ports: bto.ports.map(p => ({
+      index: p.index,
+      diameterMm: p.diameterMm ?? null,
+      airflowLs: p.airflowLs ?? null,
+      // WHERE THE AIR GOES. A collar with no destination is a collar nobody
+      // can install, so it is carried on the schedule as a gap rather than
+      // quietly omitted.
+      destination: p.servesLabel || (p.feedsBtoId ? p.feedsBtoId + ' (distribution arm)' : null),
+      servesOutletId: p.servesOutletId || null,
+      servesRoomId: p.servesRoomId || null,
+      feedsBtoId: p.feedsBtoId || null,
+      zone: p.zone || null
+    })),
+    bodyLengthMm: body?.bodyLengthMm ?? null,
+    bodyDepthMm: body?.bodyDepthMm ?? null,
+    bodyText: body?.bodyText || null,
+    dimensionsSource: body?.dimensionsSource || 'derived_from_collars',
+    // NEVER CALLED VERIFIED UNLESS SOMEBODY VERIFIED IT. Nick: "do not describe
+    // it as verified; do not invent a fabricator-approved dimension."
+    dimensionsVerified: !derived,
+    fabricationStatus: derived ? 'DERIVED — FABRICATION REVIEW REQUIRED' : 'CONFIGURED',
+    fits: body ? body.fits : true,
+    fitIssues: body?.issues || [],
+    requiredCollarRunMm: body?.requiredCollarRunMm ?? null,
+    availableCollarSpaceMm: body?.availableCollarSpaceMm ?? null,
+    // Filled in by the pricing layer; carried here so one object answers
+    // everything a schedule or a quote gate needs to ask.
+    price: price || null,
+    priceStatus: price?.status || 'PRICE REQUIRED'
+  };
+}
+
+/**
+ * What the order has to carry for these fittings.
+ *
+ * One line per EXACT physical specification, never per inlet-and-port-count,
+ * and every individual fitting ID stays on the line it was counted into.
+ */
 export function btoBomLines(btos) {
   const bySpec = new Map();
   for (const b of btos) {
-    const key = b.inletDiameterMm + ':' + b.ports.length;
+    const key = btoGroupKey(b);
     const row = bySpec.get(key) || {
       key: 'bto_fitting',
+      groupKey: key,
+      configKey: btoConfigKey(b),
       inletDiameterMm: b.inletDiameterMm,
       portCount: b.ports.length,
+      outletDiametersMm: b.ports.map(p => p.diameterMm).filter(Boolean).sort((x, y) => y - x),
       quantity: 0,
       unit: 'each',
-      label: 'BTO branch take-off ø' + b.inletDiameterMm + ' — ' +
-             b.ports.length + ' port',
+      shapeText: btoShapeText(b),
+      label: 'Fabricated BTO branch take-off — ' + btoShapeText(b),
       fittings: []
     };
     row.quantity += 1;
@@ -438,7 +578,8 @@ export function btoBomLines(btos) {
     bySpec.set(key, row);
   }
   return [...bySpec.values()].sort((a, b) =>
-    b.inletDiameterMm - a.inletDiameterMm || b.portCount - a.portCount);
+    b.inletDiameterMm - a.inletDiameterMm || b.portCount - a.portCount ||
+    (a.groupKey < b.groupKey ? -1 : 1));
 }
 
 export const BTO_MODEL = Object.freeze({
@@ -449,4 +590,5 @@ export const BTO_MODEL = Object.freeze({
 });
 
 export default { makeBto, deriveBtos, validateBtos, reconcileBto, btoBomLines,
-                 btoBodyGeometry, withBody, isReturnSection };
+                 btoBodyGeometry, withBody, isReturnSection, labelBtos,
+                 btoConfigKey, btoGroupKey, btoShapeText, btoSpec };

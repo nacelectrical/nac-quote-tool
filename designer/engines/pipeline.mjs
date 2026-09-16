@@ -8,6 +8,10 @@
 // AI assistant reads the output of this pipeline; it never feeds values into it.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { designRulesFor, settingsForDesign } from './design-rules.mjs';
+import { buildZoneDampers, validateZoneDampers } from './zone-dampers.mjs';
+import { quoteGate, quoteGateWarnings } from './quote-gate.mjs';
+import { buildSchedules } from './schedules.mjs';
 import { round } from './units.mjs';
 import { sizableRooms, blockedRooms, totalConditionedArea,
          deriveBoundariesFromPrintedSizes } from './rooms.mjs';
@@ -20,7 +24,7 @@ import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
-import { deriveBtos, validateBtos, btoBomLines, withBody } from './bto.mjs';
+import { deriveBtos, validateBtos, btoBomLines, withBody, labelBtos } from './bto.mjs';
 import { buildReturnComponents, validateReturnSeparation, returnComponentCounts,
          findSupplyReturnClashes } from './return-model.mjs';
 import { buildAreaTopology } from './area-router.mjs';
@@ -97,8 +101,17 @@ function returnCorridors(d) {
  *                            allowLowConfidence, brandPreference, phase }
  */
 export function runPipeline(design, ctx = {}) {
-  const settings = ctx.settings || DEFAULT_SETTINGS;
+  // ── THE RULES THIS JOB WAS DESIGNED TO COME FIRST ────────────────────────
+  //
+  // A design carries its own minimum branch diameter and its own minimum
+  // BTO-to-outlet run. Application settings seed those when the design is
+  // created; after that the DESIGN owns them, so opening the same job in a
+  // different app instance cannot resize its ducts. That is exactly what put
+  // ø200 back on the Foyer, the Master Bedroom and three bedrooms of a job
+  // approved at ø250.
+  const settings = settingsForDesign(design, ctx.settings || DEFAULT_SETTINGS);
   const d = { ...design };
+  d.designRules = designRulesFor(design, ctx.settings || DEFAULT_SETTINGS);
 
   // ── 0. Classification, then scale (RULES 1, 4 and 6) ──────────────────────
   // Who is being air conditioned is settled before anything else is asked, so
@@ -448,17 +461,34 @@ export function runPipeline(design, ctx = {}) {
     ];
   }
 
+  // ── 8b-i. MOTORISED ZONE DAMPERS, AS COMPONENTS ──────────────────────────
+  //
+  // The router decides WHERE a zone needs a motor. Everything else about the
+  // fitting — its size, its airflow, its velocity, its part number and its
+  // price — is read from the duct it is fitted in, so the drawing, the
+  // schedule, the order and the quote cannot hold different sizes for the same
+  // damper. Change the duct and all of them move.
   d.zoneDampers = d.network?.routed
-    ? placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {},
-                                    zones: d.zones })
+    ? buildZoneDampers(
+        placeZoneDampers(d.network, { zoneOverrides: d.zoneDamperOverrides || {},
+                                      zones: d.zones }),
+        d.network,
+        { nacRates: ctx.nacRates || null,
+          sizeOverrides: d.zoneDamperSizeOverrides || {} })
     : [];
+  d.zoneDamperValidation = validateZoneDampers(d.zoneDampers, { network: d.network });
+  if (!d.zoneDamperValidation.ok) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.zoneDamperValidation.failures.map(f => ({
+      code: f.code, severity: 'CRITICAL', message: f.message }))];
+  }
 
   // ── 8c. THE PHYSICAL BRANCH TAKE-OFFS ────────────────────────────────────
   // A BTO is a fitting somebody buys and lifts into a roof, not a number stuck
   // on an outlet. They are DERIVED from the sized network — wherever two or
   // more runs leave the same duct at the same place — so the drawing, the
   // schedule and the order all read one object.
-  d.btos = (d.network?.routed ? deriveBtos(d.network) : []).map(b => withBody(b));
+  d.btos = labelBtos(d.network?.routed ? deriveBtos(d.network) : [], d.network)
+    .map(b => withBody(b));
   d.btoValidation = validateBtos(d.btos);
   if (d.btoValidation.warnings?.length) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.warnings.map(w => ({
@@ -589,6 +619,9 @@ export function runPipeline(design, ctx = {}) {
     zones: d.zones,
     // The physical take-off fittings are real metal on the order.
     btos: d.btos,
+    // The damper COMPONENTS, not the zone list. The BOM must never re-derive a
+    // size the duct already owns.
+    zoneDampers: d.zoneDampers,
     // How the supply plenum is actually made, so the order line describes the
     // same fabricated piece the drawing shows.
     supplyPlenum: d.supplyPlenum,
@@ -597,10 +630,20 @@ export function runPipeline(design, ctx = {}) {
     drainPipeM: d.drainPipeM ?? 6,
     cableM: d.cableM ?? 12,
     extraMaterials: d.extraMaterials || []
-  }, { settings, nacRates: ctx.nacRates });
+  }, { settings, nacRates: ctx.nacRates, btoRates: ctx.btoRates });
 
   // Any line the estimator edited by hand is re-applied over the rebuilt BOM.
   d.bom = applyBomEdits(d.bom, d.bomEdits);
+
+  // ── CAN THIS BE QUOTED? ──────────────────────────────────────────────────
+  // Asked once, out loud, and only about the CUSTOMER quote. The internal
+  // sheet is always allowed out; a number somebody signs is not.
+  // ── THE TWO SCHEDULES ────────────────────────────────────────────────────
+  // Built from the same components the plan draws and the order buys, so a
+  // schedule cannot describe a fitting the drawing does not show.
+  d.schedules = buildSchedules({ ...d, btoRates: ctx.btoRates || null });
+
+  d.quoteGate = quoteGate(d);
 
   // ── 11. Costing (PART 24) ─────────────────────────────────────────────────
   d.labour = calculateLabour({

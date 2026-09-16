@@ -6,7 +6,9 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
          QUOTED_SEPARATELY } from './materials.mjs';
-import { btoBomLines } from './bto.mjs';
+import { btoBomLines, btoSpec } from './bto.mjs';
+import { btoRateBook, resolveBtoPrice, BTO_PRICE_STATUS } from './bto-pricing.mjs';
+import { damperBomLines } from './zone-dampers.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -109,35 +111,38 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
-  // ── Zone motors and zone wiring ────────────────────────────────────────────
-  // A zone damper is the size of the branch duct feeding it, so the diameter
-  // comes from the duct network rather than being assumed.
+  // Which duct feeds each room, for the outlet neck sizes further down.
   const branchDiameterByRoom = {};
   for (const sec of (design.network?.sections || [])) {
     const m = /^branch_(.+)$/.exec(sec.id || '');
     if (m && sec.diameterMm) branchDiameterByRoom[m[1]] = sec.diameterMm;
   }
-  const closableZones = (design.zones?.zones || []).filter(z => !z.alwaysOpen);
-  if (closableZones.length) {
-    const motorsByDiameter = {};
-    let unsized = 0;
-    for (const z of closableZones) {
-      // A zone can gather several rooms; the damper sits on the largest branch.
-      const diameters = (z.roomIds || []).map(id => branchDiameterByRoom[id]).filter(Boolean);
-      if (!diameters.length) { unsized += 1; continue; }
-      const d = Math.max(...diameters);
-      motorsByDiameter[d] = (motorsByDiameter[d] || 0) + 1;
-    }
-    Object.keys(motorsByDiameter).sort((a, b) => Number(a) - Number(b)).forEach(d => {
-      items.push({ ...line('zone_motor', motorsByDiameter[d], { ...ctx, diameterMm: Number(d) }),
-        category: 'zoning' });
-    });
-    if (unsized) {
-      items.push({ ...line('zone_motor', unsized, ctx), category: 'zoning',
-        sizeUnknown: true });
-    }
-    // One 15 m zone lead per motorised damper.
-    items.push({ ...line('zone_cable', closableZones.length, ctx), category: 'zoning' });
+
+  // ── MOTORISED ZONE DAMPERS, BY EXACT SIZE ──────────────────────────────
+  //
+  // Read straight off the damper COMPONENTS, which took their diameter from the
+  // duct each one is fitted in. There is no generic line: a ø250 motor and a
+  // ø300 motor are different part numbers at different prices, and a BOM that
+  // says "zone motor × 5" cannot be ordered. Nick: "The BOM must state the
+  // actual diameter. A generic damper line is not acceptable."
+  //
+  // There is no manual balancing damper line at all. Not on a main, not on a
+  // BTO port, not on an outlet branch, not on a return.
+  const dampers = design.zoneDampers || [];
+  for (const row of damperBomLines(dampers, { nacRates: ctx.nacRates || null })) {
+    items.push({ key: row.key, label: row.label, unit: row.unit, quantity: row.quantity,
+      unitCost: row.unitCost, totalCost: row.totalCost, priced: row.priced,
+      priceSource: row.priceSource, supplierCode: row.supplierCode,
+      diameterMm: row.diameterMm, actuator: row.actuator, skuKey: row.skuKey,
+      effectiveDate: row.effectiveDate, priceStatus: row.priceStatus,
+      dampers: row.dampers,
+      category: 'zoning', airSide: 'supply',
+      note: 'Motorised zone control. The damper is the size of the duct it is ' +
+            'fitted in; change the duct and this line changes with it.' });
+  }
+  // One 15 m zone lead per motorised damper.
+  if (dampers.length) {
+    items.push({ ...line('zone_cable', dampers.length, ctx), category: 'zoning' });
   }
 
   // ── Ductwork ───────────────────────────────────────────────────────────────
@@ -166,8 +171,15 @@ export function buildBillOfMaterials(design, opts = {}) {
       category: 'ductwork' });
   });
 
+  // NO MANUAL BALANCING DAMPER. Nick: "Manual balancing dampers are not
+  // required ... Only actual motorised zone dampers are permitted." The design
+  // balances with duct size and motorised zone control, so a manual damper is
+  // neither drawn, scheduled nor bought — the previous BOM carried ten of them
+  // at $420 that nobody was going to install. `damper_open` is no longer
+  // emitted by any router; the mapping is gone so a stale design cannot revive
+  // it through the order either.
   const fittingMap = { supply_plenum: 'supply_plenum', y_piece: 'y_piece', reducer: 'reducer',
-                       takeoff: 'takeoff', joiner: 'joiner', damper_open: 'damper_manual' };
+                       takeoff: 'takeoff', joiner: 'joiner' };
   Object.entries(fittingCounts).forEach(([type, qty]) => {
     const key = fittingMap[type];
     if (!key) return;                             // bends are part of the flex run
@@ -205,14 +217,37 @@ export function buildBillOfMaterials(design, opts = {}) {
   // The fittings are real metal with a part number. They are counted off the
   // derived BTO entities — one line per inlet size and port count, because a
   // 400 three-port body and a 300 two-port body are different things to order.
+  // EVERY LINE IS PRICED ON ITS OWN EXACT CONFIGURATION. There is no generic
+  // BTO rate any more: `bto_400_250_250_250` and `bto_350_250_250_250` are two
+  // different pieces of metal, and pricing one off the other is a guess that
+  // ends up on an invoice.
+  const btoBook = btoRateBook(ctx.btoRates || null);
   for (const row of btoBomLines(design.btos || [])) {
-    const body = (design.btos || []).find(b => b.id === row.fittings[0])?.body || null;
+    const first = (design.btos || []).find(b => b.id === row.fittings[0]);
+    const body = first?.body || null;
+    const price = resolveBtoPrice(row.configKey, { book: btoBook });
     items.push({ ...line('bto_fitting', row.quantity, ctx),
+      // The exact rate REPLACES the catalogue rate, and when there is no exact
+      // rate the line carries no price at all rather than a borrowed one.
+      unitCost: price.cost,
+      totalCost: price.cost === null ? null : round(price.cost * row.quantity, 2),
+      priced: price.cost !== null,
+      priceSource: price.status === BTO_PRICE_STATUS.VERIFIED ? PRICE_SOURCE.SUPPLIER
+        : price.status === BTO_PRICE_STATUS.PLACEHOLDER ? PRICE_SOURCE.PLACEHOLDER : null,
+      supplierCode: price.sku,
+      configKey: row.configKey,
+      groupKey: row.groupKey,
+      outletDiametersMm: row.outletDiametersMm,
+      btoPrice: price,
+      priceStatus: price.status,
+      fabricator: price.supplier,
+      quoteRef: price.quoteRef,
+      effectiveDate: price.effectiveDate,
       // SUPPLY AIR, EXPLICITLY. A return box is priced on its own lines under
       // the return category and must never total into these.
       category: 'ductwork', airSide: 'supply',
       diameterMm: row.inletDiameterMm,
-      label: row.label + (row.portCount === 1 ? '' : 's'),
+      label: row.label,
       portCount: row.portCount,
       fittings: row.fittings,
       // What the sheet metal shop is actually being asked for.

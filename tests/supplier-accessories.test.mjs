@@ -14,6 +14,7 @@ import {
 } from '../designer/engines/supplier-pricing.mjs';
 import { MATERIAL_CATALOGUE, resolveCost, UNQUOTED } from '../designer/engines/materials.mjs';
 import { buildBillOfMaterials } from '../designer/engines/bom.mjs';
+import { buildZoneDampers } from '../designer/engines/zone-dampers.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 
 // ── The quotation itself ───────────────────────────────────────────────────
@@ -135,8 +136,19 @@ function bomFor(overrides = {}) {
     { id: 'branch_bed1', role: 'branch', diameterMm: 250, lengthM: 7, fittings: [{ type: 'takeoff', quantity: 1 }] },
     { id: 'branch_bed2', role: 'branch', diameterMm: 200, lengthM: 5, fittings: [] }
   ];
+  const network = { sections, totalDuctLengthM: 16 };
+  // THE BOM READS DAMPER COMPONENTS, NOT ZONES. It used to re-derive the motors
+  // from the zone list and a map of branch diameters, which is a second source
+  // of truth for a size the duct already owns — and is how a drawing and an
+  // order came to disagree about a damper. The components are built once, here,
+  // the same way the pipeline builds them.
+  const zoneDampers = buildZoneDampers(
+    [{ id: 'damper_branch_bed1', sectionId: 'branch_bed1', zone: 'z1', roomId: 'bed1' },
+     { id: 'damper_branch_bed2', sectionId: 'branch_bed2', zone: 'z2', roomId: 'bed2' }],
+    network);
   return buildBillOfMaterials({
-    network: { sections, totalDuctLengthM: 16 },
+    network,
+    zoneDampers,
     outlets: { rows: [{ roomId: 'bed1', type: 'round_diffuser', quantity: 1 },
                       { roomId: 'bed2', type: 'round_diffuser', quantity: 1 }] },
     zones: { zones: [{ id: 'z1', roomIds: ['bed1'] }, { id: 'z2', roomIds: ['bed2'] }] },

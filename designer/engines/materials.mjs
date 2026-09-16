@@ -104,7 +104,7 @@ const DIFFUSERS = diameterRates('diffuser', {
  * the gap is visible rather than buried in the table below.
  */
 export const UNQUOTED = [
-  'reducer', 'joiner', 'damper_manual',
+  'reducer', 'joiner',
   'drain_kit', 'interconnect_cable', 'power_cable', 'isolator',
   'hanging_kit', 'outdoor_feet'
 ];
@@ -194,7 +194,10 @@ export const MATERIAL_CATALOGUE = {
   // ── Not quoted — shipped placeholders until NAC enter a rate ───────────────
   reducer:          { label: 'Duct reducer',                     unit: 'each', cost: 18.00 },
   joiner:           { label: 'Duct joiner',                      unit: 'each', cost: 9.50 },
-  damper_manual:    { label: 'Manual balancing damper',          unit: 'each', cost: 42.00 },
+  // NO `damper_manual`. Nick: "Manual balancing dampers are not required ...
+  // Remove manual balancing dampers completely." It is not a catalogue item,
+  // so it cannot be priced, ordered, scheduled or drawn. Motorised zone control
+  // is untouched — see `zone_motor`, which is stocked in every size.
   // Quoted separately on the jobs it appears on, so it carries NO rate here.
   grille_linear:    { label: 'Linear bar grille',                unit: 'each', cost: null,
                       quotedSeparately: true },

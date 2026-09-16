@@ -709,7 +709,7 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
         // polyline — a second `sweep` call with its own bow constant would let
         // the measured figure and the installed duct drift apart.
         points: finalRunPoints(at, { x: o.x, y: o.y }),
-        fittings: ['damper_open']
+        fittings: []
       });
       nodes.push({ id: o.id, type: 'outlet', x: o.x, y: o.y,
                    label: o.roomLabel, zone: o.zone });

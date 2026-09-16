@@ -339,7 +339,7 @@ export function buildDuctNetwork({ airflow, outlets, routesByRoomId = {}, mainRo
     const out = outletsByRoom.get(row.roomId);
     const route = routesByRoomId[row.roomId] || null;
     const qty = out?.quantity ?? 1;
-    const fittings = ['takeoff', 'damper_open', ...(extraFittingsByRoomId[row.roomId] || [])];
+    const fittings = ['takeoff', ...(extraFittingsByRoomId[row.roomId] || [])];
     if (qty > 1) fittings.push({ type: 'y_piece', quantity: qty - 1 });
 
     sections.push(sizeSection({

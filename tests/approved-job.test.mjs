@@ -89,11 +89,23 @@ test('a duct the maths genuinely required is not blamed on the minimum', () => {
   assert.equal(r.sizeBasis, 'calculated');
 });
 
-test('the minimum is a setting, not a hardcoded global', () => {
+test('the default is NAC\'s own standard, and it is still only a default', () => {
+  // The default IS ø250, because that is what this crew runs. It was the ladder
+  // minimum of 200, and that is how a job approved at ø250 came out of the app
+  // with ø200 on five rooms whenever nobody had set the job's value by hand.
+  const stock = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  assert.equal(stock.duct.minimumSupplyBranchDiameterMm, 250);
+  assert.equal(selectDiameter(45, 'final', { settings: stock }).diameterMm, 250);
+});
+
+test('ø200 is not removed — a job that configures one still gets one', () => {
+  // Nick: "Do not remove Ø200 globally. Enforce the configured per-job
+  // minimum." A future job on a crew that runs 200s sets 200 and gets 200.
   const loose = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-  assert.equal(loose.duct.minimumSupplyBranchDiameterMm, 200,
-    'the default changed — other jobs would silently resize');
-  assert.equal(selectDiameter(45, 'final', { settings: loose }).diameterMm, 200);
+  loose.duct.minimumSupplyBranchDiameterMm = 200;
+  const r = selectDiameter(45, 'final', { settings: loose });
+  assert.equal(r.diameterMm, 200);
+  assert.equal(r.raisedByMinimum, false, 'and the maths, not a floor, chose it');
 });
 
 // ── Fan coil placement ──────────────────────────────────────────────────────

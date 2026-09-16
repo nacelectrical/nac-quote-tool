@@ -621,7 +621,7 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
           airflowLs: groupFlow,
           zone: c.members[0]?.zone || null,
           points: dedupePoints([jPoint, hub]),
-          fittings: ['takeoff', 'damper_open']
+          fittings: ['takeoff']
         });
         nodes.push({ id: 'bto_node_' + junctionCounter, type: 'junction', bto: true,
                      x: hub.x, y: hub.y, label: 'BTO',
@@ -632,7 +632,7 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
 
       // ── Room branches off the take-off ────────────────────────────────────
       for (const m of c.members) {
-        const fittings = c.members.length >= minForMajor ? ['y_piece'] : ['takeoff', 'damper_open'];
+        const fittings = c.members.length >= minForMajor ? ['y_piece'] : ['takeoff'];
         // Square off and into the room. Flex does not run diagonally across a
         // ceiling.
         const branchPts = [splitPoint];

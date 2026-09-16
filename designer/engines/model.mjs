@@ -33,6 +33,17 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     job: { description: job.description || 'Ducted AC Supply & Install',
            houseType: job.houseType || '', climate: job.climate || settings.load.defaultClimate },
 
+    // ── THE RULES THIS JOB IS DESIGNED TO ────────────────────────────────────
+    //
+    // Seeded from settings once, then owned by the design. Settings are a
+    // default for the NEXT job; they are not allowed to resize THIS one after
+    // it has been approved — which is how a job approved at ø250 came back with
+    // ø200 on five rooms.
+    designRules: {
+      minimumSupplyBranchDiameterMm: settings.duct.minimumSupplyBranchDiameterMm,
+      minimumBtoToOutletDuctLengthM: settings.duct.minimumBtoToOutletDuctLengthM
+    },
+
     status: 'draft',                // draft | in_review | approved | quoted | superseded
     createdAt: now,
     updatedAt: now,

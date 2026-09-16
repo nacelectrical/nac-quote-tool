@@ -277,7 +277,6 @@ export const DEFAULT_SETTINGS = {
       reducer: 1.5,
       bend_90: 2.5,
       bend_45: 1.2,
-      damper_open: 1.0,
       takeoff: 2.0,
       joiner: 0.5
     },

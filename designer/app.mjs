@@ -722,10 +722,9 @@ export class DesignerApp {
     const btos = this.design.btos || [];
     if (!btos.length) return markers;
     const near = (a, b) => Math.hypot((a.x ?? 0) - (b.x ?? 0), (a.y ?? 0) - (b.y ?? 0)) < 14;
-    const letterOf = (b) => {
-      const sec = (this.design.network?.sections || []).find(s => s.id === b.fedBy);
-      return sec?.mainKey ? 'BTO-' + sec.mainKey + (b.armKey || '') : b.label;
-    };
+    // THE NAME IS ON THE COMPONENT. It used to be worked out here, which is how
+    // the plan came to say BTO-C1 while the schedule and the order said bto_4.
+    const letterOf = (b) => b.label;
     return markers.map(m => {
       if (m.type !== 'bto' && !m.bto) return m;
       const b = btos.find(x => near(x, m));

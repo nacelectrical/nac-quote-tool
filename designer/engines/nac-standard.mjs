@@ -211,12 +211,19 @@ export const AUTO_MIN_DIAMETER_MM = 200;
  * Dungannon Court sheet the smallest supply run is a 250, on a 65 L/s bedroom
  * that the velocity band would put on a 200.
  *
- * It is a SETTING, not a constant: `settings.duct.minimumSupplyBranchDiameterMm`
- * overrides it per design. The default stays at the ladder minimum so no
- * existing job silently changes size; a job that wants NAC's 250 standard sets
- * it, and the engine then has to say WHY every raised duct was raised.
+ * IT IS NAC'S OWN STANDARD, so it is NAC's default. It was the ladder minimum
+ * of 200, which meant the Dungannon job — approved at ø250 — came out of the
+ * app with ø200 on the Foyer, the Master Bedroom and three bedrooms whenever
+ * nobody had set the job's own value by hand. A default that disagrees with the
+ * practice of the crew using the tool is a defect waiting on somebody to notice.
+ *
+ * ø200 IS NOT REMOVED. It is still a stocked size, still on the ladder, and
+ * still what a job gets when it configures one — Nick: "Do not remove Ø200
+ * globally. Enforce the configured per-job minimum." The per-job value now
+ * lives on the DESIGN (designer/engines/design-rules.mjs), so a job keeps the
+ * sizes it was approved with wherever it is opened.
  */
-export const DEFAULT_MIN_SUPPLY_BRANCH_MM = AUTO_MIN_DIAMETER_MM;
+export const DEFAULT_MIN_SUPPLY_BRANCH_MM = 250;
 
 /** Everything NAC stocks. 450 and 500 are absent: NAC never run them. */
 export const STOCKED_DIAMETERS_MM = Object.freeze([100, 125, 150, 200, 250, 300, 350, 400]);

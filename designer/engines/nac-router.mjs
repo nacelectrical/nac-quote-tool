@@ -1031,7 +1031,7 @@ export function buildNacTopology({ rooms = [], airflow, outlets, layout = {}, zo
             airflowLs: round(t.outlet.airflowLs, 0),
             zone: t.outlet.zone,
             points: sweep(start, { x: t.outlet.x, y: t.outlet.y }, 0.22),
-            fittings: ['takeoff', 'damper_open']
+            fittings: ['takeoff']
           });
           nodes.push({ id: 'bto_' + btoNo, type: 'bto', bto: true, x: start.x, y: start.y,
                        angle: cluster.direct ? runAngleAt(runPts, t.alongIndex)

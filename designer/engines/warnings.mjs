@@ -7,6 +7,7 @@
 
 import { crossCheckFloorArea, incompleteRooms, isAutoCleared } from './rooms.mjs';
 import { isConditionedRoom } from './classify.mjs';
+import { quoteGateWarnings } from './quote-gate.mjs';
 
 export const SEVERITY = { INFO: 'INFO', CHECK: 'CHECK', WARNING: 'WARNING', CRITICAL: 'CRITICAL' };
 export const SEVERITY_ORDER = { CRITICAL: 0, WARNING: 1, CHECK: 2, INFO: 3 };
@@ -147,6 +148,10 @@ export function collectWarnings(design, opts = {}) {
   push(design.bom?.warnings, 'materials');
   push(design.commercials?.warnings, 'financials');
   push(design.loadWarnings, 'sizing');
+  // THE CUSTOMER-QUOTE GATE. These are CRITICAL to a quote and not to the
+  // internal sheet, which is why they carry `blocksCustomerQuote` and not
+  // `blocksFinalApproval` — the estimator still gets their working.
+  push(quoteGateWarnings(design.quoteGate), 'pricing');
 
   // ── Cross-cutting checks ───────────────────────────────────────────────────
   if (design.selectedUnit && design.systemLoad) {
