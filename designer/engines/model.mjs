@@ -67,6 +67,13 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     spillAllocations: [],
     outletPositionSources: {},      // roomId -> 'plan_detected' | 'estimator_placed'
 
+    // AN INSTALLER-APPROVED SUPPLY-MAIN CONFIGURATION FOR THIS JOB. Never a
+    // global default: { count, diameterMm, approvedBy }. Its presence switches
+    // the router to one-main-per-installer-area.
+    supplyMainConfig: null,
+    spigotRecommendation: null,
+    supplySpigots: null,
+
     fanCoilStatus: null,            // 'assumed' | 'estimator' | 'approved'
     fanCoilApprovedBy: null,
     placement: null,                // assessPlacement() result — preview vs final

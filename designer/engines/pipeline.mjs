@@ -21,6 +21,8 @@ import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
          buildReturnRoutes, placeZoneDampers, ROUTING_MODE } from './router.mjs';
 import { deriveBtos, validateBtos, btoBomLines } from './bto.mjs';
+import { buildAreaTopology } from './area-router.mjs';
+import { recommendedSupplySpigotCount, validateSupplySpigots } from './supply-spigots.mjs';
 import { assessPlacement } from './placement.mjs';
 import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
@@ -225,7 +227,25 @@ export function runPipeline(design, ctx = {}) {
     // THE NAC FLEX DUCT ROUTING MODEL. Not the old trunk-and-spine router:
     // PLENUM -> 2 or 3 MAINS -> BTOs -> one continuous final flex -> OUTLET,
     // with the geometry swept the way flex actually lies in a roof space.
-    const tree = measureTree(buildNacTopology({
+    // ── HOW MANY DUCTS LEAVE THE PLENUM ───────────────────────────────────
+    //
+    // A recommendation the engine always makes, and an installer choice that
+    // always wins. The recommendation is reported either way, so a job that
+    // was set by hand still shows what the rule would have said.
+    d.spigotRecommendation = recommendedSupplySpigotCount(d.outlets.totals.total, {
+      settings, systemAirflowLs: d.airflow.allocatedAirflowLs,
+      diameterMm: d.supplyMainConfig?.diameterMm || 400
+    });
+
+    // ONE MAIN PER INSTALLER AREA is used when the installer has approved a
+    // supply-main configuration for the job. Everything else keeps the spine
+    // router, so no existing design silently changes shape.
+    const tree = d.supplyMainConfig ? measureTree(buildAreaTopology({
+      rooms: included, airflow: d.airflow, outlets: d.outlets,
+      layout: d.layout || {}, zones: zonesForRouting,
+      mainConfig: d.supplyMainConfig
+    }, { settings, calibration: d.calibration }), d.calibration, { settings })
+    : measureTree(buildNacTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
       layout: d.layout || {}, zones: zonesForRouting,
       returnDesign: d.returnDesign || null
@@ -370,6 +390,32 @@ export function runPipeline(design, ctx = {}) {
   // schedule and the order all read one object.
   d.btos = d.network?.routed ? deriveBtos(d.network) : [];
   d.btoValidation = validateBtos(d.btos);
+
+  // ── 8c-ii. THE SUPPLY SPIGOTS ────────────────────────────────────────────
+  // The count and size that actually left the plenum, checked: the fabricated
+  // plenum's ability to take the collars, velocity in every main, pressure
+  // against VERIFIED available static, one area per main, the port limit, and
+  // that the mains add up to the outlets.
+  const mainSections = (d.network?.sections || [])
+    .filter(s => !s.parentId && s.role !== 'return');
+  d.supplySpigots = validateSupplySpigots({
+    mains: mainSections.map(s => ({ key: s.mainKey, airflowLs: s.airflowLs,
+                                    diameterMm: s.diameterMm,
+                                    name: (s.serves || []).join(' / ') })),
+    diameterMm: d.supplyMainConfig?.diameterMm || mainSections[0]?.diameterMm || null,
+    unit: d.selectedUnit || null,
+    outletTotalLs: (d.outlets?.rows || []).reduce((n, r) => n + r.airflowLs, 0),
+    pressurePa: null,
+    btos: d.btos,
+    manualOverride: !!d.supplyMainConfig,
+    areaNames: mainSections.map(s => (s.serves || []).join(' / '))
+  }, { settings });
+  if (d.supplySpigots) {
+    d.routeWarnings = [...(d.routeWarnings || []),
+      ...d.supplySpigots.blockers.map(b => ({ ...b, code: 'SUPPLY_' + b.code })),
+      ...d.supplySpigots.warnings.filter(w => w.severity !== 'INFO')
+        .map(w => ({ ...w, code: 'SUPPLY_' + w.code }))];
+  }
   if (!d.btoValidation.ok) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.btoValidation.failures.map(f => ({
       code: 'BTO_' + f.code, severity: 'CRITICAL', message: f.message }))];

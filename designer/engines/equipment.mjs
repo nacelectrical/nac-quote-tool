@@ -124,6 +124,11 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
         heatingKw: m.specs?.heatingKw ?? null,
         ratedAirflowLs: m.specs?.ratedAirflowLs ?? null,
         availableStaticPa: m.specs?.availableStaticPa ?? null,
+        // The discharge flange, carried through so the duct engine can check a
+        // fabricated plenum against real manufacturer dimensions instead of
+        // marking every plenum unverified.
+        supplyFlangeText: m.supplyFlangeText ?? m.specs?.supplyFlangeText ?? null,
+        returnFlangeText: m.returnFlangeText ?? m.specs?.returnFlangeText ?? null,
         dimensionsMm: (m.specs?.indoorWidthMm && m.specs?.indoorHeightMm && m.specs?.indoorDepthMm)
           ? { w: m.specs.indoorWidthMm, h: m.specs.indoorHeightMm, d: m.specs.indoorDepthMm } : null,
         electricalSupply: m.specs?.electricalSupply ?? null,

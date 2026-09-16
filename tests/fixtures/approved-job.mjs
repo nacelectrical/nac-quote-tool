@@ -96,6 +96,11 @@ export async function buildApproved(opts = {}) {
       reason: 'Removed in the renovation — open plan.', approvedBy: 'installer' }
   ];
 
+  // THREE o400 SUPPLY MAINS — installer-approved for this job, not a global
+  // default. Its presence is what switches the router to one main per area.
+  d.supplyMainConfig = { count: 3, diameterMm: 400, approvedBy: 'installer',
+                         note: 'Installer-approved for this job.' };
+
   // NAC's install minimum for this job.
   const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   settings.duct.minimumSupplyBranchDiameterMm = 250;

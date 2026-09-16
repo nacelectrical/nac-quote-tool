@@ -230,10 +230,101 @@ test('outlet, BTO, main and system airflow all reconcile', () => {
     'the system is out by ' + (nameplate - outletTotal) + ' L/s');
 });
 
-test('the two mains are the approved 566 and 233', () => {
-  const mains = out.network.sections.filter(s => !s.parentId && s.role !== 'return')
-    .map(s => s.airflowLs).sort((a, b) => b - a);
-  assert.deepEqual(mains, [566, 233]);
+test('three installer-approved mains, all \u00f8400, at the approved airflows', () => {
+  const mains = out.network.sections.filter(s => !s.parentId && s.role !== 'return');
+  assert.equal(mains.length, 3, 'the design was silently restructured away from three mains');
+  assert.deepEqual(mains.map(s => s.diameterMm), [400, 400, 400]);
+  assert.deepEqual(mains.map(s => s.airflowLs).sort((a, b) => b - a), [301, 265, 233]);
+  assert.equal(mains.reduce((n, s) => n + s.airflowLs, 0), 799);
+});
+
+test('each main serves one installer area, and no outlet is on two mains', () => {
+  const byOutlet = new Map();
+  for (const f of out.network.sections.filter(s => s.role === 'final')) {
+    assert.ok(f.mainKey, f.destination + ' is not on any main');
+    assert.ok(!byOutlet.has(f.outletId), f.destination + ' is fed twice');
+    byOutlet.set(f.outletId, f.mainKey);
+  }
+  assert.equal(byOutlet.size, 11);
+  assert.equal(new Set([...byOutlet.values()]).size, 3);
+});
+
+test('the approved area split is what the engine produced', () => {
+  const serves = {};
+  for (const f of out.network.sections.filter(s => s.role === 'final')) {
+    (serves[f.mainKey] ||= []).push(String(f.destination).replace(/ outlet \d+$/, ''));
+  }
+  const setOf = (k) => new Set(serves[k]);
+  const areas = Object.values(serves).map(v => new Set(v));
+  const has = (names) => areas.some(a => a.size === names.length && names.every(n => a.has(n)));
+  assert.ok(has(['KITCHEN', 'MEALS', 'FAMILY']), 'no Kitchen / Meals / Family main');
+  assert.ok(has(['LIVING', 'LOUNGE']), 'no Living / Lounge main');
+  assert.ok(has(['FOYER', 'MASTER BEDROOM', 'BEDROOM 4', 'BEDROOM 2', 'BEDROOM 3']),
+    'no bedroom-side main');
+  void setOf;
+});
+
+test('every main airflow equals everything downstream of it', () => {
+  const byId = new Map(out.network.sections.map(s => [s.id, s]));
+  const downstream = (id) => out.network.sections.filter(s => s.parentId === id);
+  const outletsUnder = (id) => {
+    let n = 0;
+    for (const c of downstream(id)) n += c.role === 'final' ? c.airflowLs : outletsUnder(c.id);
+    return n;
+  };
+  for (const m of out.network.sections.filter(s => !s.parentId && s.role !== 'return')) {
+    assert.equal(outletsUnder(m.id), m.airflowLs,
+      'Main ' + m.mainKey + ' carries ' + m.airflowLs + ' but feeds ' + outletsUnder(m.id));
+  }
+  void byId;
+});
+
+test('no approved main is reduced before its primary fitting', () => {
+  for (const m of out.network.sections.filter(s => !s.parentId && s.role !== 'return')) {
+    assert.equal(m.diameterMm, 400, 'Main ' + m.mainKey + ' left the plenum at ' + m.diameterMm);
+    assert.ok(!m.reducerFrom, 'Main ' + m.mainKey + ' reduces before its BTO');
+  }
+});
+
+test('exactly five BTO fittings for this fixture', () => {
+  assert.equal(out.btos.length, 5);
+  assert.ok(out.btos.every(b => b.ports.length <= 3));
+});
+
+test('the header, the schedule and the order agree on the counts', () => {
+  const mains = out.network.sections.filter(s => !s.parentId && s.role !== 'return').length;
+  assert.equal(mains, out.supplySpigots.count);
+  assert.equal(mains, out.network.mainSupplyCount ?? mains);
+  const ordered = out.bom.items.filter(i => i.key === 'bto_fitting')
+    .reduce((n, i) => n + i.quantity, 0);
+  assert.equal(ordered, out.btos.length, 'the order and the drawing disagree on fittings');
+});
+
+test('the supply spigot validation runs and reconciles', () => {
+  const v = out.supplySpigots;
+  assert.equal(v.ok, true, JSON.stringify(v.blockers));
+  assert.equal(v.count, 3);
+  assert.equal(v.diameterMm, 400);
+  assert.equal(v.totalLs, 799);
+  assert.equal(v.differenceLs, 0);
+  assert.deepEqual(v.rows.map(r => r.velocityMs), [2.4, 2.11, 1.85]);
+});
+
+test('the plenum collar check uses real manufacturer flange data', () => {
+  const p = out.supplySpigots.plenum;
+  assert.equal(p.verified, true, 'the flange data never reached the check');
+  assert.equal(p.flangeText, '245 x 1152');
+  assert.equal(p.collarRowMm, 1320);
+  assert.equal(p.fitsInOneRow, false);
+  assert.match(p.note, /fabricated WIDER than the unit/);
+  assert.ok(out.routeWarnings.some(w => w.code === 'SUPPLY_PLENUM_COLLARS_DO_NOT_FIT_ONE_ROW'),
+    'the fabrication problem was not surfaced');
+});
+
+test('the spigot count is recommended even when the installer set it', () => {
+  assert.equal(out.spigotRecommendation.count, 3);
+  assert.equal(out.spigotRecommendation.fromTable, true);
+  assert.match(out.spigotRecommendation.reason, /11 outlets/);
 });
 
 // ── The order matches the drawing ───────────────────────────────────────────

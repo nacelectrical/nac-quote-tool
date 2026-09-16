@@ -57,7 +57,7 @@ test('one BTO serves several outlets', () => {
 test('the fan coil feeds mains, and the mains feed the BTOs', () => {
   const byId = new Map(out.network.sections.map(s => [s.id, s]));
   const mains = out.network.sections.filter(s => !s.parentId && s.role !== 'return');
-  assert.equal(mains.length, 2, 'the plenum should carry the two approved mains');
+  assert.equal(mains.length, 3, 'the plenum should carry the three approved mains');
   for (const b of btos) {
     // Walk up from the fitting's feed: it must reach a main, never an outlet.
     let cur = byId.get(b.fedBy);
