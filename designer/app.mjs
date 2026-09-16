@@ -7,8 +7,9 @@
 // the deterministic engines in ./engines; nothing is computed here.
 
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table,
-         confidenceBadge, num } from './ui/dom.mjs';
+         confidenceBadge, num, money } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
+import { createSiteAdjust } from './ui/site-adjust.mjs';
 
 /**
  * THE FOUR WAYS TO LOOK AT THE PLAN TAB.
@@ -196,6 +197,116 @@ export class DesignerApp {
 
   update() { this.recompute(); this.render(); }
 
+  // ── SITE ADJUST ───────────────────────────────────────────────────────────
+
+  /** Open the iPad mode. The approved design is kept aside, untouched. */
+  openSiteAdjust() {
+    this.siteBaseDesign = JSON.parse(JSON.stringify(this.design));
+    this.siteAdjust = createSiteAdjust(this);
+    this.render();
+    // Anything the last session left on this iPad comes back before the
+    // installer has to wonder whether it survived.
+    if (this.siteAdjust.resume()) {
+      toast('Recovered unsynced site edits from this iPad.');
+    }
+  }
+
+  closeSiteAdjust() {
+    this.siteAdjust = null;
+    this.siteBaseDesign = null;
+    this.render();
+  }
+
+  /** The design Site Adjust replays its edits onto: the one it was opened at. */
+  baseDesign() { return this.siteBaseDesign || this.design; }
+
+  /** A site edit landed: take the patched design and recalculate everything. */
+  applySiteDesign(patched) {
+    this.design = patched;
+    this.recompute();
+  }
+
+  userName() { return this.user?.email || this.user?.name || 'site'; }
+  serverUpdatedAt() { return this.serverDesignUpdatedAt || null; }
+
+  /** Push a site session to storage. Rejects so the local copy is kept. */
+  async pushSiteSession(record) {
+    if (!this.saveDesign) throw new Error('No connection');
+    return this.saveDesign();
+  }
+
+  /** The plan host, so Site Adjust can put the real viewer inside its layout. */
+  viewerHost() { this.ensureViewer(); return this.viewer.element || null; }
+
+  mountSitePlan() {
+    this.ensureViewer();
+    const slot = this.root.querySelector('.sa-canvas');
+    const el = this.viewer.element;
+    // The viewer's wrapper is position:absolute;inset:0, so it needs a sized,
+    // positioned box around it — dropped in bare it anchors to the page and
+    // covers the mode bar.
+    if (slot && el && el.parentNode !== slot) mount(slot, el);
+    this.viewer.setDesignView(true);
+    this.viewer.setShowAnalysis(false);
+    // THE BOX CHANGES SHAPE WHEN A SHEET OPENS. In landscape the sheet takes
+    // half the width; the plan has to be re-fitted to what is left or the
+    // drawing runs off behind it. Re-fitting is cheap and only happens when the
+    // box has actually changed size.
+    const box = slot ? slot.getBoundingClientRect() : null;
+    const size = box ? Math.round(box.width) + 'x' + Math.round(box.height) : '';
+    if (size && size !== this.sitePlanSize) {
+      this.sitePlanSize = size;
+      // AFTER the ResizeObserver has re-measured the canvas, not just after
+      // layout: the viewer sizes its backing store from that observer, and a
+      // fit computed against the old backing store puts the drawing half off
+      // the edge — which is what happens every time a sheet opens.
+      // TWICE, deliberately. The viewer sizes its backing store from a
+      // ResizeObserver, which fires on its own schedule; a fit computed before
+      // that lands is computed against the OLD canvas and puts the drawing half
+      // behind the sheet. The first fit covers the usual case and the second
+      // covers the slow one. Both are cheap — a fit is arithmetic and a redraw.
+      clearTimeout(this.siteFitTimer);
+      clearTimeout(this.siteFitTimer2);
+      const refit = () => { this.viewer.fit?.(); this.viewer.redraw?.(); };
+      this.siteFitTimer = setTimeout(refit, 80);
+      this.siteFitTimer2 = setTimeout(refit, 320);
+    }
+    this.viewer.redraw?.();
+  }
+
+  /** Outlets an installer can connect a BTO port to. */
+  outletChoices() {
+    return (this.design.outlets?.rows || []).map(r => ({
+      id: r.roomId, label: r.label + ' — ' + (r.airflowLs ?? '?') + ' L/s' }));
+  }
+
+  /**
+   * SAVE AS-INSTALLED — beside the approved design, never over it.
+   *
+   * Nick: "Do not overwrite the quoted design or approved design. Create
+   * separate revisions that can be compared."
+   */
+  saveAsInstalled({ by, reason, changes, stage }) {
+    const before = this.siteBaseDesign?.commercials?.totalJobCost ?? null;
+    const after = this.design?.commercials?.totalJobCost ?? null;
+    this.design = addRevision(this.design, {
+      by, reason,
+      label: stage + ' — ' + changes.length + ' component change(s)' +
+        (before !== null && after !== null && before !== after
+          ? ', cost ' + money(before) + ' → ' + money(after) : '')
+    });
+    // The component-level before/after, kept on the revision itself so the two
+    // designs can be compared without re-deriving anything.
+    const rev = this.design.revisions[this.design.revisions.length - 1];
+    rev.stage = stage;
+    rev.changes = changes;
+    rev.costBefore = before;
+    rev.costAfter = after;
+    this.saveDesign?.();
+    toast('As-installed revision ' + rev.number + ' saved. The approved design is unchanged.');
+    this.render();
+  }
+
   // ── Shell ─────────────────────────────────────────────────────────────────
 
   renderShell() {
@@ -209,6 +320,17 @@ export class DesignerApp {
   }
 
   render() {
+    // ── SITE ADJUST TAKES THE WHOLE SCREEN ──────────────────────────────────
+    //
+    // Nick: "It must work without opening the full advanced-design interface."
+    // So it is not a tab inside the office layout — it replaces it. The header,
+    // the step rail, the tab bar and the assistant are all gone, and what is
+    // left is the plan, six mode buttons and the sheet for whatever was tapped.
+    if (this.siteAdjust) {
+      mount(this.root, this.siteAdjust.render());
+      this.mountSitePlan();
+      return;
+    }
     this.renderHeader();
     this.renderSteps();
     this.renderTabs();
@@ -252,6 +374,11 @@ export class DesignerApp {
           : button('◂ QUICK QUOTE', () => this.enterQuick(), 'ghost small'),
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
+        // ON SITE, ONE TAP FROM ANYWHERE. An installer on a roof should not have
+        // to find their way through the office screens to move a diffuser.
+        this.design.network?.routed
+          ? button('SITE ADJUST', () => this.openSiteAdjust(), 'small')
+          : null,
         button('Save', () => this.save(), 'small'),
         button('Customers', () => this.showCustomerPicker(), 'ghost small'),
         button('Designs', () => this.showDesignList(), 'ghost small'),

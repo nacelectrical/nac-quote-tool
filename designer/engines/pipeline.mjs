@@ -630,7 +630,11 @@ export function runPipeline(design, ctx = {}) {
     drainPipeM: d.drainPipeM ?? 6,
     cableM: d.cableM ?? 12,
     extraMaterials: d.extraMaterials || []
-  }, { settings, nacRates: ctx.nacRates, btoRates: ctx.btoRates });
+    // A FABRICATOR PRICE ENTERED ON SITE TRAVELS WITH THE DESIGN. Rates may
+    // also come from settings; the design's own record wins, because that is
+    // where the quote reference somebody keyed into Site Adjust lives.
+  }, { settings, nacRates: ctx.nacRates,
+       btoRates: { ...(ctx.btoRates || {}), ...(d.btoRates || {}) } });
 
   // Any line the estimator edited by hand is re-applied over the rebuilt BOM.
   d.bom = applyBomEdits(d.bom, d.bomEdits);
@@ -641,7 +645,7 @@ export function runPipeline(design, ctx = {}) {
   // ── THE TWO SCHEDULES ────────────────────────────────────────────────────
   // Built from the same components the plan draws and the order buys, so a
   // schedule cannot describe a fitting the drawing does not show.
-  d.schedules = buildSchedules({ ...d, btoRates: ctx.btoRates || null });
+  d.schedules = buildSchedules({ ...d, btoRates: { ...(ctx.btoRates || {}), ...(d.btoRates || {}) } });
 
   d.quoteGate = quoteGate(d);
 

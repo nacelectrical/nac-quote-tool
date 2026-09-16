@@ -230,6 +230,40 @@ measured off the calibrated plan, no run padded, no fitting inside an outlet's
 footprint, the topology and airflow unchanged, and the review warning raised
 when no compliant position exists.
 
+## Site Adjust — the iPad mode
+
+**A mode is always explicit.** Pan, Select, Move, Route, Add, Delete — named,
+one tap, always on screen. Dragging the plan must never move a fitting, and the
+only reliable way to guarantee that is to make the two different MODES rather
+than different gestures.
+
+**Targets are 56 px, 12 px apart.** The person using this is wearing gloves,
+standing on a joist, holding a torch. In portrait the mode bar wraps to two rows
+rather than shrinking the buttons.
+
+**Tap a fitting and everything about it opens** — a side panel in landscape so
+the drawing stays visible, a bottom sheet in portrait. A BTO shows its inlet,
+its airflow, its body, whether those dimensions are verified or derived, its
+configuration key, its price status and every collar with its size, airflow and
+destination. A damper shows its duct, its diameter, its velocity, its SKU, its
+supplier, its cost and its effective date.
+
+**Nothing is lost.** Every completed edit is written to the device BEFORE
+anything is sent anywhere, and the sync state is always on screen: Saved
+locally, Syncing, Synced, Sync failed, Conflict. A failed push keeps the work on
+the iPad; a design that moved on the server is reported as a conflict, never
+resolved by guessing. `Saved locally` is never shown for a write that failed.
+
+**Site Adjust does not edit the design — it appends EDITS.** The edits fold into
+the design's own override records and the whole pipeline re-runs, so lengths,
+velocities, static pressure, the schedules, the BOM and the job cost are
+recalculated rather than patched. Undo and redo are a cursor on that list.
+Recalculation happens on RELEASE, never during a drag.
+
+**SAVE AS-INSTALLED REVISION puts a new revision beside the approved design.**
+It never overwrites it. The revision carries who, when, why, the component-level
+before and after, and the cost difference.
+
 ## The internal PDF
 
 **The document carries its own font.** Declaring Helvetica leaves the reader to

@@ -78,7 +78,7 @@ function packLine(key, metres, ctx, extra = {}) {
 export function buildBillOfMaterials(design, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const nacRates = opts.nacRates || null;
-  const ctx = { nacRates };
+  const ctx = { nacRates, btoRates: opts.btoRates || null };
   const items = [];
 
   // ── Equipment ──────────────────────────────────────────────────────────────

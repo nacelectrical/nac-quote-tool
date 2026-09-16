@@ -80,12 +80,34 @@ const ready = await p.evaluate(() => {
   // The static pressure figure this model has no data sheet for.
   app.design.equipmentSpecs = { ...(app.design.equipmentSpecs || {}) };
   app.update();
+  const unpricedLines = (app.design.bom?.items || []).filter(i => !i.priced);
   return { unpriced: app.design.bom?.unpricedCount ?? null,
+           unpricedKeys: [...new Set(unpricedLines.map(i => i.key))],
+           btoConfigs: unpricedLines.filter(i => i.key === 'bto_fitting').map(i => i.configKey),
+           gateOk: app.design.quoteGate?.ok ?? null,
+           gateCodes: (app.design.quoteGate?.blockers || []).map(b => b.code),
            sell: app.design.commercials?.sellPriceIncGst ?? null };
 });
 console.log('     ', JSON.stringify(ready));
 say('the design has a sell price', ready.sell > 0, '$' + ready.sell);
-say('no material line is left unpriced', ready.unpriced === 0, String(ready.unpriced));
+// EVERY UNPRICED LINE IS A FABRICATED BTO, AND THAT IS THE POINT.
+//
+// A branch take-off is made to order, and `bto_400_250_250_250` is not the same
+// fitting as `bto_350_250_250_250`. Nick: "do not silently use one generic BTO
+// price; do not substitute the price of another configuration." So until a
+// fabricator's rate is entered against each exact configuration the line has no
+// price — and the CUSTOMER QUOTE is blocked while the internal sheet is not.
+say('the only unpriced lines are fabricated BTO configurations',
+  ready.unpricedKeys.length === 0 ||
+  ready.unpricedKeys.every(k => k === 'bto_fitting'),
+  ready.unpricedKeys.join(', ') || 'none');
+say('and each one names the exact configuration it needs a price for',
+  ready.btoConfigs.every(k => /^bto_\d+(_\d+)+$/.test(k)),
+  ready.btoConfigs.join(', ') || 'none');
+say('a customer quote is blocked while they are unpriced',
+  ready.btoConfigs.length === 0 ? ready.gateOk === true
+    : ready.gateOk === false && ready.gateCodes.includes('BTO_PRICE_REQUIRED'),
+  ready.gateCodes.join(', ') || 'nothing blocking');
 
 // ── 2. Push it to a quote ───────────────────────────────────────────────────
 STEP('Create the customer quote');
