@@ -33,7 +33,7 @@ test('a BTO is a physical multi-branch fitting, not a label', () => {
 
 test('individual outlets are never labelled as BTOs', () => {
   const outletCount = out.outlets.totals.total;
-  assert.equal(outletCount, 11);
+  assert.equal(outletCount, 10);
   assert.ok(btos.length < outletCount,
     'there are as many fittings as outlets — that is the old one-BTO-per-outlet defect');
   // No fitting is named after a room, and no outlet carries a BTO number.

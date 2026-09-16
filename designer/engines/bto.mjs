@@ -196,9 +196,10 @@ export function makeBto({ id, index, position, inletDiameterMm, inletAirflowLs,
       servesRoomId: p.servesRoomId || null,
       servesLabel: p.servesLabel || null,
       feedsBtoId: p.feedsBtoId || null,
-    // A port may also feed a duct that simply carries on — a reduced main, a
-    // major branch. That is a valid part of the hierarchy, not a dead end.
-    feedsSectionId: p.feedsSectionId || null,
+      // A deliberate distribution arm is allowed to feed a local BTO. It is
+      // distinct from an arbitrary serial chain created to dodge a port cap.
+      intentionalDistribution: !!p.intentionalDistribution,
+      feedsSectionId: p.feedsSectionId || null,
       zone: p.zone || null,
       damper: !!p.damper
     })),
@@ -266,11 +267,10 @@ export function validateBtos(btos, opts = {}) {
           message: b.id + ': ' + issue.message + ' Installer review required.' });
       }
     }
-    // A BTO feeding another BTO is not illegal metal, but on a design that asked
-    // for one fitting per main it means the router chained where it should not
-    // have, so it is reported rather than left to be noticed in a drawing.
+    // Report accidental serial chains, but allow a configured 400-350-350
+    // distribution fitting to feed geographical local BTOs.
     for (const p of b.ports) {
-      if (p.feedsBtoId) {
+      if (p.feedsBtoId && !p.intentionalDistribution) {
         warnings.push({ btoId: b.id, code: 'BTO_FEEDS_BTO',
           message: b.id + ' port ' + p.index + ' feeds ' + p.feedsBtoId +
                    ' rather than an outlet — a chained fitting.' });
@@ -299,6 +299,9 @@ export function validateBtos(btos, opts = {}) {
     }
   }
   const chainPorts = btos.reduce((n, b) => n + b.ports.filter(p => p.feedsBtoId).length, 0);
+  const intentionalDistributionPorts = btos.reduce((n, b) => n +
+    b.ports.filter(p => p.feedsBtoId && p.intentionalDistribution).length, 0);
+  const arbitraryChainPorts = chainPorts - intentionalDistributionPorts;
   return {
     ok: failures.length === 0,
     failures,
@@ -308,8 +311,9 @@ export function validateBtos(btos, opts = {}) {
     portCounts: btos.map(b => b.ports.length),
     outletPorts: btos.reduce((n, b) => n + b.ports.filter(p => p.servesOutletId).length, 0),
     chainPorts,
-    /** The shape Nick asked for: every fitting hangs off its own main. */
-    chained: chainPorts > 0,
+    intentionalDistributionPorts,
+    arbitraryChainPorts,
+    chained: arbitraryChainPorts > 0,
     bodies: btos.map(b => b.body || btoBodyGeometry(b, opts)),
     reconciliations: btos.map(reconcileBto)
   };
@@ -382,6 +386,7 @@ export function deriveBtos(network, opts = {}) {
         // A run that is not a final carries on to whatever is downstream of it;
         // the second pass below turns that into the fitting it reaches.
         feedsSectionId: r.outletId ? null : r.id,
+        intentionalDistribution: !!r.distributionArm,
         zone: r.zone || null,
         damper: !!r.zone
       }));

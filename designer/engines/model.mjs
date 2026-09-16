@@ -67,9 +67,10 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     spillAllocations: [],
     outletPositionSources: {},      // roomId -> 'plan_detected' | 'estimator_placed'
 
-    // AN INSTALLER-APPROVED SUPPLY-MAIN CONFIGURATION FOR THIS JOB. Never a
-    // global default: { count, diameterMm, approvedBy }. Its presence switches
-    // the router to one-main-per-installer-area.
+    // New designs use practical installer areas. Loaded older designs do not
+    // have this field and therefore retain their original spine routing.
+    routingStrategy: null,
+    // Optional installer-approved details and explicit area/BTO hierarchy.
     supplyMainConfig: null,
     spigotRecommendation: null,
     supplySpigots: null,

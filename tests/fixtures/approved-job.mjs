@@ -22,15 +22,13 @@ const SHEET = [
 const PPM = 340/6000;
 export const CAL = { pixelsPerMm: PPM, mmPerPixel: 1/PPM, imageWidthPx: 1179, imageHeightPx: 1262, display: {} };
 
-// Approved outlet positions. Nine were read off the marked sheet; MEALS and
-// FAMILY-2 were placed by the estimator and are recorded as such.
+// Approved outlet positions. Family has ONE centrally placed outlet.
 export const APPROVED_OUTLETS = {
   'LIVING':         [{ x: 209, y: 139,  src: OUTLET_SOURCE.DETECTED }],
   'KITCHEN':        [{ x: 212, y: 410,  src: OUTLET_SOURCE.DETECTED }],
   'MEALS':          [{ x: 398, y: 430,  src: OUTLET_SOURCE.MANUAL }],
   'LOUNGE':         [{ x: 565, y: 347,  src: OUTLET_SOURCE.DETECTED }],
-  'FAMILY':         [{ x: 201, y: 609,  src: OUTLET_SOURCE.DETECTED },
-                     { x: 258, y: 518,  src: OUTLET_SOURCE.MANUAL }],
+  'FAMILY':         [{ x: 238, y: 609,  src: OUTLET_SOURCE.MANUAL }],
   'FOYER':          [{ x: 535, y: 643,  src: OUTLET_SOURCE.DETECTED }],
   'MASTER BEDROOM': [{ x: 800, y: 456,  src: OUTLET_SOURCE.DETECTED }],
   'BEDROOM 4':      [{ x: 471, y: 844,  src: OUTLET_SOURCE.DETECTED }],
@@ -96,10 +94,23 @@ export async function buildApproved(opts = {}) {
       reason: 'Removed in the renovation — open plan.', approvedBy: 'installer' }
   ];
 
-  // THREE o400 SUPPLY MAINS — installer-approved for this job, not a global
-  // default. Its presence is what switches the router to one main per area.
+  // THREE o400 SUPPLY MAINS. Main C deliberately splits through a
+  // 400-350-350 distribution BTO, then one local BTO for Foyer/Master and one
+  // for the three bedrooms. This is an intentional distribution tree, not a
+  // workaround for an arbitrary port cap.
   d.supplyMainConfig = { count: 3, diameterMm: 400, approvedBy: 'installer',
-                         note: 'Installer-approved for this job.' };
+    note: 'Installer-approved Dungannon-style area layout.',
+    areas: [
+      { key: 'A', roomLabels: ['KITCHEN', 'MEALS', 'FAMILY'], outletDiameterMm: 250 },
+      { key: 'B', roomLabels: ['LIVING', 'LOUNGE'] },
+      { key: 'C', roomLabels: ['FOYER', 'MASTER BEDROOM', 'BEDROOM 4', 'BEDROOM 2', 'BEDROOM 3'],
+        distributionArms: [
+          { key: 'C1', label: 'Foyer / Master', diameterMm: 350,
+            roomLabels: ['FOYER', 'MASTER BEDROOM'] },
+          { key: 'C2', label: 'Bedrooms', diameterMm: 350,
+            roomLabels: ['BEDROOM 4', 'BEDROOM 2', 'BEDROOM 3'] }
+        ] }
+    ] };
 
   // NAC's install minimum for this job.
   const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));

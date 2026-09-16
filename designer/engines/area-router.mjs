@@ -311,19 +311,52 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
       message: 'No conditioned room has both airflow and a boundary on the plan.' }]) };
   }
 
+  const normal = (s) => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
   const wantMains = Math.max(1, mainConfig?.count || 2);
   const mainMm = mainConfig?.diameterMm || 400;
-  const areas = formInstallerAreas(outletPoints, wantMains);
+  let areas;
+  if (mainConfig?.areas?.length) {
+    const assigned = new Set();
+    areas = mainConfig.areas.map((spec, i) => {
+      const labels = new Set((spec.roomLabels || []).map(normal));
+      const members = outletPoints.filter(o => labels.has(normal(o.roomLabel)));
+      members.forEach(o => assigned.add(o.id));
+      return { spec: { ...spec, key: spec.key || String.fromCharCode(65 + i) }, members };
+    }).filter(a => a.members.length);
+    const unassigned = outletPoints.filter(o => !assigned.has(o.id));
+    for (const o of unassigned) {
+      const nearest = areas.reduce((best, a) =>
+        dist(centroid(a.members), o) < dist(centroid(best.members), o) ? a : best, areas[0]);
+      nearest.members.push(o);
+      warnings.push({ code: 'OUTLET_ASSIGNED_TO_NEAREST_AREA', severity: 'CHECK',
+        message: o.roomLabel + ' was not named in the installer area configuration and was assigned to Main ' + nearest.spec.key + '.' });
+    }
+  } else {
+    areas = formInstallerAreas(outletPoints, wantMains)
+      .map((members, i) => ({ spec: { key: String.fromCharCode(65 + i) }, members }));
+  }
 
   const segments = [];
   const nodes = [{ id: 'plenum', type: 'plenum', x: plenum.x, y: plenum.y,
                    source: plenumSource, label: 'Supply plenum' }];
   const letters = 'ABCDEFGH';
 
-  areas.forEach((members, ai) => {
-    const letter = letters[ai];
+  areas.forEach(({ spec, members }, ai) => {
+    const letter = spec.key || letters[ai];
     const areaLs = members.reduce((n, o) => n + o.airflowLs, 0);
-    const plan = planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
+    const arms = (spec.distributionArms || []).map((arm, i) => {
+      const labels = new Set((arm.roomLabels || []).map(normal));
+      return { ...arm, key: arm.key || letter + (i + 1),
+        members: members.filter(o => labels.has(normal(o.roomLabel))) };
+    }).filter(a => a.members.length);
+    const staged = arms.length > 1;
+    const plan = staged
+      ? { at: clampInto(clearOfOutlets(geometricMedian([
+          { ...plenum, w: mainMm / 250 },
+          ...arms.map(a => ({ ...centroid(a.members),
+            w: a.members.reduce((n, o) => n + o.airflowLs, 0) / 100 }))
+        ]), members, MIN_FITTING_TO_OUTLET_PX), footprint), direct: [] }
+      : planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
 
     // THE MAIN. Straight from the plenum to the area's one fitting, at the
     // configured size, and NOT reduced on the way — it has nothing to shed
@@ -343,28 +376,48 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
       fittings: ai === 0 ? ['supply_plenum'] : []
     });
 
-    // EVERY OUTLET IN THE AREA, DIRECT OFF THE ONE FITTING.
-    //
-    // This was a while-loop walking a chain of fittings, emitting a "Main X —
-    // onward" spur every time the old three-port ceiling was reached. There is
-    // no chain any more, so there is no loop and no spur: the main lands on the
-    // fitting and the finals radiate off it.
-    for (const o of plan.direct) {
+    const emitFinal = (o, parentId, at, fixedMm = null) => {
       segments.push({
-        id: 'final_' + o.id, parentId: mainId, role: 'final', nacRole: 'FINAL_FLEX',
+        id: 'final_' + o.id, parentId, role: 'final', nacRole: 'FINAL_FLEX',
+        bto: true,
         mainKey: letter, flex: true, airSide: 'supply', roomId: o.roomId, outletId: o.id,
         destination: o.of > 1 ? o.roomLabel + ' outlet ' + o.index : o.roomLabel,
         airflowLs: round(o.airflowLs, 0),
+        diameterMm: fixedMm || undefined,
         zone: o.zone,
-        points: sweep(plan.at, { x: o.x, y: o.y }, 0.16),
+        points: sweep(at, { x: o.x, y: o.y }, 0.16),
         fittings: ['damper_open']
       });
       nodes.push({ id: o.id, type: 'outlet', x: o.x, y: o.y,
                    label: o.roomLabel, zone: o.zone });
+    };
+
+    if (staged) {
+      for (const arm of arms) {
+        const armLs = arm.members.reduce((n, o) => n + o.airflowLs, 0);
+        const armMm = arm.diameterMm || 350;
+        const local = planAreaFittings(arm.members, plan.at,
+          { footprint, settings, mainDiameterMm: armMm });
+        const branchId = 'branch_' + arm.key;
+        segments.push({
+          id: branchId, parentId: mainId, role: 'branch', nacRole: 'DISTRIBUTION_ARM',
+          mainKey: letter, flex: true, airSide: 'supply', distributionArm: true,
+          destination: 'Main ' + letter + ' → ' + (arm.label || arm.key),
+          serves: [...new Set(arm.members.map(m => m.roomLabel))],
+          airflowLs: round(armLs, 0), diameterMm: armMm,
+          points: sweep(plan.at, local.at, 0.1), fittings: []
+        });
+        for (const o of arm.members) emitFinal(o, branchId, local.at, arm.outletDiameterMm || null);
+        nodes.push({ id: 'bto_' + arm.key, type: 'bto', airSide: 'supply',
+          x: local.at.x, y: local.at.y, mainKey: letter,
+          label: 'BTO-' + arm.key, ports: arm.members.length });
+      }
+    } else {
+      for (const o of plan.direct) emitFinal(o, mainId, plan.at, spec.outletDiameterMm || null);
     }
     nodes.push({ id: 'bto_' + letter, type: 'bto', airSide: 'supply',
                  x: plan.at.x, y: plan.at.y, mainKey: letter,
-                 label: 'BTO-' + letter, ports: plan.direct.length });
+                 label: 'BTO-' + letter, ports: staged ? arms.length : plan.direct.length });
   });
 
   return {
@@ -374,9 +427,9 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
     plenum: { ...plenum, source: plenumSource },
     mainCount: areas.length,
     mainDiameterMm: mainMm,
-    supplyMains: areas.map((members, ai) => ({
-      key: letters[ai],
-      segmentId: 'main_' + letters[ai],
+    supplyMains: areas.map(({ spec, members }, ai) => ({
+      key: spec.key || letters[ai],
+      segmentId: 'main_' + (spec.key || letters[ai]),
       name: [...new Set(members.map(m => m.roomLabel))].join(' / '),
       airflowLs: round(members.reduce((n, o) => n + o.airflowLs, 0), 0),
       diameterMm: mainMm,

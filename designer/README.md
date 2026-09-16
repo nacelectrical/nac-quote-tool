@@ -194,7 +194,8 @@ equipment + materials + subcontractor + other  =  total job cost
 Sample project, at real supplier costs: $11,996.40 cost + $6,000 fee =
 $17,996.40 ex GST → **$19,796.04 inc GST**, gross profit $6,000 (33.3%).
 Ductwork materials in that figure are still on placeholder rates, which the
-design says so on the Materials tab.
+design says so on the Materials tab. Placeholder rates block approval and the
+customer PDF until they are replaced with current supplier rates.
 
 Because every cost is recovered before the fee is added, anything entered as a
 cost — a subcontractor, an access allowance — never eats into the margin. Set
@@ -209,9 +210,9 @@ there and selectable, and a price typed on the Financials tab overrides both.
 - A line with **no cost at all** raises a **CRITICAL** warning naming it, and
   blocks design approval. Otherwise the quote goes out short by whatever that
   line is worth.
-- **Material rates** ship as clearly-labelled placeholders. On this basis they
-  go straight through to the customer, so any design using one raises a
-  **WARNING**. Enter NAC's real rates in HVAC Design Settings → Material rates.
+- **Material rates** ship as clearly-labelled placeholders. Any design using
+  one is **BLOCKED** from approval and customer quote/PDF output. Enter NAC's
+  real rates in HVAC Design Settings → Material rates.
 - **Equipment supplier cost** comes from NAC's supplier price list
   (`designer/engines/supplier-pricing.mjs` — MMEM Trade Price List, January
   2026, ex GST, account 201169). Order of authority: a `cost` in Price Setup,

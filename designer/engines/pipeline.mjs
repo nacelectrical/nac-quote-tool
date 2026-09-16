@@ -239,13 +239,17 @@ export function runPipeline(design, ctx = {}) {
       diameterMm: d.supplyMainConfig?.diameterMm || 400
     });
 
-    // ONE MAIN PER INSTALLER AREA is used when the installer has approved a
-    // supply-main configuration for the job. Everything else keeps the spine
-    // router, so no existing design silently changes shape.
-    const tree = d.supplyMainConfig ? measureTree(buildAreaTopology({
+    // New designs default to practical installer areas. Older saved jobs have
+    // no routingStrategy field and retain the legacy spine unless explicitly
+    // converted. An installer configuration overrides the recommended count.
+    const useAreaRouter = d.routingStrategy === 'area' || !!d.supplyMainConfig;
+    const effectiveMainConfig = d.supplyMainConfig || {
+      count: d.spigotRecommendation.count, diameterMm: 400, source: 'recommended'
+    };
+    const tree = useAreaRouter ? measureTree(buildAreaTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,
       layout: d.layout || {}, zones: zonesForRouting,
-      mainConfig: d.supplyMainConfig
+      mainConfig: effectiveMainConfig
     }, { settings, calibration: d.calibration }), d.calibration, { settings })
     : measureTree(buildNacTopology({
       rooms: included, airflow: d.airflow, outlets: d.outlets,

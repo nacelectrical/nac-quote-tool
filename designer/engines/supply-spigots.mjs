@@ -221,11 +221,11 @@ export function validateSupplySpigots({ mains = [], diameterMm, unit, outletTota
         body.issues.map(i => i.message).join(' ') +
         ' Installer/fabrication review required — do not chain a second fitting.' });
   }
-  // A chained fitting on a design that asked for one per main is a routing
-  // fault, and it is the fault Nick found by eye. The engine now finds it.
+  // Accidental serial chains are a fault. A configured distribution tree —
+  // e.g. 400-350-350 feeding two geographical local BTOs — is legitimate.
   for (const b of btos) {
     for (const p of b.ports) {
-      if (!p.feedsBtoId) continue;
+      if (!p.feedsBtoId || p.intentionalDistribution) continue;
       blockers.push({ code: 'BTO_CHAINED_TO_BTO', severity: 'CRITICAL',
         message: b.id + ' feeds ' + p.feedsBtoId + '. Each main must terminate at ' +
                  'exactly one BTO with every outlet direct off it.' });

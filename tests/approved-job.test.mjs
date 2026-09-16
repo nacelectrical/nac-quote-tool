@@ -14,9 +14,9 @@ const finals = out.network.sections.filter(s => s.role === 'final');
 
 // ── Outlets ─────────────────────────────────────────────────────────────────
 
-test('exactly eleven outlets, and no Study outlet', () => {
-  assert.equal(out.outlets.totals.total, 11);
-  assert.equal(finals.length, 11);
+test('exactly ten outlets, and no Study outlet', () => {
+  assert.equal(out.outlets.totals.total, 10);
+  assert.equal(finals.length, 10);
   assert.ok(!out.outlets.rows.some(r => /STUDY/i.test(r.label)), 'the Study got an outlet');
   assert.ok(!finals.some(f => /STUDY/i.test(String(f.destination))), 'the Study got a duct');
 });
@@ -32,7 +32,7 @@ test('the Study is conditioned, keeps its load, and takes spill air', () => {
   assert.ok(spill.intoRoomIds.length >= 4, 'the spill air went nowhere');
 });
 
-test('Meals and Family-2 are recorded as estimator-placed, not detected marks', () => {
+test('Meals and the single Family outlet are recorded as estimator-placed', () => {
   const meals = out.outlets.rows.find(r => r.label === 'MEALS');
   const family = out.outlets.rows.find(r => r.label === 'FAMILY');
   assert.equal(meals.positionSource, OUTLET_SOURCE.MANUAL);
@@ -54,7 +54,7 @@ test('every outlet sits where it was approved', () => {
       assert.ok(nearest < 3, label + ' outlet moved ' + Math.round(nearest) + ' px off its mark');
     }
   }
-  assert.ok(at('FAMILY').length === 2);
+  assert.equal(at('FAMILY').length, 1);
 });
 
 // ── Minimum supply branch ───────────────────────────────────────────────────
@@ -246,7 +246,7 @@ test('each main serves one installer area, and no outlet is on two mains', () =>
     assert.ok(!byOutlet.has(f.outletId), f.destination + ' is fed twice');
     byOutlet.set(f.outletId, f.mainKey);
   }
-  assert.equal(byOutlet.size, 11);
+  assert.equal(byOutlet.size, 10);
   assert.equal(new Set([...byOutlet.values()]).size, 3);
 });
 
@@ -287,19 +287,14 @@ test('no approved main is reduced before its primary fitting', () => {
   }
 });
 
-// The five-fitting shape this used to assert was the old three-port ceiling
-// showing through: three ports forced BTO-1 to chain to BTO-2 and BTO-4 to
-// BTO-5 to reach the open plan and the bedroom wing. Nick: three was never a
-// universal maximum. One fitting per main, ports as the area needs.
-test('exactly three BTO fittings — one per main, none chained', () => {
-  assert.equal(out.btos.length, 3);
+test('exactly five BTO fittings with only the approved Main C distribution tree', () => {
+  assert.equal(out.btos.length, 5);
   assert.equal(out.btoValidation.chained, false);
-  assert.equal(out.btoValidation.chainPorts, 0);
-  for (const b of out.btos) {
-    assert.ok(b.ports.every(p => !p.feedsBtoId), b.id + ' feeds another fitting');
-    assert.ok(b.ports.every(p => p.servesOutletId),
-      b.id + ' has a port that is not an outlet duct');
-  }
+  assert.equal(out.btoValidation.chainPorts, 2);
+  assert.equal(out.btoValidation.intentionalDistributionPorts, 2);
+  assert.equal(out.btoValidation.arbitraryChainPorts, 0);
+  const feeders = out.btos.flatMap(b => b.ports.filter(p => p.feedsBtoId));
+  assert.ok(feeders.every(p => p.intentionalDistribution));
 });
 
 test('each direct main terminates at exactly one BTO', () => {
@@ -309,19 +304,21 @@ test('each direct main terminates at exactly one BTO', () => {
     const fittings = out.btos.filter(b => b.fedBy === m.id);
     assert.equal(fittings.length, 1, m.id + ' has ' + fittings.length + ' fittings');
   }
-  assert.equal(new Set(out.btos.map(b => b.fedBy)).size, 3);
+  assert.equal(out.btos.filter(b => /^main_/.test(b.fedBy)).length, 3);
 });
 
-test('BTO port counts are 4, 2 and 5 — the outlets each area actually has', () => {
+test('BTO specs are 400-250-250-250, 400-300-250, 400-350-350 and two local boxes', () => {
   const byMain = Object.fromEntries(out.btos.map(b => [b.fedBy, b]));
-  assert.equal(byMain.main_A.ports.length, 4);
-  assert.equal(byMain.main_B.ports.length, 2);
-  assert.equal(byMain.main_C.ports.length, 5);
-  assert.deepEqual(out.btoValidation.portCounts.slice().sort(), [2, 4, 5]);
-  assert.equal(out.btoValidation.outletPorts, 11);
+  assert.deepEqual(byMain.main_A.ports.map(p => p.diameterMm), [250, 250, 250]);
+  assert.deepEqual(byMain.main_B.ports.map(p => p.diameterMm), [300, 250]);
+  assert.deepEqual(byMain.main_C.ports.map(p => p.diameterMm), [350, 350]);
+  assert.deepEqual(byMain.branch_C1.ports.map(p => p.diameterMm), [250, 250]);
+  assert.deepEqual(byMain.branch_C2.ports.map(p => p.diameterMm), [250, 250, 250]);
+  assert.deepEqual(out.btoValidation.portCounts.slice().sort(), [2, 2, 2, 3, 3]);
+  assert.equal(out.btoValidation.outletPorts, 10);
 });
 
-test('the three BTO totals are 301, 265 and 233 and reconcile to 799', () => {
+test('all five BTOs reconcile and the three primary fittings total 799', () => {
   const byMain = Object.fromEntries(out.btos.map(b => [b.fedBy, b]));
   const sum = (b) => b.ports.reduce((n, p) => n + p.airflowLs, 0);
   assert.equal(byMain.main_A.inletAirflowLs, 301);
@@ -330,20 +327,22 @@ test('the three BTO totals are 301, 265 and 233 and reconcile to 799', () => {
   assert.equal(sum(byMain.main_A), 301);
   assert.equal(sum(byMain.main_B), 265);
   assert.equal(sum(byMain.main_C), 233);
-  assert.equal(out.btos.reduce((n, b) => n + sum(b), 0), 799);
+  assert.equal(sum(byMain.branch_C1), 95);
+  assert.equal(sum(byMain.branch_C2), 138);
+  assert.equal(sum(byMain.main_A) + sum(byMain.main_B) + sum(byMain.main_C), 799);
+  assert.ok(out.btoValidation.reconciliations.every(r => r.ok));
 });
 
-test('no "main onward" port and no spur segment survives anywhere', () => {
+test('no arbitrary onward spur survives; only the two approved distribution arms do', () => {
   for (const b of out.btos) {
     for (const p of b.ports) {
       assert.ok(!/onward/i.test(String(p.servesLabel || '')),
         b.id + ' still carries an onward port: ' + p.servesLabel);
     }
   }
-  const spurs = out.network.sections.filter(s =>
-    /^spur_/.test(s.id) || s.role === 'branch' || /onward/i.test(String(s.destination || '')));
-  assert.deepEqual(spurs.map(s => s.id), [],
-    'the router emitted onward/spur ducts: ' + spurs.map(s => s.id).join(', '));
+  const branches = out.network.sections.filter(s => s.role === 'branch');
+  assert.deepEqual(branches.map(s => s.id), ['branch_C1', 'branch_C2']);
+  assert.ok(branches.every(s => s.distributionArm && s.diameterMm === 350));
 });
 
 test('the removed three-port rule does not creep back and rebuild the chains', () => {
@@ -351,8 +350,8 @@ test('the removed three-port rule does not creep back and rebuild the chains', (
   // main_A (4 collars) and main_C (5 collars) are the fittings it would split.
   assert.equal(BTO_MODEL.DEFAULT_PORT_CAPACITY, null,
     'a universal BTO port maximum has come back');
-  assert.ok(out.btos.some(b => b.ports.length > 3),
-    'no fitting exceeds three ports — the old ceiling may be back in force');
+  assert.equal(out.btoValidation.arbitraryChainPorts, 0,
+    'an arbitrary chain was recreated to work around a port limit');
   assert.equal(out.supplySpigots.blockers.filter(b =>
     b.code === 'BTO_OVER_PORT_LIMIT' || b.code === 'BTO_CHAINED_TO_BTO').length, 0);
 });
@@ -367,21 +366,20 @@ test('the header, the schedule and the order agree on the counts', () => {
     .reduce((n, i) => n + i.quantity, 0);
   assert.equal(ordered, out.btos.length, 'the order and the drawing disagree on fittings');
   assert.equal(ordered, c.supplyBtos);
-  // Three mains and three BTOs, stated the same way in all three places.
+  // Three mains and five physical BTOs, stated consistently.
   assert.equal(c.supplyMains, 3);
-  assert.equal(c.supplyBtos, 3);
+  assert.equal(c.supplyBtos, 5);
 });
 
 test('spigots, mains, fittings, ports and outlets are five separate counts', () => {
   // Nick: "They must not be treated as interchangeable." On this job three of
-  // them happen to be 3 and two of them are 11, which is exactly the situation
-  // in which they get quietly conflated — so each is asserted from its own source.
+  // each is asserted from its own source.
   const c = out.componentCounts;
   assert.equal(c.supplySpigots, 3);
   assert.equal(c.supplyMains, 3);
-  assert.equal(c.supplyBtos, 3);
-  assert.deepEqual(c.supplyBtoPorts, [4, 2, 5]);
-  assert.equal(c.supplyOutlets, 11);
+  assert.equal(c.supplyBtos, 5);
+  assert.deepEqual(c.supplyBtoPorts, [3, 2, 2, 2, 3]);
+  assert.equal(c.supplyOutlets, 10);
   assert.equal(c.returnGrilles, 2);
   assert.equal(c.returnDucts, 2);
   assert.equal(c.returnPlenums, 1);
@@ -452,7 +450,7 @@ test('the plenum collar check uses real manufacturer flange data', () => {
 test('the spigot count is recommended even when the installer set it', () => {
   assert.equal(out.spigotRecommendation.count, 3);
   assert.equal(out.spigotRecommendation.fromTable, true);
-  assert.match(out.spigotRecommendation.reason, /11 outlets/);
+  assert.match(out.spigotRecommendation.reason, /10 outlets/);
 });
 
 // ── The order matches the drawing ───────────────────────────────────────────

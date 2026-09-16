@@ -469,6 +469,7 @@ function sizeTopology(topology, { diameterOverrides = {}, extraFittingsByRoomId 
       // A major branch is the take-off feeding a group of rooms. The drawing
       // labels it and the installer sheet lists it, so it has to survive sizing.
       major: !!seg.major,
+      distributionArm: !!seg.distributionArm,
       serves: seg.serves ?? null,
       plenumOutlet: !!seg.plenumOutlet,
       // The NAC topology model's own fields. Without these the drawing, the

@@ -80,6 +80,7 @@ export class DesignerApp {
     this.catalogue = buildCatalogue({});
     this.controllers = ZONE_CONTROLLERS;
     this.design = createDesign({});
+    this.design.routingStrategy = 'area';
     this.summary = {};
     this.tab = 'plan';
     // QUICK QUOTE MODE is the default. An estimator quoting a normal house
@@ -545,6 +546,14 @@ export class DesignerApp {
   downloadInternalReport() { return this.downloadReport(REPORT_KIND.INTERNAL); }
 
   async downloadReport(kind) {
+    if (kind === REPORT_KIND.CUSTOMER) {
+      const i = collectInterruptions(this.design);
+      if (!i.canQuote) return void await alertDialog({
+        title: 'Customer quote blocked',
+        message: i.summary,
+        lines: i.blocking.map(x => x.title)
+      });
+    }
     const opts = { logo: document.querySelector('.brand img')?.src || null,
                    planSnapshot: this.viewer?.snapshot() || null };
     const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
@@ -583,7 +592,14 @@ export class DesignerApp {
         onHandleHold: (h) => this.onHandleHold(h),
         onRoutePick: (at, r) => this.pickRoute(at, r),
         onRouteTap: (leg, at) => this.onRouteTap(leg, at),
-        onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
+        onLayoutPick: () => this.pushEditHistory('Moved plan item'),
+        onLayoutMove: (key, item) => {
+          this.design.layout[key] = { ...item };
+          // Recalculate once on drop: routes, lengths, pressure, BOM and price
+          // immediately follow the on-site change without making an iPad rerun
+          // the engine on every pointermove.
+          this.update();
+        }
       });
     }
 
@@ -1227,12 +1243,17 @@ export class DesignerApp {
     toast((label || 'Route edited') + (n != null ? ' — now ' + n + ' m of duct' : ''));
   }
 
-  /** Geometry only, so an undo can never desynchronise the drawing and the numbers. */
+  /** Every on-plan adjustment needed on site, rebuilt through the pipeline. */
   editSnapshot() {
     return JSON.stringify({
       routeEdits: this.design.routeEdits || {},
       lockedRoutes: this.design.lockedRoutes || {},
-      ductDiameterOverrides: this.design.ductDiameterOverrides || {}
+      ductDiameterOverrides: this.design.ductDiameterOverrides || {},
+      layout: this.design.layout || {},
+      outletOverrides: this.design.outletOverrides || {},
+      supplyMainConfig: this.design.supplyMainConfig || null,
+      returnCount: this.design.returnCount ?? null,
+      returnGrilleOverrides: this.design.returnGrilleOverrides || []
     });
   }
 
@@ -1248,6 +1269,11 @@ export class DesignerApp {
     this.design.routeEdits = s.routeEdits;
     this.design.lockedRoutes = s.lockedRoutes;
     this.design.ductDiameterOverrides = s.ductDiameterOverrides;
+    this.design.layout = s.layout || {};
+    this.design.outletOverrides = s.outletOverrides || {};
+    this.design.supplyMainConfig = s.supplyMainConfig || null;
+    this.design.returnCount = s.returnCount;
+    this.design.returnGrilleOverrides = s.returnGrilleOverrides || [];
     this.update();
   }
 
@@ -2839,6 +2865,7 @@ export class DesignerApp {
       job: { description: draft.jobDescription, climate: this.settings.load.defaultClimate },
       quoteId: draft.quoteId
     });
+    d.routingStrategy = 'area';
     d.notes = draft.intakePack || '';
     d.intake = {
       quoteId: draft.quoteId,
@@ -2908,6 +2935,7 @@ export class DesignerApp {
     }, { settings: this.settings });
 
     const d = createDesign({ customer: Sample.SAMPLE_CUSTOMER, job: Sample.SAMPLE_JOB });
+    d.routingStrategy = 'area';
     d.calibration = cal;
     d.scaleLabel = cal.scaleLabel;
     d.detectedDimensions = interp.detectedDimensions;
@@ -2971,5 +2999,3 @@ function bayContaining(chain, mm) {
   }
   return null;
 }
-
-

@@ -1093,7 +1093,11 @@ export function createPlanViewer(container, opts = {}) {
 
     if (state.mode === MODES.LAYOUT) {
       const key = layoutHit(img);
-      if (key) { state.dragging = { kind: 'layout', key }; return; }
+      if (key) {
+        opts.onLayoutPick?.(key, { ...state.layout[key] });
+        state.dragging = { kind: 'layout', key };
+        return;
+      }
     }
 
     if (state.mode === MODES.ROOM) {
