@@ -233,20 +233,43 @@ export function drawOutlet(ctx, at, { colour = '#2a3040', r = 6 } = {}) {
  * Small and solid. Twelve of them must not swamp a house, but an installer
  * counting collars for the van has to be able to.
  */
-export function drawTakeOff(ctx, at, { colour = '#2a3040', angle = 0, r = 3 } = {}) {
-  // A BRANCH TAKE-OFF, the way one is drawn: a short bar across the main where
-  // the collar goes. Nick: "no big diamonds, no debug nodes, no multiple
-  // overlapping symbols — small, simple, professional." A white-filled ringed
-  // circle at every branch was reading as a node on a graph.
+export function drawTakeOff(ctx, at, { colour = '#2a3040', angle = 0, r = 3,
+                                       fitting = false, ports = 0 } = {}) {
+  // TWO DIFFERENT THINGS, DRAWN DIFFERENTLY.
+  //
+  // A plain take-off is a collar on a main: a short bar across the duct where
+  // it leaves. Nick: "no big diamonds, no debug nodes, no multiple overlapping
+  // symbols — small, simple, professional."
+  //
+  // A BTO is not that. It is the fabricated multi-collar distribution box an
+  // installer lifts into the roof, and on the approved drawing it is one of the
+  // five things the job is built around — so it gets a body you can see. It was
+  // drawn with the same 6-pixel tick as a collar, which on a whole-house view
+  // meant the fittings were effectively invisible.
   ctx.save();
   ctx.translate(at.x, at.y);
   ctx.rotate(angle);
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = 1.6;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(0, -r); ctx.lineTo(0, r);
-  ctx.stroke();
+  if (fitting) {
+    const w = 15, hgt = 10;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-w / 2, -hgt / 2, w, hgt, 2.5);
+    else ctx.rect(-w / 2, -hgt / 2, w, hgt);
+    const g = ctx.createLinearGradient(-w / 2, -hgt / 2, w / 2, hgt / 2);
+    g.addColorStop(0, '#FBFBFC'); g.addColorStop(0.5, '#C9CCD1'); g.addColorStop(1, '#93979E');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = '#4A4F57'; ctx.lineWidth = 1.5; ctx.stroke();
+    // The seam across the body, so it reads as sheet metal rather than a chip.
+    ctx.beginPath();
+    ctx.moveTo(-w / 2 + 2, 0); ctx.lineTo(w / 2 - 2, 0);
+    ctx.strokeStyle = 'rgba(40,44,52,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+  } else {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -r); ctx.lineTo(0, r);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -436,7 +459,9 @@ export function drawFlexDesign(ctx, view) {
     // not a take-off: air goes the other way, there is no spigot and nobody
     // orders one. Anything flagged as return is skipped here whatever its type.
     if (m.airSide === 'return' || m.isReturn || m.role === 'return') continue;
-    drawTakeOff(ctx, toScreen(m), { angle: (m.angle ?? 0) + Math.PI / 2 });
+    drawTakeOff(ctx, toScreen(m), { angle: (m.angle ?? 0) + Math.PI / 2,
+                                    fitting: m.type === 'bto' || !!m.bto,
+                                    ports: m.ports || 0 });
   }
   for (const o of (outlets || [])) drawOutlet(ctx, toScreen(o), { colour: '#3b4358' });
 

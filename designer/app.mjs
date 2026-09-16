@@ -9,6 +9,20 @@
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table,
          confidenceBadge, num } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
+
+/**
+ * THE FOUR WAYS TO LOOK AT THE PLAN TAB.
+ *
+ * CLEAN is the installer drawing and the default. The other three are the same
+ * drawing with one set of handles added, so an estimator never loses the design
+ * they are working on in order to move something on it.
+ */
+export const PLAN_VIEW = Object.freeze({
+  CLEAN: 'clean',
+  OUTLETS: 'outlets',
+  ROUTES: 'routes',
+  ROOMS: 'rooms'
+});
 import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
@@ -83,6 +97,8 @@ export class DesignerApp {
     this.design.routingStrategy = 'area';
     this.summary = {};
     this.tab = 'plan';
+    // The Plan tab opens on the installer drawing, not on the setup workings.
+    this.planView = PLAN_VIEW.CLEAN;
     // QUICK QUOTE MODE is the default. An estimator quoting a normal house
     // should never have to walk through thirteen engineering tabs; those stay
     // one click away under ADVANCED DESIGN for the jobs that need them.
@@ -626,7 +642,11 @@ export class DesignerApp {
            label: z.zone, title: 'Zone damper — ' + z.zone }))]
       : []);
     this.viewer.setLayout(d.layout || {});
-    this.viewer.setHandles(this.currentHandles());
+    // Handles exist only in the mode that edits them. They were loaded on every
+    // render and merely not DRAWN outside edit mode, which left a live grab
+    // target under every fitting on a drawing nobody was editing.
+    this.viewer.setHandles(
+      (this.planView || PLAN_VIEW.CLEAN) === PLAN_VIEW.ROUTES ? this.currentHandles() : []);
 
     // Zone shading, the figure blocks, the diffusers and the indoor unit — the
     // things that turn a schematic into something an installer can read.
@@ -639,8 +659,23 @@ export class DesignerApp {
     this.viewer.setPlenum(d.layout?.indoorUnit || d.layout?.plenum || d.autoRoute?.plenum || null);
     // DESIGN view is the installer's drawing; ANALYSIS is the estimator's
     // workings. Quick mode's review screen is the former.
-    this.viewer.setDesignView(this.mode === 'quick' && this.quickStep === 'design');
-    this.viewer.setShowAnalysis(!!this.showAnalysisOverlay);
+    // ── WHAT THE PLAN TAB SHOWS ───────────────────────────────────────────
+    //
+    // The Plan tab used to open on the SETUP view in full mode — green room
+    // boxes, analysis labels, route nodes and big editing rectangles over every
+    // outlet — because the installer drawing was only ever switched on for
+    // quick mode's review step. It is the same design either way, so the Plan
+    // tab now opens on the drawing and the workings are what you switch ON.
+    //
+    // CLEAN is the default. The three edit modes keep the same drawing and add
+    // only their own handles; EDIT ROOMS is the one view that goes back to the
+    // setup linework, because room boxes ARE the thing being edited.
+    const view = this.planView || PLAN_VIEW.CLEAN;
+    const quickDesign = this.mode === 'quick' && this.quickStep === 'design';
+    this.viewer.setDesignView(quickDesign || view !== PLAN_VIEW.ROOMS);
+    this.viewer.setShowAnalysis(!!this.showAnalysisOverlay || view === PLAN_VIEW.ROOMS);
+    // Green room boxes belong to Edit rooms and nowhere else.
+    this.viewer.setVisibility({ rooms: view === PLAN_VIEW.ROOMS || !!this.showAnalysisOverlay });
     this.viewer.redraw();
     return this.viewer;
   }
@@ -656,12 +691,21 @@ export class DesignerApp {
     const d = this.design;
     const sections = d.network?.sections || [];
     const out = [];
-    // Every BRANCH ends at a diffuser — that is the first outlet in the room.
-    // Every FINAL ends at another one. Taking only the finals missed the
-    // single-outlet rooms entirely, which on this plan is most of the house.
+    // A DUCT THAT FEEDS ANOTHER DUCT DOES NOT END AT A DIFFUSER.
+    //
+    // This took every branch end as an outlet, because in the older topology a
+    // branch did end at the first diffuser in a room. The area router's ø350
+    // DISTRIBUTION ARMS do not: they end at a BTO fitting. So the approved job
+    // drew twelve diffusers for ten outlets, two of them stacked on top of the
+    // fittings they actually feed.
+    //
+    // Having children is the general test — it holds for both routers and needs
+    // no flag — so a run is an outlet only when nothing hangs off it.
+    const hasChildren = new Set(sections.map(s => s.parentId).filter(Boolean));
     for (const sec of sections) {
       if (sec.role !== 'branch' && sec.role !== 'final') continue;
       if (!sec.points?.length) continue;
+      if (hasChildren.has(sec.id)) continue;
       const end = sec.points[sec.points.length - 1];
       out.push({ x: end.x, y: end.y, roomId: sec.roomId || null,
                  neckMm: sec.diameterMm ?? null, sectionId: sec.id });
@@ -683,6 +727,33 @@ export class DesignerApp {
     this.render();
   }
 
+  /**
+   * SWITCH THE PLAN TAB BETWEEN THE DRAWING AND THE THREE EDIT MODES.
+   *
+   * Each mode owns one viewer mode, so the handles on screen are always the
+   * handles for the thing being edited and nothing else. Selecting a mode never
+   * recalculates anything — dropping a moved item does, exactly as before.
+   */
+  setPlanView(view) {
+    this.planView = view;
+    const MODE_FOR = {
+      [PLAN_VIEW.CLEAN]: MODES.VIEW,
+      [PLAN_VIEW.OUTLETS]: MODES.LAYOUT,
+      [PLAN_VIEW.ROUTES]: MODES.EDIT_ROUTE,
+      [PLAN_VIEW.ROOMS]: MODES.ROOM
+    };
+    this.ensureViewer().setMode(MODE_FOR[view] || MODES.VIEW);
+    this.render();
+  }
+
+  /** Keep the toggles honest when a panel button changes the viewer mode. */
+  planViewForMode(mode) {
+    if (mode === MODES.LAYOUT) return PLAN_VIEW.OUTLETS;
+    if (mode === MODES.EDIT_ROUTE) return PLAN_VIEW.ROUTES;
+    if (mode === MODES.ROOM) return PLAN_VIEW.ROOMS;
+    return PLAN_VIEW.CLEAN;
+  }
+
   /** SHOW ANALYSIS OVERLAY — the estimator's workings, back on top. */
   toggleAnalysisOverlay() {
     this.showAnalysisOverlay = !this.showAnalysisOverlay;
@@ -700,6 +771,7 @@ export class DesignerApp {
     this.viewer.redraw();
 
     mount(tools,
+      this.renderPlanViewPanel(),
       this.renderUploadPanel(),
       this.renderNumbersPanel(),
       this.renderIntakePanel(),
@@ -707,6 +779,40 @@ export class DesignerApp {
       this.renderPlanModePanel(),
       this.renderRoutePanel(),
       this.renderLayoutPanel());
+  }
+
+  /**
+   * THE VIEW SWITCH — one row, four states, clean first.
+   *
+   * Deliberately the first thing in the Plan tab's tool column: what you are
+   * looking at matters more than any individual setting below it, and an
+   * estimator who has accidentally left an edit mode on needs to see that
+   * immediately rather than wonder why the drawing is covered in handles.
+   */
+  renderPlanViewPanel() {
+    const view = this.planView || PLAN_VIEW.CLEAN;
+    const pick = (value, label, hint) =>
+      button(label, () => this.setPlanView(value),
+        view === value ? 'primary small' : 'small', { title: hint });
+    const HINT = {
+      [PLAN_VIEW.CLEAN]: 'The installer drawing — no handles, no boxes',
+      [PLAN_VIEW.OUTLETS]: 'Drag the fan coil, plenum, return grilles and outlets',
+      [PLAN_VIEW.ROUTES]: 'Drag a duct or BTO handle, add or remove a route point',
+      [PLAN_VIEW.ROOMS]: 'Draw, move and resize the room boxes'
+    };
+    const NOTE = {
+      [PLAN_VIEW.CLEAN]: 'The approved installer drawing. Switch on an edit mode to change something on site.',
+      [PLAN_VIEW.OUTLETS]: 'Drag an item to move it. Dropping it reruns the design once — lengths, pressure, materials and price update together.',
+      [PLAN_VIEW.ROUTES]: 'Drag a handle to move a duct or a BTO. Add or remove a route point to get around a real roof obstacle.',
+      [PLAN_VIEW.ROOMS]: 'Room boxes and the analysis workings. This is the only view that shows them.'
+    };
+    return card('View', 'What the plan shows',
+      h('div', { class: 'btn-row' },
+        pick(PLAN_VIEW.CLEAN, 'Clean view', HINT[PLAN_VIEW.CLEAN]),
+        pick(PLAN_VIEW.OUTLETS, 'Edit outlets/equipment', HINT[PLAN_VIEW.OUTLETS]),
+        pick(PLAN_VIEW.ROUTES, 'Edit routes/BTOs', HINT[PLAN_VIEW.ROUTES]),
+        pick(PLAN_VIEW.ROOMS, 'Edit rooms', HINT[PLAN_VIEW.ROOMS])),
+      h('div', { class: 'note' }, NOTE[view]));
   }
 
   renderUploadPanel() {
@@ -728,7 +834,10 @@ export class DesignerApp {
             h('span', {}, 'of ' + plan.pageCount))
         : null,
       d.plan ? h('div', { class: 'note' },
-        d.plan.fileName +
+        // A design restored from a saved record, or the approved reference job,
+        // has no uploaded file behind it — so there is no filename, and this
+        // line used to read "undefined — 1179 × 1262 px".
+        (d.plan.fileName || d.plan.name || 'Approved reference plan') +
         (d.plan.widthPx ? ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' : '') +
         (d.plan.isPdf && d.plan.pageCount > 1 ? ' · page ' + d.plan.pageNumber + ' of ' + d.plan.pageCount : '') +
         (d.plan.fromIntake ? ' · from the customer\'s intake form' : '')) : null,
@@ -990,7 +1099,9 @@ export class DesignerApp {
 
   renderPlanModePanel() {
     const mode = this.viewer?.getMode() || MODES.VIEW;
-    const set = (m) => { this.viewer.setMode(mode === m ? MODES.VIEW : m); this.render(); };
+    // Route every mode change through setPlanView so the view toggles above and
+    // the viewer can never disagree about what is being edited.
+    const set = (m) => this.setPlanView(this.planViewForMode(mode === m ? MODES.VIEW : m));
     return card('3. Rooms on the plan', 'Drag to draw a room, drag a corner to resize, drag the middle to move',
       h('div', { class: 'btn-row' },
         button(mode === MODES.ROOM ? 'Editing rooms…' : 'Edit rooms', () => set(MODES.ROOM),
@@ -1038,9 +1149,10 @@ export class DesignerApp {
       routed ? h('div', { class: 'btn-row' },
         button(mode === MODES.EDIT_ROUTE ? '✓ EDITING ROUTES' : 'EDIT ROUTES',
           () => {
-            this.viewer.setMode(mode === MODES.EDIT_ROUTE ? MODES.VIEW : MODES.EDIT_ROUTE);
+            this.setPlanView(this.planViewForMode(
+              mode === MODES.EDIT_ROUTE ? MODES.VIEW : MODES.EDIT_ROUTE));
             this.viewer.setHandles(this.currentHandles());
-            this.render();
+            this.viewer.redraw();
           },
           mode === MODES.EDIT_ROUTE ? 'primary small' : 'small'),
         button('↶ Undo', () => this.undoEdit(), this.canUndo() ? 'small' : 'ghost small disabled'),
@@ -1111,8 +1223,20 @@ export class DesignerApp {
   /** Everything the estimator can grab, recomputed from the sized sections. */
   currentHandles() {
     if (!this.design.network?.routed) return [];
-    return routeHandles(this.design.network,
+    const all = routeHandles(this.design.network,
       { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    // ONLY THE HANDLES THAT MEAN SOMETHING.
+    //
+    // Every run is a swept curve of thirteen points, so a handle per point put
+    // roughly a hundred and eighty grab targets on the plan and drew the whole
+    // system as a chain of blue squares — unusable with a finger and impossible
+    // to read. The points worth grabbing are the JUNCTIONS (which is where the
+    // BTOs are), the ENDS (the plenum and the outlets), and any point a person
+    // ADDED to get around an obstacle. The rest is curve tessellation.
+    //
+    // Hit testing reads this same list on purpose: an estimator should be able
+    // to grab exactly what they can see, and nothing they cannot.
+    return all.filter(h => h.kind !== 'node' || h.added);
   }
 
   /** What is under the finger. The radius comes in already converted to image px. */
@@ -1464,9 +1588,10 @@ export class DesignerApp {
     const layout = this.design.layout || {};
     return card('5. Equipment layout', 'Drag anything into place on the plan',
       h('div', { class: 'btn-row' },
-        button(mode === MODES.LAYOUT ? 'Moving items…' : 'Move items', () => {
-          this.viewer.setMode(mode === MODES.LAYOUT ? MODES.VIEW : MODES.LAYOUT); this.render();
-        }, mode === MODES.LAYOUT ? 'primary small' : 'small'),
+        button(mode === MODES.LAYOUT ? 'Moving items…' : 'Move items',
+          () => this.setPlanView(this.planViewForMode(
+            mode === MODES.LAYOUT ? MODES.VIEW : MODES.LAYOUT)),
+          mode === MODES.LAYOUT ? 'primary small' : 'small'),
         button('+ Indoor unit', () => this.placeLayout('indoorUnit', 'Indoor unit'), 'ghost small'),
         button('+ Supply plenum', () => this.placeLayout('plenum', 'Supply plenum'), 'ghost small'),
         button('+ Return grille', () => this.placeLayout('returnGrille', 'Return'), 'ghost small'),

@@ -206,7 +206,9 @@ test('a point is added onto the leg it was dropped on', () => {
   const { edits, index } = addRoutePoint(net, 'branch_a', { x: 300, y: 220 });
   assert.equal(index, 1, 'dropped on the first leg');
   assert.equal(edits.branch_a.length, 4);
-  assert.deepEqual(edits.branch_a[1], { x: 300, y: 220 });
+  // Flagged as a person's point, so the Plan tab gives it a handle while the
+  // swept tessellation points do not get one.
+  assert.deepEqual(edits.branch_a[1], { x: 300, y: 220, added: true });
   assert.deepEqual(edits.branch_a[0], { x: 300, y: 300 });
   assert.deepEqual(edits.branch_a[3], { x: 250, y: 150 });
 });
@@ -311,4 +313,28 @@ test('an edited run re-measures, and the design follows', () => {
   assert.notEqual(b1.pressureDropPa, b0.pressureDropPa, 'and its pressure drop');
   assert.notEqual(after.totalDuctLengthM, before.totalDuctLengthM,
     'and the total the BOM buys from');
+});
+
+test('only junctions, ends and added points earn a handle', () => {
+  const net = NET();
+  // A swept run: two real ends and a string of tessellation points between.
+  net.sections.push({ id: 'swept', role: 'final', parentId: 'trunk',
+    points: Array.from({ length: 13 }, (_, i) => ({ x: 600 + i * 5, y: 400 + i * 5 })) });
+  const all = routeHandles(net);
+  const shown = all.filter(h => h.kind !== 'node' || h.added);
+  assert.ok(all.length > shown.length, 'nothing was filtered, so the test proves nothing');
+  for (const h of shown) {
+    assert.ok(h.kind !== 'node' || h.added,
+      'a bare tessellation point is still being offered as a handle');
+  }
+});
+
+test('a point someone added keeps its handle', () => {
+  const net = NET();
+  const { edits } = addRoutePoint(net, 'branch_a', { x: 300, y: 220 });
+  net.sections.find(s => s.id === 'branch_a').points = edits.branch_a;
+  const shown = routeHandles(net).filter(h => h.kind !== 'node' || h.added);
+  const mine = shown.find(h => Math.round(h.x) === 300 && Math.round(h.y) === 220);
+  assert.ok(mine, 'the point that was just added has no handle to grab');
+  assert.equal(mine.added, true);
 });

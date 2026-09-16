@@ -214,7 +214,15 @@ export function createPlanViewer(container, opts = {}) {
       });
       drawZoneSchedule();
       drawZoneBadges();
+      // EDITING HANDLES SIT ON TOP OF THE CLEAN DRAWING, NOT INSTEAD OF IT.
+      //
+      // An estimator on a roof moving a diffuser wants to see the finished
+      // drawing with a grab handle on it — not be dropped back into the setup
+      // view with room boxes and analysis linework. So each edit mode adds only
+      // its own handles to the installer drawing, and Clean View adds none.
       if (state.mode === MODES.EDIT_ROUTE) drawHandles();
+      if (state.mode === MODES.LAYOUT && state.showLayout) drawLayout();
+      if (state.mode === MODES.CALIBRATE) drawCalibration();
       return;
     }
 

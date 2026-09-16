@@ -1226,7 +1226,9 @@ export function routeHandles(network, { lockedIds = [] } = {}) {
       const k = key(p);
       const entry = byPos.get(k) || { x: p.x, y: p.y, attach: [] };
       entry.x = p.x; entry.y = p.y;
+      entry.added = entry.added || !!p.added;
       entry.attach.push({ sectionId: s.id, index: i, role: s.role,
+                          added: !!p.added,
                           end: i === 0 || i === s.points.length - 1 });
       byPos.set(k, entry);
     });
@@ -1249,6 +1251,8 @@ export function routeHandles(network, { lockedIds = [] } = {}) {
       // A handle is locked if ANY run meeting there is locked — moving it would
       // drag a locked run with it.
       locked: e.attach.some(a => locked.has(a.sectionId)),
+      /** Put here by a person, rather than by the curve sweep. */
+      added: !!e.added,
       shared
     });
   }
@@ -1399,8 +1403,15 @@ export function addRoutePoint(network, sectionId, at, { lockedIds = [] } = {}) {
     const d = distanceToSegment(at, s.points[i - 1], s.points[i]);
     if (d < bestD) { bestD = d; bestLeg = i; }
   }
+  // MARKED AS ADDED BY A PERSON.
+  //
+  // A routed run is a swept curve, so most of its points are tessellation — the
+  // shape of the bend, not decisions anybody made. Only the points someone put
+  // there to get around a real obstacle are worth a handle on the drawing, so
+  // they are flagged here and the Plan tab shows handles for these, the ends and
+  // the junctions, and nothing else.
   const pts = [...s.points.slice(0, bestLeg).map(p => ({ ...p })),
-               { x: round(at.x, 2), y: round(at.y, 2) },
+               { x: round(at.x, 2), y: round(at.y, 2), added: true },
                ...s.points.slice(bestLeg).map(p => ({ ...p }))];
   return { edits: { [sectionId]: pts }, index: bestLeg, blocked: [] };
 }

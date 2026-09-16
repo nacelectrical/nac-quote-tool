@@ -195,6 +195,65 @@ function clearOfOutlets(at, outlets, minPx) {
  */
 export const MIN_FITTING_TO_OUTLET_PX = 26;
 
+/**
+ * HOW SHORT A MAIN IS ALLOWED TO BE BEFORE IT IS NOT A MAIN.
+ *
+ * A main that measures nothing is not a duct — it means the fitting is bolted
+ * straight onto the supply plenum, and the schedule then has to print "not
+ * measured" against a run somebody still has to install. On the approved job
+ * Main C came out at 0.1 px: BTO-C landed exactly on the plenum.
+ *
+ * WHY IT LANDED THERE, because the cause is not obvious. The fitting position
+ * is a weighted geometric median of the plenum and the area's branch targets.
+ * Main C's two ø350 arms leave in nearly OPPOSITE directions — the Foyer/Master
+ * arm north-east, the bedroom arm south-west — so their pull very nearly
+ * cancels, and once the remaining pull is smaller than the plenum's own weight
+ * the median sits exactly on the plenum. That is Weiszfeld's degenerate case,
+ * and it is a correct answer to the wrong question: minimising total duct says
+ * put the fitting on the plenum, but a fitting on the plenum is not a design.
+ *
+ * So a main has a minimum run, the same way a final run already has a minimum
+ * clearance from its outlet. In millimetres, because a pixel means a different
+ * distance on every plan.
+ */
+export const MIN_MAIN_RUN_MM = 1500;
+
+/**
+ * Push a fitting off the plenum, along the line toward the air it serves.
+ *
+ * The direction is the airflow-weighted centre of what the main feeds, so the
+ * fitting moves out into the circulation space between the unit and its area —
+ * where an installer would actually set the branch point — rather than being
+ * shoved in an arbitrary direction to satisfy a number.
+ */
+export function clearOfPlenum(at, plenum, target, minPx) {
+  if (!plenum || !(minPx > 0)) return at;
+  const d = Math.hypot(at.x - plenum.x, at.y - plenum.y);
+  if (d >= minPx) return at;
+  // Prefer the direction the fitting already wanted; fall back to the air it
+  // serves when it is sitting on top of the plenum and has no direction at all.
+  let dx, dy;
+  if (d > 0.5) { dx = (at.x - plenum.x) / d; dy = (at.y - plenum.y) / d; }
+  else {
+    const tx = (target?.x ?? plenum.x) - plenum.x;
+    const ty = (target?.y ?? plenum.y) - plenum.y;
+    const td = Math.hypot(tx, ty);
+    if (td < 0.5) return at;          // nothing to aim at; leave it alone
+    dx = tx / td; dy = ty / td;
+  }
+  return { x: plenum.x + dx * minPx, y: plenum.y + dy * minPx };
+}
+
+/** Airflow-weighted centre of a set of outlets — where a main is really going. */
+function airflowCentroid(items) {
+  const w = items.reduce((n, o) => n + (o.airflowLs || 0), 0);
+  if (!w) return centroid(items);
+  return {
+    x: items.reduce((n, o) => n + o.x * (o.airflowLs || 0), 0) / w,
+    y: items.reduce((n, o) => n + o.y * (o.airflowLs || 0), 0) / w
+  };
+}
+
 /** Keep a point inside a rectangle, with a margin so it is not on the line. */
 function clampInto(p, box, margin = 6) {
   if (!box) return p;
@@ -350,13 +409,29 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
         members: members.filter(o => labels.has(normal(o.roomLabel))) };
     }).filter(a => a.members.length);
     const staged = arms.length > 1;
+    // A main has to be a duct somebody can measure and install. See
+    // MIN_MAIN_RUN_MM: when an area's arms leave in opposing directions their
+    // pull cancels and the median settles onto the plenum itself, which is a
+    // fitting bolted to the unit rather than a main.
+    const pxPerMm = opts.calibration?.pixelsPerMm || 0;
+    const minMainPx = pxPerMm
+      ? (opts.minMainRunMm ?? MIN_MAIN_RUN_MM) * pxPerMm
+      : (opts.minMainRunPx ?? 0);
     const plan = staged
-      ? { at: clampInto(clearOfOutlets(geometricMedian([
+      ? { at: clampInto(clearOfPlenum(clearOfOutlets(geometricMedian([
           { ...plenum, w: mainMm / 250 },
           ...arms.map(a => ({ ...centroid(a.members),
             w: a.members.reduce((n, o) => n + o.airflowLs, 0) / 100 }))
-        ]), members, MIN_FITTING_TO_OUTLET_PX), footprint), direct: [] }
-      : planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
+        ]), members, MIN_FITTING_TO_OUTLET_PX),
+          plenum, airflowCentroid(members), minMainPx), footprint), direct: [] }
+      : { ...planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm }),
+          at: undefined };
+    if (!staged) {
+      const base = planAreaFittings(members, plenum, { footprint, settings, mainDiameterMm: mainMm });
+      plan.at = clampInto(clearOfPlenum(base.at, plenum, airflowCentroid(members), minMainPx),
+                          footprint);
+      plan.direct = base.direct;
+    }
 
     // THE MAIN. Straight from the plenum to the area's one fitting, at the
     // configured size, and NOT reduced on the way — it has nothing to shed

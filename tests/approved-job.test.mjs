@@ -7,6 +7,7 @@ import { PLACEMENT, OUTLET_SOURCE } from '../designer/engines/placement.mjs';
 import { selectDiameter } from '../designer/engines/ducts.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { BTO_MODEL } from '../designer/engines/bto.mjs';
+import { MIN_MAIN_RUN_MM } from '../designer/engines/area-router.mjs';
 
 const D = await buildApproved();
 const out = D.out;
@@ -507,4 +508,102 @@ test('supply air reconciles exactly — no rounding drift across the three mains
     .filter(s => s.role === 'final')
     .reduce((a, s) => a + s.airflowLs, 0);
   assert.equal(finals, mains);
+});
+
+// ── MAIN C IS A REAL DUCT ───────────────────────────────────────────────────
+//
+// Main C used to measure 0.1 px. BTO-C sat exactly on the supply plenum, so the
+// schedule printed "not measured" against a ø400 run somebody still had to
+// install. The cause was a degenerate weighted median: Main C's two ø350 arms
+// leave in nearly opposite directions, their pull cancels, and the plenum's own
+// weight then holds the fitting on top of it.
+
+const plenumAt = () => (out.autoRoute?.nodes || []).find(n => n.type === 'plenum');
+const mainC = () => out.network.sections.find(s => s.id === 'main_C');
+const btoCAt = () => (out.autoRoute?.nodes || []).find(n => n.id === 'bto_C');
+
+test('Main C is a measurable duct longer than 0.5 m', () => {
+  const m = mainC();
+  assert.ok(m, 'there is no main_C section at all');
+  assert.ok(m.lengthM > 0.5, 'Main C measures ' + m.lengthM + ' m');
+  assert.equal(m.diameterMm, 400);
+  assert.equal(m.airflowLs, 233);
+});
+
+test('Main C never reads "not measured"', () => {
+  const m = mainC();
+  // The schedule prints the placeholder whenever a length is absent or zero.
+  assert.ok(Number.isFinite(m.lengthM), 'Main C has no numeric length');
+  assert.notEqual(m.lengthM, 0);
+  assert.ok(Number.isFinite(m.lengthMm) && m.lengthMm > 0, 'Main C has no measured millimetres');
+  assert.ok(m.points.length >= 2);
+  const span = Math.hypot(m.points.at(-1).x - m.points[0].x, m.points.at(-1).y - m.points[0].y);
+  assert.ok(span > 1, 'Main C spans ' + span.toFixed(2) + ' px — it is a point, not a run');
+});
+
+test('BTO-C is not sitting on the supply plenum', () => {
+  const p = plenumAt(), b = btoCAt();
+  assert.ok(p && b, 'plenum or BTO-C node is missing');
+  const px = Math.hypot(b.x - p.x, b.y - p.y);
+  const mm = px / out.calibration.pixelsPerMm;
+  assert.ok(mm >= MIN_MAIN_RUN_MM - 1,
+    'BTO-C is ' + Math.round(mm) + ' mm from the plenum');
+});
+
+test('every main is a real run, not just the one that was wrong', () => {
+  for (const m of out.network.sections.filter(s => s.role === 'main')) {
+    assert.ok(m.lengthM > 0.5, m.id + ' measures ' + m.lengthM + ' m');
+  }
+});
+
+test('moving BTO-C changed nothing else about the approved design', () => {
+  // The three mains, at the approved airflows and sizes.
+  assert.deepEqual(out.supplySpigots.rows.map(r => [r.key, r.diameterMm, r.airflowLs]),
+    [['A', 400, 301], ['B', 400, 265], ['C', 400, 233]]);
+  assert.equal(out.supplySpigots.totalLs, 799);
+  assert.equal(out.supplySpigots.differenceLs, 0);
+
+  // Ten outlets, five BTOs, ports unchanged.
+  const c = out.componentCounts;
+  assert.equal(c.supplyOutlets, 10);
+  assert.equal(c.supplyBtos, 5);
+  assert.equal(c.supplyMains, 3);
+  assert.equal(c.supplySpigots, 3);
+  assert.deepEqual(c.supplyBtoPorts, [3, 2, 2, 2, 3]);
+
+  // The two ø350 distribution arms, unchanged.
+  const arm = (id) => out.network.sections.find(s => s.id === id);
+  assert.equal(arm('branch_C1').diameterMm, 350);
+  assert.equal(arm('branch_C1').airflowLs, 95);
+  assert.equal(arm('branch_C2').diameterMm, 350);
+  assert.equal(arm('branch_C2').airflowLs, 138);
+
+  // Every outlet still at its approved size and airflow.
+  const finals = Object.fromEntries(out.network.sections
+    .filter(s => s.role === 'final')
+    .map(s => [s.destination, [s.diameterMm, s.airflowLs]]));
+  assert.deepEqual(finals['KITCHEN'], [250, 113]);
+  assert.deepEqual(finals['MEALS'], [250, 67]);
+  assert.deepEqual(finals['FAMILY'], [250, 121]);
+  assert.deepEqual(finals['LIVING'], [300, 159]);
+  assert.deepEqual(finals['LOUNGE'], [250, 106]);
+  assert.deepEqual(finals['FOYER'], [250, 45]);
+  assert.deepEqual(finals['MASTER BEDROOM'], [250, 50]);
+  assert.deepEqual(finals['BEDROOM 4'], [250, 48]);
+  assert.deepEqual(finals['BEDROOM 2'], [250, 45]);
+  assert.deepEqual(finals['BEDROOM 3'], [250, 45]);
+});
+
+test('return air is still completely separate, with zero return BTOs', () => {
+  assert.equal(out.returnSeparation.ok, true, JSON.stringify(out.returnSeparation.failures));
+  assert.equal(out.componentCounts.returnBtos, 0);
+  assert.equal(out.componentCounts.returnGrilles, 2);
+  assert.equal(out.componentCounts.returnDucts, 2);
+  assert.equal(out.componentCounts.returnPlenums, 1);
+  for (const b of out.btos) {
+    for (const p of b.ports) {
+      assert.ok(!/return/i.test(String(p.sectionId || '')),
+        b.id + ' has a return duct on a supply fitting');
+    }
+  }
 });
