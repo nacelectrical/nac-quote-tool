@@ -571,7 +571,7 @@ export class DesignerApp {
       });
     }
     const opts = { logo: document.querySelector('.brand img')?.src || null,
-                   planSnapshot: this.viewer?.snapshot() || null };
+                   planSnapshot: this.viewer?.snapshot({ clean: true, legend: true }) || null };
     const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
     const r = downloadReportPdf(this.design, kind, opts);
     if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
@@ -634,7 +634,7 @@ export class DesignerApp {
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
     this.viewer.setMarkers(d.network?.routed
-      ? [...routedMarkers(d.network, d.autoRoute),
+      ? [...this.labelledBtoMarkers(routedMarkers(d.network, d.autoRoute)),
          ...(d.zoneDampers || []).map(z => ({ type: 'damper', x: z.x, y: z.y,
            // The angle of the duct it sits on, so the drawing can put the
            // damper ACROSS the run rather than along it.
@@ -656,6 +656,20 @@ export class DesignerApp {
       byRoomId: zc.byRoomId
     });
     this.viewer.setOutlets(this.outletPoints());
+    // The symbol library draws what the job IS, so it is handed the job's own
+    // equipment: the unit model under the FCU, the designed grille sizes on the
+    // return symbols, and the outlet type that was actually selected.
+    this.viewer.setEquipment({
+      // The INDOOR model under the FCU. The paired outdoor code belongs on the
+      // equipment schedule — putting both on the symbol made a label wider than
+      // the unit it names.
+      unitModel: String(d.equipmentSelection?.model || d.selectedUnit?.model || '')
+        .split('/')[0].trim() || null,
+      returnGrilles: (d.returnComponents?.grilles || []).map(g => ({
+        id: g.id, widthMm: g.widthMm, heightMm: g.heightMm, airflowLs: g.airflowLs })),
+      outletType: (d.outlets?.rows || [])[0]?.outletType
+        || d.outletTypeOverride || 'square'
+    });
     this.viewer.setPlenum(d.layout?.indoorUnit || d.layout?.plenum || d.autoRoute?.plenum || null);
     // DESIGN view is the installer's drawing; ANALYSIS is the estimator's
     // workings. Quick mode's review screen is the former.
@@ -678,6 +692,35 @@ export class DesignerApp {
     this.viewer.setVisibility({ rooms: view === PLAN_VIEW.ROOMS || !!this.showAnalysisOverlay });
     this.viewer.redraw();
     return this.viewer;
+  }
+
+  /**
+   * Put each BTO's own identity on its marker.
+   *
+   * `BTO-C` / `400-350-350` / `233 L/s` — the fitting, what it is made of, and
+   * what it carries. The spec is built from the derived fitting's real inlet and
+   * collar sizes, so the label on the drawing and the line on the order describe
+   * the same piece of metal by construction.
+   */
+  labelledBtoMarkers(markers) {
+    const btos = this.design.btos || [];
+    if (!btos.length) return markers;
+    const near = (a, b) => Math.hypot((a.x ?? 0) - (b.x ?? 0), (a.y ?? 0) - (b.y ?? 0)) < 14;
+    const letterOf = (b) => {
+      const sec = (this.design.network?.sections || []).find(s => s.id === b.fedBy);
+      return sec?.mainKey ? 'BTO-' + sec.mainKey + (b.armKey || '') : b.label;
+    };
+    return markers.map(m => {
+      if (m.type !== 'bto' && !m.bto) return m;
+      const b = btos.find(x => near(x, m));
+      if (!b) return m;
+      return { ...m,
+        btoLabel: m.label || letterOf(b) || b.label,
+        btoSpec: [b.inletDiameterMm, ...b.ports.map(p => p.diameterMm)]
+          .filter(Boolean).join('-'),
+        inletAirflowLs: b.inletAirflowLs,
+        id: b.id };
+    });
   }
 
   /**
@@ -708,7 +751,12 @@ export class DesignerApp {
       if (hasChildren.has(sec.id)) continue;
       const end = sec.points[sec.points.length - 1];
       out.push({ x: end.x, y: end.y, roomId: sec.roomId || null,
-                 neckMm: sec.diameterMm ?? null, sectionId: sec.id });
+                 neckMm: sec.diameterMm ?? null, sectionId: sec.id,
+                 // `O3 · FAMILY · 121 L/s` is built from these three.
+                 number: out.length + 1,
+                 label: sec.destination || null,
+                 airflowLs: sec.airflowLs ?? null,
+                 outletType: sec.outletType || null });
     }
     return out;
   }
@@ -2869,7 +2917,7 @@ export class DesignerApp {
   // ── Reports (PART 26) ─────────────────────────────────────────────────────
 
   async showReportMenu() {
-    const snapshot = this.viewer?.snapshot() || null;
+    const snapshot = this.viewer?.snapshot({ clean: true, legend: true }) || null;
     const logo = document.querySelector('.brand img')?.src || null;
     const which = await pickDialog({
       title: 'Which document?',

@@ -13,6 +13,7 @@
 import { drawFlexDesign, sizeKey } from './flex-renderer.mjs';
 import { h } from './dom.mjs';
 import { ROUTING, DRAWING } from '../engines/nac-standard.mjs';
+import * as SYMBOLS from './symbols.mjs';
 
 export const MODES = {
   VIEW: 'view',
@@ -210,10 +211,31 @@ export function createPlanViewer(container, opts = {}) {
         toScreen,
         scale: state.scale,
         pxPerMm: state.pxPerMm || null,
-        labelDetail: state.labelDetail || null
+        labelDetail: state.labelDetail || null,
+        // What the symbols need to describe themselves honestly: the unit's
+        // model under the FCU, the real grille sizes on the return symbols, and
+        // the outlet type the design actually selected.
+        unitModel: state.unitModel || null,
+        returnGrilles: state.returnGrilles || [],
+        outletType: state.outletType || 'square',
+        selectedId: state.selectedId || null
       });
       drawZoneSchedule();
       drawZoneBadges();
+      // A COMPACT KEY, on the report. Drawn from the same functions as the
+      // sheet, so a symbol in the legend is by construction the symbol on the
+      // drawing — a hand-kept key eventually describes a drawing that moved on.
+      if (state.showLegend) {
+        const sizes = [...new Set(Object.values(state.routes || {})
+          .filter(r => r.role !== 'return' && r.diameterMm)
+          .map(r => r.diameterMm))].sort((a, b) => b - a);
+        const r0 = wrap.getBoundingClientRect();
+        SYMBOLS.drawLegend(ctx, { x: 14, y: r0.height - 214 }, {
+          sizes,
+          hasReturn: Object.values(state.routes || {}).some(r => r.role === 'return'),
+          outletType: state.outletType || 'square'
+        });
+      }
       // EDITING HANDLES SIT ON TOP OF THE CLEAN DRAWING, NOT INSTEAD OF IT.
       //
       // An estimator on a roof moving a diffuser wants to see the finished
@@ -221,7 +243,7 @@ export function createPlanViewer(container, opts = {}) {
       // view with room boxes and analysis linework. So each edit mode adds only
       // its own handles to the installer drawing, and Clean View adds none.
       if (state.mode === MODES.EDIT_ROUTE) drawHandles();
-      if (state.mode === MODES.LAYOUT && state.showLayout) drawLayout();
+      if (state.mode === MODES.LAYOUT && state.showLayout) drawLayoutHandles();
       if (state.mode === MODES.CALIBRATE) drawCalibration();
       return;
     }
@@ -972,6 +994,25 @@ export function createPlanViewer(container, opts = {}) {
     }
   }
 
+  /**
+   * EDIT OUTLETS: A GRAB POINT, NOT A REPLACEMENT SYMBOL.
+   *
+   * `drawLayout` paints each placed item as a big filled rectangle, which is
+   * right for the SETUP view where there is no drawing underneath. Over the
+   * installer drawing it buried every diffuser it was meant to let you move —
+   * Nick: "Editing handles must not replace the outlet symbol." So on the clean
+   * drawing each item gets a small handle offset clear of its own symbol, and
+   * the symbol stays visible while you drag it.
+   */
+  function drawLayoutHandles() {
+    for (const [key, item] of Object.entries(state.layout)) {
+      if (!item || item.x === undefined) continue;
+      const s = toScreen(item);
+      SYMBOLS.drawEditHandle(ctx, { x: s.x + 13, y: s.y - 13 }, { r: 5.5 });
+      item._key = key;
+    }
+  }
+
   function drawCalibration() {
     const pts = state.calibrationPoints;
     const showStored = state.calibration && state.mode !== MODES.CALIBRATE && pts.length === 0;
@@ -1343,6 +1384,21 @@ export function createPlanViewer(container, opts = {}) {
     },
     /** Where the diffusers go, so they can be drawn as symbols not nodes. */
     setOutlets(outlets) { state.outlets = outlets || []; draw(); },
+    /**
+     * The facts the symbol library needs to label equipment properly.
+     *
+     * Kept as one call because these travel together: they are all "what this
+     * particular job's equipment actually is", and the symbols are useless as
+     * a shared library if each surface has to remember to pass them separately.
+     */
+    setEquipment({ unitModel, returnGrilles, outletType } = {}) {
+      if (unitModel !== undefined) state.unitModel = unitModel;
+      if (returnGrilles !== undefined) state.returnGrilles = returnGrilles || [];
+      if (outletType !== undefined) state.outletType = outletType;
+      draw();
+    },
+    /** Highlight one item in cyan — the thing under the finger. */
+    setSelected(id) { state.selectedId = id || null; draw(); },
     /** The indoor unit / supply plenum position. */
     setPlenum(p) { state.plenum = p || null; draw(); },
     /**
@@ -1379,14 +1435,49 @@ export function createPlanViewer(container, opts = {}) {
      * before anything is drawn on it, so there is no transparency to lose.
      * Quality 0.92 keeps the dimension text on the plan readable.
      */
-    snapshot({ type = 'image/jpeg', quality = 0.92 } = {}) {
+    snapshot({ type = 'image/jpeg', quality = 0.92,
+               clean = true, legend = true } = {}) {
+      // A REPORT IS ALWAYS THE CLEAN DRAWING.
+      //
+      // This captured whatever the canvas happened to be showing, so a snapshot
+      // taken while an edit mode was on put drag handles and room boxes into a
+      // customer PDF. Nick: "Reports: Use Clean View automatically." So the
+      // view is forced clean for the capture and put back afterwards — the
+      // estimator does not lose their place for having pressed Download.
+      const prior = { mode: state.mode, designView: state.designView,
+                      showAnalysis: state.showAnalysis, showRooms: state.showRooms,
+                      handles: state.handles, legend: state.showLegend };
+      if (clean) {
+        state.mode = MODES.VIEW;
+        state.designView = true;
+        state.showAnalysis = false;
+        state.showRooms = false;
+        state.handles = [];
+        state.showLegend = legend;
+        draw();
+      }
+      const restore = () => {
+        if (!clean) return;
+        Object.assign(state, { mode: prior.mode, designView: prior.designView,
+                               showAnalysis: prior.showAnalysis, showRooms: prior.showRooms,
+                               handles: prior.handles, showLegend: prior.legend });
+        draw();
+      };
+      try { return snapshotNow(type, quality); } finally { restore(); }
+    },
+    /** The raw capture, with the view exactly as it stands. */
+    snapshotRaw({ type = 'image/jpeg', quality = 0.92 } = {}) {
+      return snapshotNow(type, quality);
+    }
+  };
+
+  function snapshotNow(type, quality) {
       // No plan, or a canvas that was never laid out because the Plan tab has
       // not been opened, gives a 1-pixel image. Embedding that puts a blank
       // rectangle in a customer document, which looks like a printing fault.
       // Nothing is better than nothing pretending to be something.
-      if (!state.image) return null;
-      if (canvas.width < 80 || canvas.height < 80) return null;
-      try { return canvas.toDataURL(type, quality); } catch (e) { return null; }
-    }
-  };
+    if (!state.image) return null;
+    if (canvas.width < 80 || canvas.height < 80) return null;
+    try { return canvas.toDataURL(type, quality); } catch (e) { return null; }
+  }
 }

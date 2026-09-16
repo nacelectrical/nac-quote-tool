@@ -32,6 +32,7 @@
 // numbers do not.
 
 import { DRAWING } from '../engines/nac-standard.mjs';
+import * as SYM from './symbols.mjs';
 
 /**
  * The colour of a duct: its SIZE.
@@ -407,6 +408,13 @@ export function drawZoneBadge(ctx, at, { index, colour }) {
 export function drawFlexDesign(ctx, view) {
   const { routes, outlets, markers, plenum, zoneFillByRoomId, rooms, dampers,
           toScreen, pxPerMm, labelDetail } = view;
+  // EVERY SYMBOL ON THIS DRAWING COMES OUT OF THE SHARED LIBRARY.
+  //
+  // The plan editor, Clean View, the internal report and the PDF all render
+  // through this function, and this function draws nothing itself — it asks
+  // symbols.mjs. That is what stops a BTO being a metal box on one surface and
+  // a grey circle on another.
+  const ledger = SYM.createLabelLedger();
 
   // ── 1. NO ZONE WASH ─────────────────────────────────────────────────────
   //
@@ -435,22 +443,64 @@ export function drawFlexDesign(ctx, view) {
   // ── 2. The ducts ────────────────────────────────────────────────────────
   const runs = Object.values(routes || {})
     .filter(r => r.points && r.points.length >= 2)
-    .map(r => ({ ...r, screen: r.points.map(toScreen),
-                 widthPx: tubeWidthPx(r.diameterMm, pxPerMm, { role: r.role }) }))
+    .map(r => {
+      const role = SYM.ductRole(r);
+      return { ...r, symbolRole: role, screen: r.points.map(toScreen),
+               widthPx: SYM.ductWidthPx(r.diameterMm, pxPerMm,
+                                        { role, scale: view.scale || 1 }) };
+    })
     .sort((a, b) => b.widthPx - a.widthPx);
 
+  // Widest first, so a main is never drawn over the top of a final that crosses
+  // it — the heavier run should sit under, the way it does in a real ceiling.
   for (const run of runs) {
-    drawTube(ctx, run.screen, {
-      // SIZE, not zone.
-      colour: sizeColour(run.diameterMm, run.role),
+    SYM.drawDuctRun(ctx, run.screen, {
+      diameterMm: run.diameterMm,          // SIZE is the colour, never the zone
+      role: run.symbolRole,
       widthPx: run.widthPx,
-      // A return is the other system, and must never be read as a supply run
-      // whatever colour the palette gives it.
-      isReturn: run.role === 'return'
+      selected: view.selectedId === run.id,
+      warning: !!run.warning
     });
   }
 
+  // THE EQUIPMENT BOOKS ITS GROUND FIRST.
+  //
+  // The fan coil, its plenum and the return box are drawn last, because they
+  // belong on top — but a fitting label placed before them then lands on the
+  // unit. On this job BTO-C sits 1.5 m from the plenum and its spec was written
+  // straight across the FCU. Reserving the cluster up front makes every later
+  // label step around it.
+  if (plenum && plenum.x !== undefined) {
+    const u0 = toScreen(plenum);
+    ledger.reserve(u0.x, u0.y, 118, 62);
+  }
+
   // ── 3. Fittings ─────────────────────────────────────────────────────────
+  //
+  // COLLAR DIRECTIONS COME OFF THE TOPOLOGY, NOT OFF A GUESS. Nick: "The number
+  // and direction of collars should reflect the actual topology." So for each
+  // fitting we find the runs that actually start there and the run that feeds
+  // it, and draw one collar down each of those bearings. A five-port BTO ends
+  // up with five outlet collars pointing where its five ducts go, which means
+  // the ports can be counted off the sheet.
+  const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 14;
+  const bearingsAt = (screenAt) => {
+    const out = [];
+    let inlet = null;
+    for (const run of runs) {
+      if (run.symbolRole === 'return') continue;
+      const a = run.screen[0], z = run.screen[run.screen.length - 1];
+      if (near(a, screenAt)) {
+        const q = run.screen[1] || z;
+        out.push(Math.atan2(q.y - a.y, q.x - a.x));
+      } else if (near(z, screenAt)) {
+        const q = run.screen[run.screen.length - 2] || a;
+        inlet = Math.atan2(q.y - z.y, q.x - z.x);
+      }
+    }
+    return { inlet, out };
+  };
+
   for (const m of (markers || [])) {
     if (m.type !== 'bto' && !(m.type === 'junction' && m.bto)) continue;
     // A TAKE-OFF SYMBOL IS SUPPLY-ONLY. Two return ducts meeting at the fan coil
@@ -459,37 +509,139 @@ export function drawFlexDesign(ctx, view) {
     // not a take-off: air goes the other way, there is no spigot and nobody
     // orders one. Anything flagged as return is skipped here whatever its type.
     if (m.airSide === 'return' || m.isReturn || m.role === 'return') continue;
-    drawTakeOff(ctx, toScreen(m), { angle: (m.angle ?? 0) + Math.PI / 2,
-                                    fitting: m.type === 'bto' || !!m.bto,
-                                    ports: m.ports || 0 });
+    const at = toScreen(m);
+    const b = bearingsAt(at);
+    SYM.drawBto(ctx, at, {
+      inletAngle: b.inlet, outletAngles: b.out,
+      angle: (m.angle ?? 0),
+      // ONE LINE, NOT THREE. `BTO-C · 400-350-350` is the brief's own format
+      // and says what the fitting is and what it is made of in a single strip.
+      // Stacking the identity, the spec and the airflow put fifteen labels on a
+      // five-fitting drawing. The airflow joins it only at full detail, because
+      // the schedule carries it anyway.
+      label: view.labelFittings === false ? null
+        : (m.btoLabel && m.btoSpec ? m.btoLabel + ' \u00b7 ' + m.btoSpec
+           : (m.btoLabel || null)),
+      spec: null,
+      flow: view.labelFittings === false || view.labelDetail !== 'full' ? null
+        : (m.inletAirflowLs ? SYM.LABEL.flow(m.inletAirflowLs) : null),
+      selected: view.selectedId === m.id,
+      warning: !!m.warning,
+      ledger
+    });
   }
-  for (const o of (outlets || [])) drawOutlet(ctx, toScreen(o), { colour: '#3b4358' });
+
+  // Each outlet as the TYPE the design actually selected, with its own number,
+  // room and airflow beside it rather than repeated along the duct.
+  (outlets || []).forEach((o, i) => {
+    const at = toScreen(o);
+    SYM.drawOutletSymbol(ctx, at, {
+      type: o.outletType || view.outletType || 'square',
+      angle: o.angle ?? 0,
+      selected: view.selectedId === o.sectionId,
+      ledger
+    });
+    if (view.labelOutlets !== false && (o.label || o.airflowLs != null)) {
+      // THE ROOM NAME IS ALREADY PRINTED ON THE PLAN.
+      //
+      // Nick's label rules ask for `O3 · FAMILY · 121 L/s`, and his drawing
+      // conventions say "Do not duplicate room names already printed on the
+      // floor plan." Both are right, for different surfaces: the SCHEDULE has
+      // no plan underneath it and wants the room, the DRAWING sits on a builder's
+      // sheet that already says FAMILY in 14pt. Repeating it doubled the width
+      // of ten labels and buried the middle of the house.
+      //
+      // So the drawing says `O3 · 121 L/s` and the schedule says the rest. The
+      // full form is still one press away on the detail control.
+      const full = view.labelDetail === 'full';
+      SYM.drawLabel(ctx,
+        full ? SYM.LABEL.outlet(o.number ?? (i + 1), o.label, o.airflowLs)
+             : SYM.LABEL.outlet(o.number ?? (i + 1), null, o.airflowLs),
+        { x: at.x, y: at.y + 17 }, { size: 9.5, ledger });
+    }
+  });
 
   // ZONE DAMPERS, in the ductwork. One per closable zone, on the run that feeds
   // that zone and nothing else — a motor somebody buys, fits and wires, so it
   // belongs on the drawing at the place they fit it.
-  for (const d of (dampers || [])) {
+  (dampers || []).forEach((d, i) => {
     // NEVER ON A RETURN. A zone damper on the return does not balance a room,
     // it starves the fan coil, and one drawn there would be one fitted there.
-    if (d.airSide === 'return' || d.isReturn || d.role === 'return') continue;
-    drawDamper(ctx, toScreen(d), d.angle ?? 0,
-      { colour: d.colour || '#1d7a48', label: d.zoneLabel || d.label || null });
-  }
+    if (d.airSide === 'return' || d.isReturn || d.role === 'return') return;
+    SYM.drawZoneDamper(ctx, toScreen(d), {
+      angle: d.angle ?? 0,
+      colour: d.colour || '#1D7A48',
+      // `ZM-3 · BEDROOMS` — the motor's own number and the zone it closes.
+      label: view.labelDampers === false ? null
+        : SYM.LABEL.zoneMotor(d.motorNumber ?? (i + 1), d.zoneLabel || d.label || null),
+      // A permanently open zone is ANNOTATED, never given a motor it has not got.
+      constant: !!d.constant || !!d.alwaysOpen,
+      ledger
+    });
+  });
   // A RETURN ENDS IN A GRILLE. Without one the return was a dashed line that
   // stopped in the middle of a hallway for no visible reason.
-  for (const run of runs) {
-    if (run.role !== 'return') continue;
+  const returnRuns = runs.filter(r => r.symbolRole === 'return');
+  returnRuns.forEach((run, i) => {
     const far = run.screen[run.screen.length - 1];
-    const near = run.screen[0];
+    const first = run.screen[0];
     const plen = plenum ? toScreen(plenum) : null;
     const grille = (plen && Math.hypot(far.x - plen.x, far.y - plen.y) >
-                            Math.hypot(near.x - plen.x, near.y - plen.y)) ? far : near;
-    drawReturnGrille(ctx, grille);
-  }
+                            Math.hypot(first.x - plen.x, first.y - plen.y)) ? far : first;
+    const g = (view.returnGrilles || [])[i] || null;
+    SYM.drawReturnGrilleSymbol(ctx, grille, {
+      // Real proportions where the design knows them.
+      w: g?.widthMm ? Math.max(16, Math.min(34, g.widthMm / 26)) : 22,
+      h: g?.heightMm ? Math.max(10, Math.min(24, g.heightMm / 26)) : 15,
+      label: view.labelReturns === false ? null
+        : SYM.LABEL.returnGrille(g?.id || ('R' + (i + 1)), g?.widthMm, g?.heightMm,
+                                 run.diameterMm),
+      duct: view.labelReturns === false || view.labelDetail !== 'full'
+        || g?.airflowLs == null ? null : SYM.LABEL.flow(g.airflowLs),
+      selected: view.selectedId === (g?.id || null),
+      ledger
+    });
+  });
+
   // THE FAN COIL SITS SQUARE ON THE SHEET. Turning it to face its mains
   // produced a rotated square with a cross through it, which reads as a
   // diamond — a symbol nobody uses — rather than as a unit.
-  if (plenum && plenum.x !== undefined) drawUnit(ctx, toScreen(plenum));
+  //
+  // Three separate things at the unit, and they are drawn as three things: the
+  // FAN COIL, the SUPPLY PLENUM on its discharge with one collar per main, and
+  // the RETURN BOX on the other side with one collar per return duct. Drawing
+  // them as one box is what let a reader think the returns came off the same
+  // fitting as the mains.
+  if (plenum && plenum.x !== undefined) {
+    const u = toScreen(plenum);
+    const mains = runs.filter(r => r.symbolRole === 'main' && near(r.screen[0], u))
+      .map(r => {
+        const q = r.screen[1] || r.screen[r.screen.length - 1];
+        return Math.atan2(q.y - u.y, q.x - u.x);
+      });
+    const returnsIn = returnRuns.map(r => {
+      const z = r.screen[r.screen.length - 1];
+      const q = r.screen[r.screen.length - 2] || r.screen[0];
+      return near(z, u) ? Math.atan2(q.y - z.y, q.x - z.x) : null;
+    }).filter(a => a !== null);
+
+    if (view.showReturnBox !== false && returnsIn.length) {
+      SYM.drawReturnBox(ctx, { x: u.x - 26, y: u.y }, {
+        inletAngles: returnsIn, w: 14, h: 24,
+        label: view.labelEquipment === false ? null : 'RETURN BOX', ledger });
+    }
+    if (mains.length) {
+      SYM.drawSupplyPlenum(ctx, { x: u.x + 26, y: u.y }, {
+        spigotAngles: mains, w: 13, h: 26,
+        label: view.labelEquipment === false ? null : 'SUPPLY PLENUM', ledger });
+    }
+    SYM.drawFanCoil(ctx, u, {
+      label: 'FCU',
+      model: view.labelEquipment === false ? null : (view.unitModel || null),
+      selected: view.selectedId === 'plenum',
+      ledger
+    });
+  }
 
   // ── 4. Sizes, written on the ducts ──────────────────────────────────────
   // A main always carries its size — it is the spine, and it changes along its
@@ -499,17 +651,20 @@ export function drawFlexDesign(ctx, view) {
     // Every SYMBOL already on the drawing books its patch before a single size
     // is written. Sizes were landing on the fan coil and on diffusers because
     // only other sizes were being avoided.
-    const placed = [];
+    // ONE LEDGER FOR THE WHOLE SHEET.
+    //
+    // Every symbol already booked its patch through the shared library as it was
+    // drawn, and so did every symbol label. Seeding from that record is what
+    // stops a duct size being written across a diffuser, a BTO spec or the fan
+    // coil — the sizes were only avoiding OTHER SIZES before, which is why they
+    // kept landing on the equipment.
+    const placed = ledger.boxes.map(b => ({ x: b.x0, y: b.y0,
+                                            w: b.x1 - b.x0, h: b.y1 - b.y0 }));
     const reserve = (pt, w, h) => {
       const c = toScreen(pt);
       placed.push({ x: c.x - w / 2, y: c.y - h / 2, w, h });
     };
-    for (const o of (outlets || [])) reserve(o, 18, 18);
-    for (const m of (markers || [])) {
-      if (m.type === 'bto' || (m.type === 'junction' && m.bto)) reserve(m, 12, 12);
-    }
-    for (const d of (dampers || [])) reserve(d, (d.zoneLabel || d.label) ? 62 : 18, 18);
-    if (plenum && plenum.x !== undefined) reserve(plenum, 40, 30);
+    if (plenum && plenum.x !== undefined) reserve(plenum, 96, 40);
 
     const clear = (x, y, w, h) => {
       const box = { x: x - w / 2, y: y - h / 2, w, h };

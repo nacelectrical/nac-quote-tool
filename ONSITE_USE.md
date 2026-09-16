@@ -16,6 +16,13 @@ put handles on that same drawing for the thing you are changing:
 | **Edit routes/BTOs** | Handles on the BTO fittings, the run ends, and any point you added. |
 | **Edit rooms** | The green room boxes and the analysis workings. Only this view shows them. |
 
+Every symbol on every surface — the plan editor, Clean view, the internal report
+and the PDF — is drawn by one shared library, `designer/ui/symbols.mjs`, so they
+cannot visually disagree about what is being installed. Sizes are colour-coded
+(ø400 magenta, ø350 purple-grey, ø300 green, ø250 amber, ø200 blue, return
+dashed grey) AND labelled, because colour must never be the only cue on a
+greyscale print.
+
 Route handles are the ones worth grabbing — the junctions (the BTOs), the ends,
 and points a person added to get around an obstacle. The swept curve's own
 tessellation points are not offered, because they are the shape of a bend rather
@@ -62,8 +69,8 @@ node --test tests/*.test.mjs
 
 Expected result for this handoff: 787 tests, 787 passed, 0 failed.
 
-Browser suites live in `tools/browser-tests/`; `plan-view.mjs` covers the Plan
-tab's view modes. `auto-route.mjs` carries two STALE assertions — it expects the
-trunk to reduce across the house and reducers to be bought. The approved
-installer-area design deliberately does neither, because no main is reduced
-before its BTO, so those two have been failing since this topology was adopted.
+Browser suites live in `tools/browser-tests/`. `plan-view.mjs` covers the Plan
+tab's view modes and `symbols.mjs` is the visual regression for the symbol
+library — every symbol is rendered to its own tile and checked for ink area,
+bounding box, corner fill and mean colour, so a symbol that vanishes, collapses,
+explodes or stops being distinguishable from another one is caught.
