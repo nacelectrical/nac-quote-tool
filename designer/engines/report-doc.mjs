@@ -334,14 +334,17 @@ export function internalReportDoc(design, { planSnapshot = null,
     b.push(h2('Bill of materials'));
     b.push(table(
       [{ label: 'Category' }, { label: 'Item', w: 3 }, { label: 'Qty', r: true }, { label: 'Unit' },
-       { label: 'Unit cost', r: true }, { label: 'Total', r: true }, { label: 'Price source' }],
+       { label: 'Unit cost', r: true }, { label: 'Total', r: true },
+       // Wide enough for the longest thing that goes in it. At the default
+       // weight `Placeholder` broke across two lines as `PLACEHOLD` / `ER`.
+       { label: 'Price source', w: 1.4 }],
       d.bom.items,
       r => [r.category, r.label, r.quantity, r.unit,
             r.unitCost === null ? 'PRICE REQUIRED' : money(r.unitCost),
             r.totalCost === null ? 'PRICE REQUIRED' : money(r.totalCost),
             r.priceSource === 'nac' ? 'NAC'
               : r.priceSource === 'supplier_list' ? 'Supplier list'
-              : r.priceSource === 'default_placeholder' ? 'PLACEHOLDER' : 'NONE']));
+              : r.priceSource === 'default_placeholder' ? 'Placeholder' : 'NONE']));
     if (d.bom.placeholderCount) {
       b.push(flag('warn', d.bom.placeholderCount + ' line(s) use shipped placeholder rates worth ' +
         money(d.bom.placeholderCost) + '. They are not confirmed NAC prices.'));

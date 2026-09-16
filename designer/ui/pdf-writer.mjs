@@ -147,9 +147,15 @@ const WINANSI = {
   // both faces, where Helvetica-Bold's oslash is 611 — so every bold line
   // carrying a size was laid out fractionally narrow.
   'ø': [0xF8, 556, 611], 'Ø': [0xD8, 778, 778],
+  // `Supply plenum → Main A` is on the ductwork table, and `Settings → Material
+  // rates` is in three warnings. WinAnsi has no arrow, and folding it to `->`
+  // put what looks like a typing accident in the middle of a schedule. The
+  // right-pointing guillemet is a real glyph in this encoding and reads as the
+  // same thing: a direction of travel.
+  '→': [0xBB, 556, 556],
   'Δ': null, 'Ω': null                              // no WinAnsi byte — spelled out below
 };
-const ASCII_FALLBACK = { 'Δ': 'd', 'Ω': 'ohm', '→': '->', '≤': '<=', '≥': '>=', '≈': '~', ' ': ' ' };
+const ASCII_FALLBACK = { 'Δ': 'd', 'Ω': 'ohm', '→': '>', '≤': '<=', '≥': '>=', '≈': '~', ' ': ' ' };
 
 /**
  * The width table the page will actually be drawn with.

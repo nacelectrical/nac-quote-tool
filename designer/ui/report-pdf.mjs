@@ -158,10 +158,17 @@ class Layout {
   kv(items) {
     const cols = 4, gap = 6;
     const w = (this.contentW - gap * (cols - 1)) / cols;
-    this.flushHeading(items.some(it => it[2]) ? 46 : 37);
+    this.flushHeading(items.some(it => it[2]) ? 54 : 37);
     for (let i = 0; i < items.length; i += cols) {
       const row = items.slice(i, i + cols);
-      const h = row.some(it => it[2]) ? 40 : 31;
+      // THE CAPTION WRAPS RATHER THAN BEING CUT OFF. `Fabricated transition
+      // plenum: 1152 ...` is the one line on the sheet that says what is being
+      // ordered instead of a stock box, and an ellipsis took the numbers off
+      // the end of it. Two lines is the ceiling: the box is a summary, and past
+      // that the reader wants the bill of materials.
+      const subs = row.map(it => it[2] ? wrapText(String(it[2]), w - 12, 6.5, false).slice(0, 2) : []);
+      const subH = Math.max(0, ...subs.map(l => l.length)) * 8;
+      const h = subH ? 32 + subH : 31;
       this.need(h + 6);
       const top = this.y;
       row.forEach((it, c) => {
@@ -172,7 +179,8 @@ class Layout {
         // to fit before it is ever shortened with an ellipsis.
         const fit = fitSize(it[1], w - 12, 10, 6.5, true);
         this.pdf.text(clip(it[1], w - 12, fit, true), x + 6, top - 24, { size: fit, bold: true, colour: INK });
-        if (it[2]) this.pdf.text(clip(it[2], w - 12, 6.5, false), x + 6, top - 34, { size: 6.5, colour: MUTED });
+        subs[c].forEach((line, li) =>
+          this.pdf.text(line, x + 6, top - 34 - li * 8, { size: 6.5, colour: MUTED }));
       });
       this.y = top - h - gap;
     }
@@ -193,16 +201,28 @@ class Layout {
     // Wrap every cell up front so a row's height is known before it is drawn.
     const wrapped = rows.map(r => r.map((cell, i) => wrapText(cell, widths[i] - pad * 2, size, false)));
 
+    // A HEADING WRAPS; IT DOES NOT GET CUT OFF.
+    //
+    // Clipped to the column it came out as `DIAMETE...`, `VELOCIT...`,
+    // `PRESSUR...` and `CONFIDE...` — four columns on the ductwork table whose
+    // heading no longer said what the numbers under it were. Wrapping costs a
+    // few points of page and says the whole word at any column width.
+    const HEAD_LEAD = 8;
+    const headLines = cols.map((c, i) => wrapText(c.label.toUpperCase(), widths[i] - pad * 2, 6.5, true));
+    const headH = Math.max(14, Math.max(...headLines.map(l => l.length)) * HEAD_LEAD + 6);
+
     const headerRow = () => {
-      const h = 14;
+      const h = headH;
       this.need(h + lead + 4);
       const top = this.y;
       this.pdf.rect(M, top - h, this.contentW, h, { fill: HEADFILL, stroke: RULE, lineWidth: 0.4 });
       let x = M;
       cols.forEach((c, i) => {
-        const label = clip(c.label.toUpperCase(), widths[i] - pad * 2, 6.5, true);
-        const tx = c.r ? x + widths[i] - pad - textWidth(label, 6.5, true) : x + pad;
-        this.pdf.text(label, tx, top - 9.5, { size: 6.5, bold: true, colour: [0.29, 0.33, 0.47] });
+        headLines[i].forEach((line, li) => {
+          const tx = c.r ? x + widths[i] - pad - textWidth(line, 6.5, true) : x + pad;
+          this.pdf.text(line, tx, top - 9.5 - li * HEAD_LEAD,
+                        { size: 6.5, bold: true, colour: [0.29, 0.33, 0.47] });
+        });
         x += widths[i];
       });
       this.y = top - h;
@@ -290,18 +310,23 @@ class Layout {
     const key = legend ? dataUrlBytes(legend) : null;
     const keyMeta = (key && key.mime === 'image/jpeg') ? probeJpeg(key.bytes) : null;
     if (keyMeta) {
-      const ML = 24;                                 // this page's own margin
+      // The document's own LEFT and RIGHT margins are kept — that is what Nick
+      // means by "while maintaining margins", and the side column has to sit
+      // inside them like every other block. Only the TOP is tightened, because
+      // height is the one thing the drawing is short of and the heading that
+      // used to take it has moved into the column.
+      const MT = 24;
       const footerTop = M + 20;
       const bottom = footerTop + 6;
-      const top = H - ML;
+      const top = H - MT;
       const boxH = top - bottom;
       const colW = 200, gap = 16;
-      const planW = W - ML * 2 - colW - gap;
+      const planW = W - M * 2 - colW - gap;
       const scale = Math.min(planW / meta.width, boxH / meta.height);
       const dw = meta.width * scale, dh = meta.height * scale;
-      this.pdf.image(img.bytes, ML + (planW - dw) / 2, top - dh, dw, dh);
+      this.pdf.image(img.bytes, M + (planW - dw) / 2, top - dh, dw, dh);
 
-      const cx = W - ML - colW;
+      const cx = W - M - colW;
       let cy = top;
       this.pdf.text('FLOOR PLAN — DUCT LAYOUT', cx, cy - 9,
                     { size: 9.5, bold: true, colour: BLUE });

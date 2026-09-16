@@ -397,6 +397,49 @@ for (const l of cLabels) {
 }
 say('and nothing in it overlaps anything else', cHits === 0, cHits + ' overlap(s)');
 
+// ── 9. Text is off the ductwork, and on its own system's side ──────────────
+//
+// Nick: "prevent labels from covering ducts or equipment; keep return labels on
+// the return side; keep supply labels on the supply side." A duct is a line, so
+// it could never be booked as a rectangle and labels were free to sit across
+// it. The renderer now stamps every run into an occupancy grid, so this is
+// measurable: re-stamp the drawn paths here and charge each placed label for
+// what it covers.
+STEP('[9] No label is written along a duct');
+const cover = await p.evaluate(async () => {
+  const SYM = await import('/designer/ui/symbols.mjs');
+  const D = window.nacDesigner.viewer.state.drawn;
+  const L = SYM.createLabelLedger();
+  for (const path of (D.paths || [])) {
+    if (!path.points || path.points.length < 2) continue;
+    L.route(path.points, (path.widthPx || 4) / 2 + 1,
+            path.role === 'return' ? 'return' : 'supply');
+  }
+  return (D.boxes || []).filter(b => !b.symbol).map(b => ({
+    box: [Math.round(b.x0), Math.round(b.y0)],
+    supply: L.ductCover(b, 'supply'),
+    ret: L.ductCover(b, 'return')
+  }));
+});
+const buried = cover.filter(c => Math.min(c.supply, c.ret) > 0.55);
+say('no label is buried in a duct', buried.length === 0,
+  buried.length + ' of ' + cover.length + ' label(s) more than half on ink' +
+  (buried.length ? ' — worst at ' + buried[0].box : ''));
+const worstCover = cover.reduce((m, c) => Math.max(m, Math.min(c.supply, c.ret)), 0);
+say('and the worst one is still mostly on clear paper', worstCover < 0.55,
+  'worst coverage ' + (worstCover * 100).toFixed(0) + '%');
+
+// ── 10. Every crossing hops, and the hop clears what it crosses ────────────
+STEP('[10] Each crossing is a bridge, not a joint');
+const hops = await p.evaluate(() => (window.nacDesigner.viewer.state.drawn.crossings || [])
+  .map(c => ({ r: c.hopR ?? null, gap: c.gapPx ?? null })));
+say('every crossing carries a hop radius sized from the run it crosses',
+  hops.length > 0 && hops.every(h => h.r > 4),
+  hops.map(h => 'r=' + (h.r ? h.r.toFixed(1) : '-')).join(' '));
+say('and the gap cut in the return is the full width of that hop',
+  hops.every(h => h.gap && Math.abs(h.gap - h.r * 2) < 0.01),
+  hops.map(h => 'gap=' + (h.gap ? h.gap.toFixed(1) : '-')).join(' '));
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'}`);
 await b.close();
 process.exit(failures ? 1 : 0);

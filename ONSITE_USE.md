@@ -125,6 +125,21 @@ cannot visually disagree about what is being installed. Sizes are colour-coded
 dashed grey) AND labelled, because colour must never be the only cue on a
 greyscale print.
 
+**Text stays off the ductwork, and on its own side of the system.** A duct is a
+line, not a rectangle: the bounding box of one diagonal run covers a quarter of
+the house, so runs were never booked against label placement at all and
+`BTO-C · 400-350-350` sat straight across the two return drops. Every run is now
+stamped into an occupancy grid — supply and return kept apart — and a label pays
+for the fraction of itself that lands on ink, three times over if it is the
+other system's ink. Covering a symbol still costs more than covering a duct, and
+distance only breaks ties, so the shortest genuinely clear leader wins.
+
+**Where the two systems cross, the return hops over.** The gap is cut to the
+width of the run passing THROUGH it, not the width of the run being broken, and
+an arc in the return's own colour carries it across on a white casing. Two ducts
+meeting at a point on a drawing means a joint, and a return joined to a supply
+is the one thing this system must never look like.
+
 Route handles are the ones worth grabbing — the junctions (the BTOs), the ends,
 and points a person added to get around an obstacle. The swept curve's own
 tessellation points are not offered, because they are the shape of a bend rather
@@ -190,13 +205,16 @@ when no compliant position exists.
 
 ## The internal PDF
 
-**The document declares the font metrics it was laid out with.** A base-14 font
-needs no `/Widths` array, and that is exactly the problem: a reader with no
-Helvetica substitutes another font and lays every line out on *its* metrics, so
-the same file looks right in one viewer and comes back with letters spaced too
-far apart or words running together in the next. Both faces now carry
-`/FirstChar`, `/LastChar` and the full width array, and those numbers are the
-same AFM widths `textWidth` measures with.
+**The document carries its own font.** Declaring Helvetica leaves the reader to
+find a face for it, and a reader with no Helvetica substitutes one, draws its
+shapes and advances by the widths the file declares — which is where
+`InternalHVAC Design Sheet` and `Totalaiflow` came from. The file was right and
+the reader was guessing. Liberation Sans Regular and Bold (SIL OFL 1.1,
+metric-compatible with Arial) now ship in `designer/vendor/fonts/` and go into
+the PDF as `/FontFile2` with a `/FontDescriptor` and the real `/Widths`, so
+there is no choice left to make. `tools/extract-font-metrics.mjs` reads the
+widths straight out of the TTFs into `designer/ui/pdf-fonts.mjs`, and
+`textWidth` measures with the face that will actually be drawn.
 
 Two glyph defects went with it. The bullet, U+2022, had no WinAnsi entry, so
 every bulleted list opened with `?`. And the middot — which is in every duct
@@ -210,11 +228,25 @@ paints its background white instead of the app's dark chrome, and the capture is
 trimmed to what was actually drawn. Embedded whole, the dark surround took about
 a third of the landscape sheet and the drawing was scaled down to fit inside it.
 
-**The caption cannot land on the footer.** Its lines are measured first and the
-picture gets what is left, with the caption anchored to the footer rule rather
-than to the bottom of the image. A fixed allowance was a guess at how many lines
-the caption would wrap to; it wrapped to two and the second went across the
-rule.
+**The drawing gets the paper; everything else gets a column.** A house plan
+taller than it is wide is HEIGHT-bound on a landscape sheet, so widening the
+picture does nothing — it is already far short of the width. The page heading,
+the caption and the key therefore sit in a 200 pt column down the right-hand
+side, where the sheet has width going spare, and the plan runs the full height
+between the margins. The key is captured separately (`legendStrip()`) so it is
+not baked into the same bitmap. Measured off the image placement matrix in the
+file, on the Dungannon job that is **+27.7% linear, +63% area**.
+
+**The trim keeps the drawing, not the builder's margins.** `inkBounds()` used to
+take the first and last off-white pixel, which handed a fifth of the sheet to a
+pale landscaping strip down one edge and the ghost of a title-block border down
+the other. It now groups inked lines into runs, joins runs separated by less
+than a clear gutter, and keeps the heaviest: the drawing is the big block of
+ink, and anything across a white gutter from it is the sheet's own furniture.
+
+**A heading wraps; it does not get cut off.** Clipped to its column the
+ductwork schedule read `DIAMETE...`, `VELOCIT...` and `PRESSUR...` — headings
+that no longer said what the numbers under them were.
 
 
 Page 1 is the design summary and any CRITICAL warnings — the ones that block

@@ -233,3 +233,28 @@ test('the diameter sign is measured correctly in bold', () => {
   assert.equal(Math.round(textWidth('ø', 1000, true)), 611);
   assert.equal(Math.round(textWidth('ø', 1000, false)), 556);
 });
+
+// ── THE ARROW ─────────────────────────────────────────────────────────────
+//
+// `Supply plenum → Main A` is a cell on the ductwork schedule and `Settings →
+// Material rates` is in three warnings. WinAnsi has no arrow, and the writer
+// used to fold it to `->`, which read as a typing accident in the middle of a
+// table. It is now drawn as the right-pointing guillemet, which IS in the
+// encoding and means the same thing.
+test('an arrow reaches the page as one real glyph, not as two ASCII characters', () => {
+  const doc = new PdfDoc({ title: 'Arrow' });
+  doc.addPage();
+  doc.text('Supply plenum \u2192 Main A', 40, 700, { size: 9 });
+  const raw = asText(doc.bytes());
+  assert.ok(/Supply plenum \\273 Main A/.test(raw),
+            'the arrow is written as octal \\273 — WinAnsi guillemotright');
+  assert.ok(!/Supply plenum -> Main A/.test(raw), 'and not as the ASCII fold');
+});
+
+test('the arrow is measured as one glyph wide', () => {
+  const one = textWidth('\u2192', 10, false);
+  assert.ok(Math.abs(one - textWidth('\u00bb', 10, false)) < 0.01,
+            'it measures exactly what the glyph it is drawn as measures');
+  assert.ok(one < textWidth('->', 10, false),
+            'which is narrower than the two characters it used to become');
+});

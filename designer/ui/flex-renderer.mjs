@@ -700,11 +700,17 @@ export function drawFlexDesign(ctx, view) {
   // A gap in the return with the supply passing over it. Never a junction dot:
   // a dot is what a JOINT looks like, and the whole point is that these do not
   // join. The return is drawn first and broken; the supply runs over it whole.
-  const supplyScreens = runs.filter(r => r.symbolRole !== 'return').map(r => r.screen);
+  const supplyRuns = runs.filter(r => r.symbolRole !== 'return');
   const crossings = [];
   for (const r of runs) {
     if (r.symbolRole !== 'return') continue;
-    r.crossings = supplyScreens.flatMap(sp => SYM.findCrossings(r.screen, sp));
+    // EACH CROSSING CARRIES THE SIZE OF WHAT IT HAS TO CLEAR. The gap used to be
+    // cut to the RETURN's own width, so a return crossing a ø400 main was cut
+    // too narrow to see and the two read as touching.
+    r.crossings = supplyRuns.flatMap(s => SYM.findCrossings(r.screen, s.screen).map(c => {
+      const hop = (s.widthPx || 8) / 2 + (r.widthPx || 8) / 2 + 2;
+      return { ...c, hopR: hop, gapPx: hop * 2, width: Math.max(2, (r.widthPx || 8) * 0.42) };
+    }));
     crossings.push(...r.crossings);
   }
 
@@ -712,7 +718,7 @@ export function drawFlexDesign(ctx, view) {
   // it — the heavier run should sit under, the way it does in a real ceiling.
   // Returns go down first, so the supply can bridge over them.
   for (const run of runs.filter(r => r.symbolRole === 'return')) {
-    const gap = run.widthPx + 10;
+    const gap = run.widthPx + 10;      // the fallback; each break sizes its own
     for (const piece of SYM.breakAround(run.screen, run.crossings || [], gap)) {
       SYM.drawDuctRun(ctx, piece, {
         diameterMm: run.diameterMm, role: 'return', widthPx: run.widthPx,
@@ -749,7 +755,7 @@ export function drawFlexDesign(ctx, view) {
     });
   }
   for (const c of crossings) {
-    SYM.drawCrossingBridge(ctx, c, { angle: c.angle, r: 6 });
+    SYM.drawCrossingBridge(ctx, c, { angle: c.angle, r: c.hopR ?? 6, width: c.width ?? 2.4 });
   }
 
   // ── EVERY SYMBOL BOOKS ITS GROUND BEFORE ANY LABEL IS PLACED ────────────
@@ -771,6 +777,19 @@ export function drawFlexDesign(ctx, view) {
   // ring around each symbol at the moment labels are placed, and a label will
   // happily sit in it — which is how a size label came to clip an outlet by a
   // pixel and a half even with the placer working correctly.
+  // THE RUNS BOOK THEIR INK FIRST OF ALL.
+  //
+  // A duct is a line, not a rectangle: the bounding box of one diagonal run
+  // covers a quarter of the house, so runs were never in the ledger at all and
+  // labels sat straight across them. Stamped into the ledger's occupancy grid
+  // they cost what they actually cover — and supply and return are stamped
+  // apart, so a label pays extra for crossing to the other system's side.
+  for (const r of runs) {
+    if (!r.screen || r.screen.length < 2) continue;
+    ledger.route(r.screen, (r.widthPx || 4) / 2 + 1,
+                 (r.role === 'return' || r.symbolRole === 'return') ? 'return' : 'supply');
+  }
+
   if (equip) {
     // THE WHOLE ASSEMBLY, IN ONE BOX, WITH ROOM FOR ITS OWN LABELS. Nick:
     // "Reserve enough space around the assembly for labels before routing
@@ -1068,7 +1087,8 @@ export function drawFlexDesign(ctx, view) {
         colour: isReturn ? SYM.RETURN_COLOUR : SYM.INK,
         // It has already been fitted to a clear stretch of its own duct; a
         // leader from a duct to its own size label would be noise.
-        leader: false
+        leader: false,
+        role: isReturn ? 'return' : 'supply'
       });
     }
   }
@@ -1136,7 +1156,9 @@ export function drawFlexDesign(ctx, view) {
                    a: { x: r.screen[0].x, y: r.screen[0].y },
                    z: { x: r.screen.at(-1).x, y: r.screen.at(-1).y },
                    crossings: (r.crossings || []).length })),
-    crossings: crossings.map(c => ({ x: c.x, y: c.y })),
+    // The hop is handed back with the point, so a test can check the bridge
+    // clears the run it crosses rather than only that a crossing was found.
+    crossings: crossings.map(c => ({ x: c.x, y: c.y, hopR: c.hopR, gapPx: c.gapPx })),
     /** Every box on the sheet: symbols first, then the labels placed around them. */
     boxes: ledger.all().map(bx => ({ x0: bx.x0, y0: bx.y0, x1: bx.x1, y1: bx.y1,
                                      symbol: !!bx.symbol }))

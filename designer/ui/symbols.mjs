@@ -122,9 +122,12 @@ export const LABEL = Object.freeze({
 
 export function createLabelLedger() {
   const boxes = [];
+  // Duct ink, stamped into a coarse grid rather than bounded by a rectangle.
+  const CELL = 5;
+  const gridSupply = new Set(), gridReturn = new Set();
   return {
     boxes,
-    reset() { boxes.length = 0; },
+    reset() { boxes.length = 0; gridSupply.clear(); gridReturn.clear(); },
     /** Reserve a rectangle a symbol occupies, so no label can be put on it. */
     reserve(x, y, w, h, weight = 3) { boxes.push({ x0: x - w / 2, x1: x + w / 2,
                                                    y0: y - h / 2, y1: y + h / 2,
@@ -150,6 +153,55 @@ export function createLabelLedger() {
       return n;
     },
     add(b) { boxes.push(b); },
+
+    // ── THE DUCTS THEMSELVES ────────────────────────────────────────────
+    //
+    // A rectangle is the wrong shape for a duct: the bounding box of one
+    // diagonal run covers a quarter of the house, so runs were never booked
+    // and labels sat straight across them. Nick: "prevent labels from covering
+    // ducts or equipment."
+    //
+    // So a run is stamped into a coarse occupancy grid instead — one grid for
+    // supply, one for return. A label then pays for the fraction of itself
+    // that lands on ink, and pays THREE TIMES over for landing on the other
+    // system's ink, which is what keeps `BTO-C · 400-350-350` off the two
+    // return drops and return text on the return side.
+    route(points, halfWidth = 4, role = 'supply') {
+      if (!points || points.length < 2) return;
+      const grid = role === 'return' ? gridReturn : gridSupply;
+      const reach = Math.max(0, Math.ceil((halfWidth + CELL / 2) / CELL));
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.max(1, Math.ceil(len / CELL));
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          const cx = Math.floor((a.x + (b.x - a.x) * t) / CELL);
+          const cy = Math.floor((a.y + (b.y - a.y) * t) / CELL);
+          for (let ox = -reach; ox <= reach; ox++) {
+            for (let oy = -reach; oy <= reach; oy++) grid.add((cx + ox) + ',' + (cy + oy));
+          }
+        }
+      }
+    },
+    /** 0..1 — how much of this box is over duct ink, own system counted once. */
+    ductCover(b, role = 'supply') {
+      if (!gridSupply.size && !gridReturn.size) return 0;
+      const own = role === 'return' ? gridReturn : gridSupply;
+      const other = role === 'return' ? gridSupply : gridReturn;
+      const x0 = Math.floor(b.x0 / CELL), x1 = Math.floor(b.x1 / CELL);
+      const y0 = Math.floor(b.y0 / CELL), y1 = Math.floor(b.y1 / CELL);
+      let n = 0, hit = 0;
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cy = y0; cy <= y1; cy++) {
+          n++;
+          const k = cx + ',' + cy;
+          if (other.has(k)) hit += 3;              // the wrong side of the system
+          else if (own.has(k)) hit += 1;
+        }
+      }
+      return n ? hit / n : 0;
+    },
     /** Everything already on the sheet, for a caller that wants to measure. */
     all() { return boxes.slice(); }
   };
@@ -188,6 +240,9 @@ const LABEL_OFFSETS = (() => {
  */
 export const LEADER_THRESHOLD_PX = 26;
 
+/** What covering a duct completely is worth, in pixels of extra leader. */
+const DUCT_COVER_PX = 400;
+
 /** Overlap area between two boxes, in square px. Zero when they miss. */
 function overlapArea(a, b) {
   const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
@@ -220,7 +275,14 @@ export function drawLabel(ctx, text, at, opts = {}) {
           // guess which component the label belongs to. Nick, on exactly this:
           // "Move the RETURN BOX label so it points directly to the actual
           // return box — not to BTO-A or a nearby duct."
-          anchor = null } = opts;
+          anchor = null,
+          // WHICH SYSTEM THIS LABEL BELONGS TO. A supply label pays triple for
+          // sitting on return ink and a return label pays triple for sitting on
+          // supply ink, which is how the two stay on their own sides of the
+          // equipment instead of swapping over in the one crowded patch of
+          // plan where it matters. Nick: "keep return labels on the return
+          // side; keep supply labels on the supply side."
+          role = 'supply' } = opts;
   if (!text) return null;
   ctx.save();
   ctx.font = weight + ' ' + size + 'px -apple-system, system-ui, sans-serif';
@@ -236,16 +298,26 @@ export function drawLabel(ctx, text, at, opts = {}) {
                   y0: at.y + dy - h / 2, y1: at.y + dy + h / 2 };
       const score = ledger.overlap(b);
       const dist = Math.hypot(dx, dy);
-      // OVERLAP DOMINATES ABSOLUTELY; DISTANCE ONLY BREAKS TIES.
+      // THREE TIERS, IN ORDER, AND THEY NEVER TRADE AGAINST EACH OTHER.
       //
-      // Adding the two put them in the same currency, so a clear spot forty
-      // pixels further away lost to one that clipped an outlet by twelve square
-      // pixels. Any overlap at all must be worse than any distance, or the
-      // placer will keep buying a shorter leader with somebody else's symbol.
-      const total = score * 10000 + dist;
+      // Covering a SYMBOL is worst: a fitting you cannot see is a fitting that
+      // does not get installed. Covering DUCT INK is next — the line is still
+      // followable around a label, but not through a stack of them. DISTANCE
+      // only breaks ties, so the shortest leader that is genuinely clear wins.
+      //
+      // Adding them in one currency is what used to go wrong: a clear spot
+      // forty pixels further away lost to one that clipped an outlet by twelve
+      // square pixels.
+      // DUCT_COVER_PX is what a fully covered duct is worth in pixels of
+      // leader. Set too high, labels bought a clear patch with a leader half
+      // the width of the house — BTO-A's spec ended up outside the building.
+      // Landing on the OTHER system's ink counts triple, so crossing sides
+      // still costs more than any leader worth drawing.
+      const cover = ledger.ductCover ? ledger.ductCover(b, role) : 0;
+      const total = score * 10000 + cover * DUCT_COVER_PX + dist;
       if (total < best.score) best = { x: at.x + dx, y: at.y + dy, score: total,
-                                       dist, box: b, raw: score };
-      if (score === 0) break;                     // nothing better than clear
+                                       dist, box: b, raw: score, cover };
+      if (score === 0 && cover === 0) break;      // nothing better than clear
     }
     if (best.box) ledger.add(best.box);
   }
@@ -784,7 +856,7 @@ export function drawEquipmentAssembly(ctx, geom, { unitModel = null, labels = tr
     if (geom.return.collars.length && returnLabel) {
       drawLabel(ctx, returnLabel, outward({ x: geom.return.x, y: geom.return.y },
                                           -(geom.return.h / 2 + 16)),
-                { size: 7, colour: '#3C4250', weight: 700, ledger,
+                { size: 7, colour: '#3C4250', weight: 700, ledger, role: 'return',
                   anchor: { x: geom.return.x, y: geom.return.y } });
     }
     if (geom.supply.collars.length && supplyLabel) {
@@ -1264,8 +1336,8 @@ export function drawReturnGrilleSymbol(ctx, at, { w = 22, h = 15, angle = 0,
   ctx.restore();
   if (ledger) ledger.reserve(at.x, at.y, w + 8, h + 8);
   let y = at.y + h / 2 + 11;
-  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 7.5, colour: '#3C4250', ledger, anchor: at }); y += 10; }
-  if (duct) drawLabel(ctx, duct, { x: at.x, y }, { size: 7, colour: '#4A5160', weight: 600, ledger });
+  if (label) { drawLabel(ctx, label, { x: at.x, y }, { size: 7.5, colour: '#3C4250', ledger, anchor: at, role: 'return' }); y += 10; }
+  if (duct) drawLabel(ctx, duct, { x: at.x, y }, { size: 7, colour: '#4A5160', weight: 600, ledger, role: 'return' });
 }
 
 /**
@@ -1856,7 +1928,11 @@ export function breakAround(pts, breaks, gapPx) {
         Math.hypot(a.x + (b.x - a.x) * o.t - o.k.x, a.y + (b.y - a.y) * o.t - o.k.y) < 2)
       .sort((x, y) => x.t - y.t);
     for (const o of onSeg) {
-      const half = gapPx / segLen / 2;
+      // Each break may size its own gap: a return crossing a ø400 main needs a
+      // wider gap than the same return crossing a ø250 final, and one gap for
+      // the whole run is either too mean for the big one or a hole under the
+      // small one.
+      const half = (o.k.gapPx ?? gapPx) / segLen / 2;
       const t0 = Math.max(0, o.t - half), t1 = Math.min(1, o.t + half);
       current.push({ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 });
       pieces.push(current);
@@ -1868,15 +1944,34 @@ export function breakAround(pts, breaks, gapPx) {
   return pieces.filter(pc => pc.length >= 2);
 }
 
-/** The little hop over a crossing, drawn on the upper run. */
-export function drawCrossingBridge(ctx, at, { angle = 0, r = 6,
-                                              colour = 'rgba(30,34,48,0.8)' } = {}) {
+/**
+ * THE HOP OVER A CROSSING.
+ *
+ * Nick: "Show a clear bridge/gap at that exact crossing. It must not resemble a
+ * connection." Two ducts that meet at a point on a drawing mean a JOINT, and a
+ * return joined to a supply is the one thing this system must never look like.
+ *
+ * So the return is cut with a gap wide enough to clear the run passing through
+ * it, and this arc carries it over the top: the return's own colour, its own
+ * weight, on a white casing so it reads above the duct it steps across. A tick
+ * a couple of pixels high under a ten-pixel duct is invisible, which is what
+ * the first version of this was.
+ */
+export function drawCrossingBridge(ctx, at, { angle = 0, r = 6, width = 2.4,
+                                              colour = RETURN_COLOUR } = {}) {
   ctx.save();
   ctx.translate(at.x, at.y);
   ctx.rotate(angle);
+  ctx.lineCap = 'butt';
+  ctx.setLineDash([]);
   ctx.beginPath();
   ctx.arc(0, 0, r, Math.PI, 0);
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = width + 3.2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.96)';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r, Math.PI, 0);
+  ctx.lineWidth = width;
   ctx.strokeStyle = colour;
   ctx.stroke();
   ctx.restore();

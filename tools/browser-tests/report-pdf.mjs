@@ -53,8 +53,17 @@ async function makeAndRead(kind) {
     // The equipment inset goes in the same way the Reports button passes it.
     const inset = window.nacDesigner.viewer?.equipmentInset() || null;
     window.__insetMime = (/^data:([^;,]+)/.exec(inset || '') || [])[1] || 'none';
+    // THE SAME FOUR PICTURES THE REPORTS BUTTON PASSES. The landscape sheet
+    // takes the plan WITHOUT the key baked in plus the key on its own, so it
+    // can give the drawing the full height of the paper; testing with only
+    // `planSnapshot` exercised the layout the app no longer uses.
+    const plate = window.nacDesigner.viewer?.snapshot({ clean: true, legend: false }) || null;
+    const planLegend = window.nacDesigner.viewer?.legendStrip() || null;
+    window.__plateMime = (/^data:([^;,]+)/.exec(plate || '') || [])[1] || 'none';
+    window.__keyMime = (/^data:([^;,]+)/.exec(planLegend || '') || [])[1] || 'none';
     const built = R.buildReportPdf(window.nacDesigner.design, kind,
-      { logo: null, planSnapshot: snap, equipmentInset: inset });
+      { logo: null, planSnapshot: snap, planPlate: plate, planLegend,
+        equipmentInset: inset });
     const pdfjs = window.pdfjsLib;
     pdfjs.GlobalWorkerOptions.workerSrc = '/designer/vendor/pdf.worker.min.js';
     const doc = await pdfjs.getDocument({ data: built.bytes.slice() }).promise;
@@ -121,6 +130,66 @@ const footTop = land.items.filter(i => /nacelectrical\.com\.au|Page \d+ of/.test
   .reduce((n, i) => Math.max(n, i.y), -Infinity);
 say('the caption sits clear above the footer', capBottom - footTop >= 8,
   'caption bottom ' + capBottom.toFixed(1) + ' pt, footer top ' + footTop.toFixed(1) + ' pt');
+
+// ── THE LANDSCAPE SHEET, SIZED ────────────────────────────────────────────
+//
+// Nick: "The landscape page has excessive unused white space. Increase the
+// floor-plan drawing by approximately 25-35% while maintaining margins. Move
+// the zone schedule, duct legend and symbol legend into a compact aligned side
+// column."
+//
+// A house plan taller than it is wide is HEIGHT-bound on a landscape sheet, so
+// this is measured off the image placement matrix in the file: build the page
+// BOTH ways from the same drawing and compare how much paper the plan gets.
+const grow = await p.evaluate(async () => {
+  const R = await import('/designer/ui/reports.mjs');
+  const { REPORT_KIND } = await import('/designer/engines/report-doc.mjs');
+  const v = window.nacDesigner.viewer;
+  const snap = v.snapshot({ clean: true, legend: true });
+  const plate = v.snapshot({ clean: true, legend: false });
+  const key = v.legendStrip();
+  const dims = (url) => new Promise((res) => { const i = new Image();
+    i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight }); i.src = url; });
+  const bytesOf = (o) => R.buildReportPdf(window.nacDesigner.design, REPORT_KIND.INTERNAL,
+    { logo: null, planSnapshot: snap, equipmentInset: null, ...o }).bytes;
+  // `a 0 0 d e f cm /ImN Do` — the landscape plan is the first picture in the
+  // file, because page 1 carries none.
+  const firstImage = (bytes) => {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    const m = /([\d.]+) 0 0 ([\d.]+) ([\d.]+) ([\d.]+) cm\s*\/Im\d+ Do/.exec(s);
+    return m ? { w: +m[1], h: +m[2], x: +m[3], y: +m[4] } : null;
+  };
+  const before = firstImage(bytesOf({}));
+  const after = firstImage(bytesOf({ planPlate: plate, planLegend: key }));
+  const snapDim = await dims(snap), plateDim = await dims(plate);
+  return { before, after, snapDim, plateDim,
+           ptPerPxBefore: before && before.h / snapDim.h,
+           ptPerPxAfter: after && after.h / plateDim.h };
+});
+const gain = grow.ptPerPxAfter / grow.ptPerPxBefore - 1;
+say('the key is captured apart from the drawing',
+  (await p.evaluate(() => window.__keyMime)) === 'image/jpeg' &&
+  (await p.evaluate(() => window.__plateMime)) === 'image/jpeg',
+  'plate ' + (await p.evaluate(() => window.__plateMime)) +
+  ', key ' + (await p.evaluate(() => window.__keyMime)));
+// How much is bought depends on the plan: a drawing that is taller than it is
+// wide is height-bound on this sheet and gains the most, a wide one gains less.
+// So the floor asserted here is the one that must hold for ANY plan, and the
+// figure is printed so the gain on the job in front of you is on the record.
+say('the plan is drawn materially larger than on the one-bitmap page',
+  gain >= 0.12,
+  (gain * 100).toFixed(1) + '% linear — ' +
+  grow.before.w.toFixed(0) + 'x' + grow.before.h.toFixed(0) + ' pt becomes ' +
+  grow.after.w.toFixed(0) + 'x' + grow.after.h.toFixed(0) + ' pt');
+say('the height it gained is what the column bought it',
+  grow.after.h > grow.before.h * 1.1,
+  grow.before.h.toFixed(0) + ' pt of page height becomes ' + grow.after.h.toFixed(0) + ' pt');
+say('the column carries the page title, so the drawing keeps the full height',
+  /FLOOR PLAN . DUCT LAYOUT/.test(land.text), 'title on the landscape sheet');
+say('the plan and the key are two separate pictures on that sheet',
+  grow.after.x + grow.after.w < 842 - 24,
+  'plan ends at ' + (grow.after.x + grow.after.w).toFixed(0) + ' pt of 842');
 say('it carries the NAC identity', /NAC Electrical/.test(itext) && /97 636 392 982/.test(itext));
 say('it is titled the internal sheet', /Internal HVAC Design Sheet/.test(itext));
 say('it carries the bill of materials', /BILL OF MATERIALS/i.test(itext));
