@@ -65,7 +65,13 @@ export const SELECTION_WEIGHTS = Object.freeze({
   widenedPlenum: 4,          // a box the shop has to make wider than the unit
   perDuct: 2,                // fewer ducts is less labour and less metal
   perHundredMm: 1,           // and a smaller duct is cheaper than a bigger one
-  abovePreferredVelocity: 6  // a main run fast is a main you can hear
+  abovePreferredVelocity: 6,  // a main run fast is a main you can hear
+  /**
+   * A main carrying far more than its share. Two mains averaging 450 L/s can be
+   * a 616 / 284 split once the rooms are actually grouped, and the 616 is the
+   * duct that gets installed — the average is not a thing that exists.
+   */
+  perImbalancePoint: 0.25
 });
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -98,6 +104,49 @@ export function availableArrangements({ unit = null, settings = null,
 }
 
 /**
+ * THE AIRFLOW EACH MAIN ACTUALLY CARRIES.
+ *
+ * The selector used to divide the system airflow by the number of spigots and
+ * check THAT. On this house 900 L/s over two ø400 averages 450 L/s and passes
+ * everything — but the rooms group into three installer areas of 349, 267 and
+ * 284 L/s, so two mains really carry 616 and 284. Nobody installs 450.
+ *
+ * Longest-processing-time packing: the biggest area first, onto whichever main
+ * is carrying least. Deterministic, and it is what an installer does by eye.
+ * Areas are never split across mains — a main serves whole areas or it is not
+ * an installer area.
+ */
+export function groupAreasIntoMains(areaFlows, count) {
+  const flows = (areaFlows || [])
+    .map((a, i) => (typeof a === 'number'
+      ? { name: 'Area ' + (i + 1), airflowLs: a }
+      : { name: a?.name || a?.label || ('Area ' + (i + 1)),
+          airflowLs: Number(a?.airflowLs ?? a?.ls ?? 0) || 0 }))
+    .filter(a => a.airflowLs > 0)
+    .sort((a, b) => b.airflowLs - a.airflowLs);
+  if (!flows.length || !count) return null;
+  const mains = Array.from({ length: count }, (_, i) => ({
+    key: String.fromCharCode(65 + i), areas: [], airflowLs: 0 }));
+  for (const a of flows) {
+    const target = mains.reduce((lo, m) => (m.airflowLs < lo.airflowLs ? m : lo), mains[0]);
+    target.areas.push(a.name);
+    target.airflowLs += a.airflowLs;
+  }
+  for (const m of mains) m.airflowLs = Math.round(m.airflowLs);
+  const carrying = mains.filter(m => m.areas.length);
+  const max = Math.max(...mains.map(m => m.airflowLs));
+  const min = Math.min(...carrying.map(m => m.airflowLs));
+  return {
+    mains,
+    /** A main with no area of its own is a duct nobody asked for. */
+    emptyMains: mains.length - carrying.length,
+    heaviestLs: max,
+    lightestLs: min,
+    imbalancePct: max > 0 ? round2(((max - min) / max) * 100) : 0
+  };
+}
+
+/**
  * Measure ONE arrangement against this job.
  *
  * Returns everything that was looked at, whether or not it decided anything, so
@@ -110,14 +159,58 @@ export function evaluateArrangement(arrangement, job, opts = {}) {
 
   const systemLs = Number(job.systemAirflowLs) || 0;
   const perDuctLs = count ? systemLs / count : 0;
-  const velocityMs = spigotVelocity(perDuctLs, diameterMm);
+
+  // ── EVERY MAIN IS CHECKED, NOT THE AVERAGE OF THEM ────────────────────
+  //
+  // When the job says what its installer areas carry, the areas are grouped
+  // onto this arrangement's mains and each main is measured on the air it
+  // really moves. Where a job has not said, the average is all there is and the
+  // result says so rather than presenting a divided total as a measurement.
+  const areaFlows = Array.isArray(job.installerAreas)
+    ? job.installerAreas.filter(a => typeof a === 'number' || a?.airflowLs != null || a?.ls != null)
+    : (Array.isArray(job.areaAirflowsLs) ? job.areaAirflowsLs : []);
+  // A design that has already been routed KNOWS what each main carries — the
+  // rooms are grouped, the geography is settled, and packing them again from
+  // area totals would be a second opinion about a fact. So a supplied set of
+  // actual main flows outranks the packing, when it is for this many mains.
+  const supplied = Array.isArray(job.mainAirflowsLs) && job.mainAirflowsLs.length === count
+    ? job.mainAirflowsLs.map((ls, i) => ({ name: (job.mainAreaNames || [])[i] || null,
+                                           airflowLs: Number(ls) || 0 }))
+    : null;
+  const grouping = supplied
+    ? {
+        mains: supplied.map((m, i) => ({ key: String.fromCharCode(65 + i),
+          areas: m.name ? [m.name] : [], airflowLs: Math.round(m.airflowLs) })),
+        emptyMains: supplied.filter(m => m.airflowLs <= 0).length,
+        heaviestLs: Math.round(Math.max(...supplied.map(m => m.airflowLs))),
+        lightestLs: Math.round(Math.min(...supplied.map(m => m.airflowLs))),
+        imbalancePct: round2(((Math.max(...supplied.map(m => m.airflowLs)) -
+                              Math.min(...supplied.map(m => m.airflowLs))) /
+                             Math.max(...supplied.map(m => m.airflowLs), 1)) * 100)
+      }
+    : (areaFlows.length ? groupAreasIntoMains(areaFlows, count) : null);
+  const mainFlowsLs = grouping ? grouping.mains.map(m => m.airflowLs)
+                               : Array.from({ length: count }, () => perDuctLs);
+  const actualPerMain = !!grouping;
+  const heaviestLs = mainFlowsLs.length ? Math.max(...mainFlowsLs) : 0;
+
+  const mainRows = mainFlowsLs.map((ls, i) => ({
+    key: grouping ? grouping.mains[i].key : String.fromCharCode(65 + i),
+    areas: grouping ? grouping.mains[i].areas : null,
+    airflowLs: Math.round(ls),
+    velocityMs: spigotVelocity(ls, diameterMm)
+  }));
+
+  // The arrangement is judged on its WORST main, because that is the duct that
+  // decides whether the system is quiet and whether the air arrives.
+  const velocityMs = spigotVelocity(heaviestLs, diameterMm);
 
   // ── Pressure loss along the LONGEST main, which is the one that has to
   //    reach with something left for the branches.
   const longestMainM = Number(job.longestMainRouteM) ||
     (Array.isArray(job.mainRouteLengthsM) && job.mainRouteLengthsM.length
       ? Math.max(...job.mainRouteLengthsM) : 0);
-  const paPerM = perDuctLs ? pressureDropPaPerM(diameterMm, perDuctLs, { settings }) : 0;
+  const paPerM = heaviestLs ? pressureDropPaPerM(diameterMm, heaviestLs, { settings }) : 0;
   const mainLossPa = round2(paPerM * longestMainM);
 
   const availableStaticPa = job.availableStaticPa ??
@@ -143,9 +236,22 @@ export function evaluateArrangement(arrangement, job, opts = {}) {
       message: 'No system airflow was supplied, so velocity and pressure loss could not ' +
                'be worked out for ' + arrangement.key + '.' });
   } else if (velocityMs > band.max) {
+    const worst = mainRows.find(m => m.velocityMs === velocityMs) || mainRows[0];
+    // Kept as OVER_VELOCITY: supply-spigots.mjs raises MAIN_OVER_VELOCITY about
+    // a main that was BUILT, and two different checks sharing one code would be
+    // indistinguishable in the warning list an estimator reads.
     blockers.push({ code: 'OVER_VELOCITY',
-      message: count + ' × ø' + diameterMm + ' carries ' + Math.round(perDuctLs) +
-        ' L/s per duct at ' + velocityMs + ' m/s, over the ' + band.max + ' m/s ceiling.' });
+      message: 'Main ' + worst.key + ' of ' + count + ' × ø' + diameterMm + ' carries ' +
+        worst.airflowLs + ' L/s at ' + velocityMs + ' m/s, over the ' + band.max +
+        ' m/s ceiling' + (actualPerMain
+          ? ' (the ' + Math.round(perDuctLs) + ' L/s average passes; this main does not).' : '.') });
+  } else if (velocityMs > band.preferred) {
+    const worst = mainRows.find(m => m.velocityMs === velocityMs) || mainRows[0];
+    notes.push({ code: 'MAIN_ABOVE_TARGET_VELOCITY',
+      message: 'Main ' + worst.key + ' carries ' + worst.airflowLs + ' L/s at ' + velocityMs +
+        ' m/s, above the ' + band.preferred + ' m/s target' + (actualPerMain
+          ? ' — the ' + Math.round(perDuctLs) + ' L/s average would have read ' +
+            spigotVelocity(perDuctLs, diameterMm) + ' m/s and hidden it.' : '.') });
   } else if (velocityMs < band.preferredMin) {
     notes.push({ code: 'BELOW_PREFERRED_VELOCITY',
       message: velocityMs + ' m/s per main, under the ' + band.preferredMin +
@@ -208,6 +314,18 @@ export function evaluateArrangement(arrangement, job, opts = {}) {
         'decision is missing and the choice rests on airflow, pressure and the plenum.' });
   }
 
+  if (grouping && grouping.emptyMains > 0) {
+    notes.push({ code: 'MAIN_WITH_NO_AREA',
+      message: grouping.emptyMains + ' of the ' + count + ' mains would carry no installer ' +
+        'area of its own.' });
+  }
+  if (grouping && grouping.imbalancePct > 25) {
+    notes.push({ code: 'MAINS_UNEVEN',
+      message: 'The mains would carry ' + grouping.mains.map(m => m.airflowLs + ' L/s').join(' and ') +
+        ' — ' + grouping.imbalancePct + '% apart. The average of ' + Math.round(perDuctLs) +
+        ' L/s is not a duct anybody installs.' });
+  }
+
   const W = SELECTION_WEIGHTS;
   const score = round2(
     areaGap * W.perInstallerArea +
@@ -215,7 +333,8 @@ export function evaluateArrangement(arrangement, job, opts = {}) {
     (widened ? W.widenedPlenum : 0) +
     count * W.perDuct +
     (diameterMm / 100) * W.perHundredMm +
-    Math.max(0, velocityMs - band.preferred) * W.abovePreferredVelocity);
+    Math.max(0, velocityMs - band.preferred) * W.abovePreferredVelocity +
+    (grouping ? grouping.imbalancePct * W.perImbalancePoint : 0));
 
   return {
     key: arrangement.key,
@@ -223,6 +342,13 @@ export function evaluateArrangement(arrangement, job, opts = {}) {
     source: arrangement.source || 'standard',
     text: count + ' × ø' + diameterMm,
     perDuctAirflowLs: Math.round(perDuctLs),
+    /** What each main really carries once the areas are grouped onto it. */
+    mains: mainRows,
+    actualPerMainAirflow: actualPerMain,
+    heaviestMainLs: Math.round(heaviestLs),
+    lightestMainLs: grouping ? grouping.lightestLs : Math.round(perDuctLs),
+    imbalancePct: grouping ? grouping.imbalancePct : 0,
+    /** The velocity of the worst main, which is the one that gets installed. */
     velocityMs,
     velocityBand: { preferredMin: band.preferredMin, preferred: band.preferred, max: band.max },
     withinVelocityCeiling: !systemLs ? null : velocityMs <= band.max,
@@ -279,6 +405,12 @@ export function selectSupplySpigotArrangement(job = {}, opts = {}) {
       supplyFlangeText: job.unit?.supplyFlangeText || null,
       installerAreaCount: Array.isArray(job.installerAreas) ? job.installerAreas.length
         : (job.installerAreaCount ?? null),
+      /** The airflow of each installer area, when the job knows it. */
+      areaAirflowsLs: (chosen?.actualPerMainAirflow && Array.isArray(job.installerAreas))
+        ? job.installerAreas.map(a => (typeof a === 'number' ? a : (a?.airflowLs ?? a?.ls ?? null)))
+        : null,
+      perMainAirflowBasis: chosen?.actualPerMainAirflow
+        ? 'actual grouped installer areas' : 'system airflow divided by the spigot count',
       longestMainRouteM: job.longestMainRouteM ??
         (Array.isArray(job.mainRouteLengthsM) && job.mainRouteLengthsM.length
           ? Math.max(...job.mainRouteLengthsM) : null),
@@ -292,8 +424,12 @@ export function selectSupplySpigotArrangement(job = {}, opts = {}) {
     decidedByOutletCount: false,
     unverified,
     summary: chosen
-      ? chosen.text + ' supply spigots — ' + chosen.perDuctAirflowLs + ' L/s per main at ' +
-        chosen.velocityMs + ' m/s, ' + chosen.mainLossPa + ' Pa along the longest main' +
+      ? chosen.text + ' supply spigots — ' +
+        (chosen.actualPerMainAirflow
+          ? chosen.mains.map(m => m.airflowLs + ' L/s').join(' / ') + ' on the actual mains, ' +
+            'worst at ' + chosen.velocityMs + ' m/s'
+          : chosen.perDuctAirflowLs + ' L/s per main at ' + chosen.velocityMs + ' m/s') +
+        ', ' + chosen.mainLossPa + ' Pa along the longest main' +
         (chosen.installerAreaCount
           ? ', ' + chosen.count + ' main(s) for ' + chosen.installerAreaCount +
             ' installer area(s)' : '') +
@@ -357,25 +493,52 @@ export function overrideSpigotArrangement(selection, { count, diameterMm, by, re
 export function remeasureSelection(selection, longestMainM, opts = {}) {
   if (!selection?.chosen || !longestMainM) return selection;
   const settings = opts.settings || DEFAULT_SETTINGS;
+  // Once a design is routed the mains have real lengths AND real airflows. The
+  // pressure term used the average of the latter, which on an uneven pair
+  // understated the loss on the very duct the index run goes down.
+  const actual = Array.isArray(opts.mainAirflowsLs) ? opts.mainAirflowsLs.map(Number) : null;
   const re = (c) => {
-    const paPerM = c.perDuctAirflowLs
-      ? pressureDropPaPerM(c.diameterMm, c.perDuctAirflowLs, { settings }) : 0;
-    return { ...c, longestMainM, paPerM: round2(paPerM),
-             mainLossPa: round2(paPerM * longestMainM),
-             mainLengthMeasured: true };
+    const flows = actual && actual.length === c.count ? actual : null;
+    const basisLs = flows ? Math.max(...flows) : (c.heaviestMainLs || c.perDuctAirflowLs);
+    const paPerM = basisLs ? pressureDropPaPerM(c.diameterMm, basisLs, { settings }) : 0;
+    const next = { ...c, longestMainM, paPerM: round2(paPerM),
+                   mainLossPa: round2(paPerM * longestMainM),
+                   mainLengthMeasured: true };
+    if (flows) {
+      next.mains = flows.map((ls, i) => ({
+        key: c.mains?.[i]?.key || String.fromCharCode(65 + i),
+        areas: c.mains?.[i]?.areas || null,
+        airflowLs: Math.round(ls), velocityMs: spigotVelocity(ls, c.diameterMm) }));
+      next.actualPerMainAirflow = true;
+      next.heaviestMainLs = Math.round(Math.max(...flows));
+      next.lightestMainLs = Math.round(Math.min(...flows));
+      next.velocityMs = spigotVelocity(Math.max(...flows), c.diameterMm);
+      next.imbalancePct = round2(((Math.max(...flows) - Math.min(...flows)) /
+                                  Math.max(...flows, 1)) * 100);
+    }
+    return next;
   };
+  const chosen = re(selection.chosen);
   return {
     ...selection,
-    chosen: re(selection.chosen),
+    chosen,
     ranked: selection.ranked.map(re),
     rejected: selection.rejected.map(re),
     runnerUp: selection.runnerUp ? re(selection.runnerUp) : null,
+    summary: chosen.actualPerMainAirflow
+      ? chosen.text + ' supply spigots — ' + chosen.mains.map(m => m.airflowLs + ' L/s').join(' / ') +
+        ' on the routed mains, worst at ' + chosen.velocityMs + ' m/s, ' + chosen.mainLossPa +
+        ' Pa along the longest main' +
+        (chosen.plenumWidened ? ', on a widened fabricated plenum' : '') + '.'
+      : selection.summary,
     inputs: { ...selection.inputs, longestMainRouteM: longestMainM,
-              longestMainMeasured: true }
+              longestMainMeasured: true,
+              perMainAirflowBasis: chosen.actualPerMainAirflow
+                ? 'measured on the routed mains' : selection.inputs?.perMainAirflowBasis || null }
   };
 }
 
 export default { STANDARD_ARRANGEMENTS, SELECTION_WEIGHTS, FLEX_INSULATION_MM,
                  remeasureSelection,
-                 availableArrangements, evaluateArrangement,
+                 availableArrangements, evaluateArrangement, groupAreasIntoMains,
                  selectSupplySpigotArrangement, overrideSpigotArrangement };

@@ -28,6 +28,8 @@
 //
 // Nothing here knows about any particular house.
 
+import { grilleDimensionsOf } from './returnair.mjs';
+
 /** The only component kinds that exist on the return side. */
 export const RETURN_COMPONENT = Object.freeze({
   GRILLE: 'return_grille',
@@ -72,15 +74,20 @@ export function buildReturnComponents({ returnDesign, returnRoutes = [], layout 
   const grilles = returns.map((r, i) => {
     const route = returnRoutes[i] || null;
     const at = route?.points?.[0] || null;
+    const dim = grilleDimensionsOf(r);
     return {
       id: r.id || ('R' + (i + 1)),
       kind: RETURN_COMPONENT.GRILLE,
       airSide: 'return',
       index: i + 1,
       label: 'Return grille ' + (r.id || ('R' + (i + 1))),
-      grilleSize: r.grilleSize || null,
-      widthMm: r.widthMm ?? null,
-      heightMm: r.heightMm ?? null,
+      // ONE READER. See grilleDimensionsOf() — this is the line the 700 x 500
+      // was being lost on.
+      grilleSize: dim.text || r.grilleSize || null,
+      widthMm: dim.widthMm,
+      heightMm: dim.heightMm,
+      grilleWidthMm: dim.widthMm,
+      grilleHeightMm: dim.heightMm,
       airflowLs: r.airflowLs ?? null,
       grossFaceVelocityMs: r.grossFaceVelocityMs ?? null,
       effectiveFreeAreaVelocityMs: r.effectiveFreeAreaVelocityMs ?? null,

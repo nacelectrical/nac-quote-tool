@@ -41,7 +41,7 @@ import { suggestOpenPlanGroups, applyOpenPlanGroups, zoneRemedies,
 import { estimateStaticPressure } from './pressure.mjs';
 import { buildBillOfMaterials, applyBomEdits } from './bom.mjs';
 import { calculateLabour, calculateCommercials, toQuoteLineItems } from './costing.mjs';
-import { collectWarnings, summarise } from './warnings.mjs';
+import { collectWarnings, summarise, resetDerivedWarnings } from './warnings.mjs';
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
 
 /**
@@ -104,6 +104,21 @@ function returnCorridors(d) {
  *                            allowLowConfidence, brandPreference, phase }
  */
 export function runPipeline(design, ctx = {}) {
+  // ── EVERY DERIVED WARNING IS REBUILT, NEVER ADDED TO ────────────────────
+  //
+  // `routeWarnings` was only ever appended to, and the design object survives
+  // between runs, so every recomputation left the last run's warnings on the
+  // job and added one more. A real plan reached 196 of them, and a CRITICAL
+  // blocker from an intermediate state — "the mains carry 2302 L/s against
+  // 901 L/s of outlets" — stayed on the design, blocking finalisation, long
+  // after the live check read 900 against 900 with nothing wrong.
+  //
+  // So the derived lists are cleared here, at the one point every full run
+  // passes through, and rebuilt from the state the run actually sees. What a
+  // PERSON put on the job — acknowledgements, site notes, photos, overrides —
+  // is not derived and is not touched.
+  const cleared = resetDerivedWarnings(design);
+
   // ── THE RULES THIS JOB WAS DESIGNED TO COME FIRST ────────────────────────
   //
   // A design carries its own minimum branch diameter and its own minimum
@@ -113,7 +128,7 @@ export function runPipeline(design, ctx = {}) {
   // ø200 back on the Foyer, the Master Bedroom and three bedrooms of a job
   // approved at ø250.
   const settings = settingsForDesign(design, ctx.settings || DEFAULT_SETTINGS);
-  const d = { ...design };
+  const d = { ...design, ...cleared };
   d.designRules = designRulesFor(design, ctx.settings || DEFAULT_SETTINGS);
 
   // ── 0. Classification, then scale (RULES 1, 4 and 6) ──────────────────────
@@ -648,7 +663,10 @@ export function runPipeline(design, ctx = {}) {
   // somebody's back — only the numbers beside it are made real.
   if (d.spigotSelection?.chosen) {
     d.spigotSelection = remeasureSelection(d.spigotSelection,
-      measuredLongestMainM(d), { settings });
+      measuredLongestMainM(d), { settings,
+        // THE MAINS THAT WERE ACTUALLY BUILT. Two spigots averaging 450 L/s can
+        // be a 616 / 284 split once the rooms are grouped; 450 is not a duct.
+        mainAirflowsLs: mainSections.map(s => s.airflowLs) });
   }
 
   // ONE RECORD OF HOW THE PLENUM IS MADE, read by the drawing, the schedule,

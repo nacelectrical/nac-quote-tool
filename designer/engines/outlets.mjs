@@ -165,10 +165,40 @@ export function designRoomOutlets(room, airflowLs, opts = {}) {
     reasons.push('Capped at the configured maximum of ' + O.maxOutletsPerRoom + ' outlets per room.');
   }
 
+  // ── THE OVERRIDE LANDS HERE, BEFORE ANYTHING IS CHECKED ──────────────────
+  //
+  // It used to land after: the row's quantity and per-outlet airflow were
+  // replaced by the estimator's number, but the capacity check, the neck, the
+  // duct and the reasoning text were all still the ones worked out for the
+  // AUTOMATIC quantity. So an open-plan area cut from three outlets to two ran
+  // at 175 L/s through a diffuser configured for 130 and said nothing at all —
+  // the one case where the warning matters most is the one case it was silent.
+  //
+  // Everything below this line is computed from `qty`, whatever set it.
+  const recommendedQuantity = qty;
+  const overrideQty = opts.quantity;
+  const hasOverride = overrideQty !== undefined && overrideQty !== null && overrideQty !== '';
+  if (hasOverride) {
+    qty = Math.max(0, Number(overrideQty) || 0);
+    reasons.push('Quantity manually set to ' + qty + ' by the estimator' +
+      (qty === recommendedQuantity ? ' (the same as the calculated quantity).'
+        : ', against a calculated ' + recommendedQuantity + '.'));
+  }
+
   const perOutlet = qty > 0 ? flow / qty : 0;
   const warnings = [];
+  if (hasOverride) warnings.push({ code: 'MANUAL_OVERRIDE', severity: 'INFO',
+    message: room.label + ': outlet quantity manually set to ' + qty +
+      ' (calculated ' + recommendedQuantity + ').' });
+  if (hasOverride && qty === 0) warnings.push({ code: 'ROOM_HAS_NO_OUTLET', severity: 'WARNING',
+    message: room.label + ' has been set to NO outlet while it still carries ' +
+      round(flow, 0) + ' L/s of design airflow. Either it is on spill air and ' +
+      'should be recorded as such, or it needs an outlet.' });
   if (perOutlet > type.maxLs) warnings.push({ code: 'OUTLET_OVER_CAPACITY', severity: 'WARNING',
-    message: room.label + ': ' + round(perOutlet, 0) + ' L/s per outlet exceeds the ' + type.maxLs + ' L/s limit for a ' + type.label.toLowerCase() + '.' });
+    message: room.label + ': ' + round(perOutlet, 0) + ' L/s per outlet exceeds the ' + type.maxLs +
+      ' L/s limit for a ' + type.label.toLowerCase() + '. ' + round(flow, 0) + ' L/s needs ' +
+      Math.ceil(flow / type.maxLs) + ' of them, or an outlet type rated for ' +
+      round(perOutlet, 0) + ' L/s.' });
   if (perOutlet < type.minLs && flow > 0) warnings.push({ code: 'OUTLET_UNDER_CAPACITY', severity: 'CHECK',
     message: room.label + ': ' + round(perOutlet, 0) + ' L/s per outlet is below the ' + type.minLs + ' L/s minimum — throw and mixing will be poor.' });
   if (!room.widthMm || !room.lengthMm) warnings.push({ code: 'OUTLET_GEOMETRY_ASSUMED', severity: 'INFO',
@@ -189,6 +219,8 @@ export function designRoomOutlets(room, airflowLs, opts = {}) {
     type: typeKey,
     typeLabel: type.label,
     quantity: qty,
+    /** What the engine would have fitted — kept beside what was fitted. */
+    recommendedQuantity,
     perOutletLs: round(perOutlet, 0),
     // ROOM AIRFLOW -> BRANCH DUCT -> OUTLET NECK -> DIFFUSER FACE.
     branchDiameterMm: branch.diameterMm,
@@ -204,7 +236,8 @@ export function designRoomOutlets(room, airflowLs, opts = {}) {
     longestDimM: longest !== null ? round(longest, 2) : null,
     reasons,
     warnings,
-    overridden: false
+    overridden: hasOverride,
+    quantityOverridden: hasOverride
   };
 }
 
@@ -222,36 +255,14 @@ export function designOutlets(rooms, airflowRows, opts = {}) {
     const ov = overrides[a.roomId] || {};
     const positionSource = placedBy[a.roomId]
       || (room.outletPositionSource || (room.manualOutlets ? 'estimator_placed' : 'auto_derived'));
-    const base = { ...designRoomOutlets(room, a.adjustedLs, { ...opts, type: ov.type }),
-                   positionSource,
-                   positionIsManual: positionSource === 'estimator_placed' };
-    // ZERO IS A NUMBER SOMEBODY CHOSE.
-    //
-    // This read `if (ov.quantity)`, so setting a room to nought outlets did
-    // nothing at all — the override was indistinguishable from no override.
-    // That made "remove an outlet" impossible for the single-outlet rooms it is
-    // most often wanted for, on site, in front of the ceiling in question. A
-    // room left with no outlet is a real decision and a loud one: it keeps its
-    // load and its air allocation, so it is carried as a WARNING rather than
-    // quietly balanced away.
-    if (ov.quantity !== undefined && ov.quantity !== null && ov.quantity !== '') {
-      const qty = Math.max(0, Number(ov.quantity) || 0);
-      return {
-        ...base,
-        quantity: qty,
-        perOutletLs: qty ? round(base.airflowLs / qty, 0) : 0,
-        overridden: true,
-        reasons: [...base.reasons, 'Quantity manually set to ' + qty + ' by the estimator.'],
-        warnings: [...base.warnings,
-          { code: 'MANUAL_OVERRIDE', severity: 'INFO',
-            message: base.label + ': outlet quantity manually overridden.' },
-          ...(qty === 0 ? [{ code: 'ROOM_HAS_NO_OUTLET', severity: 'WARNING',
-            message: base.label + ' has been set to NO outlet while it still carries ' +
-              base.airflowLs + ' L/s of design airflow. Either it is on spill air and ' +
-              'should be recorded as such, or it needs an outlet.' }] : [])]
-      };
-    }
-    return base;
+    // BOTH OVERRIDES GO IN AS INPUTS. The type always did; the quantity used to
+    // be stitched on afterwards, which left every check describing a design
+    // nobody had asked for. ZERO IS A NUMBER SOMEBODY CHOSE, and it still is —
+    // a room set to no outlet keeps its load and its air and says so loudly.
+    return { ...designRoomOutlets(room, a.adjustedLs,
+                                  { ...opts, type: ov.type, quantity: ov.quantity }),
+             positionSource,
+             positionIsManual: positionSource === 'estimator_placed' };
   });
 
   const totals = results.reduce((acc, r) => {

@@ -15,6 +15,56 @@ export const SEVERITY_ORDER = { CRITICAL: 0, WARNING: 1, CHECK: 2, INFO: 3 };
 let _seq = 0;
 export function _resetWarningIds() { _seq = 0; }
 
+/**
+ * EVERY WARNING LIST THE PIPELINE DERIVES, AND NOTHING A PERSON ENTERED.
+ *
+ * These are rebuilt from the design state on every full run. They are listed
+ * here rather than cleared where they happen to be written, because the bug
+ * they exist to stop was exactly a list written in six places and cleared in
+ * none of them.
+ */
+export const DERIVED_WARNING_FIELDS = Object.freeze([
+  'warnings', 'warningSummary',
+  'routeWarnings', 'returnRouteWarnings', 'loadWarnings'
+]);
+
+/**
+ * The validation results those warnings are read off. Each is recomputed when
+ * its stage runs, and several only run when the design is routed — so left
+ * alone they describe a topology that no longer exists.
+ */
+export const DERIVED_VALIDATION_FIELDS = Object.freeze([
+  'topologyCheck', 'btoValidation', 'zoneDamperValidation', 'returnSeparation',
+  'supplySpigots', 'spigotOverride', 'spigotSelectionDiffers'
+]);
+
+/**
+ * WHAT A PERSON PUT ON THE JOB, which a recomputation must never clear:
+ * acknowledgements, site notes and photos, and every recorded override. Named
+ * so the distinction is testable rather than remembered.
+ */
+export const USER_ENTERED_FIELDS = Object.freeze([
+  'warningAcknowledgements', 'siteNotes', 'sitePhotos',
+  'roomLoadOverrides', 'airflowOverrides', 'outletOverrides',
+  'ductDiameterOverrides', 'returnGrilleOverrides', 'btoOverrides',
+  'supplyMainConfig', 'zoneDefinitions', 'lockedRoutes', 'routeEdits'
+]);
+
+/**
+ * The patch that starts a pipeline run: every derived warning and validation
+ * result blanked, so the run rebuilds them instead of adding to them.
+ *
+ * Returns a patch rather than mutating, because the pipeline copies the design
+ * and a function that quietly edited the caller's object would be the same
+ * class of bug in a different place.
+ */
+export function resetDerivedWarnings(design = {}) {
+  const patch = {};
+  for (const k of DERIVED_WARNING_FIELDS) patch[k] = null;
+  for (const k of DERIVED_VALIDATION_FIELDS) patch[k] = null;
+  return patch;
+}
+
 function normalise(w, area) {
   return {
     // Anything the raiser attached travels with the warning. A capacity

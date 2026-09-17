@@ -11,6 +11,33 @@ import { findUnitSpec } from './unit-specs.mjs';
  * Supports a single return or several, and always shows the face velocities so
  * an undersized return is obvious before it becomes a noise complaint.
  */
+/**
+ * THE ONE PLACE A RETURN GRILLE'S SIZE IS READ.
+ *
+ * The return engine wrote `grilleWidthMm` / `grilleHeightMm`; the component
+ * model that feeds the drawing read `widthMm` / `heightMm`. Neither was wrong
+ * on its own and nothing ever failed, so the drawing simply had no grille size
+ * on it — a 700 x 500 chosen on the schedule was drawn as nothing at all.
+ *
+ * One reader, used by both, so the two names cannot drift apart again. It
+ * takes either spelling, and falls back to parsing the printed size so a
+ * record that only carries the text still yields numbers.
+ */
+export function grilleDimensionsOf(record) {
+  if (!record) return { widthMm: null, heightMm: null, text: null };
+  const w = record.grilleWidthMm ?? record.widthMm ?? null;
+  const h = record.grilleHeightMm ?? record.heightMm ?? null;
+  if (w && h) return { widthMm: Number(w), heightMm: Number(h), text: grilleSizeText(w, h) };
+  const m = String(record.grilleSize || '').match(/(\d+)\s*[x×]\s*(\d+)/i);
+  if (m) return { widthMm: Number(m[1]), heightMm: Number(m[2]), text: grilleSizeText(m[1], m[2]) };
+  return { widthMm: null, heightMm: null, text: record.grilleSize || null };
+}
+
+/** The printed size, written once so the schedule, drawing and order match. */
+export function grilleSizeText(widthMm, heightMm) {
+  return (widthMm && heightMm) ? widthMm + ' × ' + heightMm + ' mm' : null;
+}
+
 export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSizesMm = null,
                                   filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null,
                                   unit = null }, opts = {}) {
@@ -111,7 +138,11 @@ export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSize
       airflowLs: round(perReturnLs, 0),
       grilleWidthMm: chosen.widthMm,
       grilleHeightMm: chosen.heightMm,
-      grilleSize: chosen.widthMm + ' × ' + chosen.heightMm + ' mm',
+      // Both spellings, off the same two numbers. Downstream reads whichever it
+      // always read and gets the same grille.
+      widthMm: chosen.widthMm,
+      heightMm: chosen.heightMm,
+      grilleSize: grilleSizeText(chosen.widthMm, chosen.heightMm),
       grossAreaM2: round(chosen.grossAreaM2, 3),
       grossFaceVelocityMs: round(grossFaceVelocity, 2),
       freeAreaRatio: R.grilleFreeAreaRatio,
