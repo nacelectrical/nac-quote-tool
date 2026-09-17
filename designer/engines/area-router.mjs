@@ -508,10 +508,15 @@ export function planAreaFittings(outlets, plenum, opts = {}) {
  *   1. THE GROUPS ARE REAL. Two clusters separated by more than their own
  *      spread are two parts of a house. One even scatter is not, and splitting
  *      it would manufacture a fitting to serve half a room.
- *   2. THE METAL IS CHEAPER. Both options are costed in weighted flex — a metre
- *      of ø400 is not a metre of ø250 — and staging has to be worth it. A
- *      generous tolerance, because the staged answer also buys shorter finals
- *      and no crossings, which the cost function does not price.
+ *   2. THE METAL IS NOT DEARER. Both options are costed in weighted flex — a
+ *      metre of ø400 is not a metre of ø250 — and staging is allowed a small
+ *      margin, because it also buys shorter finals and no crossings, which the
+ *      cost function does not price. Only a small one: the reason to stage is
+ *      to avoid long branches crossing each other to reach one remote body, so
+ *      if the flat answer is CHEAPER in flex it did not have those branches and
+ *      the premise for staging is gone. At a generous 15% the shipped sample
+ *      plan staged an area for 8% more flex and an extra fabricated box, which
+ *      is the opposite of what the rule is for.
  *   3. IT IS BUILDABLE. Two arms is two more pieces of metal; below two outlets
  *      an arm is not an arm, it is a branch pretending to be one.
  *
@@ -605,7 +610,7 @@ export function planDistributionArms(members, plenum, opts = {}) {
   if (!best) return null;
   const { separationPx, spreadPx } = best;
 
-  const tolerance = opts.stagedCostTolerance ?? 1.15;
+  const tolerance = opts.stagedCostTolerance ?? 1.05;
   if (best.cost > flatCost * tolerance) return null;
 
   // Heaviest arm first, so Arm 1 is the one an installer runs first.
