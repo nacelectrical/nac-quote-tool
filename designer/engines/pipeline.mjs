@@ -19,7 +19,7 @@ import { calibrationRequirement, deriveCalibrationFromRooms } from './calibratio
 import { classificationSummary, isConditionedRoom, isExcludedRoom } from './classify.mjs';
 import { roomLoad, systemLoad, describeAssumptions } from './loads.mjs';
 import { selectEquipment, selectZoneController } from './equipment.mjs';
-import { calculateAirflow } from './airflow.mjs';
+import { calculateAirflow, applySystemShares } from './airflow.mjs';
 import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
 import { buildDuctTree, measureTree, scoreRoute, routeConfidence,
@@ -266,6 +266,17 @@ export function runPipeline(design, ctx = {}) {
       const factor = (donorTotal + moved) / donorTotal;
       for (const dn of donors) dn.adjustedLs = Math.round((dn.adjustedLs || 0) * factor);
     }
+    // ── THE SHARES FOLLOW THE AIR ──────────────────────────────────────────
+    //
+    // Redistributing spill air moves DESIGN airflow between rooms, so every
+    // room's share of the system changed the moment that loop ran. Leaving the
+    // shares as the calculator first worked them out is how the Study came to
+    // print 0 L/s and 5.4% of system on the same line — 5.4% being its share of
+    // the airflow it was RECOMMENDED, not of the airflow it is designed to get.
+    //
+    // This is presentation only: no airflow figure is touched here, so the
+    // allocated total, the duct sizing and everything downstream are unchanged.
+    applySystemShares(d.airflow.rows || []);
   }
 
   // ── 5. Outlets (PART 15) ──────────────────────────────────────────────────

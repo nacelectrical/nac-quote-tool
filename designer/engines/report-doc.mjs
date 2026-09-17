@@ -65,7 +65,7 @@ const inset = (src, caption) => ({ t: 'inset', src, caption: caption || '' });
 function table(cols, rows, get) {
   return {
     t: 'table',
-    cols: cols.map(c => ({ label: c.label, r: !!c.r, w: c.w || null })),
+    cols: cols.map(c => ({ label: c.label, r: !!c.r, w: c.w || null, nw: !!c.nw })),
     rows: (rows || []).map(r => get(r).map(str))
   };
 }
@@ -378,7 +378,9 @@ export function internalReportDoc(design, { planSnapshot = null,
   if (btoRows.length) {
     b.push(h2('BTO fabrication schedule'));
     b.push(table(
-      [{ label: 'BTO', w: 0.8 }, { label: 'Configuration', w: 2.2 },
+      // `nw` — the fitting's name is never broken over two lines. `BTO-C` above
+      // `1` is a different fitting to anybody reading it in a workshop.
+      [{ label: 'BTO', w: 1.05, nw: true }, { label: 'Configuration', w: 2.0 },
        { label: 'Inlet (L/s)', r: true }, { label: 'Collars', r: true },
        { label: 'Body L × W × H (mm)', w: 1.6 }, { label: 'Collar faces', w: 1.2 },
        { label: 'Layout', w: 1.5 },

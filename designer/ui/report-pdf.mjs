@@ -12,6 +12,14 @@ import { PdfDoc, textWidth, wrapText, jpegInfo } from './pdf-writer.mjs';
 
 const A4 = { width: 595.28, height: 841.89 };
 const M = 40;                                  // margin, points
+/** The footer's type size, and the metal it keeps between itself and the edge. */
+const FOOT_SIZE = 7;
+/** Clear space between the page number and the right margin. Never zero. */
+const FOOT_SAFE = 6;
+/** Clear space between the business line and the page number. */
+const FOOT_GAP = 14;
+/** A no-wrap column may shrink to this, and no further, before it wraps. */
+const NOWRAP_MIN_SIZE = 6;
 
 const INK      = [0.078, 0.078, 0.173];
 const MUTED    = [0.42, 0.45, 0.59];
@@ -198,8 +206,15 @@ class Layout {
     const total = weights.reduce((a, b) => a + b, 0);
     const widths = weights.map(w => (this.contentW * w) / total);
 
-    // Wrap every cell up front so a row's height is known before it is drawn.
-    const wrapped = rows.map(r => r.map((cell, i) => wrapText(cell, widths[i] - pad * 2, size, false)));
+    // ── A COLUMN THAT MUST NOT WRAP ────────────────────────────────────────
+    //
+    // `BTO-C1` and `BTO-C2` broke over two lines in the fabrication schedule —
+    // `BTO-C` on one line and `1` on the next, which reads as a different
+    // fitting. A column marked `nw` is set at the largest size at which its
+    // WIDEST cell fits on one line, down to a floor that is still legible; the
+    // heading keeps the table's own heading size and may still wrap. Shrinking a
+    // shared row is not on: only the marked column moves.
+    const { cellSize, wrapped } = columnLayout(cols, rows, widths, size, pad);
 
     // A HEADING WRAPS; IT DOES NOT GET CUT OFF.
     //
@@ -237,9 +252,10 @@ class Layout {
       if (r % 2 === 1) this.pdf.rect(M, top - h, this.contentW, h, { fill: [0.976, 0.98, 0.992] });
       let x = M;
       cells.forEach((lines, i) => {
+        const cs = cellSize[i];
         lines.forEach((line, li) => {
-          const tx = cols[i].r ? x + widths[i] - pad - textWidth(line, size, false) : x + pad;
-          this.pdf.text(line, tx, top - pad - size - li * lead, { size, colour: INK });
+          const tx = cols[i].r ? x + widths[i] - pad - textWidth(line, cs, false) : x + pad;
+          this.pdf.text(line, tx, top - pad - size - li * lead, { size: cs, colour: INK });
         });
         x += widths[i];
       });
@@ -404,23 +420,86 @@ class Layout {
     if (caption) this.paragraph(caption);
   }
 
-  /** Footer and page numbers, written once the page count is known. */
+  /**
+   * Footer and page numbers, written once the page count is known.
+   *
+   * ── THE PAGE NUMBER KEEPS ITS LAST DIGIT ─────────────────────────────────
+   *
+   * This right-aligned the number so its last glyph landed EXACTLY on the right
+   * margin — measured at 555.28 pt against a margin of 555.28 pt, with nothing
+   * in hand. A viewer that rounds, a printer with its own unprintable border,
+   * or a font whose real advance runs a hair past the metric it was positioned
+   * with, and the final character is gone: "Page 14 of 15" prints as
+   * "Page 14 of 1", which reads as a one-page document.
+   *
+   * So the number now sits a clear gap inside the margin, and the two halves of
+   * the footer are measured against each other: if the business line would ever
+   * reach the page number, it is the business line that gives way.
+   */
   finish() {
     this.flushHeading(0);                       // a heading with nothing after it still prints
-    for (let i = 0; i < this.pdf.pages.length; i++) {
+    const total = this.pdf.pages.length;
+    for (let i = 0; i < total; i++) {
       this.pdf.current = this.pdf.pages[i];
       // A landscape sheet is wider, so its footer runs to ITS right margin —
       // drawn at the portrait width it stopped two thirds of the way across.
       const w = (this.pdf.pages[i].width ?? A4.width) - M * 2;
       this.pdf.line(M, M + 20, M + w, M + 20, { colour: RULE, lineWidth: 0.5 });
+
+      const right = 'Page ' + (i + 1) + ' of ' + total;
+      const rightW = textWidth(right, FOOT_SIZE, false);
+      const rightX = M + w - FOOT_SAFE - rightW;
+      this.pdf.text(right, rightX, M + 9, { size: FOOT_SIZE, colour: MUTED });
+
+      // Everything left of the page number, and not one point further.
       const left = this.doc.business + '  ·  ABN ' + this.doc.abn + '  ·  ' + this.doc.website;
-      this.pdf.text(left, M, M + 9, { size: 7, colour: MUTED });
-      const right = 'Page ' + (i + 1) + ' of ' + this.pdf.pages.length;
-      this.pdf.text(right, M + w - textWidth(right, 7, false), M + 9, { size: 7, colour: MUTED });
+      const room = rightX - M - FOOT_GAP;
+      this.pdf.text(clip(left, room, FOOT_SIZE, false), M, M + 9,
+                    { size: FOOT_SIZE, colour: MUTED });
     }
     return this.pdf.bytes();
   }
 }
+
+/**
+ * How a table's cells are set: the size each column is drawn at, and the lines
+ * every cell breaks into.
+ *
+ * Pulled out of `table()` so it can be checked on its own. A column marked `nw`
+ * is set at the largest size at which its WIDEST cell fits on one line, down to
+ * a floor that is still legible, and it is the only column that moves.
+ */
+export function columnLayout(cols, rows, widths, size, pad) {
+  const cellSize = cols.map((c, i) => {
+    if (!c.nw) return size;
+    const room = widths[i] - pad * 2;
+    return rows.reduce((s, r) =>
+      Math.min(s, fitSize(String(r[i] ?? ''), room, size, NOWRAP_MIN_SIZE, false)), size);
+  });
+  const wrapped = rows.map(r => r.map((cell, i) =>
+    wrapText(cell, widths[i] - pad * 2, cellSize[i], false)));
+  return { cellSize, wrapped };
+}
+
+/** The column widths a table of these weights gets across `contentW`. */
+export function columnWidths(cols, contentW = A4.width - 80) {
+  const weights = cols.map(c => c.w || 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+  return weights.map(w => (contentW * w) / total);
+}
+
+/** The footer's geometry, so it can be checked without rendering a page. */
+export const FOOTER = Object.freeze({
+  size: FOOT_SIZE, safeMm: FOOT_SAFE, gap: FOOT_GAP, margin: M,
+  minSize: NOWRAP_MIN_SIZE,
+  /** Where `Page n of m` starts and ends on a page this wide. */
+  pageNumberBox(pageWidth, text) {
+    const w = pageWidth - M * 2;
+    const tw = textWidth(text, FOOT_SIZE, false);
+    const x = M + w - FOOT_SAFE - tw;
+    return { x, right: x + tw, limit: pageWidth - M, width: tw };
+  }
+});
 
 function probeJpeg(bytes) { return jpegInfo(bytes); }
 

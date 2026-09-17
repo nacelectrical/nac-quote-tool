@@ -5,6 +5,38 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 
 /**
+ * WHAT SHARE OF THE SYSTEM THIS IS — FROM THE DESIGN AIRFLOW, ALWAYS.
+ *
+ * One function, used by the airflow table and the zone schedule, because the
+ * two must never be able to disagree. The Study is the case that found this: it
+ * takes spill air, so its DESIGN airflow is 0 L/s, but its share was left at
+ * 5.4% — the figure worked out before the spill was redistributed, which is the
+ * share of its RECOMMENDED airflow. The zone schedule read 0% on the same page.
+ *
+ * `valueLs` is always the design (adjusted) figure. Never the recommendation.
+ */
+export function shareOfSystemPct(valueLs, totalLs) {
+  const total = Number(totalLs) || 0;
+  if (total <= 0) return 0;
+  return round(((Number(valueLs) || 0) / total) * 100, 1);
+}
+
+/**
+ * Re-state every row's share of the system from the design airflow it now has.
+ *
+ * Called once inside the calculator, and AGAIN by the pipeline after spill air
+ * has been redistributed — because that step moves design airflow between rooms
+ * and a share computed before it describes a system that is not being built.
+ *
+ * @returns {number} the design airflow the shares were taken against.
+ */
+export function applySystemShares(rows) {
+  const total = (rows || []).reduce((s, r) => s + (r.adjustedLs || 0), 0);
+  (rows || []).forEach(r => { r.systemSharePct = shareOfSystemPct(r.adjustedLs, total); });
+  return total;
+}
+
+/**
  * @param {Object} systemLoadRec  from loads.systemLoad()
  * @param {Object} opts { settings, selectedUnit, overridesByRoomId }
  */
@@ -53,8 +85,7 @@ export function calculateAirflow(systemLoadRec, opts = {}) {
     };
   });
 
-  const allocatedLs = rows.reduce((s, r) => s + r.adjustedLs, 0);
-  rows.forEach(r => { r.systemSharePct = allocatedLs > 0 ? round((r.adjustedLs / allocatedLs) * 100, 1) : 0; });
+  const allocatedLs = applySystemShares(rows);
 
   const warnings = rows.flatMap(r => r.warnings);
   const imbalance = systemAirflowLs > 0 ? (allocatedLs - systemAirflowLs) / systemAirflowLs : 0;

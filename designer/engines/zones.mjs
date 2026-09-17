@@ -4,6 +4,7 @@
 // the engine says so and recommends a constant zone — the estimator decides.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { shareOfSystemPct } from './airflow.mjs';
 import { DRAWING } from './nac-standard.mjs';
 import { round } from './units.mjs';
 
@@ -53,7 +54,9 @@ export function analyseZones(zones, airflow, opts = {}) {
 
   const rows = zones.map(z => ({
     ...z,
-    systemSharePct: systemLs > 0 ? round((z.airflowLs / systemLs) * 100, 1) : 0,
+    // THE SAME CALCULATION THE AIRFLOW TABLE USES. Two copies of one formula is
+    // how the Study came to read 0% on one table and 5.4% on the other.
+    systemSharePct: shareOfSystemPct(z.airflowLs, systemLs),
     alwaysOpen: z.kind === 'constant' || z.kind === 'common'
   }));
 
