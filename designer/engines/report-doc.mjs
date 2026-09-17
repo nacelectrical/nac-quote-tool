@@ -298,12 +298,14 @@ export function internalReportDoc(design, { planSnapshot = null,
         ['Supply spigots', sel.chosen ? sel.chosen.text : 'NONE AVAILABLE',
           sel.chosen ? sel.chosen.perDuctAirflowLs + ' L/s per main at ' +
             sel.chosen.velocityMs + ' m/s' : ''],
-        ['Decided on', sel.basis, 'outlet count is an input, not the rule'],
+        ['Decided on', 'NOT the outlet count', sel.basis],
         ['Installer areas', sel.inputs.installerAreaCount ?? '—',
           sel.chosen ? sel.chosen.count + ' main(s)' : ''],
-        ['Longest main', sel.inputs.longestMainRouteM == null ? '—'
-          : sel.inputs.longestMainRouteM + ' m',
-          sel.chosen ? sel.chosen.mainLossPa + ' Pa of loss along it' : ''],
+        ['Longest main', sel.inputs.longestMainRouteM == null ? 'NOT ROUTED YET'
+          : Number(sel.inputs.longestMainRouteM).toFixed(1) + ' m',
+          sel.inputs.longestMainRouteM == null
+            ? 'so main pressure loss could not be worked out'
+            : (sel.chosen ? sel.chosen.mainLossPa + ' Pa of loss along it' : '')],
         ['Available static', sel.inputs.availableStaticPa == null
           ? 'UNVERIFIED' : sel.inputs.availableStaticPa + ' Pa',
           sel.inputs.unit || ''],

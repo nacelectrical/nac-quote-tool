@@ -225,16 +225,30 @@ export function designOutlets(rooms, airflowRows, opts = {}) {
     const base = { ...designRoomOutlets(room, a.adjustedLs, { ...opts, type: ov.type }),
                    positionSource,
                    positionIsManual: positionSource === 'estimator_placed' };
-    if (ov.quantity) {
-      const qty = Number(ov.quantity);
+    // ZERO IS A NUMBER SOMEBODY CHOSE.
+    //
+    // This read `if (ov.quantity)`, so setting a room to nought outlets did
+    // nothing at all — the override was indistinguishable from no override.
+    // That made "remove an outlet" impossible for the single-outlet rooms it is
+    // most often wanted for, on site, in front of the ceiling in question. A
+    // room left with no outlet is a real decision and a loud one: it keeps its
+    // load and its air allocation, so it is carried as a WARNING rather than
+    // quietly balanced away.
+    if (ov.quantity !== undefined && ov.quantity !== null && ov.quantity !== '') {
+      const qty = Math.max(0, Number(ov.quantity) || 0);
       return {
         ...base,
         quantity: qty,
-        perOutletLs: round(base.airflowLs / qty, 0),
+        perOutletLs: qty ? round(base.airflowLs / qty, 0) : 0,
         overridden: true,
         reasons: [...base.reasons, 'Quantity manually set to ' + qty + ' by the estimator.'],
-        warnings: [...base.warnings, { code: 'MANUAL_OVERRIDE', severity: 'INFO',
-          message: base.label + ': outlet quantity manually overridden.' }]
+        warnings: [...base.warnings,
+          { code: 'MANUAL_OVERRIDE', severity: 'INFO',
+            message: base.label + ': outlet quantity manually overridden.' },
+          ...(qty === 0 ? [{ code: 'ROOM_HAS_NO_OUTLET', severity: 'WARNING',
+            message: base.label + ' has been set to NO outlet while it still carries ' +
+              base.airflowLs + ' L/s of design airflow. Either it is on spill air and ' +
+              'should be recorded as such, or it needs an outlet.' }] : [])]
       };
     }
     return base;

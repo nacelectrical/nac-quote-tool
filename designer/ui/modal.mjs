@@ -64,13 +64,43 @@ export function openDialog({ title, subtitle = null, body = [], buttons, cancelV
       h('div', { class: 'dlg-body' }, ...[body].flat(4).filter(Boolean)),
       h('div', { class: 'dlg-foot' }, ...buttons(close)));
 
+    // ── THE GHOST CLICK ─────────────────────────────────────────────────
+    //
+    // A touch screen fires a synthetic `click` a moment after `touchend`, at
+    // the same coordinates. When a dialog is opened from a tap — which is how
+    // every Site Adjust confirmation is opened — that click arrives AFTER the
+    // backdrop has appeared under the finger, lands on it, and closed the
+    // dialog the instant it opened. On the iPad that read as Delete and Add
+    // simply not working: the tap registered, the engine ran, and the question
+    // vanished before anybody saw it.
+    //
+    // So a backdrop tap cancels only when the press STARTED on the backdrop,
+    // and never in the first few hundred milliseconds of the dialog's life.
+    const openedAt = Date.now();
+    let pressedOnBackdrop = false;
     const host = h('div', {
       class: 'dlg-host', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-title',
-      // A tap on the backdrop cancels; a tap inside must not.
-      onclick: (e) => { if (e.target === host) close(cancelValue); }
+      onpointerdown: (e) => { pressedOnBackdrop = e.target === host; },
+      // A tap on the backdrop cancels; a tap inside must not; and a tap that
+      // began somewhere else entirely is not a tap on the backdrop at all.
+      onclick: (e) => {
+        if (e.target !== host) return;
+        if (!pressedOnBackdrop) return;
+        if (Date.now() - openedAt < 300) return;
+        close(cancelValue);
+      }
     }, panel);
 
     document.body.appendChild(host);
+    // AND THE GHOST CLICK CANNOT PRESS ANYTHING EITHER.
+    //
+    // Guarding the backdrop was not enough: the same synthetic click can land
+    // on a BUTTON inside a dialog that has just appeared under the finger, and
+    // silently choose the option that happens to be there. That is worse than
+    // dismissing the dialog, because it does something and looks deliberate.
+    // Nothing in a dialog is touchable for its first moments.
+    host.style.pointerEvents = 'none';
+    setTimeout(() => { host.style.pointerEvents = ''; }, 350);
     document.addEventListener('keydown', onKey, true);
 
     const auto = panel.querySelector('input,select,textarea,button.primary') || panel.querySelector('button');

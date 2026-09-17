@@ -2,18 +2,20 @@
 // HOW MANY DUCTS LEAVE THE PLENUM
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// A starting recommendation, and then the checks that have to pass before it is
-// allowed to stand. The count is NOT the whole engineering decision — Nick was
-// explicit about that — so this module returns a number AND the reasons it
-// might be wrong, and an installer's own choice always wins while still being
-// told what the engine thinks of it.
+// THE CHECKS. The CHOICE is next door, in spigot-selection.mjs.
 //
-//   1-8 outlets   -> 2 spigots
-//   9-12 outlets  -> 3 spigots
-//   13+           -> work it out from airflow, areas, equipment and BTO limits
+// This module answers: given the arrangement this job is being built with, is
+// the fabricated plenum able to take the collars, is every main inside the
+// velocity band, is the pressure inside the unit's VERIFIED available static,
+// does every main serve a real installer area, can every BTO on the end of one
+// actually be made, and do the mains add up to the outlets.
 //
-// which is max(2, ceil(outlets / 4)) up to twelve, and a real calculation past
-// it rather than sitting on three forever.
+// It no longer decides how many spigots there are. That used to be a table of
+// outlet count divided by four — `recommendedSupplySpigotCount` below, kept
+// only so a sheet can show what the old rule would have said. Nick: "Do not use
+// outlet count as the deciding rule."
+//
+// An installer's own choice always wins here, and is still told the truth.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { btoBodyGeometry } from './bto.mjs';

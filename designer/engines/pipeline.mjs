@@ -30,8 +30,8 @@ import { buildReturnComponents, validateReturnSeparation, returnComponentCounts,
          findSupplyReturnClashes } from './return-model.mjs';
 import { buildAreaTopology } from './area-router.mjs';
 import { recommendedSupplySpigotCount, validateSupplySpigots } from './supply-spigots.mjs';
-import { selectSupplySpigotArrangement,
-         overrideSpigotArrangement } from './spigot-selection.mjs';
+import { selectSupplySpigotArrangement, overrideSpigotArrangement,
+         remeasureSelection } from './spigot-selection.mjs';
 import { assessPlacement } from './placement.mjs';
 import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
@@ -313,12 +313,21 @@ export function runPipeline(design, ctx = {}) {
       unit: d.selectedUnit || null,
       systemAirflowLs: d.airflow.allocatedAirflowLs,
       availableStaticPa: d.selectedUnit?.availableStaticPa ?? null,
-      installerAreas: d.installerAreas || null,
+      installerAreas: d.installerAreas || d.supplyMainConfig?.areas || null,
+      // INSTALLER AREAS, NOT ZONES. A zone is a damper's worth of rooms; an
+      // installer area is a main's worth of house, and a job routinely has six
+      // of the first and three of the second. Reading the zone count here made
+      // the sheet claim six areas on a three-main job.
       installerAreaCount: d.installerAreaCount ??
-        (d.installerAreas?.length ?? (zonesForRouting?.zones?.length || 0)),
+        (d.installerAreas?.length ?? d.supplyMainConfig?.areas?.length ??
+         (zonesForRouting?.zones?.length || 0)),
       roofGeometry: d.roofGeometry || null,
       mainRouteLengthsM: d.mainRouteLengthsM || null,
-      longestMainRouteM: d.longestMainRouteM ?? null,
+      // On a design that has been routed before, the mains have a MEASURED
+      // length and the pressure term is real. On the first pass there is none,
+      // and the result says the loss could not be worked out rather than
+      // printing a zero as though it had been.
+      longestMainRouteM: d.longestMainRouteM ?? measuredLongestMainM(d),
       allowWidenedPlenum: d.allowWidenedPlenum !== false,
       maxPlenumWidthMm: d.maxPlenumWidthMm ?? null,
       arrangements: d.spigotArrangements || [],
@@ -361,9 +370,10 @@ export function runPipeline(design, ctx = {}) {
           systemAirflowLs: d.airflow.allocatedAirflowLs,
           availableStaticPa: d.selectedUnit?.availableStaticPa ?? null,
           installerAreaCount: d.installerAreaCount ??
-            (d.installerAreas?.length ?? (zonesForRouting?.zones?.length || 0)),
+            (d.installerAreas?.length ?? d.supplyMainConfig?.areas?.length ??
+             (zonesForRouting?.zones?.length || 0)),
           roofGeometry: d.roofGeometry || null,
-          longestMainRouteM: d.longestMainRouteM ?? null,
+          longestMainRouteM: d.longestMainRouteM ?? measuredLongestMainM(d),
           allowWidenedPlenum: d.allowWidenedPlenum !== false,
           outletCount: d.outlets.totals.total
         }
@@ -621,6 +631,15 @@ export function runPipeline(design, ctx = {}) {
     manualOverride: !!d.supplyMainConfig,
     areaNames: mainSections.map(s => (s.serves || []).join(' / '))
   }, { settings });
+  // The mains now have a measured length, so the pressure term in the spigot
+  // selection stops being a blank. The arrangement that was built is not
+  // reconsidered — re-deciding here would be rerouting a design behind
+  // somebody's back — only the numbers beside it are made real.
+  if (d.spigotSelection?.chosen) {
+    d.spigotSelection = remeasureSelection(d.spigotSelection,
+      measuredLongestMainM(d), { settings });
+  }
+
   // ONE RECORD OF HOW THE PLENUM IS MADE, read by the drawing, the schedule,
   // the BOM line and the warning — so they cannot describe four different
   // pieces of metal.
@@ -767,6 +786,13 @@ export function runPipeline(design, ctx = {}) {
  * and the cost all follow from it. There is no separate drawing to fall out of
  * step with the design.
  */
+/** The longest main this design has actually been routed with, if it has. */
+function measuredLongestMainM(d) {
+  const mains = (d.network?.sections || [])
+    .filter(x => !x.parentId && x.role !== 'return' && x.lengthM > 0);
+  return mains.length ? Math.max(...mains.map(x => x.lengthM)) : null;
+}
+
 function applyLockedGeometry(tree, design, settings) {
   const edits = design.routeEdits || {};
   const locked = design.lockedRoutes || {};

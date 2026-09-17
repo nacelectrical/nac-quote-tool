@@ -344,6 +344,38 @@ export function overrideSpigotArrangement(selection, { count, diameterMm, by, re
   };
 }
 
+/**
+ * THE SAME ARRANGEMENT, AGAINST THE MAINS AS THEY WERE ACTUALLY ROUTED.
+ *
+ * The choice is made before the router runs, so its pressure term uses whatever
+ * route length was known at the time — often none. Once the mains exist they
+ * have a MEASURED length, and the loss along the longest one is a real number
+ * rather than a blank. This re-measures and CHANGES NOTHING ELSE: the
+ * arrangement that was built stays the arrangement that was built, because
+ * re-deciding here would be rerouting a design behind somebody's back.
+ */
+export function remeasureSelection(selection, longestMainM, opts = {}) {
+  if (!selection?.chosen || !longestMainM) return selection;
+  const settings = opts.settings || DEFAULT_SETTINGS;
+  const re = (c) => {
+    const paPerM = c.perDuctAirflowLs
+      ? pressureDropPaPerM(c.diameterMm, c.perDuctAirflowLs, { settings }) : 0;
+    return { ...c, longestMainM, paPerM: round2(paPerM),
+             mainLossPa: round2(paPerM * longestMainM),
+             mainLengthMeasured: true };
+  };
+  return {
+    ...selection,
+    chosen: re(selection.chosen),
+    ranked: selection.ranked.map(re),
+    rejected: selection.rejected.map(re),
+    runnerUp: selection.runnerUp ? re(selection.runnerUp) : null,
+    inputs: { ...selection.inputs, longestMainRouteM: longestMainM,
+              longestMainMeasured: true }
+  };
+}
+
 export default { STANDARD_ARRANGEMENTS, SELECTION_WEIGHTS, FLEX_INSULATION_MM,
+                 remeasureSelection,
                  availableArrangements, evaluateArrangement,
                  selectSupplySpigotArrangement, overrideSpigotArrangement };

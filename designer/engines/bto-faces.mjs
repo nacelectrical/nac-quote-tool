@@ -312,18 +312,28 @@ export function btoFaceLayout(bto, opts = {}) {
   // A collar that could not be placed still has to be measured and shown, so
   // the reason it does not fit is on the sheet rather than an empty space.
   const unplacedRows = unplaced.map(c => {
-    const worst = faces.map(f => layoutFace(f, [c], body, allowances))
-      .sort((a, b) => b.spareWidthMm - a.spareWidthMm)[0];
+    // MEASURED AGAINST THE FACE AS IT WOULD BE, not against an empty one. A
+    // collar that fits a bare face on its own is not the question; the question
+    // is whether it fits BESIDE what is already there, and the shortfall an
+    // installer needs is that one.
+    const tries = faces.map(f => {
+      const l = layoutFace(f, [...(buckets.get(f) || []), c], body, allowances);
+      return { faceLabel: l.faceLabel, short: r1(l.requiredWidthMm - l.availableWidthMm),
+               beside: (buckets.get(f) || []).length };
+    }).sort((a, b) => a.short - b.short);
+    const best = tries[0];
     return {
       portIndex: c.portIndex,
       nominalDiameterMm: c.diameterMm,
       outsideDiameterMm: collarOutsideDiameterMm(c.diameterMm, allowances),
       destination: c.destination,
       airflowLs: c.airflowLs,
+      bestFace: best?.faceLabel || null,
+      shortByMm: best ? Math.max(0, best.short) : null,
       reason: 'No face on a ' + body.lengthMm + ' × ' + body.widthMm + ' × ' + body.heightMm +
-        ' mm body has room for it beside the collars already on this fitting. The best fit, ' +
-        (worst?.faceLabel || '—').toLowerCase() + ', is short by ' +
-        Math.max(0, r1(-(worst?.spareWidthMm ?? 0))) + ' mm.'
+        ' mm body has room for it beside the collars already on this fitting. The closest, ' +
+        (best?.faceLabel || '—').toLowerCase() + ', already carries ' + (best?.beside ?? 0) +
+        ' collar(s) and would be ' + Math.max(0, best?.short ?? 0) + ' mm short.'
     };
   });
 

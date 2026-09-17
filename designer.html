@@ -462,7 +462,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 .sa-mode{flex:1;min-width:104px;min-height:60px;border-radius:14px;border:2px solid #3a4270;
   background:#1b2040;color:#c9d0f5;font-size:17px;font-weight:800;letter-spacing:.02em;cursor:pointer}
 .sa-mode.on{background:#2B6CB8;border-color:#7fb0ff;color:#fff}
-.sa-hint{margin:10px 16px 0;color:#aab2d8;font-size:15px}
+.sa-hint{margin:8px 16px 0;color:#aab2d8;font-size:14.5px;line-height:1.35}
 .sa-sync{display:flex;align-items:center;gap:12px;margin:12px 16px 0;padding:12px 16px;
   border-radius:12px;font-size:15px}
 .sa-sync strong{font-size:15px;letter-spacing:.04em}
@@ -472,7 +472,24 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 .sa-sync span{flex:1;min-width:0}
 .sa-conflict{margin:12px 16px 0;padding:14px 16px;border-radius:12px;background:#3d1520;
   color:#ffd9e0;display:flex;flex-direction:column;gap:10px;font-size:15px}
-.sa-history{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.sa-bar{display:flex;align-items:center;gap:12px;padding:10px 16px;overflow-x:auto}
+.sa-history{display:flex;align-items:center;gap:12px}
+/* The things that have nowhere on the drawing to be tapped: a note, a photo, a
+   new return, and the lock on whichever route is open. Same 56 px targets. */
+.sa-tools{display:flex;align-items:center;gap:12px}
+.sa-tool{min-height:56px;padding:0 18px;border-radius:12px;border:1px solid #3a4270;
+  background:#1b2040;color:#c9d0f5;font-size:16px;font-weight:700;white-space:nowrap;
+  cursor:pointer}
+.sa-tool.on{background:#3a3212;border-color:#8a7420;color:#ffdf8a}
+.sa-tool-note{color:#aab2d8;font-size:14px;white-space:nowrap}
+.sa-busy{margin:10px 16px 0;padding:12px 16px;border-radius:12px;background:#222850;
+  color:#ffdf8a;font-size:15px}
+/* The collar layout, as the shop reads it: one line per collar, monospaced so
+   the centres line up under each other. */
+.sa-layout{display:flex;flex-direction:column;gap:4px;background:#12162c;border-radius:10px;
+  padding:12px;border:1px solid #242a4d}
+.sa-layout-line{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d0f5;
+  white-space:pre-wrap}
 .sa-count{color:#aab2d8;font-size:15px}
 .sa-canvas{flex:1;min-height:0;margin:0 16px 12px;border-radius:14px;overflow:hidden;
   position:relative;background:#fff}
@@ -492,18 +509,39 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 /* The sheet floats, so the CANVAS has to give it room — otherwise the plan is
    simply hidden behind it and the installer loses sight of what they tapped. */
 .site-adjust.has-sheet .sa-canvas{margin-right:calc(min(560px,48%) + 16px)}
+/* EVERY BAR STOPS AT THE SHEET, not just the canvas.
+   The sheet is absolutely positioned, so a bar that spans the full width runs
+   underneath it — which put Route, Add, Delete, Done and the whole tool bar
+   behind the panel the moment anything was tapped. An installer could open a
+   fitting and then not change mode without closing it again. */
+.site-adjust.has-sheet .sa-top,
+.site-adjust.has-sheet .sa-modes,
+.site-adjust.has-sheet .sa-hint,
+.site-adjust.has-sheet .sa-sync,
+.site-adjust.has-sheet .sa-conflict,
+.site-adjust.has-sheet .sa-bar{padding-right:calc(min(560px,48%) + 28px)}
+.site-adjust.has-sheet .sa-hint,
+.site-adjust.has-sheet .sa-sync,
+.site-adjust.has-sheet .sa-conflict{margin-right:0}
 .site-adjust.has-sheet .sa-foot{padding-right:calc(min(560px,48%) + 32px)}
 @media (orientation:portrait){
   .sa-sheet{left:0;right:0;top:auto;bottom:0;width:auto;max-height:56vh;
     border-left:0;border-top:2px solid #F5C200;border-radius:18px 18px 0 0;
     box-shadow:0 -12px 40px rgba(0,0,0,.5)}
   .site-adjust.has-sheet .sa-canvas{margin-right:16px;margin-bottom:calc(56vh + 12px)}
+  .site-adjust.has-sheet .sa-top,
+  .site-adjust.has-sheet .sa-modes,
+  .site-adjust.has-sheet .sa-hint,
+  .site-adjust.has-sheet .sa-sync,
+  .site-adjust.has-sheet .sa-conflict,
+  .site-adjust.has-sheet .sa-bar{padding-right:16px}
   /* Portrait has no height to spare. With a sheet open the secondary bars step
      aside so the DRAWING keeps a usable band — an installer has to be able to
      see what they tapped while they are changing it. */
   .site-adjust.has-sheet .sa-sync,
   .site-adjust.has-sheet .sa-history,
   .site-adjust.has-sheet .sa-hint,
+  .site-adjust.has-sheet .sa-bar,
   .site-adjust.has-sheet .sa-foot{display:none}
 }
 .sa-sheet-head{display:flex;align-items:center;gap:12px;padding:16px 18px 10px}

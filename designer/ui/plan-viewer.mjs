@@ -21,8 +21,33 @@ export const MODES = {
   ROOM: 'room',
   ROUTE: 'route',
   LAYOUT: 'layout',
-  EDIT_ROUTE: 'edit_route'
+  EDIT_ROUTE: 'edit_route',
+  /** SITE ADJUST — one finger, gloves on, in a roof. See `drawSiteLayer`. */
+  SITE: 'site'
 };
+
+/**
+ * THE SITE ADJUST GESTURE MODES.
+ *
+ * One is always on and it is always named on screen. Nick: "Prevent dragging
+ * the drawing when the installer intends to move a component." The only way to
+ * guarantee that is to make panning and moving different MODES rather than
+ * different gestures on the same finger — which is what these are.
+ */
+export const SITE_GESTURE = {
+  PAN: 'pan', SELECT: 'select', MOVE: 'move',
+  ROUTE: 'route', ADD: 'add', DELETE: 'delete'
+};
+
+/**
+ * How big a Site Adjust grab target is, in SCREEN pixels.
+ *
+ * Nick: "Use large touch targets suitable for gloves. Small canvas handles are
+ * not acceptable." 30 px of radius is a 60 px target — bigger than Apple's 44
+ * and bigger than the office handle, because the office handle is for a mouse.
+ */
+export const SITE_TOUCH_R = 30;
+export const SITE_DRAW_R = 15;
 
 /**
  * How big a target a handle is, in SCREEN pixels.
@@ -64,6 +89,17 @@ export function createPlanViewer(container, opts = {}) {
     draftRoute: [],
     layout: {},            // key -> { x, y, label, type }
     dragging: null,
+    // ── SITE ADJUST ───────────────────────────────────────────────────────
+    // Which gesture is armed, what can be grabbed, and which run is open for
+    // route editing. The viewer holds the geometry; site-adjust.mjs holds the
+    // meaning and fills these in on every render.
+    siteGesture: SITE_GESTURE.SELECT,
+    /** Re-fit when the box changes shape, unless a finger has moved the plan. */
+    autoFit: false,
+    userAdjusted: false,
+    siteTargets: [],       // [{ id, kind, x, y, badge, movable }]
+    siteSelectedId: null,
+    siteRoute: null,       // { sectionId, points: [{x,y}], locked }
     showRooms: true,
     showRoutes: true,
     showLayout: true,
@@ -110,6 +146,21 @@ export function createPlanViewer(container, opts = {}) {
     // The plan tab lays out after the image loads, so the first fit can happen
     // while the canvas is still collapsed. Re-fit until it has a real size.
     if (pendingFit && r.width > 80 && r.height > 80) { fit(); return; }
+    // ── THE BOX CHANGED SHAPE, SO THE DRAWING HAS TO BE RE-FITTED ─────────
+    //
+    // On the iPad a sheet takes half the width the moment something is tapped,
+    // and the canvas is a different box from one frame to the next. Keeping the
+    // old scale and offset is what left the plan as a sliver in one corner —
+    // and a plan that has slid off the edge is one nobody can tap.
+    //
+    // The ResizeObserver is the ONLY thing that knows the box has settled, so
+    // the re-fit belongs here rather than on a timer somebody has to guess.
+    // A fit that would undo the installer's own pinch is not done: panning and
+    // zooming set `userAdjusted`, and a fit clears it.
+    if (state.autoFit && !state.userAdjusted && r.width > 80 && r.height > 80) {
+      fit();
+      return;
+    }
     draw();
   }
 
@@ -121,6 +172,10 @@ export function createPlanViewer(container, opts = {}) {
     // the plan and then hunting for somewhere to put the schedule is how the
     // schedule ended up sitting on the house.
     if (!state.designView || !state.zoneChips.length) return 0;
+    // NOT ON THE IPAD. Site Adjust is a plan somebody is putting a finger on,
+    // and 178 px of zone schedule down the side of a canvas that already gives
+    // half its width to a sheet leaves the house too small to tap accurately.
+    if (state.mode === MODES.SITE) return 0;
     return r.width > SCHEDULE_GUTTER_PX * 2.2 ? SCHEDULE_GUTTER_PX : 0;
   }
 
@@ -129,6 +184,7 @@ export function createPlanViewer(container, opts = {}) {
     const r = wrap.getBoundingClientRect();
     if (r.width < 80 || r.height < 80) { pendingFit = true; return; }
     pendingFit = false;
+    state.userAdjusted = false;
     const gutter = scheduleGutter(r);
     const usable = r.width - gutter;
     const s = Math.min(usable / state.image.width, r.height / state.image.height) * 0.94;
@@ -146,6 +202,7 @@ export function createPlanViewer(container, opts = {}) {
     state.scale = Math.max(state.minScale, Math.min(state.maxScale, state.scale * factor));
     state.offsetX = cx - before.x * state.scale;
     state.offsetY = cy - before.y * state.scale;
+    state.userAdjusted = true;
     draw();
   }
 
@@ -230,7 +287,9 @@ export function createPlanViewer(container, opts = {}) {
         outletType: state.outletType || 'square',
         selectedId: state.selectedId || null
       });
-      drawZoneSchedule();
+      // NOT ON THE IPAD: Site Adjust needs the width for the house, not for a
+      // schedule nobody reads with a torch in their teeth.
+      if (state.mode !== MODES.SITE) drawZoneSchedule();
       drawZoneBadges();
       // A COMPACT KEY, on the report. Drawn from the same functions as the
       // sheet, so a symbol in the legend is by construction the symbol on the
@@ -273,6 +332,12 @@ export function createPlanViewer(container, opts = {}) {
       if (state.mode === MODES.EDIT_ROUTE) drawHandles();
       if (state.mode === MODES.LAYOUT && state.showLayout) drawLayoutHandles();
       if (state.mode === MODES.CALIBRATE) drawCalibration();
+      // SITE ADJUST IS AN EDIT MODE ON THE INSTALLER DRAWING. It is drawn here,
+      // inside the design-view branch, because that branch RETURNS — the site
+      // layer added only at the bottom of draw() was never reached on the one
+      // view Site Adjust actually runs on, so the grab circles were invisible
+      // and a finger had nothing to aim at.
+      if (state.mode === MODES.SITE) drawSiteLayer();
       return;
     }
 
@@ -284,7 +349,7 @@ export function createPlanViewer(container, opts = {}) {
     // The zone schedule is claimed BEFORE any duct label, not after. A drawing
     // whose legend has been shoved into the middle of the house by the labels
     // is the wrong way round: the schedule has a home, the labels move.
-    if (state.designView) { drawZoneSchedule(); }
+    if (state.designView && state.mode !== MODES.SITE) { drawZoneSchedule(); }
     // Every SYMBOL on the drawing — diffuser, take-off, damper, the unit itself
     // and the zone badges — books its patch of plan BEFORE a single duct label
     // is placed. Labels were landing on top of outlets and on the fan coil
@@ -295,7 +360,102 @@ export function createPlanViewer(container, opts = {}) {
     if (state.designView) drawZoneBadges();
     if (state.showLayout && (!state.designView || state.showAnalysis)) drawLayout();
     if (state.mode === MODES.EDIT_ROUTE) drawHandles();
+    if (state.mode === MODES.SITE) drawSiteLayer();
     if (!state.designView || state.showAnalysis) drawCalibration();
+  }
+
+  /**
+   * THE SITE ADJUST LAYER — grab targets a gloved finger can actually hit.
+   *
+   * Drawn in SCREEN space, so a handle is the same size whatever the zoom: an
+   * installer zooms in to see the duct, not to make the targets bigger, and a
+   * target that shrinks when you zoom out is a target you cannot hit at all.
+   */
+  function drawSiteLayer() {
+    const P = { outlet: '#C79400', bto: '#1D7A48', damper: '#7A3FB8',
+                fcu: '#2B6CB8', plenum: '#3B2D8F', returnPlenum: '#6E7486',
+                returnGrille: '#8A5A00', duct: '#4A4F57' };
+    const toScreen = (p) => ({ x: p.x * state.scale + state.offsetX,
+                               y: p.y * state.scale + state.offsetY });
+    ctx.save();
+    ctx.lineJoin = 'round';
+
+    // The run being edited, with a handle on every point of it.
+    if (state.siteRoute?.points?.length) {
+      const pts = state.siteRoute.points.map(toScreen);
+      ctx.strokeStyle = 'rgba(19,199,220,0.9)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      pts.forEach((p, i) => {
+        const dragging = state.dragging?.kind === 'site-route' &&
+                         state.dragging.hit?.pointIndex === i && state.dragging.moved;
+        const at = dragging ? toScreen(state.dragging.last) : p;
+        ctx.beginPath();
+        ctx.arc(at.x, at.y, SITE_DRAW_R, 0, Math.PI * 2);
+        ctx.fillStyle = dragging ? 'rgba(19,199,220,0.95)' : 'rgba(255,255,255,0.95)';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#13C7DC';
+        ctx.stroke();
+      });
+      if (state.siteRoute.locked) {
+        const mid = pts[Math.floor(pts.length / 2)];
+        ctx.font = '800 12px -apple-system, system-ui, sans-serif';
+        ctx.fillStyle = '#8A5A00';
+        ctx.textAlign = 'center';
+        ctx.fillText('LOCKED', mid.x, mid.y - SITE_DRAW_R - 8);
+      }
+    }
+
+    for (const t of (state.siteTargets || [])) {
+      if (t.x === null || t.x === undefined) continue;
+      const dragging = state.dragging?.kind === 'site-move' &&
+                       state.dragging.target?.id === t.id && state.dragging.moved;
+      const at = dragging ? toScreen(state.dragging.last) : toScreen(t);
+      const selected = state.siteSelectedId === t.id;
+      const colour = P[t.kind] || P.duct;
+
+      // The target itself: a wide ring, not a dot. The ring is the thing being
+      // aimed at, so it is drawn the size it is hit at.
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, SITE_DRAW_R, 0, Math.PI * 2);
+      ctx.fillStyle = dragging ? 'rgba(19,199,220,0.30)'
+        : selected ? 'rgba(19,199,220,0.22)' : 'rgba(255,255,255,0.72)';
+      ctx.fill();
+      ctx.lineWidth = selected || dragging ? 4 : 2.5;
+      ctx.strokeStyle = selected || dragging ? '#13C7DC' : colour;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = colour;
+      ctx.fill();
+
+      if (t.badge) {
+        ctx.font = '800 10.5px -apple-system, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.strokeText(t.badge, at.x, at.y - SITE_DRAW_R - 9);
+        ctx.fillStyle = colour;
+        ctx.fillText(t.badge, at.x, at.y - SITE_DRAW_R - 9);
+      }
+      // Where it came from, while it is being moved: an installer needs to see
+      // how far they have taken it, not just where their finger is.
+      if (dragging) {
+        const from = toScreen(t);
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(19,199,220,0.7)';
+        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(at.x, at.y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.restore();
   }
 
   /**
@@ -1120,9 +1280,86 @@ export function createPlanViewer(container, opts = {}) {
   let panning = null;
   let drawingRoom = null;
 
+  // ── SITE ADJUST ─────────────────────────────────────────────────────────
+  //
+  // The viewer owns the GESTURES and the coordinates; Site Adjust owns what the
+  // things under the finger MEAN. So the hit tests are callbacks: this file
+  // never learns what a BTO is, and site-adjust.mjs never learns about pinch
+  // zoom or device pixel ratios.
+  //
+  // Nothing recalculates during a drag. `onSiteMoveEnd` fires ONCE, on release.
+  function siteRadius() { return SITE_TOUCH_R / state.scale; }
+
+  function siteDown(e, img) {
+    const g = state.siteGesture;
+    if (g === SITE_GESTURE.PAN) {
+      panning = { x: e.clientX, y: e.clientY, ox: state.offsetX, oy: state.offsetY };
+      return;
+    }
+
+    if (g === SITE_GESTURE.ROUTE) {
+      const hit = opts.onSiteRouteHit?.(img, siteRadius()) || null;
+      if (hit?.pointIndex !== null && hit?.pointIndex !== undefined) {
+        state.dragging = { kind: 'site-route', hit, start: img, last: img, moved: false };
+        // Press and hold removes the point. One finger, no right-click.
+        state.holdTimer = setTimeout(() => {
+          if (state.dragging?.kind === 'site-route' && !state.dragging.moved) {
+            state.dragging = null;
+            opts.onSiteRoutePointHold?.(hit);
+            draw();
+          }
+        }, 550);
+        draw();
+        return;
+      }
+      if (hit?.sectionId) {
+        state.dragging = { kind: 'site-route-tap', hit, start: img, moved: false };
+        return;
+      }
+      panning = { x: e.clientX, y: e.clientY, ox: state.offsetX, oy: state.offsetY };
+      return;
+    }
+
+    const target = opts.onSiteHit?.(img, siteRadius()) || null;
+
+    if (g === SITE_GESTURE.MOVE) {
+      if (target && target.movable !== false) {
+        state.siteSelectedId = target.id;
+        state.dragging = { kind: 'site-move', target, start: img, last: img, moved: false };
+        draw();
+        return;
+      }
+      // Nothing under the finger: the plan may still be moved, which is the one
+      // place the two gestures are allowed to share a finger.
+      panning = { x: e.clientX, y: e.clientY, ox: state.offsetX, oy: state.offsetY };
+      return;
+    }
+
+    if (g === SITE_GESTURE.ADD || g === SITE_GESTURE.DELETE ||
+        g === SITE_GESTURE.SELECT) {
+      state.dragging = { kind: 'site-tap', target, start: img, moved: false, gesture: g };
+      return;
+    }
+    panning = { x: e.clientX, y: e.clientY, ox: state.offsetX, oy: state.offsetY };
+  }
+
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // ── A FINGER THAT NEVER LIFTED ────────────────────────────────────────
+    //
+    // A pointerup can go missing: the canvas is re-parented mid-gesture when a
+    // commit re-renders the screen, a dialog opens over it, the browser cancels
+    // the capture. The id then sits in this map forever, every later touch
+    // makes it look like TWO fingers, and the viewer treats every tap as the
+    // start of a pinch — so nothing on the plan can be tapped again until the
+    // page is reloaded. On an iPad that reads as "the app has stopped working".
+    //
+    // So a pointer nobody has heard from in a second and a half is gone.
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    for (const [id, p] of pointers) {
+      if (id !== e.pointerId && now - (p.t || 0) > 1500) pointers.delete(id);
+    }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
     if (pointers.size === 2) {
       const [p1, p2] = [...pointers.values()];
       pinchStart = { dist: Math.hypot(p2.x - p1.x, p2.y - p1.y), scale: state.scale,
@@ -1177,6 +1414,8 @@ export function createPlanViewer(container, opts = {}) {
       // Otherwise fall through to panning, so the plan can still be moved.
     }
 
+    if (state.mode === MODES.SITE) { siteDown(e, img); return; }
+
     if (state.mode === MODES.LAYOUT) {
       const key = layoutHit(img);
       if (key) {
@@ -1208,7 +1447,8 @@ export function createPlanViewer(container, opts = {}) {
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY,
+      t: (typeof performance !== 'undefined' ? performance.now() : Date.now()) });
 
     if (pinchStart && pointers.size === 2) {
       const [p1, p2] = [...pointers.values()];
@@ -1236,6 +1476,25 @@ export function createPlanViewer(container, opts = {}) {
       if (Math.hypot(img.x - state.dragging.start.x, img.y - state.dragging.start.y) > 3 / state.scale) {
         state.dragging.moved = true;
       }
+      return;
+    }
+    // ── SITE ADJUST DRAGS ─────────────────────────────────────────────────
+    // A ghost follows the finger and NOTHING ELSE HAPPENS. The design is not
+    // touched, the engine is not run, the schedule is not rebuilt. All of that
+    // happens once, on release, in endPointer.
+    if (state.dragging?.kind === 'site-move' || state.dragging?.kind === 'site-route') {
+      const moved = Math.hypot(img.x - state.dragging.start.x, img.y - state.dragging.start.y);
+      if (moved > 3 / state.scale) {
+        state.dragging.moved = true;
+        clearTimeout(state.holdTimer);
+      }
+      state.dragging.last = img;
+      draw();
+      return;
+    }
+    if (state.dragging?.kind === 'site-tap' || state.dragging?.kind === 'site-route-tap') {
+      if (Math.hypot(img.x - state.dragging.start.x, img.y - state.dragging.start.y) >
+          6 / state.scale) state.dragging.moved = true;
       return;
     }
     if (state.mode === MODES.EDIT_ROUTE && !state.dragging) {
@@ -1278,6 +1537,11 @@ export function createPlanViewer(container, opts = {}) {
     if (panning) {
       state.offsetX = panning.ox + (e.clientX - panning.x);
       state.offsetY = panning.oy + (e.clientY - panning.y);
+      // Somebody has put the plan where they want it; a later re-fit would be
+      // the tool undoing their work.
+      if (Math.hypot(e.clientX - panning.x, e.clientY - panning.y) > 4) {
+        state.userAdjusted = true;
+      }
       draw();
     }
   });
@@ -1318,6 +1582,33 @@ export function createPlanViewer(container, opts = {}) {
         return;
       }
 
+      // ── SITE ADJUST: ONE COMMIT, ON RELEASE ────────────────────────────
+      if (d.kind === 'site-move') {
+        if (d.moved) opts.onSiteMoveEnd?.(d.target, d.last);
+        else opts.onSiteSelect?.(d.target);
+        draw();
+        return;
+      }
+      if (d.kind === 'site-route') {
+        if (d.moved) opts.onSiteRoutePointEnd?.(d.hit, d.last);
+        draw();
+        return;
+      }
+      if (d.kind === 'site-route-tap') {
+        if (!d.moved) opts.onSiteRouteTap?.(d.hit, d.start);
+        draw();
+        return;
+      }
+      if (d.kind === 'site-tap') {
+        if (!d.moved) {
+          if (d.gesture === SITE_GESTURE.ADD) opts.onSiteAdd?.(d.start, d.target);
+          else if (d.gesture === SITE_GESTURE.DELETE) opts.onSiteDelete?.(d.target, d.start);
+          else { state.siteSelectedId = d.target?.id ?? null; opts.onSiteSelect?.(d.target); }
+        }
+        draw();
+        return;
+      }
+
       if (d.kind === 'layout') opts.onLayoutMove?.(d.key, state.layout[d.key]);
       else {
         const room = state.rooms.find(r => r.id === d.roomId);
@@ -1338,7 +1629,20 @@ export function createPlanViewer(container, opts = {}) {
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
+  // The browser took the capture away — the gesture is over whether or not a
+  // pointerup ever arrives. Ending it here is what stops the stale-finger bug
+  // above from happening in the first place.
+  canvas.addEventListener('lostpointercapture', (e) => {
+    if (pointers.has(e.pointerId)) endPointer(e);
+  });
   canvas.addEventListener('pointerleave', (e) => { if (panning || drawingRoom) endPointer(e); });
+  // A finger that leaves the canvas mid-drag must not leave a fitting half
+  // moved: the drag is ended where it left, and it commits like any other.
+  canvas.addEventListener('pointerout', (e) => {
+    if (state.mode === MODES.SITE && String(state.dragging?.kind || '').startsWith('site')) {
+      endPointer(e);
+    }
+  });
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1392,6 +1696,32 @@ export function createPlanViewer(container, opts = {}) {
         : mode === MODES.CALIBRATE || mode === MODES.ROUTE ? 'crosshair' : 'default';
       draw();
     },
+
+    // ── SITE ADJUST ───────────────────────────────────────────────────────
+    /** Which gesture the finger is armed with. Panning and moving are modes. */
+    /** Keep the drawing fitted as the box changes shape. On for Site Adjust. */
+    setAutoFit(on) { state.autoFit = !!on; if (on) state.userAdjusted = false; },
+    setSiteGesture(g) {
+      state.siteGesture = g || SITE_GESTURE.SELECT;
+      canvas.style.cursor = g === SITE_GESTURE.PAN ? 'grab'
+        : g === SITE_GESTURE.ADD || g === SITE_GESTURE.DELETE ? 'crosshair' : 'pointer';
+      draw();
+    },
+    getSiteGesture: () => state.siteGesture,
+    /** What the gesture layer thinks is happening. For diagnostics only. */
+    gestureDebug: () => ({ mode: state.mode, gesture: state.siteGesture,
+                           pointers: pointers.size, dragging: state.dragging?.kind || null,
+                           panning: !!panning, targets: state.siteTargets.length,
+                           scale: state.scale }),
+    /** Everything that can be grabbed, in image coordinates. */
+    setSiteTargets(list) { state.siteTargets = list || []; draw(); },
+    setSiteSelected(id) { state.siteSelectedId = id ?? null; draw(); },
+    /** The one run open for route editing, or null. */
+    setSiteRoute(route) { state.siteRoute = route || null; draw(); },
+    getSiteRoute: () => state.siteRoute,
+    /** What Site Adjust's tests are given, so the two can never drift apart. */
+    siteTouchRadius: () => SITE_TOUCH_R / state.scale,
+    siteRedraw: () => draw(),
     getMode: () => state.mode,
     // Called on every app render, so it must be idempotent: clearing the
     // picking points unconditionally made it impossible to ever place the

@@ -215,6 +215,12 @@ export class DesignerApp {
   closeSiteAdjust() {
     this.siteAdjust = null;
     this.siteBaseDesign = null;
+    // Hand the canvas back: leaving it armed with a site gesture would make the
+    // office screen move fittings when somebody meant to pan.
+    this.viewer?.setSiteTargets?.([]);
+    this.viewer?.setSiteRoute?.(null);
+    this.viewer?.setAutoFit?.(false);
+    this.viewer?.setMode?.(MODES.VIEW);
     this.render();
   }
 
@@ -273,6 +279,45 @@ export class DesignerApp {
       this.siteFitTimer2 = setTimeout(refit, 320);
     }
     this.viewer.redraw?.();
+  }
+
+  // ── THE SITE CANVAS ───────────────────────────────────────────────────────
+  //
+  // Site Adjust never touches the viewer directly; it says what it wants and
+  // this translates. That keeps the gesture layer in plan-viewer.mjs and the
+  // meaning of what is under the finger in site-adjust.mjs, with one seam.
+
+  /** Arm the canvas with a gesture. Panning and moving are different modes. */
+  setSiteGesture(g) {
+    this.ensureViewer();
+    this.viewer.setMode(MODES.SITE);
+    // The iPad canvas changes shape every time a sheet opens, so the drawing is
+    // kept fitted to whatever box it has — unless a finger has moved it.
+    this.viewer.setAutoFit(true);
+    this.viewer.setSiteGesture(g);
+  }
+  /** Everything a finger can grab, in image coordinates. */
+  setSiteTargets(list) { this.viewer?.setSiteTargets?.(list || []); }
+  setSiteSelected(id) { this.viewer?.setSiteSelected?.(id ?? null); }
+  /** The one run open for route editing, with its points. */
+  setSiteRoute(route) { this.viewer?.setSiteRoute?.(route || null); }
+  /** The grab radius in IMAGE px at the current zoom, so hit tests agree. */
+  siteTouchRadius() { return this.viewer?.siteTouchRadius?.() ?? 24; }
+  siteRedraw() { this.viewer?.siteRedraw?.(); }
+  /** Every supply run that can carry a fitting or be re-routed. */
+  siteSections() {
+    return (this.design.network?.sections || [])
+      .filter(s => s.role !== 'return' && !/^return(_|$)/.test(String(s.id || '')))
+      .filter(s => Array.isArray(s.points) && s.points.length >= 2);
+  }
+  /** Which room a tap landed in, for adding an outlet. */
+  siteRoomAt(at) {
+    for (const r of (this.design.rooms || [])) {
+      const b = r.boundaryPx;
+      if (!b) continue;
+      if (at.x >= b.x && at.x <= b.x + b.w && at.y >= b.y && at.y <= b.y + b.h) return r;
+    }
+    return null;
   }
 
   /** Outlets an installer can connect a BTO port to. */
@@ -748,6 +793,19 @@ export class DesignerApp {
         onHandleHold: (h) => this.onHandleHold(h),
         onRoutePick: (at, r) => this.pickRoute(at, r),
         onRouteTap: (leg, at) => this.onRouteTap(leg, at),
+        // ── SITE ADJUST ─────────────────────────────────────────────────
+        // The viewer owns the gestures; Site Adjust owns what is under the
+        // finger and what changing it means. These forward one to the other so
+        // neither has to know the other's job.
+        onSiteHit: (at, r) => this.siteAdjust?.hitTest(at, r) || null,
+        onSiteSelect: (t) => this.siteAdjust?.onCanvasSelect(t),
+        onSiteMoveEnd: (t, at) => this.siteAdjust?.onCanvasMoveEnd(t, at),
+        onSiteAdd: (at, t) => this.siteAdjust?.onCanvasAdd(at, t),
+        onSiteDelete: (t, at) => this.siteAdjust?.onCanvasDelete(t, at),
+        onSiteRouteHit: (at, r) => this.siteAdjust?.routeHit(at, r) || null,
+        onSiteRouteTap: (hit, at) => this.siteAdjust?.onCanvasRouteTap(hit, at),
+        onSiteRoutePointEnd: (hit, at) => this.siteAdjust?.onCanvasRoutePointEnd(hit, at),
+        onSiteRoutePointHold: (hit) => this.siteAdjust?.onCanvasRoutePointHold(hit),
         onLayoutPick: () => this.pushEditHistory('Moved plan item'),
         onLayoutMove: (key, item) => {
           this.design.layout[key] = { ...item };
@@ -3084,7 +3142,10 @@ export class DesignerApp {
       });
       out.push({
         label: r.id,
-        src: cv.toDataURL('image/png'),
+        // JPEG, because the PDF writer embeds JPEG: a PNG is silently dropped
+        // and replaced with an apology in the middle of the fabrication
+        // section. The drawing is line work on white, which JPEGs cleanly.
+        src: cv.toDataURL('image/jpeg', 0.94),
         caption: r.id + ' — ' + r.shapeText + '. Body ' + r.bodyText + ', collars on ' +
           (r.facesUsed || []).length + ' face(s). ' + (r.layoutStatus || '')
       });

@@ -123,21 +123,55 @@ export function applySiteEdits(design, edits) {
 
   for (const e of edits || []) {
     switch (e.type) {
+      // AN OUTLET'S POSITION LIVES IN `layout`, under the key the routers read:
+      // `outlet_<roomId>_<index>`. Writing x and y onto the override record
+      // looked right and moved nothing, because no router has ever read them.
       case SITE_EDIT.MOVE_OUTLET:
+        d.layout = { ...(d.layout || {}),
+          ['outlet_' + e.target + '_' + (e.after.index ?? 0)]: { x: e.after.x, y: e.after.y } };
         d.outletOverrides = put(d.outletOverrides, e.target,
-          { ...(d.outletOverrides?.[e.target] || {}), x: e.after.x, y: e.after.y });
+          { ...(d.outletOverrides?.[e.target] || {}), movedOnSite: true });
         break;
       case SITE_EDIT.SET_OUTLET_TYPE:
         d.outletOverrides = put(d.outletOverrides, e.target,
           { ...(d.outletOverrides?.[e.target] || {}), type: e.after.type });
         break;
-      case SITE_EDIT.ADD_OUTLET:
+      // AN OUTLET IS ADDED OR REMOVED BY CHANGING THE ROOM'S QUANTITY, which is
+      // the field the outlet engine actually reads. Writing `{ added: true }`
+      // to an override record nothing consumes is how a control ends up looking
+      // like it works and changing nothing.
+      case SITE_EDIT.ADD_OUTLET: {
+        const cur = d.outletOverrides?.[e.target] || {};
         d.outletOverrides = put(d.outletOverrides, e.target,
-          { ...(e.after || {}), added: true });
+          { ...cur, quantity: e.after.quantity, addedOnSite: true });
+        if (e.after.x !== undefined && e.after.x !== null) {
+          d.layout = { ...(d.layout || {}),
+            ['outlet_' + e.target + '_' + (e.after.index ?? 0)]: { x: e.after.x, y: e.after.y } };
+        }
         break;
-      case SITE_EDIT.REMOVE_OUTLET:
-        d.outletOverrides = put(d.outletOverrides, e.target, { removed: true });
+      }
+      case SITE_EDIT.REMOVE_OUTLET: {
+        const cur = d.outletOverrides?.[e.target] || {};
+        d.outletOverrides = put(d.outletOverrides, e.target,
+          { ...cur, quantity: e.after.quantity, removedOnSite: true });
+        // The routers read `_0`, `_1`, `_2` … in order, so taking the middle
+        // one out has to CLOSE THE GAP. Leaving a hole orphans every position
+        // after it and the router quietly re-places outlets somebody had
+        // already put where they wanted them.
+        if (e.after.index !== undefined && e.after.index !== null) {
+          const layout = { ...(d.layout || {}) };
+          const k = Number(e.after.index);
+          const prefix = 'outlet_' + e.target + '_';
+          delete layout[prefix + k];
+          for (let i = k + 1; ; i++) {
+            if (!(prefix + i in layout)) break;
+            layout[prefix + (i - 1)] = layout[prefix + i];
+            delete layout[prefix + i];
+          }
+          d.layout = layout;
+        }
         break;
+      }
 
       case SITE_EDIT.MOVE_EQUIPMENT:
         d.layout = { ...(d.layout || {}), [e.target]: { x: e.after.x, y: e.after.y } };
@@ -245,26 +279,46 @@ export function applySiteEdits(design, edits) {
         d.ductDiameterOverrides = put(d.ductDiameterOverrides, e.target, e.after.diameterMm);
         break;
 
+      // ── ROUTES ─────────────────────────────────────────────────────────
+      // `routeEdits` and `lockedRoutes` are the two records the pipeline reads
+      // when it re-applies geometry to a freshly generated tree, and they are
+      // keyed by SECTION ID with the points on them. A bare list of ids, or a
+      // third record nothing reads, is a route edit that redraws and then
+      // vanishes on the next recalculation.
       case SITE_EDIT.SET_ROUTE:
+        d.routeEdits = put(d.routeEdits, e.target,
+          { points: e.after.points, by: e.by || null, at: e.at || null });
         d.routeOverrides = put(d.routeOverrides, e.target, e.after.points);
         break;
       case SITE_EDIT.LOCK_ROUTE:
-        d.lockedRoutes = [...new Set([...(d.lockedRoutes || []), e.target])];
+        d.lockedRoutes = put(d.lockedRoutes, e.target,
+          { points: e.after.points, by: e.by || null, at: e.at || null });
         break;
       case SITE_EDIT.UNLOCK_ROUTE:
-        d.lockedRoutes = (d.lockedRoutes || []).filter(k => k !== e.target);
+        d.lockedRoutes = drop(d.lockedRoutes, e.target);
         break;
 
+      // ── THE RETURN ─────────────────────────────────────────────────────
+      // A return grille lives in `layout` under its own key, and the number of
+      // returns is `returnCount`. Both are what the return designer reads.
       case SITE_EDIT.MOVE_RETURN:
+        d.layout = { ...(d.layout || {}), [e.target]: { x: e.after.x, y: e.after.y } };
         d.returnOverrides = put(d.returnOverrides, e.target,
           { ...(d.returnOverrides?.[e.target] || {}), x: e.after.x, y: e.after.y });
         break;
       case SITE_EDIT.ADD_RETURN:
+        d.returnCount = e.after.count;
         d.returnCountOverride = e.after.count;
+        d.layout = { ...(d.layout || {}), [e.target]: { x: e.after.x, y: e.after.y } };
+        d.returnGrilleOverrides = [...(d.returnGrilleOverrides || []),
+                                   e.after.grilleSize || [600, 400]];
         break;
       case SITE_EDIT.REMOVE_RETURN:
+        d.returnCount = e.after.count;
         d.returnCountOverride = e.after.count;
+        d.layout = drop(d.layout, e.target);
         d.returnOverrides = drop(d.returnOverrides, e.target);
+        d.returnGrilleOverrides = (d.returnGrilleOverrides || []).slice(0, e.after.count);
         break;
 
       case SITE_EDIT.ADD_NOTE:
