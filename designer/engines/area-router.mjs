@@ -494,6 +494,137 @@ export function planAreaFittings(outlets, plenum, opts = {}) {
 }
 
 /**
+ * SHOULD THIS AREA BE ONE FITTING, OR A DISTRIBUTION FITTING AND TWO LOCALS?
+ *
+ * Nick: "When four outlets form two clear spatial pairs, prefer a distribution
+ * BTO, two distribution arms and two local two-port BTOs, rather than one
+ * remote four-port fitting with long crossing branches."
+ *
+ * So this is a geometry question, not a port count. The port preference
+ * (`preferredMaxDirectOutletPortsPerLocalBto`, NAC default 3) only decides when
+ * to ASK it; whether to stage is then settled by three things that are true of
+ * this plan rather than of any plan:
+ *
+ *   1. THE GROUPS ARE REAL. Two clusters separated by more than their own
+ *      spread are two parts of a house. One even scatter is not, and splitting
+ *      it would manufacture a fitting to serve half a room.
+ *   2. THE METAL IS CHEAPER. Both options are costed in weighted flex — a metre
+ *      of ø400 is not a metre of ø250 — and staging has to be worth it. A
+ *      generous tolerance, because the staged answer also buys shorter finals
+ *      and no crossings, which the cost function does not price.
+ *   3. IT IS BUILDABLE. Two arms is two more pieces of metal; below two outlets
+ *      an arm is not an arm, it is a branch pretending to be one.
+ *
+ * Returns null to leave the area flat. Nothing here caps anything: an area that
+ * fails these tests keeps all its collars on one body, and the fabrication
+ * check reports the body it actually needs.
+ */
+export function planDistributionArms(members, plenum, opts = {}) {
+  const settings = opts.settings || DEFAULT_SETTINGS;
+  const maxDirect = opts.preferredMaxDirectOutletPorts
+    ?? settings.duct?.preferredMaxDirectOutletPortsPerLocalBto
+    ?? 3;
+  if (!Array.isArray(members) || members.length <= Math.max(1, maxDirect)) return null;
+
+  // Weighted flex, the same weighting the fitting placement uses: a metre of
+  // ø400 is not a metre of ø250.
+  const finalMm = (o) => selectDiameter(o.airflowLs, 'final', { settings }).diameterMm || 250;
+  const mainMm = opts.mainDiameterMm || 400;
+  const armMm = opts.armDiameterMm || 350;
+  const legs = (from, group) =>
+    group.reduce((n, o) => n + dist(from, o) * (finalMm(o) / 250), 0);
+
+  const flatAt = planAreaFittings(members, plenum, {
+    footprint: opts.footprint, settings, mainDiameterMm: mainMm }).at;
+  const flatCost = dist(plenum, flatAt) * (mainMm / 250) + legs(flatAt, members);
+
+  const costOf = (A, B) => {
+    const at = geometricMedian([
+      { ...plenum, w: mainMm / 250 },
+      { ...centroid(A), w: A.reduce((n, o) => n + o.airflowLs, 0) / 100 },
+      { ...centroid(B), w: B.reduce((n, o) => n + o.airflowLs, 0) / 100 }
+    ]);
+    const la = planAreaFittings(A, at, { footprint: opts.footprint, settings, mainDiameterMm: armMm }).at;
+    const lb = planAreaFittings(B, at, { footprint: opts.footprint, settings, mainDiameterMm: armMm }).at;
+    return { at, la, lb,
+      cost: dist(plenum, at) * (mainMm / 250)
+          + (dist(at, la) + dist(at, lb)) * (armMm / 250)
+          + legs(la, A) + legs(lb, B) };
+  };
+
+  // WHICH TWO GROUPS? Take the cheapest pair of groups, not the first one a
+  // farthest-point seed happens to produce. On a four-bedroom wing that seeding
+  // put three bedrooms on one arm and one on the other — which is not two
+  // groups, so nothing staged and the wing came out as one four-collar body.
+  //
+  // Every two-way partition is costed where there are few enough of them to
+  // enumerate honestly, which covers any real installer area; beyond that the
+  // farthest-point split is the starting point and the enumeration is skipped
+  // rather than approximated silently.
+  //
+  // TWO GROUPS FIRST, THEN THE CHEAPEST OF THEM. The order matters. Costing
+  // every partition and asking afterwards whether the winner was two groups
+  // picks the cheapest CUT, which on a four-bedroom wing was the master and
+  // bedroom 2 against bedrooms 3 and 4 — a saving of three percent bought by
+  // interleaving the two arms across the same hallway. That is not two groups;
+  // it is one group cut in half, and the separation test rightly threw it out,
+  // taking the whole staged option with it.
+  //
+  // So a partition has to BE two groups — the gap between their centroids
+  // wider than their own spread — to be costed at all, and the cheapest of
+  // those wins.
+  const spread = (g) => {
+    const c = centroid(g);
+    return g.reduce((n, o) => n + dist(c, o), 0) / g.length;
+  };
+  const separationFactor = opts.clusterSeparationFactor ?? 1.0;
+  const consider = (A, B, out) => {
+    if (Math.min(A.length, B.length) < 2) return;      // an arm serves a group
+    const separationPx = dist(centroid(A), centroid(B));
+    const spreadPx = spread(A) + spread(B);
+    if (separationPx <= spreadPx * separationFactor) return;
+    const c = costOf(A, B);
+    if (!out.best || c.cost < out.best.cost) {
+      out.best = { ...c, A, B, separationPx, spreadPx };
+    }
+  };
+  const found = { best: null };
+  if (members.length <= (opts.maxEnumeratedOutlets ?? 12)) {
+    const n = members.length;
+    for (let mask = 1; mask < (1 << n) - 1; mask++) {
+      const A = [], B = [];
+      for (let i = 0; i < n; i++) ((mask >> i) & 1 ? A : B).push(members[i]);
+      if (A[0] !== members[0]) continue;                // each partition once
+      consider(A, B, found);
+    }
+  } else {
+    const [A, B] = splitInTwo(members);
+    consider(A, B, found);
+  }
+  const best = found.best;
+  if (!best) return null;
+  const { separationPx, spreadPx } = best;
+
+  const tolerance = opts.stagedCostTolerance ?? 1.15;
+  if (best.cost > flatCost * tolerance) return null;
+
+  // Heaviest arm first, so Arm 1 is the one an installer runs first.
+  const groups = [best.A, best.B].sort((g, h) =>
+    h.reduce((n, o) => n + o.airflowLs, 0) - g.reduce((n, o) => n + o.airflowLs, 0));
+  return {
+    arms: groups,
+    reason: members.length + ' outlets in two groups ' + Math.round(separationPx) +
+      ' px apart against a ' + Math.round(spreadPx) + ' px spread, above the preferred ' +
+      maxDirect + ' direct collars on one local fitting.',
+    preferredMaxDirectOutletPorts: maxDirect,
+    separationPx: round(separationPx, 1),
+    spreadPx: round(spreadPx, 1),
+    flatCost: round(flatCost, 1),
+    stagedCost: round(best.cost, 1)
+  };
+}
+
+/**
  * Build the whole supply topology: N mains, one per area, each ending at its
  * area's primary fitting.
  */
@@ -622,15 +753,38 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
   const finalWeight = (o) =>
     (selectDiameter(o.airflowLs, 'final', { settings }).diameterMm || 250) / 250;
   const clearanceReviews = [];
+  const distributionDecisions = [];
 
   areas.forEach(({ spec, members }, ai) => {
     const letter = spec.key || letters[ai];
     const areaLs = members.reduce((n, o) => n + o.airflowLs, 0);
-    const arms = (spec.distributionArms || []).map((arm, i) => {
+    let arms = (spec.distributionArms || []).map((arm, i) => {
       const labels = new Set((arm.roomLabels || []).map(normal));
       return { ...arm, key: arm.key || letter + (i + 1),
         members: members.filter(o => labels.has(normal(o.roomLabel))) };
     }).filter(a => a.members.length);
+    // ── NOBODY CONFIGURED ARMS, SO ASK THE GEOMETRY WHETHER IT WANTS THEM ──
+    //
+    // The staged structure was only ever built when a job spelled it out by
+    // room name. So a wing of four bedrooms in two obvious pairs came out as
+    // one remote four-collar body with four long branches reaching back to it,
+    // and the only way to get the fitting an installer would actually set was
+    // to type the arms in. It is a geometry question and the router can see the
+    // geometry.
+    let autoArms = null;
+    if (arms.length < 2) {
+      autoArms = planDistributionArms(members, plenum, {
+        settings, footprint, mainDiameterMm: mainMm,
+        preferredMaxDirectOutletPorts: opts.preferredMaxDirectOutletPorts
+          ?? settings.duct?.preferredMaxDirectOutletPortsPerLocalBto });
+      if (autoArms) {
+        arms = autoArms.arms.map((group, i) => ({
+          key: letter + (i + 1),
+          label: [...new Set(group.map(o => o.roomLabel))].join(' / '),
+          members: group, auto: true
+        }));
+      }
+    }
     const staged = arms.length > 1;
     // A main has to be a duct somebody can measure and install. See
     // MIN_MAIN_RUN_MM: when an area's arms leave in opposing directions their
@@ -718,7 +872,14 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
     if (staged) {
       for (const arm of arms) {
         const armLs = arm.members.reduce((n, o) => n + o.airflowLs, 0);
-        const armMm = arm.diameterMm || 350;
+        // AN ARM IS SIZED FOR THE AIR IT CARRIES, not set to a habit. A wing
+        // arm carrying 153 L/s is not a ø350, and calling it one put metal on
+        // the order that nobody would have installed. It is still never level
+        // with or below the largest final coming off it — that is a full-bore
+        // take-off, and mainFloorForFinals is the rule that says so.
+        const armMm = arm.diameterMm || mainFloorForFinals(
+          selectDiameter(armLs, 'branch', { settings }).diameterMm,
+          arm.members.map(o => finalSizeForAirflow(o.airflowLs)));
         const base = planAreaFittings(arm.members, plan.at,
           { footprint, settings, mainDiameterMm: armMm });
         // The arm's own fitting is where the outlets hang, so this is where the
@@ -749,7 +910,25 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
     }
     nodes.push({ id: 'bto_' + letter, type: 'bto', airSide: 'supply',
                  x: plan.at.x, y: plan.at.y, mainKey: letter,
-                 label: 'BTO-' + letter, ports: staged ? arms.length : plan.direct.length });
+                 label: 'BTO-' + letter, ports: staged ? arms.length : plan.direct.length,
+                 // A distribution fitting's ports feed arms, not outlets. Said
+                 // here so nothing downstream has to infer it from the shape.
+                 distribution: staged,
+                 feedsBtoIds: staged ? arms.map(a => 'bto_' + a.key) : [] });
+    distributionDecisions.push({
+      key: letter, staged, outlets: members.length,
+      arms: staged ? arms.map(a => ({ key: a.key, label: a.label || a.key,
+        outlets: a.members.length,
+        airflowLs: round(a.members.reduce((n, o) => n + o.airflowLs, 0), 0),
+        auto: !!a.auto })) : [],
+      basis: autoArms ? autoArms.reason
+        : (staged ? 'Distribution arms configured on this job by room name.'
+                  : members.length + ' outlet(s) straight off one local fitting.'),
+      preferredMaxDirectOutletPorts: autoArms?.preferredMaxDirectOutletPorts
+        ?? (opts.preferredMaxDirectOutletPorts
+            ?? settings.duct?.preferredMaxDirectOutletPortsPerLocalBto ?? null),
+      weightedFlex: autoArms ? { flat: autoArms.flatCost, staged: autoArms.stagedCost } : null
+    });
   });
 
   // ── WHEN NO PRACTICAL COMPLIANT POSITION EXISTS ─────────────────────────
@@ -787,6 +966,8 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
     btoClearanceReviews: clearanceReviews.map(({ key, set }) => ({
       key, shortfalls: set.shortfalls })),
     segments, nodes, footprint,
+    /** Why each area is one fitting or a distribution fitting with arms. */
+    distributionDecisions,
     plenum: { ...plenum, source: plenumSource },
     mainCount: areas.length,
     mainDiameterMm: mainMm,
@@ -805,4 +986,5 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
 }
 
 export default { buildAreaTopology, formInstallerAreas, planAreaFittings, splitInTwo,
+                 planDistributionArms,
                  placeFittingClear, finalRunPoints, finalRunLengthPx };

@@ -353,6 +353,21 @@ export const BTO = Object.freeze({
    */
   portCapacity: null,
   /**
+   * HOW MANY OUTLETS NAC PREFERS TO HANG STRAIGHT OFF ONE LOCAL FITTING.
+   *
+   * A PREFERENCE, and deliberately not the hard ceiling that `portCapacity`
+   * would be. Past this many direct outlets the router looks for two clear
+   * spatial groups and, where it finds them, builds a distribution fitting with
+   * two arms feeding two local BTOs instead of one remote body with four long
+   * branches crossing each other to reach it.
+   *
+   * It never forces a chain and never fails a design on its own: a fitting with
+   * more collars than this is built exactly as designed when the geometry says
+   * that is the sensible answer, and an installer who has verified a larger
+   * body physically may raise it on the job.
+   */
+  preferredMaxDirectOutletPortsPerLocalBto: 3,
+  /**
    * Clear space between adjacent outlet collars on a fabricated body, so the
    * flex clamps can actually be done up. Configurable; this is NAC's working
    * figure, not a manufacturer's.

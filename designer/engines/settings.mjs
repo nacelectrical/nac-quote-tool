@@ -207,6 +207,11 @@ export const DEFAULT_SETTINGS = {
     minimumBtoToOutletDuctLengthM: 2.0,
     junctionClusterFraction: NAC.bto.clusterFraction,
     majorBranchMinRooms: NAC.bto.minRoomsForMajorBranch,
+    // A ROUTING PREFERENCE, NOT A FABRICATION LIMIT. Past this many outlets
+    // straight off one local BTO the router looks for two clear spatial groups
+    // and builds a distribution fitting with two arms instead. An installer who
+    // has verified a larger body may raise it on the job.
+    preferredMaxDirectOutletPortsPerLocalBto: NAC.bto.preferredMaxDirectOutletPortsPerLocalBto,
 
     // Preferred / maximum velocities in m/s by duct role. PHYSICS, not install
     // practice, so these stay here rather than in the standard.
