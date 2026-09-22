@@ -215,7 +215,17 @@ function zonesHtml(p) {
   // rows as cards under 720px. Nick: "avoid horizontal tables; convert
   // schedules into cards."
   return sect('zones', 'Your zones',
-    when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller) + '.</p>')
+    // The actual part, its supplier code and what it costs. "Controlled by the
+    // Brand Standard Controller" named nothing a customer could look up and
+    // nothing anybody had priced.
+    when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller)
+      + when(!!z.controllerSku, ' (' + esc(z.controllerSku) + ')')
+      + when(z.controllerMaxZones > 0, ', which handles up to ' + esc(z.controllerMaxZones)
+          + ' zones')
+      + '.'
+      + when(z.controllerIncludedInSystem === true,
+          ' It is supplied with the system at no separate charge.')
+      + '</p>')
     + '<div class="tablewrap"><table class="grid">'
     + '<thead><tr><th>Zone</th>' + when(z.showRooms, '<th>Rooms</th>')
       + '<th>Control</th></tr></thead><tbody>'
@@ -524,8 +534,9 @@ export function renderPresentationHtml(presentation, opts = {}) {
     // in the document so it is the first thing a screen reader says too.
     + when(!!p.demonstration,
         '<div class="demo-banner" role="note">' + esc(p.demonstrationNote
-          || 'DEMONSTRATION — this is not a quote.') + '</div>'
-        + '<div class="demo-mark" aria-hidden="true"><span>DEMONSTRATION</span></div>')
+          || 'DEMONSTRATION — NOT FOR CUSTOMER ISSUE.') + '</div>'
+        + '<div class="demo-mark" aria-hidden="true">'
+        + '<span>DEMONSTRATION — NOT FOR CUSTOMER ISSUE</span></div>')
     + '<main class="doc">' + body + '</main>'
     + when(!print, stickyHtml(p))
     + when(!print, '<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" '
@@ -570,7 +581,7 @@ body{font-family:var(--sans);color:var(--body);background:var(--bg);line-height:
    w·cos28 + h·sin28, so the cap is well under the page width at every size the
    proposal is read at. */
 .demo-mark span{display:block;transform:rotate(-28deg);white-space:nowrap;
-  font-size:min(7vw,96px);font-weight:900;letter-spacing:.08em;
+  font-size:min(3.1vw,40px);font-weight:900;letter-spacing:.06em;
   color:rgba(138,28,28,.10);line-height:1}
 body.demo .doc{position:relative;z-index:1}
 img{max-width:100%;display:block}
@@ -849,7 +860,7 @@ const PRINT_ONLY = `
 /* The demonstration mark has to be on every printed page, not only the first,
    so it is repeated per page rather than fixed to the viewport. */
 .demo-banner{position:static}
-.demo-mark span{font-size:40pt}
+.demo-mark span{font-size:17pt}
 body{font-size:11pt;background:#fff}
 .doc{max-width:none;padding-bottom:0}
 .sec{padding:16pt 0;break-inside:auto}

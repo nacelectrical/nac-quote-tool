@@ -62,6 +62,24 @@ const ISSUABLE_CONTENT = {
   }
 };
 
+// A customer who could actually receive a quote. CUSTOMER above is deliberately
+// demonstration data — sample@example.invalid on 0400 000 000 — and the publish
+// gate now refuses to issue to it, which is the point. The handful of tests that
+// need a genuinely issuable proposal use this one.
+const ISSUABLE_CUSTOMER = {
+  name: 'Sarah Whitlock',
+  email: 'sarah.whitlock@bigpond.com',
+  phone: '0412 665 108',
+  address: '34 Kauri Crescent, Peregian Springs QLD 4573',
+  notes: 'INTERNAL: chase deposit, customer haggles'
+};
+// JOB above is at "12 Example Street", which the gate reads as a placeholder
+// address — correctly, because that is exactly what it is.
+const ISSUABLE_JOB = {
+  siteAddress: '34 Kauri Crescent, Peregian Springs QLD 4573',
+  notes: 'INTERNAL: roof access is tight, allow extra time'
+};
+
 function build(over = {}) {
   return buildPresentation({
     design: DESIGN, customer: CUSTOMER, job: JOB, content: DEMO_CONTENT,
@@ -573,14 +591,16 @@ test('a suburb is derived from an address without exposing the street', () => {
 });
 
 test('the acceptance state drives what the page offers', () => {
-  const accepted = build({ status: 'accepted', content: ISSUABLE_CONTENT }).presentation;
+  const accepted = build({ status: 'accepted', content: ISSUABLE_CONTENT,
+                           customer: ISSUABLE_CUSTOMER, job: ISSUABLE_JOB }).presentation;
   assert.equal(accepted.acceptance.accepted, true);
   assert.equal(accepted.acceptance.canAccept, false);
   const html = renderPresentationHtml(accepted);
   assert.ok(html.includes('Proposal accepted'));
   assert.ok(!html.includes('id="acceptForm"'));
 
-  const declined = build({ status: 'declined', content: ISSUABLE_CONTENT }).presentation;
+  const declined = build({ status: 'declined', content: ISSUABLE_CONTENT,
+                           customer: ISSUABLE_CUSTOMER, job: ISSUABLE_JOB }).presentation;
   assert.ok(renderPresentationHtml(declined).includes('Proposal declined'));
 });
 

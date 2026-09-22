@@ -23,6 +23,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { quoteGate } from './quote-gate.mjs';
+import { looksUnfilled, customerStatus } from './customer-data.mjs';
+export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts
@@ -106,23 +108,6 @@ export function formatDate(value) {
  * Nick: "If a technical or pricing gate blocks the quote, do not publish a
  * customer presentation."
  */
-/**
- * Values that mean "nobody has filled this in yet", whatever they look like.
- *
- * A licence field reading SAMPLE-12345 is not a licence. Neither is TEST, nor
- * an address at example.invalid, nor the word PLACEHOLDER. Each of them renders
- * as confidently as a real one, which is exactly the problem: a customer
- * reading "Electrical contractor licence: SAMPLE-12345" has been shown a
- * credential that does not exist.
- */
-const NOT_A_REAL_VALUE = /\b(sample|test|placeholder|example|dummy|lorem|tbc|xxx+|n\/?a)\b|\.invalid\b|\bTODO\b/i;
-
-export function looksUnfilled(value) {
-  const v = trimmed(value);
-  if (!v) return false;                 // absent is handled separately
-  return NOT_A_REAL_VALUE.test(v);
-}
-
 /** The credentials a proposal states as fact. Each is checked, not assumed. */
 const CREDENTIAL_FIELDS = Object.freeze([
   ['abn', 'ABN'],
@@ -212,23 +197,26 @@ export function presentationGate(design, opts = {}) {
   // Room count, outlet count and the coverage table are three renderings of one
   // design. A customer who counts the rooms in the table and finds a different
   // number from the one in the summary has caught NAC out on their own quote.
-  // A room on SPILL AIR is conditioned and deliberately has no outlet of its
-  // own — the Dungannon study is one. It is not a disagreement, so it is not
-  // counted on either side of this comparison.
+  // Three renderings of one house, and each has a population it legitimately
+  // covers. The coverage table lists EVERY conditioned room. The outlet
+  // schedule lists the rooms with an outlet — a room on SPILL AIR is
+  // conditioned and deliberately has none, which the Dungannon study is. The
+  // zone schedule covers every conditioned room, spill included, because a
+  // spill room is still in a zone.
   const spill = new Set(rows(design?.spillRoomIds));
-  const conditioned = rows(design?.rooms)
-    .filter(r => r && r.conditioned && !spill.has(r.id));
-  const coverageRoomCount = conditioned.length;
+  const conditionedRooms = rows(design?.rooms).filter(r => r && r.conditioned);
+  const coverageRoomCount = conditionedRooms.length;
+  const ductedRoomCount = conditionedRooms.filter(r => !spill.has(r.id)).length;
   const outletRowRooms = rows(design?.outlets?.rows).filter(o => !spill.has(o.roomId)).length;
   const registerRooms = design?.outletConsistency?.roomCount ?? null;
   // The register counts rooms that actually carry an outlet, which is the same
   // population as `outletRowRooms` once spill rooms are out of both.
 
-  if (coverageRoomCount && outletRowRooms && coverageRoomCount !== outletRowRooms) {
+  if (ductedRoomCount && outletRowRooms && ductedRoomCount !== outletRowRooms) {
     blockers.push({
       code: 'ROOM_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
-      message: 'The coverage table would list ' + coverageRoomCount + ' conditioned room(s) '
+      message: 'The coverage table would list ' + ductedRoomCount + ' ducted room(s) '
         + 'against ' + outletRowRooms + ' room(s) with outlets. The proposal cannot state two '
         + 'different sizes for the same house.'
     });
@@ -266,6 +254,55 @@ export function presentationGate(design, opts = {}) {
           + 'Enter its cost before this proposal is issued.'
       });
     }
+  }
+
+  // ── IS THERE A REAL CUSTOMER BEHIND THIS? ───────────────────────────────
+  // HELLO SAMPLE went out to sample@example.invalid on 0400 000 000. Every one
+  // of those fields was populated, so every presence check passed.
+  if (issuing) {
+    const cust = customerStatus(opts.customer || {}, { siteAddress: opts.siteAddress });
+    for (const f of cust.failures) {
+      blockers.push({
+        code: 'CUSTOMER_DATA_NOT_REAL',
+        severity: 'CRITICAL',
+        field: f.field,
+        message: f.reason + ' A proposal cannot be issued to a customer record that is not real.'
+      });
+    }
+  }
+
+  // ── NOTHING UNAPPROVED REACHES A CUSTOMER ───────────────────────────────
+  // The content library already filters on approval. This is the belt on top of
+  // those braces: if anything unapproved survived into the built page, the
+  // proposal does not go out.
+  const unapprovedReviews = rows(opts.reviews).filter(r => r && r.approved !== true);
+  const unapprovedWork = rows(opts.installations).filter(i => i && i.approved !== true);
+  if (unapprovedReviews.length) {
+    blockers.push({ code: 'UNAPPROVED_REVIEW', severity: 'CRITICAL',
+      message: unapprovedReviews.length + ' review(s) on this proposal have not been approved '
+        + 'for marketing use. A review NAC has not approved is not published.' });
+  }
+  if (unapprovedWork.length) {
+    blockers.push({ code: 'UNAPPROVED_PROJECT', severity: 'CRITICAL',
+      message: unapprovedWork.length + ' past installation(s) on this proposal have not been '
+        + 'approved. A customer\'s house is not marketing material until they have said so.' });
+  }
+
+  // ── THE ZONE SCHEDULE RECONCILES TOO ────────────────────────────────────
+  // Room count and outlet count are checked above. The zone schedule is the
+  // third rendering of the same design and has to agree with them.
+  const zoneRooms = new Set();
+  for (const z of rows(design?.zones?.zones)) {
+    for (const r of rows(z.rooms)) zoneRooms.add(trimmed(r));
+  }
+  if (zoneRooms.size && coverageRoomCount && zoneRooms.size !== coverageRoomCount) {   // eslint-disable-line
+    blockers.push({
+      code: 'ZONE_COUNT_DISAGREEMENT',
+      severity: 'CRITICAL',
+      message: 'The zone schedule covers ' + zoneRooms.size + ' room(s) against '
+        + coverageRoomCount + ' conditioned room(s) in the coverage table. The proposal '
+        + 'cannot describe the same house two ways.'
+    });
   }
 
   // ── NO FABRICATED CREDENTIALS ────────────────────────────────────────────
@@ -473,10 +510,36 @@ function rationaleSection(d, ctx) {
       + 'living space at ' + designKw.toFixed(1) + ' kW, based on the room sizes, ceiling height and '
       + 'the way the home is laid out.');
   }
-  if (n(u.capacityKw) !== null) {
-    points.push('The ' + trimmed(u.brandName) + ' ' + n(u.capacityKw) + ' kW system was selected to meet '
-      + 'that requirement with sensible headroom — large enough for a hot Queensland afternoon, without '
-      + 'being so oversized that it short-cycles and leaves the air feeling damp.');
+  // ── "SENSIBLE HEADROOM" IS A CLAIM, AND IT HAS TO BE TRUE ───────────────
+  //
+  // This sentence was printed unconditionally, including on the demonstration
+  // proposal where a 16 kW unit sat against a 22.5 kW calculated load. A
+  // system 6.5 kW SHORT was described to a customer as having headroom.
+  //
+  // The wording now follows the arithmetic. Above the load it may claim
+  // headroom; at or below it, it says what the machine actually is. The
+  // publish gate refuses an under-capacity proposal outright unless the
+  // reduced-capacity decision is on record — so this wording exists for the
+  // case where somebody HAS made that call and the customer must be told
+  // plainly what they are buying.
+  const capKw = n(u.capacityKw);
+  if (capKw !== null && designKw !== null) {
+    if (capKw >= designKw * 1.05) {
+      points.push('The ' + trimmed(u.brandName) + ' ' + capKw + ' kW system was selected to meet '
+        + 'that requirement with sensible headroom — large enough for a hot Queensland afternoon, '
+        + 'without being so oversized that it short-cycles and leaves the air feeling damp.');
+    } else if (capKw >= designKw) {
+      points.push('The ' + trimmed(u.brandName) + ' ' + capKw + ' kW system was selected to meet '
+        + 'that requirement. It is matched closely to the calculated load rather than oversized, '
+        + 'which keeps it running steadily instead of short-cycling.');
+    } else {
+      points.push('The ' + trimmed(u.brandName) + ' ' + capKw + ' kW system is sized to the home\'s '
+        + 'everyday cooling and heating needs rather than to the peak calculated load of '
+        + designKw.toFixed(1) + ' kW. On the hottest afternoons of the year it will run '
+        + 'continuously and may not hold the set temperature in every room at once.');
+    }
+  } else if (capKw !== null) {
+    points.push('The ' + trimmed(u.brandName) + ' ' + capKw + ' kW system was selected for this home.');
   }
   if (areas.length) {
     points.push('Conditioned areas: ' + listSentence(areas) + '.');
@@ -506,8 +569,17 @@ function listSentence(items) {
 function zonesSection(d) {
   const zs = rows(d.zones?.zones);
   if (!zs.length) return null;
+  const c = d.controller || {};
   const built = {
-    controller: trimmed(d.controller?.name),
+    // THE ACTUAL COMPATIBLE CONTROLLER, not "Brand Standard Controller" with
+    // nothing behind it. A zoned proposal names the part, its supplier code
+    // and what it costs — a component the customer is buying is a component
+    // somebody has priced.
+    controller: trimmed(c.name),
+    controllerSku: trimmed(c.supplierCode || c.sku) || null,
+    controllerMaxZones: n(c.maxZones),
+    controllerIncludedInSystem: c.includedInSystem === true,
+    controllerPriceIncGst: c.includedInSystem === true ? 0 : (n(c.price) ?? n(c.cost)),
     rows: zs.map((z, i) => {
       const name = friendlyLabel(z.name) || ('Zone ' + (i + 1));
       const roomNames = rows(z.rooms).map(friendlyLabel).filter(Boolean);
@@ -681,9 +753,6 @@ export function buildPresentation({
     };
   }
 
-  const gate = presentationGate(d, { trust, issuing,
-                                     termsAndConditions: content.termsAndConditions });
-  if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
   const evidence = inclusionEvidence(d, {
     trust, standardInclusions: content.standardInclusions || {}
   });
@@ -712,15 +781,33 @@ export function buildPresentation({
     suburb: suburbOf(job.siteAddress || customer.address),
     tags: content.selectionTags || []
   };
-  const reviews = selectReviews(content.reviews || [], {
+  // The SELECTED records are kept alongside the public ones. publicReview and
+  // publicInstallation deliberately strip everything internal — including the
+  // approval flag — because that is the shape a customer is allowed to see. So
+  // the gate has to be shown the sources, or it is checking objects that never
+  // carried the field it is asking about.
+  const selectedReviewSources = selectReviews(content.reviews || [], {
     ...selectionCtx,
     selectedIds: content.selectedReviewIds, excludedIds: content.excludedReviewIds
-  }).map(publicReview);
+  });
+  const reviews = selectedReviewSources.map(publicReview);
 
-  const installations = selectInstallations(content.installations || [], imagesById, {
+  const selectedInstallSources = selectInstallations(content.installations || [], imagesById, {
     ...selectionCtx,
     selectedIds: content.selectedInstallationIds, excludedIds: content.excludedInstallationIds
-  }).map(i => publicInstallation(i, imagesById));
+  });
+  const installations = selectedInstallSources.map(i => publicInstallation(i, imagesById));
+
+  // THE GATE RUNS HERE, once the reviews and installations that would actually
+  // be published are known. Asking before they are resolved would be asking
+  // about a different page from the one about to be built.
+  const gate = presentationGate(d, {
+    trust, issuing,
+    termsAndConditions: content.termsAndConditions,
+    customer, siteAddress: job.siteAddress || customer.address,
+    reviews: selectedReviewSources, installations: selectedInstallSources
+  });
+  if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
 
   const expired = !!expiresAt && Date.parse(expiresAt) < Date.now();
 
@@ -738,7 +825,8 @@ export function buildPresentation({
     /** Renders as a watermark on every surface. Never quietly true. */
     demonstration,
     demonstrationNote: demonstration
-      ? 'DEMONSTRATION — this is not a quote and no price on it is offered.' : null,
+      ? 'DEMONSTRATION — NOT FOR CUSTOMER ISSUE. This is not a quote and no price on it '
+        + 'is offered.' : null,
     brand: {
       name: trust.businessName || 'NAC Electrical Air & Refrigeration',
       abn: trust.abn, phone: trust.phone, email: trust.email, website: trust.website,
@@ -773,7 +861,20 @@ export function buildPresentation({
     _internal: { withheldUpgrades: withheld }
   };
 
-  return { ok: true, blockers: [], presentation };
+  // ── ONE IMMUTABLE REVISION, BOTH RENDERINGS ──────────────────────────────
+  // Nick: "HTML and PDF must use the same immutable quote revision." They are
+  // rendered from this one object, so they cannot differ by construction — and
+  // freezing it means nothing can quietly edit the revision, the price or the
+  // acceptance state between the two renders either.
+  return { ok: true, blockers: [], presentation: deepFreeze(presentation) };
+}
+
+/** Freeze an object and everything under it. Object.freeze is shallow. */
+function deepFreeze(obj) {
+  if (!obj || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
+  Object.freeze(obj);
+  for (const v of Object.values(obj)) deepFreeze(v);
+  return obj;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
