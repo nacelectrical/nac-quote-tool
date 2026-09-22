@@ -90,6 +90,7 @@ export class DesignerApp {
     this.settings = structuredClone(DEFAULT_SETTINGS);
     this.settingsOverride = {};
     this.materialRates = {};
+    this.rateVerifications = {};
     this.equipmentSpecs = {};
     this.nacBrands = null;
     this.nacControllers = null;
@@ -154,16 +155,18 @@ export class DesignerApp {
   }
 
   async loadConfig() {
-    const [override, rates, specs, brands, controllers] = await Promise.all([
+    const [override, rates, specs, rateVerifications, brands, controllers] = await Promise.all([
       Store.getJson(Store.SETTINGS_KEYS.hvacSettings, {}),
       Store.getJson(Store.SETTINGS_KEYS.materialRates, {}),
       Store.getJson(Store.SETTINGS_KEYS.equipmentSpecs, {}),
+      Store.getJson(Store.SETTINGS_KEYS.rateVerifications, {}),
       Store.loadNacBrands(),
       Store.loadNacControllers()
     ]);
     this.settingsOverride = override || {};
     this.settings = settingsWith(this.settingsOverride);
     this.materialRates = rates || {};
+    this.rateVerifications = rateVerifications || {};
     this.equipmentSpecs = specs || {};
     this.nacBrands = brands;
     this.nacControllers = controllers;
@@ -190,6 +193,7 @@ export class DesignerApp {
       controllers: this.controllers,
       controllerPricing: this.controllerPricing,
       nacRates: this.materialRates,
+      rateVerifications: this.rateVerifications,
       allowLowConfidence: !!this.design.allowLowConfidence
     });
     this.summary = designSummary(this.design);
@@ -2733,6 +2737,26 @@ export class DesignerApp {
     this.update();
   }
 
+  /**
+   * §5 — record WHO stood behind a material rate, and on what evidence.
+   *
+   * Separate from `materialRates`, which holds the figure. A number and the
+   * evidence for it are different things: the rate is what NAC pays, this is
+   * the supplier, the date it was quoted, and the person who checked it. A
+   * used line without a complete record here blocks the customer quote.
+   */
+  updateRateVerification(id, field, value) {
+    if (!this.rateVerifications) this.rateVerifications = {};
+    const rec = { ...(this.rateVerifications[id] || {}) };
+    if (value === null || value === '') delete rec[field];
+    else rec[field] = value;
+    // An empty record is removed rather than left as an empty object, so
+    // "nothing recorded" and "a record with nothing in it" stay the same thing.
+    if (Object.keys(rec).length) this.rateVerifications[id] = rec;
+    else delete this.rateVerifications[id];
+    this.update();
+  }
+
   setSpecModel(key) { this.specModelKey = key; this.render(); }
 
   updateSpec(specKey, fieldName, value) {
@@ -2750,6 +2774,7 @@ export class DesignerApp {
     const parts = [
       ['design settings', Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride],
       ['material rates', Store.SETTINGS_KEYS.materialRates, this.materialRates],
+      ['rate verifications', Store.SETTINGS_KEYS.rateVerifications, this.rateVerifications],
       ['equipment specs', Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs]
     ];
     const results = await Promise.all(parts.map(([, key, value]) => Store.setJson(key, value)));

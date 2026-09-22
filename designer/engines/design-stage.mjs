@@ -61,6 +61,10 @@ export const VERIFIED_SCALE_SOURCES = Object.freeze([
 export const ROOM_STATUS_PROVISIONAL = 'PROVISIONAL — SCALE REQUIRED';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
+const round = (v, dp = 2) => {
+  const f = Math.pow(10, dp);
+  return Math.round((Number(v) + Number.EPSILON) * f) / f;
+};
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const x = Number(v);
@@ -386,40 +390,94 @@ export function capabilities(design, opts = {}) {
  * configured it returns `null` and says so, rather than reaching for a number
  * that would look like a price.
  */
+/** Every element of a proposal allowance, in the order a screen shows them. */
+export const ALLOWANCE_FIELDS = Object.freeze([
+  { key: 'ductwork',      label: 'Standard ductwork',
+    help: 'Flex, rigid, take-offs, strap and tape for a typical job of this size.' },
+  { key: 'perOutlet',     label: 'Per supply outlet', per: 'outlet',
+    help: 'Added for each outlet. NAC\u2019s approved jobs run about $67 an outlet in flex, strap and tape.' },
+  { key: 'perZone',       label: 'Per motorised zone', per: 'zone',
+    help: 'Added for each motorised zone \u2014 the damper and its actuator.' },
+  { key: 'returns',       label: 'Return air',
+    help: 'Return grilles, filter, box and the run back to the fan coil.' },
+  { key: 'plenums',       label: 'Supply and return plenums',
+    help: 'The fabricated boxes on the fan coil, supply and return.' },
+  { key: 'electrical',    label: 'Electrical',
+    help: 'Isolator, power and interconnecting cable, and the connection.' },
+  { key: 'refrigeration', label: 'Refrigeration services',
+    help: 'Paircoil, insulation, gas, vacuum and commissioning.' },
+  { key: 'condensate',    label: 'Condensate',
+    help: 'Drain line, insulation, and a safety tray or pump.' },
+  { key: 'labour',        label: 'Installation labour',
+    help: 'Leave empty when labour is covered by the flat job fee.' },
+  { key: 'roofAccess',    label: 'Roof space and access',
+    help: 'Allowance for a tight, hot or awkward roof, or difficult site access.' },
+  { key: 'contingencyPct', label: 'Contingency', unit: '%', optional: true,
+    help: 'Optional. A percentage added on top of everything above.' }
+]);
+
 export function proposalAllowance({ outletCount = 0, zoneCount = 0, settings = null } = {}) {
   const a = settings?.commercial?.proposalAllowance || null;
   if (!a) {
-    return { ok: false, amount: null, basis: null,
+    return { ok: false, amount: null, basis: null, lines: [], missing: ALLOWANCE_FIELDS.slice(),
       reason: 'No proposal ductwork allowance is configured. Set one in HVAC Design Settings '
             + '→ Commercial before quoting at proposal stage.' };
   }
-  const flat = num(a.flat);
-  const perOutlet = num(a.perOutlet);
-  const perZone = num(a.perZone);
 
-  if (flat !== null && perOutlet === null && perZone === null) {
-    return { ok: true, amount: flat, basis: 'Standard installation allowance',
-             detail: 'A flat NAC allowance for ductwork and installation at proposal stage.',
-             provisional: true, reason: null };
+  // ── EVERY LINE, NAMED ────────────────────────────────────────────────────
+  // A single flat figure told an estimator nothing about what it covered, so
+  // nobody could tell whether a job needed more. Each element is entered and
+  // shown separately, and the total is their sum.
+  const lines = [];
+  const add = (key, label, value, qty = 1, per = null) => {
+    const v = num(value);
+    if (v === null || v === 0) return;
+    lines.push({ key, label, rate: v, quantity: qty, per,
+                 amount: round(v * qty, 2) });
+  };
+
+  // `flat` is the pre-breakdown single figure. It is the SAME element as
+  // `ductwork`, so it is read as one rather than added beside it — otherwise a
+  // job configured before the breakdown existed would be charged twice.
+  add('ductwork', 'Standard ductwork', a.ductwork ?? a.flat);
+  add('returns', 'Return air', a.returns);
+  add('plenums', 'Supply and return plenums', a.plenums);
+  add('electrical', 'Electrical', a.electrical);
+  add('refrigeration', 'Refrigeration services', a.refrigeration);
+  add('condensate', 'Condensate', a.condensate);
+  add('labour', 'Installation labour', a.labour);
+  add('roofAccess', 'Roof space and access', a.roofAccess);
+  add('perOutlet', 'Ductwork per outlet', a.perOutlet,
+      Math.max(0, Math.round(outletCount)), 'outlet');
+  add('perZone', 'Zone hardware per motorised zone', a.perZone,
+      Math.max(0, Math.round(zoneCount)), 'zone');
+
+  if (!lines.length) {
+    return { ok: false, amount: null, basis: null, lines: [],
+      missing: ALLOWANCE_FIELDS.slice(),
+      reason: 'No proposal ductwork allowance has been set. Enter the allowance elements in '
+            + 'HVAC Design Settings → Commercial before quoting at proposal stage.' };
   }
-  if (perOutlet === null && perZone === null && flat === null) {
-    // The block exists but every field is null, which is how it ships. Same
-    // answer as no block at all, and the same instruction: a blocker that does
-    // not name the screen leaves somebody hunting for it.
-    return { ok: false, amount: null, basis: null,
-      reason: 'No proposal ductwork allowance has been set. Enter a flat allowance, or a '
-            + 'per-outlet and per-zone rate, in HVAC Design Settings → Commercial before '
-            + 'quoting at proposal stage.' };
+
+  const subtotal = round(lines.reduce((t, l) => t + l.amount, 0), 2);
+  const pct = num(a.contingencyPct);
+  if (pct !== null && pct > 0) {
+    lines.push({ key: 'contingencyPct', label: 'Contingency (' + pct + '%)',
+      rate: pct, quantity: 1, amount: round(subtotal * pct / 100, 2) });
   }
-  const amount = (flat ?? 0) + (perOutlet ?? 0) * outletCount + (perZone ?? 0) * zoneCount;
-  const parts = [];
-  if (flat) parts.push('base ' + flat);
-  if (perOutlet) parts.push(outletCount + ' outlet(s) × ' + perOutlet);
-  if (perZone) parts.push(zoneCount + ' zone(s) × ' + perZone);
+  const amount = round(lines.reduce((t, l) => t + l.amount, 0), 2);
+  const scaled = lines.some(l => l.key === 'perOutlet' || l.key === 'perZone');
+
   return {
-    ok: true, amount, provisional: true,
-    basis: 'Provisional allowance from outlet and zone count',
-    detail: parts.join(' + ') + '. Replaced by measured quantities once the duct design is done.',
+    ok: true, amount, provisional: true, lines,
+    missing: ALLOWANCE_FIELDS.filter(f => num(a[f.key]) === null),
+    basis: scaled ? 'Provisional allowance from outlet and zone count'
+                  : 'Standard installation allowance',
+    detail: lines.map(l => l.per
+      ? l.quantity + ' ' + l.per + '(s) × ' + l.rate
+      : l.label.toLowerCase() + ' ' + l.rate).join(' + ')
+      + '. Replaced by measured quantities once the duct design is done.',
     reason: null
   };
 }
+

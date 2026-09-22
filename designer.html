@@ -196,6 +196,25 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 .settings-head h2{margin:0;font-size:16px;font-weight:800;color:var(--yellow)}
 .settings-head > div{display:flex;gap:8px;flex-wrap:wrap}
 .settings-nav{display:flex;gap:7px;flex-wrap:wrap}
+/* ── Proposal allowance rows ──────────────────────────────────────────────
+   Every element on its own line with its own explanation, because a single
+   figure told nobody what it covered. An unset required element is marked, so
+   the screen says what is missing rather than looking finished. */
+.alw{display:flex;flex-direction:column;gap:2px}
+.alw-row{display:grid;grid-template-columns:1fr 150px 78px;gap:12px;align-items:center;
+  padding:10px 12px;border-radius:8px;border:1px solid transparent}
+.alw-row:nth-child(odd){background:rgba(255,255,255,.02)}
+.alw-row.unset{border-color:rgba(245,194,0,.35);background:rgba(245,194,0,.06)}
+.alw-label strong{display:block;font-size:13px}
+.alw-help{display:block;font-size:11.5px;color:var(--ink-3);line-height:1.45;margin-top:2px}
+.alw-input input{width:100%}
+.alw-state{font-size:11px;font-weight:800;letter-spacing:.04em;text-align:right;
+  color:var(--ink-3)}
+.alw-row.unset .alw-state{color:var(--yellow)}
+@media(max-width:700px){
+  .alw-row{grid-template-columns:1fr 110px;grid-template-areas:'l l' 'i s'}
+  .alw-label{grid-area:l}.alw-input{grid-area:i}.alw-state{grid-area:s}
+}
 .settings-body{display:flex;flex-direction:column;gap:14px}
 
 /* ── Assistant ────────────────────────────────────────────────────────── */

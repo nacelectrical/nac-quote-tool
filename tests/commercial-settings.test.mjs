@@ -1,0 +1,185 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// NAC'S COMMERCIAL NUMBERS ARE NAC'S
+//
+// The demonstration proposal carried a 20% deposit, a 30-day validity and a
+// $4,200 ductwork allowance. I put all three there to make the page look
+// finished. None of them is NAC policy, and shipping them as defaults would
+// have made invented commercial terms look like company policy the first time
+// a real quote went out — on a document a customer signs.
+//
+// Nick: "Do not insert invented default dollar amounts." These tests hold that
+// line: nothing has a default, everything is editable, and an unconfigured
+// value blocks publication while saying exactly what is missing and where.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
+import { proposalAllowance, ALLOWANCE_FIELDS } from '../designer/engines/design-stage.mjs';
+import { commercialTermsStatus, TERMS_FIELDS } from '../designer/engines/commercial-terms.mjs';
+import { usedRateStatus, rateVerified, VERIFICATION_FIELDS }
+  from '../designer/engines/material-verification.mjs';
+
+// ── §3 the proposal allowance ───────────────────────────────────────────────
+test('no allowance amount ships as a default', () => {
+  const a = DEFAULT_SETTINGS.commercial.proposalAllowance;
+  for (const f of ALLOWANCE_FIELDS) {
+    assert.equal(a[f.key], null, f.key + ' shipped with an invented amount');
+  }
+  assert.equal(a.flat, null);
+});
+
+test('an unconfigured allowance blocks, and names the screen', () => {
+  const r = proposalAllowance({ outletCount: 10, zoneCount: 4, settings: DEFAULT_SETTINGS });
+  assert.equal(r.ok, false);
+  assert.equal(r.amount, null);
+  assert.match(r.reason, /HVAC Design Settings/);
+  // And it says what is missing, so the screen can point at it.
+  assert.ok(r.missing.length >= 10, 'the missing elements were not listed');
+});
+
+test('the allowance covers every element Nick named, each on its own line', () => {
+  const keys = ALLOWANCE_FIELDS.map(f => f.key);
+  for (const required of ['ductwork', 'perOutlet', 'perZone', 'returns', 'plenums',
+                          'electrical', 'refrigeration', 'condensate', 'labour',
+                          'roofAccess', 'contingencyPct']) {
+    assert.ok(keys.includes(required), 'no allowance element for ' + required);
+  }
+  // Every element has a plain-language explanation for the screen.
+  for (const f of ALLOWANCE_FIELDS) {
+    assert.ok(f.help && f.help.length > 20, f.key + ' has no explanation');
+    assert.ok(f.label && f.label.length > 2, f.key + ' has no label');
+  }
+
+  const settings = { commercial: { proposalAllowance: {
+    ductwork: 900, perOutlet: 67.16, perZone: 40.80, returns: 260, plenums: 244,
+    electrical: 300, refrigeration: 420, condensate: 160, labour: null,
+    roofAccess: 250, contingencyPct: 5 } } };
+  const r = proposalAllowance({ outletCount: 10, zoneCount: 6, settings });
+  assert.equal(r.ok, true);
+  // Each element is its own line, so an estimator can see what it covers.
+  const byKey = Object.fromEntries(r.lines.map(l => [l.key, l]));
+  assert.equal(byKey.perOutlet.quantity, 10);
+  assert.equal(byKey.perZone.quantity, 6);
+  assert.ok(byKey.contingencyPct.amount > 0);
+  // Labour was left empty and does not appear at all — not as a zero.
+  assert.ok(!byKey.labour);
+  const sub = 900 + 67.16 * 10 + 40.8 * 6 + 260 + 244 + 300 + 420 + 160 + 250;
+  assert.ok(Math.abs(r.amount - (sub * 1.05)) < 0.5, r.amount + ' vs ' + (sub * 1.05));
+});
+
+// ── §6 deposit, payment and validity ────────────────────────────────────────
+test('no deposit or validity ships as a default', () => {
+  const t = DEFAULT_SETTINGS.commercial.terms;
+  assert.equal(t.depositPercent, null, 'the demonstration 20% deposit shipped as policy');
+  assert.equal(t.depositAmount, null);
+  assert.equal(t.validityDays, null, 'the demonstration 30-day validity shipped as policy');
+  assert.equal(t.balanceDueEvent, '');
+  assert.equal(t.termsVersion, '');
+  assert.deepEqual(t.paymentMethods, []);
+  assert.equal(t.confirmed, false);
+});
+
+test('unset terms block, and say exactly what is missing', () => {
+  const s = commercialTermsStatus(DEFAULT_SETTINGS);
+  assert.equal(s.ok, false);
+  const keys = s.missing.map(m => m.key);
+  for (const k of ['deposit', 'balanceDueEvent', 'validityDays', 'paymentMethods',
+                   'termsVersion']) {
+    assert.ok(keys.includes(k), k + ' was not reported missing');
+  }
+  const f = s.failures.find(x => x.code === 'COMMERCIAL_TERMS_NOT_SET');
+  assert.ok(f);
+  assert.match(f.message, /HVAC Design Settings/);
+  // Every field has an explanation for the screen.
+  for (const t of TERMS_FIELDS) assert.ok(t.help && t.help.length > 20, t.key);
+});
+
+test('filling the terms in is not the same as confirming them', () => {
+  const filled = { commercial: { terms: {
+    depositPercent: 20, balanceDueEvent: 'completion and commissioning',
+    validityDays: 30, paymentMethods: ['Bank transfer'], termsVersion: 'v1',
+    confirmed: false } } };
+  const s = commercialTermsStatus(filled);
+  assert.equal(s.ok, false);
+  assert.equal(s.missing.length, 0, 'nothing is missing, yet it is still blocked');
+  assert.ok(s.failures.some(f => f.code === 'TERMS_NOT_CONFIRMED'));
+
+  const confirmed = { commercial: { terms: { ...filled.commercial.terms,
+    confirmed: true, confirmedBy: 'Nick Cahill', confirmedAt: '2026-09-22' } } };
+  const ok = commercialTermsStatus(confirmed);
+  assert.equal(ok.ok, true, JSON.stringify(ok.failures.map(f => f.code)));
+  assert.equal(ok.confirmed, true);
+});
+
+test('a deposit set two ways, or an impossible validity, is refused', () => {
+  const both = commercialTermsStatus({ commercial: { terms: {
+    depositPercent: 20, depositAmount: 1500, balanceDueEvent: 'x', validityDays: 30,
+    paymentMethods: ['Bank'], termsVersion: 'v1', confirmed: true, confirmedBy: 'N' } } });
+  assert.ok(both.failures.some(f => f.code === 'DEPOSIT_SET_TWO_WAYS'));
+
+  const expired = commercialTermsStatus({ commercial: { terms: {
+    depositPercent: 20, balanceDueEvent: 'x', validityDays: 0,
+    paymentMethods: ['Bank'], termsVersion: 'v1', confirmed: true, confirmedBy: 'N' } } });
+  assert.ok(expired.failures.some(f => f.code === 'VALIDITY_IMPLAUSIBLE'));
+});
+
+// ── §5 material rates requiring confirmation ────────────────────────────────
+test('a rate is verified only when somebody can say where it came from', () => {
+  assert.equal(rateVerified(null), false);
+  assert.equal(rateVerified({ cost: 95 }), false, 'a bare number counted as verified');
+  assert.equal(rateVerified({ cost: 95, supplier: 'MMEM', effectiveDate: '2026-09-01' }),
+    false, 'no verifier counted as verified');
+  assert.equal(rateVerified({ cost: 95, supplier: 'MMEM', effectiveDate: '2026-09-01',
+    verifiedBy: 'Nick Cahill', verifiedAt: '2026-09-15' }), true);
+
+  // Every column Nick asked for.
+  const keys = VERIFICATION_FIELDS.map(f => f.key);
+  for (const k of ['supplier', 'supplierDesc', 'effectiveDate', 'cost',
+                   'verifiedBy', 'verifiedAt']) {
+    assert.ok(keys.includes(k), 'no verification column for ' + k);
+  }
+});
+
+test('unverified rates on lines the job USES block the quote', () => {
+  const design = { bom: { items: [
+    { key: 'outdoor_feet', label: 'Outdoor unit mounting feet', unitCost: 95,
+      priced: true, priceSource: 'default_placeholder' },
+    { key: 'flex_duct', diameterMm: 250, label: 'Flex duct 250', unitCost: 32,
+      priced: true, priceSource: 'supplier_list', supplierCode: 'MMA2506' }
+  ] } };
+  const r = usedRateStatus({ design, verifications: {} });
+  assert.equal(r.ok, false);
+  // The placeholder needs confirming; the supplier-quoted line carries its own
+  // evidence and does not.
+  assert.deepEqual(r.needing.map(x => x.id), ['outdoor_feet']);
+  assert.match(r.failures[0].message, /HVAC Design Settings/);
+  assert.match(r.failures[0].message, /Outdoor unit mounting feet/);
+
+  const verified = usedRateStatus({ design, verifications: { outdoor_feet: {
+    supplier: 'MMEM', effectiveDate: '2026-09-01', cost: 95,
+    verifiedBy: 'Nick Cahill', verifiedAt: '2026-09-15' } } });
+  assert.equal(verified.ok, true, JSON.stringify(verified.needing.map(x => x.id)));
+});
+
+test('rates the job does not use never block it', () => {
+  // The catalogue carries every size. Blocking on sizes this house will never
+  // see is noise that teaches an estimator to ignore the check.
+  const design = { bom: { items: [
+    { key: 'flex_duct', diameterMm: 250, label: 'Flex 250', unitCost: 32,
+      priced: true, priceSource: 'supplier_list', supplierCode: 'MMA2506' }
+  ] } };
+  const r = usedRateStatus({ design, verifications: {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.rows.length, 1, 'it looked beyond the lines this job uses');
+});
+
+test('the proposal allowance is not a material rate and is never asked to be one', () => {
+  const design = { bom: { items: [
+    { key: 'proposal_ductwork_allowance', label: 'Standard installation allowance',
+      unitCost: 1093.24, priced: true, priceSource: 'NAC' }
+  ] } };
+  const r = usedRateStatus({ design, verifications: {} });
+  assert.equal(r.rows.length, 0, 'the allowance was treated as a supplier rate');
+  assert.equal(r.ok, true);
+});

@@ -25,6 +25,8 @@ export const SETTINGS_KEYS = {
   hvacSettings: 'nac_hvac_settings_v1',
   materialRates: 'nac_hvac_materials_v1',
   equipmentSpecs: 'nac_hvac_equipment_specs_v1',
+  /** WHO stood behind each material rate, and on what evidence. See §5. */
+  rateVerifications: 'nac_hvac_rate_verifications_v1',
   // The records the EXISTING quote tool already owns. Read only — the designer
   // never writes to these.
   brands: 'nac_brands_v4',

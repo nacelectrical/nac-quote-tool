@@ -129,6 +129,11 @@ export function quoteGate(design) {
   // there is a design to price. On 34 Kauri every one of them was false and a
   // sell price of $15,079.33 was printed anyway.
 
+  // ── EVERY RATE THIS JOB USES HAS BEEN VERIFIED ──────────────────────────
+  for (const f of (design?.rateVerification?.failures || [])) {
+    blockers.push({ code: f.code, severity: 'CRITICAL', message: f.message, ids: f.ids });
+  }
+
   // ── THE ACTIVE PRICING MODE HAS WHAT IT NEEDS ───────────────────────────
   for (const f of (design?.pricing?.failures || [])) {
     blockers.push({ code: f.code, severity: 'CRITICAL', message: f.message,

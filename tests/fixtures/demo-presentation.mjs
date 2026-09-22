@@ -339,7 +339,26 @@ export async function buildDemoDesign() {
         + 'year it will run continuously and may not hold the set temperature in every room '
         + 'at once.'
     };
-    out = runPipeline(next.design, { catalogue, settings, nacRates, btoRates });
+    // ── EVERY USED RATE, VERIFIED ──────────────────────────────────────────
+    // A rate typed into a box is still just a number. A verified rate says
+    // where it came from, when it was quoted and who checked it — so the demo
+    // has to carry that too, or it demonstrates a job that could not be sold.
+    // The supplier and dates here are demonstration data like everything else
+    // in this fixture, which is why it is watermarked and cannot be issued.
+    const priced = runPipeline(next.design, { catalogue, settings, nacRates, btoRates });
+    const rateVerifications = {};
+    for (const row of (priced.rateVerification?.rows || [])) {
+      rateVerifications[row.id] = {
+        supplier: 'Metal Mart / MMEM',
+        supplierDesc: row.label,
+        effectiveDate: '2026-09-01',
+        cost: row.currentRate ?? 0,
+        verifiedBy: 'Nick Cahill',
+        verifiedAt: '2026-09-15'
+      };
+    }
+    out = runPipeline(next.design, { catalogue, settings, nacRates, btoRates,
+                                     rateVerifications });
     if (!added && (out.quoteGate?.ok ?? false)) break;
   }
   return { out, nacRates, btoRates, catalogue, settings };

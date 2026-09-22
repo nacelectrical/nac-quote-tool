@@ -370,9 +370,50 @@ export const DEFAULT_SETTINGS = {
     // and/or `perZone` (with or without a base `flat`) for a provisional
     // allowance that scales with the job.
     proposalAllowance: {
-      flat: null,
-      perOutlet: null,
-      perZone: null
+      // ── PER JOB ──────────────────────────────────────────────────────
+      ductwork: null,        // standard ductwork allowance for a job
+      returns: null,         // return-air grilles, boxes and the run back
+      plenums: null,         // fabricated supply and return plenums
+      electrical: null,      // isolator, cabling, connection
+      refrigeration: null,   // paircoil, gas, vacuum, commissioning
+      condensate: null,      // drain, insulation, tray or pump
+      labour: null,          // installation labour, where it is not in the fee
+      roofAccess: null,      // roof space, access and site-difficulty allowance
+      // ── PER COUNT ────────────────────────────────────────────────────
+      perOutlet: null,       // added for each supply outlet
+      perZone: null,         // added for each motorised zone
+      // ── OPTIONAL ─────────────────────────────────────────────────────
+      contingencyPct: null,  // a percentage on top of everything above
+      // The original single-figure field. Still read, so a job configured
+      // before the breakdown existed keeps its number.
+      flat: null
+    },
+
+    // ── DEPOSIT, PAYMENT AND VALIDITY ───────────────────────────────────
+    //
+    // EVERY FIELD IS EMPTY ON PURPOSE. The demonstration proposal carried a
+    // 20% deposit and 30-day validity, and those were mine, not NAC's. Shipping
+    // them as defaults would have made an invented payment term look like
+    // company policy the first time a real quote went out.
+    //
+    // Until these are entered and confirmed, a customer quote is blocked.
+    terms: {
+      depositPercent: null,       // one or the other, not both
+      depositAmount: null,
+      /** [{ label, detail, percent }] — what is due and when. */
+      paymentStages: [],
+      /** The event that makes the balance payable. */
+      balanceDueEvent: '',
+      /** How long a quote stands. */
+      validityDays: null,
+      /** ['Bank transfer', 'Card', ...] */
+      paymentMethods: [],
+      /** Which version of NAC's terms this quote was issued under. */
+      termsVersion: '',
+      /** Set by Nick when the above is right. Nothing publishes until it is. */
+      confirmed: false,
+      confirmedBy: '',
+      confirmedAt: ''
     }
   },
 

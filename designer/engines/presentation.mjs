@@ -24,6 +24,7 @@
 
 import { quoteGate } from './quote-gate.mjs';
 import { looksUnfilled, customerStatus } from './customer-data.mjs';
+import { commercialTermsStatus } from './commercial-terms.mjs';
 export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
@@ -303,6 +304,17 @@ export function presentationGate(design, opts = {}) {
         + coverageRoomCount + ' conditioned room(s) in the coverage table. The proposal '
         + 'cannot describe the same house two ways.'
     });
+  }
+
+  // ── NAC'S OWN COMMERCIAL TERMS ──────────────────────────────────────────
+  // The demonstration proposal carried a 20% deposit and 30-day validity that
+  // I invented. A customer signs these.
+  if (issuing) {
+    const terms = commercialTermsStatus(opts.settings);
+    for (const f of terms.failures) {
+      blockers.push({ code: f.code, severity: 'CRITICAL', message: f.message,
+                      missing: f.missing || undefined });
+    }
   }
 
   // ── NO FABRICATED CREDENTIALS ────────────────────────────────────────────
@@ -805,7 +817,8 @@ export function buildPresentation({
     trust, issuing,
     termsAndConditions: content.termsAndConditions,
     customer, siteAddress: job.siteAddress || customer.address,
-    reviews: selectedReviewSources, installations: selectedInstallSources
+    reviews: selectedReviewSources, installations: selectedInstallSources,
+    settings
   });
   if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
 

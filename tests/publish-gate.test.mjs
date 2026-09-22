@@ -46,9 +46,22 @@ const GOOD_TRUST = { businessName: 'NAC Electrical Air & Refrigeration',
                      abn: '11 222 333 444', electricalLicence: '86420',
                      arcAuthorisation: 'AU13579' };
 
+
+/** NAC's commercial terms, entered and confirmed. Nothing issues without them. */
+const CONFIRMED_SETTINGS = { commercial: { terms: {
+  depositPercent: 20,
+  balanceDueEvent: 'completion and commissioning',
+  validityDays: 30,
+  paymentMethods: ['Bank transfer', 'Card'],
+  termsVersion: 'NAC-T&C-2026-01',
+  paymentStages: [{ label: 'Deposit on acceptance', detail: 'Confirms your booking' }],
+  confirmed: true, confirmedBy: 'Nick Cahill', confirmedAt: '2026-09-22T00:00:00Z'
+} } };
+
 function issue(over = {}) {
   return buildPresentation({
     design: GOOD_DESIGN, customer: GOOD_CUSTOMER, job: GOOD_JOB,
+    settings: CONFIRMED_SETTINGS,
     content: { trust: GOOD_TRUST, ...(over.content || {}) },
     proposalNumber: 'NAC-1', revision: 3, status: 'issued',
     ...over

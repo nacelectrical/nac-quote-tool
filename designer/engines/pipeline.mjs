@@ -51,6 +51,7 @@ import { ZONE_CONTROLLERS } from './catalogue.mjs';
 import { buildOutletRegister, checkOutletConsistency } from './outlet-register.mjs';
 import { nacScheduleData } from './nac-schedule.mjs';
 import { pricingRequirements } from './pricing-mode.mjs';
+import { usedRateStatus } from './material-verification.mjs';
 
 /**
  * The corridors the return-air flexes will occupy, as keep-out segments.
@@ -1135,6 +1136,19 @@ export function runPipeline(design, ctx = {}) {
   // equipment SELL price is not asked for at all — the supplier cost is what
   // the price is built from.
   d.pricing = pricingRequirements({ design: d, settings });
+
+  // ── WHICH RATES THIS JOB LEANS ON, AND WHO STOOD BEHIND THEM ─────────────
+  // Only the lines this job uses. The catalogue carries rates for sizes this
+  // house will never see, and blocking on those is noise that teaches an
+  // estimator to ignore the check.
+  d.rateVerification = usedRateStatus({
+    design: d, verifications: ctx.rateVerifications || d.rateVerifications || {}
+  });
+  if (!d.rateVerification.ok) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.rateVerification.failures.map(f => ({
+      code: f.code, severity: f.severity, area: 'pricing', message: f.message
+    }))];
+  }
   if (!d.pricing.ok) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.pricing.failures.map(f => ({
       code: f.code, severity: f.severity, area: 'pricing', message: f.message

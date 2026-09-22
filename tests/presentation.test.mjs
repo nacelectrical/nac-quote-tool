@@ -80,9 +80,22 @@ const ISSUABLE_JOB = {
   notes: 'INTERNAL: roof access is tight, allow extra time'
 };
 
+
+/** NAC's commercial terms, entered and confirmed. Nothing issues without them. */
+const CONFIRMED_SETTINGS = { commercial: { terms: {
+  depositPercent: 20,
+  balanceDueEvent: 'completion and commissioning',
+  validityDays: 30,
+  paymentMethods: ['Bank transfer', 'Card'],
+  termsVersion: 'NAC-T&C-2026-01',
+  paymentStages: [{ label: 'Deposit on acceptance', detail: 'Confirms your booking' }],
+  confirmed: true, confirmedBy: 'Nick Cahill', confirmedAt: '2026-09-22T00:00:00Z'
+} } };
+
 function build(over = {}) {
   return buildPresentation({
     design: DESIGN, customer: CUSTOMER, job: JOB, content: DEMO_CONTENT,
+    settings: CONFIRMED_SETTINGS,
     proposalNumber: 'NAC-2026-0184',
     preparedAt: '2026-09-22T00:00:00Z', expiresAt: '2026-10-22T00:00:00Z',
     // DRAFT, not issued: DEMO_CONTENT is demonstration data and the builder
