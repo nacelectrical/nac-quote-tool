@@ -122,8 +122,14 @@ say('the bullet character survived into the text layer', /\u2022/.test(itext),
 // of the same page, and a fixed allowance for a caption that wrapped to two
 // lines put the second one across the footer rule.
 const land = I.pages.find(p => p.w === 842);
+// The sheet's POSITION is not the test — where it lands depends on how many
+// warnings the job carries ahead of it, and a job with more blockers than
+// another legitimately pushes it later. What must be true is that the page it
+// does land on is captioned and footed like every other page.
+const landPageNo = /Page (\d+) of (\d+)/.exec(land.text);
 say('the floor-plan page has both a caption and a footer',
-  /Duct colour is SIZE/.test(land.text) && /Page 2 of/.test(land.text));
+  /Duct colour is SIZE/.test(land.text) && !!landPageNo,
+  landPageNo ? 'page ' + landPageNo[1] + ' of ' + landPageNo[2] : 'no page number on it');
 const capBottom = land.items.filter(i => /Duct colour is SIZE|follows diameter/.test(i.str))
   .reduce((n, i) => Math.min(n, i.y), Infinity);
 const footTop = land.items.filter(i => /nacelectrical\.com\.au|Page \d+ of/.test(i.str))
