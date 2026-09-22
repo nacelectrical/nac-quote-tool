@@ -45,12 +45,33 @@ const CUSTOMER = { name: 'Sample Customer', email: 'sample@example.invalid',
 const JOB = { siteAddress: '12 Example Street, Peregian Springs QLD 4573',
               notes: 'INTERNAL: roof access is tight, allow extra time' };
 
+// Content that is NOT demonstration data, for the handful of tests that need a
+// presentation in a real issued state. The credentials are fabricated in the
+// sense that NAC did not issue them — but they are shaped like real ones on
+// purpose, because a test of "what does an ACCEPTED page look like" has to get
+// past the gate that refuses placeholders.
+const ISSUABLE_CONTENT = {
+  ...DEMO_CONTENT,
+  demonstration: false,
+  trust: {
+    ...DEMO_CONTENT.trust,
+    abn: '11 222 333 444',
+    electricalLicence: '86420',
+    arcAuthorisation: 'AU13579',
+    email: 'quotes@nacelectrical.com.au'
+  }
+};
+
 function build(over = {}) {
   return buildPresentation({
     design: DESIGN, customer: CUSTOMER, job: JOB, content: DEMO_CONTENT,
     proposalNumber: 'NAC-2026-0184',
     preparedAt: '2026-09-22T00:00:00Z', expiresAt: '2026-10-22T00:00:00Z',
-    revision: 1, status: 'issued', heroImage: HERO, ...over
+    // DRAFT, not issued: DEMO_CONTENT is demonstration data and the builder
+    // refuses to issue, accept or send one. The refusal itself is tested
+    // below; everything else is tested against the preview, which renders the
+    // same page with a DEMONSTRATION watermark on it.
+    revision: 1, status: 'draft', heroImage: HERO, ...over
   });
 }
 const BUILT = build();
@@ -288,7 +309,7 @@ test('missing optional content leaves no blank section', () => {
     customer: { name: '' }, job: {},
     content: { trust: {}, reviews: [], installations: [], images: [], upgrades: [],
                paymentTerms: {}, aftercare: {}, standardInclusions: {} },
-    proposalNumber: '', revision: 1, status: 'issued'
+    proposalNumber: '', revision: 1, status: 'draft'
   });
   assert.equal(bare.ok, true);
   const b = bare.presentation;
@@ -552,15 +573,63 @@ test('a suburb is derived from an address without exposing the street', () => {
 });
 
 test('the acceptance state drives what the page offers', () => {
-  const accepted = build({ status: 'accepted' }).presentation;
+  const accepted = build({ status: 'accepted', content: ISSUABLE_CONTENT }).presentation;
   assert.equal(accepted.acceptance.accepted, true);
   assert.equal(accepted.acceptance.canAccept, false);
   const html = renderPresentationHtml(accepted);
   assert.ok(html.includes('Proposal accepted'));
   assert.ok(!html.includes('id="acceptForm"'));
 
-  const declined = build({ status: 'declined' }).presentation;
+  const declined = build({ status: 'declined', content: ISSUABLE_CONTENT }).presentation;
   assert.ok(renderPresentationHtml(declined).includes('Proposal declined'));
+});
+
+// ── DEMONSTRATION DATA ──────────────────────────────────────────────────────
+
+test('demonstration content can be previewed but never issued', () => {
+  const preview = build({ status: 'draft' });
+  assert.equal(preview.ok, true, 'a demonstration must still be reviewable');
+  assert.equal(preview.presentation.demonstration, true);
+  assert.match(preview.presentation.demonstrationNote, /DEMONSTRATION/);
+
+  // And it is on the page, on screen and on paper, not just in the data.
+  for (const [what, html] of [['web', renderPresentationHtml(preview.presentation)],
+                              ['print', presentationPrintHtml(preview.presentation)]]) {
+    assert.ok(html.includes('demo-banner'), what + ': no banner');
+    assert.ok(html.includes('demo-mark'), what + ': no watermark');
+    assert.ok(/DEMONSTRATION/.test(html), what + ': the word never appears');
+  }
+
+  for (const status of ['issued', 'accepted', 'sent']) {
+    const r = build({ status });
+    assert.equal(r.ok, false, status + ' was allowed on demonstration content');
+    assert.equal(r.presentation, null, status + ' still returned a page to render');
+    assert.ok(r.blockers.some(b => b.code === 'DEMONSTRATION_CONTENT'),
+      status + ': ' + JSON.stringify(r.blockers.map(b => b.code)));
+  }
+});
+
+test('a placeholder credential is never stated to a customer', () => {
+  // DEMO_TRUST carries TEST-ELEC-0000 and TEST-ARC-0000.
+  const r = buildPresentation({
+    design: DESIGN, customer: CUSTOMER, job: JOB,
+    content: { ...DEMO_CONTENT, demonstration: false },
+    proposalNumber: 'NAC-2026-0184', revision: 1, status: 'issued', heroImage: HERO
+  });
+  assert.equal(r.ok, false);
+  const codes = r.blockers.map(b => b.code);
+  assert.ok(codes.includes('PLACEHOLDER_CREDENTIAL'), JSON.stringify(codes));
+  // And it names the field rather than saying "something is wrong".
+  const b = r.blockers.find(x => x.code === 'PLACEHOLDER_CREDENTIAL');
+  assert.ok(['electricalLicence', 'arcAuthorisation'].includes(b.field), b.field);
+});
+
+test('NAC no longer claims it does not subcontract, or promises open-ended servicing', () => {
+  const points = DEMO_CONTENT.trust.points.join(' | ');
+  assert.ok(!/subcontract/i.test(points), points);
+  assert.ok(!/ongoing support and servicing/i.test(points), points);
+  // And nothing renders it either.
+  assert.ok(!/subcontract/i.test(HTML));
 });
 
 test('the rendered page escapes content rather than trusting it', () => {

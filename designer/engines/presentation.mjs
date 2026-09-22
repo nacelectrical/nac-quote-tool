@@ -106,9 +106,53 @@ export function formatDate(value) {
  * Nick: "If a technical or pricing gate blocks the quote, do not publish a
  * customer presentation."
  */
-export function presentationGate(design) {
+/**
+ * Values that mean "nobody has filled this in yet", whatever they look like.
+ *
+ * A licence field reading SAMPLE-12345 is not a licence. Neither is TEST, nor
+ * an address at example.invalid, nor the word PLACEHOLDER. Each of them renders
+ * as confidently as a real one, which is exactly the problem: a customer
+ * reading "Electrical contractor licence: SAMPLE-12345" has been shown a
+ * credential that does not exist.
+ */
+const NOT_A_REAL_VALUE = /\b(sample|test|placeholder|example|dummy|lorem|tbc|xxx+|n\/?a)\b|\.invalid\b|\bTODO\b/i;
+
+export function looksUnfilled(value) {
+  const v = trimmed(value);
+  if (!v) return false;                 // absent is handled separately
+  return NOT_A_REAL_VALUE.test(v);
+}
+
+/** The credentials a proposal states as fact. Each is checked, not assumed. */
+const CREDENTIAL_FIELDS = Object.freeze([
+  ['abn', 'ABN'],
+  ['electricalLicence', 'Electrical contractor licence'],
+  ['arcAuthorisation', 'ARC refrigeration authorisation'],
+  ['insuranceStatement', 'Insurance']
+]);
+
+/**
+ * May a customer presentation be produced from this design at all?
+ *
+ * The internal design sheet is always allowed out; a customer quote is not.
+ * This reuses the EXISTING quote gate rather than inventing a second opinion,
+ * and adds what a PRESENTATION needs beyond a priced bill: something to sell, a
+ * price to sell it at, a system that meets the load it was sized for, numbers
+ * that agree with one another across the page, and credentials that are real.
+ *
+ * Nick: "If a technical or pricing gate blocks the quote, do not publish a
+ * customer presentation."
+ *
+ * @param {object} design
+ * @param {object} opts
+ * @param {object} opts.trust    the normalised trust block, when one is known
+ * @param {boolean} opts.issuing true when this is a real proposal going to a
+ *   customer, rather than an internal preview. Some checks only bite on issue.
+ */
+export function presentationGate(design, opts = {}) {
   const gate = quoteGate(design);
   const blockers = [...(gate.blockers || [])];
+  const issuing = opts.issuing !== false;
 
   if (!design?.selectedUnit) {
     blockers.push({ code: 'NO_EQUIPMENT_SELECTED', severity: 'CRITICAL',
@@ -118,6 +162,118 @@ export function presentationGate(design) {
     blockers.push({ code: 'NO_SELL_PRICE', severity: 'CRITICAL',
       message: 'The quote has no sell price. A presentation cannot be issued without one.' });
   }
+
+  // ── A SYSTEM THAT CANNOT MEET THE LOAD IS NOT PRESENTED AS ADEQUATE ──────
+  // Internally this is a CRITICAL warning an estimator may knowingly override,
+  // and NAC really has installed a 16 kW machine against a 22.5 kW calculated
+  // load. What may never happen is a customer reading a proposal that calls it
+  // sized for their house.
+  // The one way past it is a RECORDED DECISION: who accepted the reduced
+  // capacity, when, and the words the customer is to be given about what the
+  // system will and will not do. A decision with a name on it is a decision;
+  // a flag is not, so all three are required.
+  const decision = design?.capacityDecision || null;
+  const decisionRecorded = !!(decision && trimmed(decision.acknowledgedBy)
+    && trimmed(decision.at) && trimmed(decision.customerWording));
+  const cap = n(design?.selectedUnit?.capacityKw);
+  const load = n(design?.systemLoad?.designKw);
+  if (cap !== null && load !== null && load > 0 && cap < load && !decisionRecorded) {
+    blockers.push({
+      code: 'CAPACITY_BELOW_CALCULATED_LOAD',
+      severity: 'CRITICAL',
+      message: 'The ' + cap + ' kW system is below the ' + (Math.round(load * 10) / 10)
+        + ' kW calculated load for this house. A proposal may not describe it as adequate. '
+        + 'Either select a system that meets the load, or record the reduced-capacity '
+        + 'decision and the wording the customer is to be given.',
+      capacityKw: cap, designKw: Math.round(load * 100) / 100
+    });
+  }
+
+  // ── THE PAGE MUST AGREE WITH ITSELF ──────────────────────────────────────
+  // Room count, outlet count and the coverage table are three renderings of one
+  // design. A customer who counts the rooms in the table and finds a different
+  // number from the one in the summary has caught NAC out on their own quote.
+  // A room on SPILL AIR is conditioned and deliberately has no outlet of its
+  // own — the Dungannon study is one. It is not a disagreement, so it is not
+  // counted on either side of this comparison.
+  const spill = new Set(rows(design?.spillRoomIds));
+  const conditioned = rows(design?.rooms)
+    .filter(r => r && r.conditioned && !spill.has(r.id));
+  const coverageRoomCount = conditioned.length;
+  const outletRowRooms = rows(design?.outlets?.rows).filter(o => !spill.has(o.roomId)).length;
+  const registerRooms = design?.outletConsistency?.roomCount ?? null;
+  // The register counts rooms that actually carry an outlet, which is the same
+  // population as `outletRowRooms` once spill rooms are out of both.
+
+  if (coverageRoomCount && outletRowRooms && coverageRoomCount !== outletRowRooms) {
+    blockers.push({
+      code: 'ROOM_COUNT_DISAGREEMENT',
+      severity: 'CRITICAL',
+      message: 'The coverage table would list ' + coverageRoomCount + ' conditioned room(s) '
+        + 'against ' + outletRowRooms + ' room(s) with outlets. The proposal cannot state two '
+        + 'different sizes for the same house.'
+    });
+  }
+  if (registerRooms !== null && outletRowRooms && registerRooms !== outletRowRooms) {
+    blockers.push({
+      code: 'OUTLET_COUNT_DISAGREEMENT',
+      severity: 'CRITICAL',
+      message: 'The outlet register covers ' + registerRooms + ' room(s) against '
+        + outletRowRooms + ' in the outlet schedule.'
+    });
+  }
+
+  // ── A ZONE CONTROLLER IS A REAL PART AT A REAL PRICE ─────────────────────
+  // A zoned proposal names a controller. Naming one NAC has not priced is
+  // selling a component nobody has costed.
+  const zoneCount = rows(design?.zones?.zones).filter(z => z && z.closable !== false).length;
+  if (zoneCount > 1) {
+    const c = design?.controller || null;
+    if (!c || !trimmed(c.name)) {
+      blockers.push({
+        code: 'NO_ZONE_CONTROLLER',
+        severity: 'CRITICAL',
+        message: 'This is a ' + zoneCount + '-zone system with no zone controller selected. '
+          + 'A zoned proposal has to name the controller the customer is buying.'
+      });
+    } else if (n(c.cost) === null && n(c.price) === null) {
+      blockers.push({
+        code: 'ZONE_CONTROLLER_NOT_PRICED',
+        severity: 'CRITICAL',
+        message: 'The zone controller "' + trimmed(c.name) + '" carries no price. '
+          + 'Enter its cost before this proposal is issued.'
+      });
+    }
+  }
+
+  // ── NO FABRICATED CREDENTIALS ────────────────────────────────────────────
+  if (issuing && opts.trust) {
+    const t = opts.trust;
+    for (const [key, label] of CREDENTIAL_FIELDS) {
+      if (looksUnfilled(t[key])) {
+        blockers.push({
+          code: 'PLACEHOLDER_CREDENTIAL',
+          severity: 'CRITICAL',
+          message: label + ' reads "' + trimmed(t[key]) + '", which is a placeholder rather '
+            + 'than a credential. A proposal may not state one NAC does not hold. Enter the '
+            + 'real value, or leave the field empty so it is omitted.',
+          field: key
+        });
+      }
+    }
+    for (const w of [t.workmanshipWarranty, t.manufacturerWarranty]) {
+      if (looksUnfilled(w)) {
+        blockers.push({
+          code: 'PLACEHOLDER_WARRANTY_CLAIM',
+          severity: 'CRITICAL',
+          message: 'A warranty statement reads "' + trimmed(w) + '". A warranty the customer '
+            + 'is told they have is a commitment NAC has to honour, so it comes from the '
+            + 'settings or it is not shown.'
+        });
+      }
+    }
+  }
+
   return { ok: blockers.length === 0, blockers, summary: gate.summary ?? null };
 }
 
@@ -402,16 +558,34 @@ function investmentSection(d, ctx) {
   };
 }
 
+/**
+ * What NAC commits to after handover.
+ *
+ * A WARRANTY AND A SERVICING PROMISE ARE COMMITMENTS, NOT COPY. Everything a
+ * customer is told here, NAC has to honour — so the two that carry a legal
+ * weight come from the TRUST SETTINGS, which are Nick's own and are blank until
+ * he fills them in. A placeholder that survived into either field is caught by
+ * the gate before this runs; anything that still reads as unfilled is dropped
+ * here rather than printed.
+ */
 function warrantySection(ctx) {
   const t = normaliseTrust(ctx.trust);
   const care = ctx.aftercare || {};
   const items = [];
-  if (t.manufacturerWarranty) items.push({ title: 'Equipment warranty', detail: t.manufacturerWarranty });
-  if (t.workmanshipWarranty) items.push({ title: 'NAC workmanship warranty', detail: t.workmanshipWarranty });
-  if (trimmed(care.commissioning)) items.push({ title: 'Commissioning', detail: trimmed(care.commissioning) });
-  if (trimmed(care.filterCare)) items.push({ title: 'Filter care', detail: trimmed(care.filterCare) });
-  if (trimmed(care.servicing)) items.push({ title: 'Servicing', detail: trimmed(care.servicing) });
-  if (trimmed(care.support)) items.push({ title: 'Support', detail: trimmed(care.support) });
+  const real = (v) => { const s = trimmed(v); return (s && !looksUnfilled(s)) ? s : ''; };
+
+  if (real(t.manufacturerWarranty)) {
+    items.push({ title: 'Equipment warranty', detail: real(t.manufacturerWarranty),
+                 source: 'settings' });
+  }
+  if (real(t.workmanshipWarranty)) {
+    items.push({ title: 'NAC workmanship warranty', detail: real(t.workmanshipWarranty),
+                 source: 'settings' });
+  }
+  if (real(care.commissioning)) items.push({ title: 'Commissioning', detail: real(care.commissioning) });
+  if (real(care.filterCare)) items.push({ title: 'Filter care', detail: real(care.filterCare) });
+  if (real(care.servicing)) items.push({ title: 'Servicing', detail: real(care.servicing) });
+  if (real(care.support)) items.push({ title: 'Support', detail: real(care.support) });
   return items.length ? { items } : null;
 }
 
@@ -433,10 +607,36 @@ export function buildPresentation({
   privacy = {}, intro = '', heroImage = null, productImage = null
 } = {}) {
   const d = design || {};
-  const gate = presentationGate(d);
-  if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
-
   const trust = normaliseTrust(content.trust || settings.trust);
+
+  // ── DEMONSTRATION DATA IS NEVER A PROPOSAL ───────────────────────────────
+  //
+  // Nick: "quote-proposal.pdf is DEMONSTRATION DATA ONLY and must never be
+  // publishable." The demo content library exists so the presentation can be
+  // designed, reviewed and tested against something that looks like a real
+  // quote. That is exactly what makes it dangerous: it looks like a real quote.
+  //
+  // So it is marked at the source, the mark travels into the presentation, and
+  // every surface that renders one renders the watermark. A demonstration may
+  // be previewed; it may not be issued, accepted or sent.
+  const demonstration = content.demonstration === true || settings.demonstration === true;
+  const issuing = status === 'issued' || status === 'accepted' || status === 'sent';
+  if (demonstration && issuing) {
+    return {
+      ok: false,
+      presentation: null,
+      blockers: [{
+        code: 'DEMONSTRATION_CONTENT',
+        severity: 'CRITICAL',
+        message: 'This presentation is built on DEMONSTRATION content. It can be previewed '
+          + 'and reviewed, but it may not be issued, accepted or sent to anybody. Point it at '
+          + 'the real content library first.'
+      }]
+    };
+  }
+
+  const gate = presentationGate(d, { trust, issuing });
+  if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
   const evidence = inclusionEvidence(d, {
     trust, standardInclusions: content.standardInclusions || {}
   });
@@ -488,6 +688,10 @@ export function buildPresentation({
     revision: revision ?? d.quoteRevision ?? 1,
     status,
     expired,
+    /** Renders as a watermark on every surface. Never quietly true. */
+    demonstration,
+    demonstrationNote: demonstration
+      ? 'DEMONSTRATION — this is not a quote and no price on it is offered.' : null,
     brand: {
       name: trust.businessName || 'NAC Electrical Air & Refrigeration',
       abn: trust.abn, phone: trust.phone, email: trust.email, website: trust.website,

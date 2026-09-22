@@ -182,9 +182,14 @@ export const DEMO_TRUST = {
     'Local residential ducted air conditioning specialists',
     'Quality equipment from established manufacturers',
     'Every system individually designed for the home, not sized off a rule of thumb',
-    'Installed by our own crew — we do not subcontract the install',
-    'Commissioned, balanced and demonstrated to you on handover',
-    'Ongoing support and servicing after the job is finished'
+    // "Installed by our own crew — we do not subcontract the install" was here.
+    // Nick had it removed: it is a claim about how NAC staffs a job, and it is
+    // not one the software can know or keep true. A trust point NAC cannot
+    // guarantee on every job is a promise waiting to be broken.
+    'Commissioned, balanced and demonstrated to you on handover'
+    // "Ongoing support and servicing after the job is finished" is also gone:
+    // a servicing commitment belongs in the trust settings, where Nick states
+    // the terms, not in a bullet that implies one without saying what it is.
   ]
 };
 
@@ -209,6 +214,17 @@ export const DEMO_UPGRADES = [
 ];
 
 export const DEMO_CONTENT = {
+  // ── THIS IS DEMONSTRATION DATA ────────────────────────────────────────────
+  //
+  // It exists so the presentation can be designed, reviewed and tested against
+  // something that reads like a real quote — which is exactly what makes it
+  // dangerous. The flag travels into every presentation built from it, renders
+  // as a watermark on every surface, and makes `buildPresentation` REFUSE to
+  // issue, accept or send. A demonstration may be looked at; it may never be a
+  // quote. Nick: "quote-proposal.pdf is DEMONSTRATION DATA ONLY and must never
+  // be publishable."
+  demonstration: true,
+
   // NAC's own logo, so the visual acceptance is judged against the real mark
   // rather than a grey box. It is NAC's asset, not customer data.
   logo: nacLogo(),
@@ -309,6 +325,20 @@ export async function buildDemoDesign() {
       }
     }
     const next = await buildApproved();
+    // ── THE REDUCED-CAPACITY DECISION, ON THE RECORD ────────────────────────
+    // Dungannon really was installed with a 16 kW machine against a 22.5 kW
+    // calculated load. The presentation gate refuses to describe that as
+    // adequate unless somebody has owned the decision and said what the
+    // customer is to be told — so here is that record, which is what the real
+    // job had behind it.
+    next.design.capacityDecision = {
+      acknowledgedBy: 'Nick Cahill',
+      at: '2026-09-01T00:00:00Z',
+      customerWording: 'This system is sized to the home\'s everyday cooling and heating '
+        + 'needs rather than to the peak calculated load. On the hottest afternoons of the '
+        + 'year it will run continuously and may not hold the set temperature in every room '
+        + 'at once.'
+    };
     out = runPipeline(next.design, { catalogue, settings, nacRates, btoRates });
     if (!added && (out.quoteGate?.ok ?? false)) break;
   }

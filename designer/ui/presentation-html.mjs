@@ -509,7 +509,17 @@ export function renderPresentationHtml(presentation, opts = {}) {
     // for the web build — so Cmd-P from the customer's own link produces the
     // same document the PDF does, not a screenshot of a web page.
     + '<style>' + CSS + (print ? PRINT_ONLY : '@media print{' + PRINT_ONLY + '}') + '</style>'
-    + '</head><body class="' + (print ? 'print' : 'web') + '">'
+    + '</head><body class="' + (print ? 'print' : 'web')
+        + (p.demonstration ? ' demo' : '') + '">'
+    // ── DEMONSTRATION ──────────────────────────────────────────────────────
+    // Across the page, on screen and on paper, and not dismissible. A page
+    // built from demonstration content reads exactly like a quote, which is
+    // the whole reason it has to say that it is not one. The banner is first
+    // in the document so it is the first thing a screen reader says too.
+    + when(!!p.demonstration,
+        '<div class="demo-banner" role="note">' + esc(p.demonstrationNote
+          || 'DEMONSTRATION — this is not a quote.') + '</div>'
+        + '<div class="demo-mark" aria-hidden="true">DEMONSTRATION</div>')
     + '<main class="doc">' + body + '</main>'
     + when(!print, stickyHtml(p))
     + when(!print, '<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" '
@@ -533,6 +543,22 @@ html{-webkit-text-size-adjust:100%}
 body{font-family:var(--sans);color:var(--body);background:var(--bg);line-height:1.62;
   font-size:17px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 .doc{max-width:1060px;margin:0 auto;padding-bottom:96px}
+
+/* ── DEMONSTRATION ───────────────────────────────────────────────────────
+   A page built from demonstration content looks exactly like a quote. The
+   banner sits above everything and is not dismissible; the diagonal mark sits
+   behind the content so a screenshot of any part of the page carries it too.
+   Both print. */
+.demo-banner{position:sticky;top:0;z-index:60;background:#8A1C1C;color:#fff;
+  font-weight:800;letter-spacing:.06em;text-transform:uppercase;font-size:13px;
+  text-align:center;padding:10px 16px;line-height:1.4;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.demo-mark{position:fixed;inset:0;z-index:0;pointer-events:none;
+  display:flex;align-items:center;justify-content:center;
+  font-size:min(18vw,190px);font-weight:900;letter-spacing:.08em;
+  color:rgba(138,28,28,.10);transform:rotate(-28deg);white-space:nowrap;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+body.demo .doc{position:relative;z-index:1}
 img{max-width:100%;display:block}
 h1,h2,h3{color:var(--ink);line-height:1.22;font-weight:700;letter-spacing:-.01em}
 p{margin:0 0 1em}p:last-child{margin-bottom:0}
@@ -802,6 +828,10 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 /** Print rules. Applied for mode:'print' and also inside @media print for web. */
 const PRINT_ONLY = `
 @page{size:A4;margin:14mm 12mm}
+/* The demonstration mark has to be on every printed page, not only the first,
+   so it is repeated per page rather than fixed to the viewport. */
+.demo-banner{position:static}
+.demo-mark{position:fixed;font-size:120pt}
 body{font-size:11pt;background:#fff}
 .doc{max-width:none;padding-bottom:0}
 .sec{padding:16pt 0;break-inside:auto}
