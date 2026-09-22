@@ -42,6 +42,10 @@ import { estimateStaticPressure } from './pressure.mjs';
 import { buildBillOfMaterials, applyBomEdits } from './bom.mjs';
 import { calculateLabour, calculateCommercials, toQuoteLineItems } from './costing.mjs';
 import { collectWarnings, summarise, resetDerivedWarnings } from './warnings.mjs';
+import { capabilities, DESIGN_STAGE, ROOM_STATUS_PROVISIONAL, proposalAllowance }
+  from './design-stage.mjs';
+import { checkSupplyGraph, checkPlenum, checkDuctSizes, pressureReadiness,
+         supplyMains, PRESSURE_STATUS } from './supply-graph.mjs';
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
 
 /**
@@ -148,7 +152,15 @@ export function runPipeline(design, ctx = {}) {
     const derived = deriveCalibrationFromRooms(d.rooms, {
       imageWidthPx: d.plan?.widthPx ?? null, imageHeightPx: d.plan?.heightPx ?? null });
     d.derivedCalibration = derived;
-    if (derived.ok) d.calibration = derived.calibration;
+    if (derived.ok) {
+      // A scale read off the plan's OWN printed dimensions, and cross-checked
+      // between at least two rooms that agree, is a verified scale — the
+      // drawing measured itself. It is recorded as such here so the scale gate
+      // downstream can tell it apart from a figure somebody declared.
+      d.calibration = { ...derived.calibration, verified: true,
+                        source: 'printed_dimension',
+                        derivedFromRooms: (derived.readings || []).map(r => r.label) };
+    }
   } else {
     d.derivedCalibration = null;
   }
@@ -159,6 +171,32 @@ export function runPipeline(design, ctx = {}) {
   if (d.calibration?.pixelsPerMm) {
     d.rooms = deriveBoundariesFromPrintedSizes(d.rooms, d.calibration, {
       imageWidthPx: d.plan?.widthPx ?? null, imageHeightPx: d.plan?.heightPx ?? null });
+  }
+
+  // ── 0a-ii. WHAT THIS JOB IS ALLOWED TO DO ────────────────────────────────
+  // Asked once, here, and consulted by every stage below. A job whose scale
+  // came off a car drawn on a marketing plan may not select equipment or carry
+  // a price; a job still at proposal stage may not invent ductwork. Both of
+  // those happened, and both produced confident numbers.
+  d.capabilities = capabilities(d);
+  d.designStage = d.capabilities.stage;
+
+  // A room measured through an unverified scale is not verified, whatever the
+  // measurement confidence says about the pixels.
+  if (!d.capabilities.mayMeasureRooms) {
+    // Only the rooms that actually lean on the scale. A room the estimator
+    // typed in, or one read off a printed dimension, is measured and stays
+    // measured whatever the pixels say.
+    const SCALED = new Set(['calibrated_geometry', 'estimated']);
+    // And only rooms that had otherwise CLEARED. This gate downgrades; it never
+    // promotes. A room sitting at Review or Needs a dimension has a problem the
+    // scale has nothing to do with, and it stays blocked on that problem.
+    const CLEARED = new Set(['Verified', 'Manual']);
+    d.rooms = d.rooms.map(r =>
+      r.conditioned && CLEARED.has(r.status) && SCALED.has(r.measurement?.source)
+        ? { ...r, status: ROOM_STATUS_PROVISIONAL, scaleUnverified: true,
+            areaProvisional: true, statusBeforeScaleGate: r.status }
+        : r);
   }
 
   // ── 0b. Which rooms share an air space (PART 20) ──────────────────────────
@@ -231,12 +269,28 @@ export function runPipeline(design, ctx = {}) {
     designAirflowLs: provisionalAirflowLs
   });
 
-  // Keep the estimator's explicit choice if they made one, otherwise recommend.
-  if (d.selectedUnitKey) {
+  // ── EQUIPMENT IS NOT SELECTED FROM AN UNVERIFIED SCALE ───────────────────
+  // The Kauri report said in its own words that equipment must not be selected
+  // because the scale moved the load from 14 to 18 kW, and then selected a
+  // 16 kW Daikin anyway — into the design summary, the bill of materials and
+  // the price. A block that the next paragraph ignores is not a block.
+  //
+  // The CANDIDATES stay: an estimator comparing options internally is exactly
+  // what the list is for. What does not happen is a selection.
+  if (!d.capabilities.maySelectEquipment) {
+    d.selectedUnit = null;
+    d.equipmentBlocked = {
+      blocked: true,
+      reason: d.capabilities.reasonFor('selectEquipment'),
+      candidatesForComparisonOnly: true
+    };
+  } else if (d.selectedUnitKey) {
+    d.equipmentBlocked = null;
     const [bId, mId] = d.selectedUnitKey.split(':');
     d.selectedUnit = d.equipmentSelection.allCandidates
       .find(c => c.brandId === bId && c.modelId === mId) || d.equipmentSelection.recommended[0] || null;
   } else {
+    d.equipmentBlocked = null;
     d.selectedUnit = d.equipmentSelection.recommended[0] || d.equipmentSelection.allCandidates[0] || null;
   }
   if (d.selectedUnit) {
@@ -452,15 +506,24 @@ export function runPipeline(design, ctx = {}) {
     d.autoRoute = { ...d.autoRoute, stale: true };
   }
 
-  d.network = buildDuctNetwork({
-    airflow: d.airflow,
-    outlets: d.outlets,
-    routesByRoomId: d.ductRoutes || {},
-    mainRoute: d.mainRoute,
-    diameterOverrides: d.ductDiameterOverrides || {},
-    extraFittingsByRoomId: d.extraFittings || {},
-    topology: d.autoRoute?.generated && !d.autoRoute.stale ? d.autoRoute : null
-  }, { settings });
+  // ── THE DUCT PIPELINE DOES NOT RUN BEFORE THE DESIGN STAGE ──────────────
+  // 34 Kauri was explicitly proposal-stage with duct design deferred, and this
+  // pipeline produced ten supply mains, a 4,660 mm plenum, BTOs, Y-pieces,
+  // duct diameters, a duct bill of materials and a static pressure anyway.
+  // None of it described anything, because there was nothing to describe.
+  d.network = d.capabilities.mayRouteDucts
+    ? buildDuctNetwork({
+        airflow: d.airflow,
+        outlets: d.outlets,
+        routesByRoomId: d.ductRoutes || {},
+        mainRoute: d.mainRoute,
+        diameterOverrides: d.ductDiameterOverrides || {},
+        extraFittingsByRoomId: d.extraFittings || {},
+        topology: d.autoRoute?.generated && !d.autoRoute.stale ? d.autoRoute : null
+      }, { settings })
+    : { sections: [], totalDuctLengthM: 0, routed: false,
+        notRouted: true,
+        reason: d.capabilities.reasonFor('routeDucts') };
 
   // How good is the routed layout, and how much of it rests on something
   // solid? Never 'install-ready' — the best it can say is that the geometry it
@@ -643,8 +706,14 @@ export function runPipeline(design, ctx = {}) {
   // plenum's ability to take the collars, velocity in every main, pressure
   // against VERIFIED available static, one area per main, the port limit, and
   // that the mains add up to the outlets.
-  const mainSections = (d.network?.sections || [])
-    .filter(s => !s.parentId && s.role !== 'return');
+  // A SUPPLY MAIN IS A DUCT LEAVING THE PLENUM.
+  //
+  // This used to read `!s.parentId && s.role !== 'return'` — a definition by
+  // absence. Whenever the router produced a flat list with no parent links,
+  // every duct in the job qualified: on 34 Kauri that made ten mains out of
+  // one, summed to 1921 L/s against 800 L/s of outlets by counting the same
+  // air three times, and put ten ø400 collars on a fabricated plenum.
+  const mainSections = supplyMains(d.network);
   d.supplySpigots = validateSupplySpigots({
     mains: mainSections.map(s => ({ key: s.mainKey, airflowLs: s.airflowLs,
                                     diameterMm: s.diameterMm,
@@ -676,9 +745,37 @@ export function runPipeline(design, ctx = {}) {
     ? { ...d.supplySpigots.plenum.arrangement,
         flangeWidthMm: d.supplySpigots.plenum.flangeWidthMm ?? null,
         flangeHeightMm: d.supplySpigots.plenum.flangeHeightMm ?? null,
-        collarCount: d.supplySpigots.plenum.collarCount ?? mainSections.length,
+        // THE COLLAR COUNT IS THE SPIGOT COUNT. It used to fall back to the
+        // number of ducts in the graph, which is how three selected ø400
+        // spigots became a plenum with ten collars on a 4,660 mm body.
+        collarCount: d.spigotSelection?.chosen?.count
+          ?? d.supplyMainConfig?.count
+          ?? d.supplySpigots.plenum.collarCount
+          ?? null,
         collarDiameterMm: d.supplySpigots.plenum.collarDiameterMm ?? null }
     : null;
+  // ── THE SUPPLY GRAPH HAS TO DESCRIBE A MACHINE THAT COULD EXIST ─────────
+  // Not a warning somebody acknowledges — an invariant. Nick: "Do not
+  // acknowledge or override this error. Correct the component graph."
+  const outletTotalLs = (d.outlets?.rows || []).reduce((n, r) => n + (r.airflowLs || 0), 0);
+  d.supplyGraphCheck = checkSupplyGraph({
+    network: d.network,
+    outletTotalLs,
+    spigotCount: d.spigotSelection?.chosen?.count
+      ?? d.supplyMainConfig?.count
+      ?? null
+  });
+  d.plenumCheck = checkPlenum(d.supplyPlenum,
+    d.spigotSelection?.chosen?.count ?? d.supplyMainConfig?.count ?? null);
+  d.ductSizeCheck = checkDuctSizes(d.network, d.designRules?.minimumSupplyBranchDiameterMm
+    ?? settings.duct.minimumSupplyBranchDiameterMm);
+
+  for (const check of [d.supplyGraphCheck, d.plenumCheck, d.ductSizeCheck]) {
+    if (check && !check.ok) {
+      d.routeWarnings = [...(d.routeWarnings || []), ...check.failures];
+    }
+  }
+
   if (d.supplySpigots) {
     d.routeWarnings = [...(d.routeWarnings || []),
       ...d.supplySpigots.blockers.map(b => ({ ...b, code: 'SUPPLY_' + b.code })),
@@ -714,10 +811,32 @@ export function runPipeline(design, ctx = {}) {
   d.placement = assessPlacement(d);
 
   // ── 9. Static pressure (PART 21) ──────────────────────────────────────────
-  d.pressure = estimateStaticPressure({
-    network: d.network, returnDesign: d.returnDesign, outlets: d.outlets,
-    selectedUnit: d.selectedUnit, zoneAnalysis: d.zones
-  }, { settings });
+  // A pressure drop over no duct is not a low pressure drop. The Kauri report
+  // chose an index run, totalled 107 Pa, compared it against 160 Pa available
+  // and called the check passed — with a total routed length of 0.0 m and every
+  // duct length zero.
+  d.pressureReadiness = pressureReadiness(d.network);
+  d.pressure = d.pressureReadiness.ok
+    ? Object.assign(estimateStaticPressure({
+        network: d.network, returnDesign: d.returnDesign, outlets: d.outlets,
+        selectedUnit: d.selectedUnit, zoneAnalysis: d.zones
+      }, { settings }), {
+        // Which of the metres in that figure were measured and which were the
+        // standard allowance. A number the estimator cannot trace is a number
+        // nobody should sign off.
+        basedOnAllowances: d.pressureReadiness.basedOnAllowances === true,
+        allowanceSections: d.pressureReadiness.allowanceSections || [],
+        allowanceNote: d.pressureReadiness.allowanceNote || null
+      })
+    : {
+        status: PRESSURE_STATUS.NOT_CALCULATED,
+        calculated: false,
+        reason: d.pressureReadiness.reason,
+        indexRun: null,
+        totalPa: null, estimatedPa: null,
+        availableStaticPa: null, marginPa: null,
+        disclaimer: PRESSURE_STATUS.NOT_CALCULATED + ' — ' + d.pressureReadiness.reason
+      };
 
   // Re-check the selected unit now that a real pressure figure exists.
   if (d.selectedUnit && d.pressure.estimatedRequirementPa) {

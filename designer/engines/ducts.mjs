@@ -355,15 +355,44 @@ export function buildDuctNetwork({ airflow, outlets, routesByRoomId = {}, mainRo
     // Final connections when a room is served by more than one outlet.
     if (qty > 1) {
       for (let i = 0; i < qty; i++) {
-        sections.push(sizeSection({
+        // ── A FINAL DROP IS NEVER ZERO METRES ────────────────────────────
+        //
+        // A final length is only ever typed in by the estimator, so in a
+        // freshly built network it is null — and a null length used to come
+        // through as 0.00 m. That is not "a short run", it is an outlet
+        // sitting on top of its own take-off, and it fed a pressure
+        // calculation as though the drop cost nothing.
+        //
+        // NAC's own layout rule already says the shortest run to an outlet is
+        // `settings.duct.minimumBtoToOutletDuctLengthM` (2.0 m as configured).
+        // So an unmeasured drop carries that as a STANDARD ALLOWANCE, marked
+        // as an allowance in `lengthSource` so a report can say which metres
+        // were measured and which were assumed. Typing a real length replaces
+        // it, and nothing downstream has to treat zero as a number.
+        const measuredMm = route?.finalLengthsMm?.[i] ?? null;
+        const allowanceMm = Math.round((settings.duct?.minimumBtoToOutletDuctLengthM ?? 2.0) * 1000);
+        const sized = sizeSection({
           id: 'final_' + row.roomId + '_' + (i + 1),
           role: 'final',
           destination: row.label + ' outlet ' + (i + 1),
           airflowLs: row.adjustedLs / qty,
-          lengthMm: route?.finalLengthsMm?.[i] ?? null,
+          lengthMm: measuredMm ?? allowanceMm,
           diameterMm: diameterOverrides['final_' + row.roomId + '_' + (i + 1)],
           fittings: ['bend_90']
-        }, opts));
+        }, opts);
+        if (measuredMm === null) {
+          sized.lengthSource = 'standard_allowance';
+          sized.lengthAllowanceM = round(mmToM(allowanceMm), 2);
+          sized.warnings = [...sized.warnings, {
+            code: 'FINAL_LENGTH_IS_AN_ALLOWANCE', severity: 'CHECK',
+            message: row.label + ' outlet ' + (i + 1) + ': no drop length measured — carrying the '
+              + 'standard ' + round(mmToM(allowanceMm), 1) + ' m allowance. Measure it to price '
+              + 'and pressure-check the real run.'
+          }];
+        } else {
+          sized.lengthSource = 'measured';
+        }
+        sections.push(sized);
       }
     }
   }

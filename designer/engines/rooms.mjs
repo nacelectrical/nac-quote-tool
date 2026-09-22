@@ -502,12 +502,23 @@ export function isAutoCleared(room) {
     AUTO_CLEAR_SOURCES.has(room.measurement?.source);
 }
 
+/**
+ * A room measured through a plan scale nobody has verified.
+ *
+ * It still has an area and still feeds a PROVISIONAL load — that band is the
+ * whole point of showing it — but it is not Verified and must never print as
+ * though it were. Nick: "Do not describe rooms measured from an unverified
+ * scale as `Verified`. Use `PROVISIONAL — SCALE REQUIRED`."
+ */
+export const STATUS_PROVISIONAL_SCALE = 'PROVISIONAL — SCALE REQUIRED';
+
 export function sizableRooms(rooms, { allowOverride = false } = {}) {
   return (rooms || []).filter(r =>
     isConditionedRoom(r) &&
     !r.measurement?.incomplete &&
     r.areaSqM > 0 &&
     (r.status === 'Verified' || r.status === 'Manual' ||
+     r.status === STATUS_PROVISIONAL_SCALE ||
      isAutoCleared(r) ||
      (allowOverride && r.overrideApproved)));
 }
@@ -517,6 +528,7 @@ export function blockedRooms(rooms) {
     isConditionedRoom(r) &&
     (r.measurement?.incomplete ||
      (r.status !== 'Verified' && r.status !== 'Manual' &&
+      r.status !== STATUS_PROVISIONAL_SCALE &&
       !isAutoCleared(r) && !r.overrideApproved)));
 }
 
