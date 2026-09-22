@@ -43,7 +43,8 @@ function ascii(bytes, at, len) {
  */
 export function scanMetadata(bytes) {
   const b = u8(bytes);
-  const markers = [];
+  const markers = [];   // privacy-bearing, and the reason `clean` goes false
+  const benign = [];    // present, harmless, reported so nobody wonders
   let format = null;
 
   const isJpeg = b.length > 3 && b[0] === 0xFF && b[1] === 0xD8;
@@ -51,7 +52,25 @@ export function scanMetadata(bytes) {
 
   if (isJpeg) {
     format = 'jpeg';
-    // Walk the JPEG segment chain. Every APPn and COM segment is metadata.
+    // ── WHICH APPLICATION SEGMENTS ACTUALLY MATTER ──────────────────────────
+    //
+    // Not every APPn block is metadata worth removing. Treating them all as
+    // suspect rejected every image a browser had just re-encoded, because
+    // Chromium writes an ICC colour profile into APP2 — that is colour
+    // management, not a camera serial number, and dropping it would make
+    // photographs render wrong on a wide-gamut screen.
+    //
+    // So the segments are classified:
+    //
+    //   PRIVACY   EXIF (camera, timestamp, GPS), XMP (creator, location),
+    //             IPTC (contact details), a JFIF thumbnail (a second picture),
+    //             MPF (embedded images), any camera-maker segment, and free
+    //             text comments.
+    //   BENIGN    the bare JFIF header, an ICC profile, the Adobe colour
+    //             transform marker.
+    //
+    // `clean` is about the first list only. The second is reported so a person
+    // looking at the result can see what IS there.
     let i = 2;
     while (i < b.length - 3) {
       if (b[i] !== 0xFF) { i++; continue; }
@@ -60,17 +79,39 @@ export function scanMetadata(bytes) {
       if (marker === 0xDA || marker === 0xD9) break;   // start of scan / end of image
       const len = (b[i + 2] << 8) | b[i + 3];
       if (len < 2) break;
-      if (marker >= 0xE0 && marker <= 0xEF) {
-        const tag = ascii(b, i + 4, 6).replace(/\0.*$/, '');
-        if (marker === 0xE1 && /^Exif/.test(tag)) markers.push('EXIF');
-        else if (marker === 0xE1 && /^http:\/\/ns\.adobe/.test(ascii(b, i + 4, 20))) markers.push('XMP');
-        else if (marker === 0xED) markers.push('IPTC');
-        else if (marker === 0xE0 && /^JFIF/.test(tag)) {
-          // A bare JFIF header carries density only. A JFIF *thumbnail* embeds
-          // a second picture, which is metadata worth reporting.
+      const tag = ascii(b, i + 4, 12);
+
+      if (marker === 0xE0) {
+        // APP0. A bare JFIF header carries pixel density. A JFIF THUMBNAIL
+        // embeds a whole second picture, which is worth removing.
+        if (/^JFIF\0/.test(tag)) {
           const tw = b[i + 16], th = b[i + 17];
-          if (tw > 0 && th > 0) markers.push('JFIF_THUMBNAIL');
-        } else if (marker !== 0xE0) markers.push('APP' + (marker - 0xE0));
+          if (tw > 0 && th > 0) markers.push('JFIF_THUMBNAIL'); else benign.push('JFIF');
+        } else if (/^JFXX/.test(tag)) {
+          markers.push('JFIF_THUMBNAIL');
+        } else {
+          benign.push('APP0');
+        }
+      } else if (marker === 0xE1) {
+        if (/^Exif/.test(tag)) markers.push('EXIF');
+        else if (/^http:\/\/ns\.adobe/.test(ascii(b, i + 4, 24))) markers.push('XMP');
+        else markers.push('APP1');
+      } else if (marker === 0xE2) {
+        if (/^ICC_PROFILE/.test(tag)) benign.push('ICC_PROFILE');
+        else if (/^MPF/.test(tag)) markers.push('MPF');       // embedded images
+        else markers.push('APP2');
+      } else if (marker === 0xED) {
+        markers.push('IPTC');
+      } else if (marker === 0xEE) {
+        // APP14 "Adobe" is the colour-transform flag. Removing it turns some
+        // CMYK and YCCK JPEGs inside out.
+        if (/^Adobe/.test(tag)) benign.push('ADOBE_COLOUR'); else markers.push('APP14');
+      } else if (marker >= 0xE3 && marker <= 0xEC) {
+        // APP3–APP12 are camera-maker territory: serial numbers, focus data,
+        // sometimes a second copy of the GPS block.
+        markers.push('APP' + (marker - 0xE0));
+      } else if (marker === 0xEF) {
+        markers.push('APP15');
       } else if (marker === 0xFE) {
         markers.push('COMMENT');
       }
@@ -85,6 +126,8 @@ export function scanMetadata(bytes) {
       if (type === 'IEND') break;
       if (['tEXt', 'iTXt', 'zTXt', 'eXIf'].includes(type)) {
         markers.push(type === 'eXIf' ? 'EXIF' : 'TEXT');
+      } else if (type === 'iCCP') {
+        benign.push('ICC_PROFILE');   // colour management, not a camera record
       }
       i += 12 + len;
       if (len > b.length) break;
@@ -94,7 +137,8 @@ export function scanMetadata(bytes) {
   // GPS tags live inside EXIF, so EXIF present means GPS may be present. The
   // scanner reports the container; the rule is that neither may survive.
   const unique = [...new Set(markers)];
-  return { clean: unique.length === 0, format, markers: unique };
+  return { clean: unique.length === 0, format, markers: unique,
+           benign: [...new Set(benign)] };
 }
 
 /** Convenience for the rule the content library enforces. */

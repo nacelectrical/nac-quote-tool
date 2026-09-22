@@ -104,6 +104,21 @@ module.exports = async function handler(req, res) {
           ? incoming.hiddenSections.map(s => str(s, 40)).filter(Boolean).slice(0, 20) : []
       };
 
+      // Images live in object storage now, so the document holds URLs. If it is
+      // still megabytes, something is putting pixels back into it, and every
+      // quote render would carry them.
+      const media = await import('../designer/engines/media-store.mjs');
+      const size = media.librarySizeReport(clean);
+      if (size.overLimit) {
+        return res.status(413).json({ error: 'library_too_large',
+          detail: 'The content library is ' + Math.round(size.bytes / 1024) + ' KB, over the '
+            + Math.round(size.limit / 1024) + ' KB limit. '
+            + (size.legacyCount
+                ? size.legacyCount + ' image(s) are still stored inline — use "Move inline '
+                  + 'images into storage" on the Product images tab.'
+                : 'Remove some content and try again.') });
+      }
+
       const r = await supa('/rest/v1/nac_presentation_content', {
         method: 'POST', key: KEY,
         prefer: 'resolution=merge-duplicates,return=minimal',

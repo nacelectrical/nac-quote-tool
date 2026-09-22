@@ -112,6 +112,8 @@ import {
   PERMISSION, CONSENT, REVIEW_SOURCES, INCLUSION_CATALOGUE
 } from '/designer/engines/presentation-content.mjs';
 import { makeDerivatives, scanMetadata } from '/designer/engines/image-privacy.mjs';
+import { LIMITS, legacyAssets, librarySizeReport, isDataUriRef }
+  from '/designer/engines/media-store.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 
@@ -463,7 +465,7 @@ function drawImages() {
         el('span', { class: 'pill ' + (a.exifStripped && a.gpsRemoved ? 'ok' : 'no'),
           text: a.exifStripped && a.gpsRemoved ? 'Metadata removed' : 'Metadata present' }),
         el('span', { class: 'spacer' }),
-        el('button', { class: 'btn danger', text: 'Delete', onclick: () => del(C.images, i) })
+        el('button', { class: 'btn danger', text: 'Delete', onclick: () => deleteAsset(i) })
       ]),
       field('Alt text (required — read aloud by screen readers)', a.alt, x => a.alt = x),
       el('div', { class: 'grid2' }, [
@@ -475,7 +477,15 @@ function drawImages() {
       tagsField('Tags', a.tags, x => a.tags = x),
       el('div', { class: 'tools' }, [toggle('Approved for marketing', a.approved, x => a.approved = x)]),
       el('div', { class: 'note', text: 'Sizes stored: '
-        + (a.derivatives || []).map(d => d.width + 'px').join(', ') }),
+        + (a.derivatives || []).map(d => d.width + 'px').join(', ')
+        + ((a.derivatives || []).some(d => isDataUriRef(d.ref))
+            ? ' — still inside the library document; use "Move into storage" below.'
+            : ' — in object storage')
+        + (a.original
+            ? (a.original.retained === false
+                ? '. Original too large to retain: ' + (a.original.note || '')
+                : '. Original kept privately.')
+            : '.') }),
       v.ok ? null : el('div', { class: 'why', text: 'Withheld: ' + v.reasons.join(' ') })
     ]));
   });
@@ -483,51 +493,184 @@ function drawImages() {
     'Uploads are re-encoded into web sizes. The re-encode is what strips EXIF and GPS — the '
   + 'original is never served to a customer. Each copy is scanned afterwards and the result is '
   + 'shown above, so "metadata removed" is a measurement rather than an assumption.',
-    [list, uploadButton('+ Upload image', async (asset) => {
-      C.images.push(asset); markDirty(); drawAll();
-    })]);
+    [storageNotice(), list,
+     uploadButton('+ Upload images', async (asset) => { C.images.push(asset); },
+       { multiple: true }),
+     el('div', { class: 'tools' }, [
+       el('button', { class: 'btn', text: 'Move inline images into storage',
+         onclick: migrateLegacy })
+     ])]);
+}
+
+/** Whether storage is actually reachable, checked before anyone uploads. */
+let storageState = null;
+function storageNotice() {
+  const size = librarySizeReport(C);
+  const bits = [];
+  if (storageState === null) bits.push('Checking image storage…');
+  else if (!storageState.configured) {
+    bits.push('IMAGE STORAGE IS NOT CONFIGURED on this deployment — uploads will fail. '
+      + 'Set SUPABASE_SERVICE_KEY in Vercel and apply designer/quote-media-buckets.sql.');
+  } else {
+    bits.push('Storage ready (' + storageState.keyVariable + ', bucket '
+      + storageState.buckets.public + ').');
+  }
+  bits.push('Library document ' + (size.bytes / 1024).toFixed(0) + ' KB of '
+    + (size.limit / 1024 / 1024).toFixed(0) + ' MB'
+    + (size.legacyCount ? '; ' + size.legacyCount + ' image(s) still stored inline ('
+        + (size.inlineBytes / 1024).toFixed(0) + ' KB).' : '.'));
+  const row = el('div', { class: 'row' + (storageState && !storageState.configured ? ' blocked' : '') },
+    [el('div', { class: 'note', text: bits.join(' ') })]);
+  return row;
+}
+async function checkStorage() {
+  try {
+    const r = await fetch('/api/presentation-media', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'status' }) });
+    storageState = await r.json();
+  } catch { storageState = { configured: false, keyVariable: null, buckets: {} }; }
+  drawImages();
 }
 
 function uploadButton(label, onAsset, opts = {}) {
   const input = el('input', { type: 'file', accept: 'image/*' });
+  if (opts.multiple) input.multiple = true;
   input.style.display = 'none';
   input.addEventListener('change', async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    setStatus('Processing image…');
-    try {
-      const made = await makeDerivatives(file, opts);
-      const derivatives = [];
-      let clean = true;
-      for (const d of made.derivatives) {
-        const buf = new Uint8Array(await d.blob.arrayBuffer());
-        if (!scanMetadata(buf).clean) clean = false;
-        derivatives.push({ ref: await toDataUrl(d.blob), width: d.width, height: d.height,
-          format: d.format, bytes: d.bytes });
-      }
-      const asset = normaliseImageAsset({
-        id: uid('img'), alt: '', approved: false, derivatives,
-        original: { ref: file.name, width: made.width, height: made.height, bytes: file.size },
-        exifStripped: clean, gpsRemoved: clean
-      });
-      await onAsset(asset);
-      setStatus(clean ? 'Image added — metadata removed. Add alt text and approve it.'
-                      : 'Image added, but metadata survived the re-encode. It cannot be published.',
-                clean ? 'ok' : 'err');
-    } catch {
-      setStatus('Could not read that image.', 'err');
-    }
+    const files = [...(input.files || [])];
     input.value = '';
+    if (!files.length) return;
+    for (let i = 0; i < files.length; i++) {
+      setStatus('Processing ' + (files.length > 1 ? (i + 1) + ' of ' + files.length + ' — ' : '')
+        + files[i].name + '…');
+      const asset = await uploadOne(files[i], opts);
+      if (!asset) return;                    // uploadOne has already explained
+      await onAsset(asset);
+    }
+    markDirty(); drawAll();
+    setStatus(files.length > 1
+      ? files.length + ' images uploaded. Add alt text and approve them.'
+      : 'Image uploaded — metadata removed. Add alt text and approve it.', 'ok');
   });
   return el('div', {}, [input,
     el('button', { class: 'btn primary', text: label, onclick: () => input.click() })]);
 }
-function toDataUrl(blob) {
+
+/**
+ * One image, all the way to object storage.
+ *
+ * The derivatives are made here because a canvas re-encode is what strips EXIF
+ * and GPS, and doing it in the browser means the metadata never leaves the
+ * machine it was taken on. The ORIGINAL does travel — it goes to the private
+ * bucket, intact, and is never served to anybody.
+ */
+async function uploadOne(file, opts = {}) {
+  try {
+    const made = await makeDerivatives(file, opts);
+
+    const derivatives = [];
+    for (const d of made.derivatives) {
+      const buf = new Uint8Array(await d.blob.arrayBuffer());
+      // A courtesy check so a problem is named before a round trip. The record
+      // is built from the SERVER's scan, not this one.
+      if (!scanMetadata(buf).clean) {
+        setStatus('That image still carried metadata after re-encoding and was not '
+          + 'uploaded. Try exporting it from Photos first.', 'err');
+        return null;
+      }
+      derivatives.push({ width: d.width, height: d.height,
+        contentType: 'image/' + (d.format === 'jpg' ? 'jpeg' : d.format),
+        data: await toBase64(d.blob) });
+    }
+
+    // Keep the original unless it is enormous, in which case the largest web
+    // copy becomes the highest resolution on file and the record says so.
+    let original = null;
+    if (file.size <= LIMITS.originalBytes) {
+      original = { contentType: file.type || 'image/jpeg', width: made.width,
+                   height: made.height, data: await toBase64(file) };
+    } else {
+      original = { tooLarge: true, width: made.width, height: made.height, bytes: file.size };
+    }
+
+    setStatus('Uploading ' + file.name + '…');
+    const r = await fetch('/api/presentation-media', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'upload', derivatives, original })
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.asset) {
+      setStatus((j && (j.detail || j.error)) || 'Upload failed. Nothing was stored.', 'err');
+      return null;
+    }
+    return normaliseImageAsset(j.asset);
+  } catch (e) {
+    setStatus('Could not read that image.', 'err');
+    return null;
+  }
+}
+
+function toBase64(blob) {
   return new Promise((res, rej) => {
     const r = new FileReader();
-    r.onload = () => res(r.result); r.onerror = rej;
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
     r.readAsDataURL(blob);
   });
+}
+
+/** Remove an asset's objects from storage, then the record. */
+async function deleteAsset(i) {
+  const asset = C.images[i];
+  if (!confirm('Delete this image? Its stored copies are removed too.')) return;
+  if (asset && !(asset.derivatives || []).some(d => isDataUriRef(d.ref))) {
+    try {
+      await fetch('/api/presentation-media', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', asset })
+      });
+    } catch { /* the record goes either way; an orphan object is recoverable */ }
+  }
+  C.images.splice(i, 1);
+  markDirty(); drawAll();
+}
+
+/**
+ * Move images that still live inside the library document into storage.
+ *
+ * The old records keep working while this is pending — a data URI is a valid
+ * image source — so nothing is broken in the meantime. Approval, alt text,
+ * tags and focal point carry across; only where the pixels live changes.
+ */
+async function migrateLegacy() {
+  const legacy = legacyAssets(C.images);
+  if (!legacy.length) { setStatus('Nothing to move — every image is already in storage.', 'ok'); return; }
+  if (!confirm('Move ' + legacy.length + ' image(s) into object storage?')) return;
+
+  let moved = 0;
+  for (const old of legacy) {
+    const biggest = [...(old.derivatives || [])]
+      .filter(d => isDataUriRef(d.ref)).sort((a, b) => b.width - a.width)[0];
+    if (!biggest) continue;
+    setStatus('Moving ' + (old.alt || old.id) + '…');
+    try {
+      const blob = await (await fetch(biggest.ref)).blob();
+      const asset = await uploadOne(new File([blob], (old.id || 'image') + '.jpg',
+        { type: blob.type || 'image/jpeg' }));
+      if (!asset) continue;
+      const at = C.images.findIndex(x => x.id === old.id);
+      if (at >= 0) {
+        // Same picture, same decisions — only the storage changed.
+        C.images[at] = normaliseImageAsset({ ...asset, id: old.id, alt: old.alt,
+          tags: old.tags, focalPoint: old.focalPoint, approved: old.approved });
+      }
+      moved++;
+    } catch { /* reported in the summary below */ }
+  }
+  markDirty(); drawAll();
+  setStatus(moved + ' of ' + legacy.length + ' moved into storage. Save the library to keep it.',
+    moved === legacy.length ? 'ok' : 'err');
 }
 
 function drawInclusions() {
@@ -756,7 +899,7 @@ const PREVIEW_DESIGN = {
 };
 
 showTab('branding');
-load();
+load().then(checkStorage);
 </script>
 </body>
 </html>

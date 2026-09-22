@@ -249,6 +249,21 @@ export function publicInstallation(install, imagesById = {}) {
 // derivative therefore cannot leak metadata, because there is nothing to serve.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * An image source we are willing to store.
+ *
+ * https for object storage, or an inline data image for the records that have
+ * not been migrated yet. Anything else — an http host, a protocol-relative URL,
+ * a javascript: string — is dropped here rather than relied on being caught by
+ * the renderer, because the library is also read by the PDF and by the admin
+ * preview.
+ */
+export function allowedRef(ref) {
+  const s = trimmed(ref);
+  if (/^data:image\/(png|jpe?g|webp|avif|gif);base64,/i.test(s)) return true;
+  return /^https:\/\/[^\s"'<>]+$/i.test(s);
+}
+
 export function normaliseImageAsset(input = {}) {
   const derivatives = list(input.derivatives).map(d => ({
     ref: trimmed(d.ref),
@@ -256,7 +271,7 @@ export function normaliseImageAsset(input = {}) {
     height: num(d.height),
     format: trimmed(d.format) || 'jpeg',
     bytes: num(d.bytes)
-  })).filter(d => d.ref && d.width);
+  })).filter(d => d.ref && d.width && allowedRef(d.ref));
   derivatives.sort((a, b) => a.width - b.width);
   return {
     kind: 'image',
@@ -269,11 +284,20 @@ export function normaliseImageAsset(input = {}) {
     approved: bool(input.approved),
     tags: tags(input.tags),
     // Private. Never rendered into a customer page.
+    //
+    // `bucket` and `path` are carried through, not dropped: they are the only
+    // handle on the stored original, and without them deleting an image would
+    // remove the record and leave the customer's photograph sitting in the
+    // bucket with nothing pointing at it.
     original: input.original ? {
-      ref: trimmed(input.original.ref),
+      bucket: trimmed(input.original.bucket) || null,
+      path: trimmed(input.original.path) || null,
+      ref: trimmed(input.original.ref) || null,
       width: num(input.original.width),
       height: num(input.original.height),
-      bytes: num(input.original.bytes)
+      bytes: num(input.original.bytes),
+      retained: input.original.retained !== false,
+      note: trimmed(input.original.note) || null
     } : null,
     derivatives,
     exifStripped: bool(input.exifStripped),
