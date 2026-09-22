@@ -123,6 +123,34 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
+  // ── The proposal ductwork allowance ────────────────────────────────────────
+  //
+  // ONE LINE, and it says on its face that it is an allowance. Not a length of
+  // flex, not a count of fittings, not a plenum — those do not exist yet and
+  // inventing them is what put a 4,660 mm plenum on a job nobody had routed.
+  //
+  // It is a real cost line, so the fee, the GST and the margin all behave
+  // exactly as they do on a fully designed job. What changes is that the
+  // customer document has to say the ductwork is an allowance, and the estimator
+  // has to see it replaced by measured quantities once the design is done.
+  const allowance = design.proposalAllowance;
+  if (allowance && allowance.ok && Number(allowance.amount) > 0) {
+    items.push({
+      key: 'proposal_ductwork_allowance',
+      label: allowance.basis + ' — PROVISIONAL ALLOWANCE',
+      unit: 'allowance', quantity: 1,
+      unitCost: round(Number(allowance.amount), 2),
+      totalCost: round(Number(allowance.amount), 2),
+      priceSource: PRICE_SOURCE.NAC,
+      priced: true,
+      category: 'ductwork',
+      /** Read by the report and the proposal so neither can present it as measured. */
+      provisional: true,
+      allowanceBasis: allowance.detail || null,
+      replacedBy: 'Measured duct quantities, once the duct design is run.'
+    });
+  }
+
   // Which duct feeds each room, for the outlet neck sizes further down.
   const branchDiameterByRoom = {};
   for (const sec of (design.network?.sections || [])) {

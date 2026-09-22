@@ -325,6 +325,30 @@ export function capabilities(design, opts = {}) {
         ? 'A fixed price cannot be built on areas taken off an unverified plan. ' + areas.reason
         : 'A fixed price needs a completed duct design. Use the proposal allowance instead.');
 
+  // ── A PROPOSAL PRICE IS NOT A FIXED PRICE ────────────────────────────────
+  //
+  // Saying "use the proposal allowance instead" and then providing no way to
+  // do it is not an answer. A job at proposal stage — rooms measured, load
+  // known, equipment selectable, ductwork not yet designed — is a normal thing
+  // to quote, and NAC quotes it the way NAC prices everything: what the job
+  // costs, plus the fee. The only difference is that the ductwork line is a
+  // declared allowance rather than a measured quantity, and the document says
+  // so on its face.
+  //
+  // It still needs verified AREAS, because the allowance sits on top of an
+  // equipment cost and an equipment cost sits on a load. And it needs NAC to
+  // have SET an allowance: without one there is no number, and the software
+  // does not invent one.
+  const allowance = proposalAllowance({
+    outletCount: opts.outletCount ?? 0,
+    zoneCount: opts.zoneCount ?? 0,
+    settings: opts.settings || null
+  });
+  const mayQuoteProposal = (areas.verified && allowance.ok)
+    || deny('quoteProposal', !areas.verified
+        ? 'A proposal price rests on the room areas like any other. ' + areas.reason
+        : allowance.reason);
+
   return {
     stage,
     scale,
@@ -335,6 +359,9 @@ export function capabilities(design, opts = {}) {
     mayCalculatePressure: mayRouteDucts,
     mayBuildDuctBom: mayRouteDucts,
     mayPrice,
+    /** May carry an ALLOWANCE-based proposal price. Never a fixed price. */
+    mayQuoteProposal,
+    proposalAllowance: allowance,
     blocks,
     reasonFor(key) {
       const b = blocks.find(x => x.key === key);

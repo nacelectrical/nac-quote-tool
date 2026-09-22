@@ -342,7 +342,7 @@ function investmentHtml(p) {
   // Two columns on a wide screen: the breakdown on the left, the headline total
   // and the payment terms on the right. A single 560px column left the right
   // half of a desktop page empty, which read as unfinished rather than roomy.
-  return sect('investment', 'Your investment',
+  return sect('investment', inv.priceLabel || 'Your investment',
     '<div class="inv">'
     + '<div class="inv-a">'
       + '<dl class="inv-lines">'
@@ -352,9 +352,15 @@ function investmentHtml(p) {
       + when(!!inv.validity, '<p class="note">' + esc(inv.validity) + '</p>')
     + '</div>'
     + '<div class="inv-b">'
-      + '<p class="inv-total"><span>Total investment</span>'
+      + '<p class="inv-total"><span>'
+        + esc(inv.proposalPrice ? 'Proposal price' : 'Total investment') + '</span>'
         + '<strong data-total>' + esc(moneyRound(inv.totalIncGst)) + '</strong>'
         + '<small>including GST</small></p>'
+      // Directly under the number, where somebody reading only the number sees
+      // it. A price that can move says so beside itself, not in the terms.
+      + when(!!inv.proposalNote,
+          '<p class="inv-prov"><strong>Not a fixed price.</strong> '
+          + esc(inv.proposalNote) + '</p>')
       + when(!!inv.deposit, '<p class="inv-dep">Deposit to confirm your booking: <strong>'
           + esc(money(inv.deposit && inv.deposit.amount)) + '</strong>'
           + when(!!(inv.deposit && inv.deposit.percent), ' (' + esc(inv.deposit && inv.deposit.percent) + '%)')
@@ -720,6 +726,10 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .opt-d{font-size:14.8px;color:var(--muted);line-height:1.55}
 
 /* ── investment ─────────────────────────────────────────────────────── */
+.inv-prov{margin-top:12px;padding:12px 14px;border-radius:10px;
+  background:#FFF7E0;border:1px solid var(--gold-d);color:var(--ink);
+  font-size:14px;line-height:1.5;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
 .inv{display:grid;gap:26px}
 @media(min-width:900px){.inv{grid-template-columns:1fr 1fr;gap:40px;align-items:start}}
 .inv-b{display:flex;flex-direction:column}

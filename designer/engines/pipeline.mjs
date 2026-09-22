@@ -181,7 +181,7 @@ export function runPipeline(design, ctx = {}) {
   // came off a car drawn on a marketing plan may not select equipment or carry
   // a price; a job still at proposal stage may not invent ductwork. Both of
   // those happened, and both produced confident numbers.
-  d.capabilities = capabilities(d);
+  d.capabilities = capabilities(d, { settings });
   d.designStage = d.capabilities.stage;
 
   // A room measured through an unverified scale is not verified, whatever the
@@ -866,6 +866,17 @@ export function runPipeline(design, ctx = {}) {
       .find(c => c.brandId + ':' + c.modelId === key) || d.selectedUnit;
   }
 
+  // ── 9a. THE CAPABILITIES, RE-ASKED WITH REAL COUNTS ──────────────────────
+  // The first ask ran before outlets and zones existed, so an allowance priced
+  // per outlet or per zone could only see zeroes. Nothing that gates the
+  // ENGINES changes here — scale, areas and stage are already settled — only
+  // the proposal-price question, which needs the counts to answer.
+  d.capabilities = capabilities(d, {
+    settings,
+    outletCount: d.outlets?.totals?.total || 0,
+    zoneCount: (d.zones?.zones || []).filter(z => !z.alwaysOpen).length
+  });
+
   // ── 9b. THE OUTLET REGISTER ──────────────────────────────────────────────
   // Built BEFORE the bill of materials, because the order reads it. One record
   // per physical outlet: id, room, type, airflow, neck, the final duct that
@@ -879,6 +890,12 @@ export function runPipeline(design, ctx = {}) {
     // WHY there is no unit, not just that there isn't one. Without this the
     // bill of materials is simply short by a machine and says nothing about it.
     equipmentBlocked: d.equipmentBlocked,
+    // At proposal stage the ductwork is one declared allowance, not a measured
+    // quantity. It goes through the BOM rather than being bolted onto the price
+    // afterwards, so the job cost, the fee and the GST all follow from it the
+    // same way they follow from every other line.
+    proposalAllowance: d.capabilities.mayRouteDucts ? null
+      : (d.capabilities.proposalAllowance?.ok ? d.capabilities.proposalAllowance : null),
     controller: d.controller,
     network: d.network,
     outlets: d.outlets,
@@ -974,8 +991,36 @@ export function runPipeline(design, ctx = {}) {
   // is the sell price: the one number somebody could copy into a quote, read
   // off a screen, or take to a customer over the phone. It is null, and the
   // record says why rather than leaving a blank that reads as $0.
-  if (!d.capabilities.mayPrice) {
-    const why = d.capabilities.reasonFor('price');
+  if (!d.capabilities.mayPrice && d.capabilities.mayQuoteProposal) {
+    // ── A PROPOSAL PRICE, AND IT SAYS SO ───────────────────────────────────
+    // The rooms are measured, the load is known and the machine is chosen. What
+    // is not designed is the ductwork, and that is carried as NAC's own declared
+    // allowance. The arithmetic is the ordinary arithmetic — job cost plus the
+    // fee — so this is a number NAC stands behind. It is not a fixed price, and
+    // every surface that shows it has to say which of the two it is.
+    d.commercials = {
+      ...d.commercials,
+      proposalPrice: true,
+      fixedPrice: false,
+      proposalBasis: d.capabilities.proposalAllowance,
+      basis: {
+        ...(d.commercials.basis || {}),
+        key: 'proposal_allowance',
+        label: 'Proposal price — job cost with a declared ductwork allowance, plus the fee'
+      },
+      warnings: [...(d.commercials.warnings || []), {
+        code: 'PROPOSAL_PRICE_NOT_FIXED', severity: 'CHECK',
+        message: 'This is a PROPOSAL price. The ductwork is carried as '
+          + d.capabilities.proposalAllowance.basis.toLowerCase() + ', not as measured '
+          + 'quantities. It is replaced by the real figure once the duct design is run, and '
+          + 'the customer document must say so.'
+      }]
+    };
+  } else if (!d.capabilities.mayPrice) {
+    const why = d.capabilities.reasonFor('quoteProposal') === null
+      ? d.capabilities.reasonFor('price')
+      : d.capabilities.reasonFor('price') + ' A proposal price is not available either: '
+        + d.capabilities.reasonFor('quoteProposal');
     d.commercials = {
       ...d.commercials,
       priceBlocked: true,
@@ -1033,8 +1078,10 @@ export function runPipeline(design, ctx = {}) {
   // ── 12. Warnings (PART 27) ────────────────────────────────────────────────
   d.warnings = collectWarnings(d, ctx);
   d.warningSummary = summarise(d.warnings);
-  // Quote lines ARE the price in another shape. A blocked design has none.
-  d.quoteLineItems = d.capabilities.mayPrice ? toQuoteLineItems(d, d.commercials) : [];
+  // Quote lines ARE the price in another shape. A blocked design has none; a
+  // proposal-priced one has them, carrying a proposal price.
+  d.quoteLineItems = (d.capabilities.mayPrice || d.capabilities.mayQuoteProposal)
+    ? toQuoteLineItems(d, d.commercials) : [];
   d.stage = 'complete';
   d.settingsSnapshot = { version: settings.version };
   return d;

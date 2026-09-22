@@ -163,6 +163,25 @@ export function presentationGate(design, opts = {}) {
       message: 'The quote has no sell price. A presentation cannot be issued without one.' });
   }
 
+  // ── A PROPOSAL PRICE MAY NOT BE DRESSED AS A FIXED ONE ───────────────────
+  // The one thing that must never happen with this feature: a customer signs a
+  // number believing it cannot move. If the design is proposal-priced, the
+  // document says so, and if the wording that says so is missing the proposal
+  // does not go out.
+  if (design?.commercials?.proposalPrice === true) {
+    const terms = trimmed(opts.termsAndConditions);
+    if (design.commercials.fixedPrice === true) {
+      blockers.push({ code: 'PROPOSAL_PRICE_MARKED_FIXED', severity: 'CRITICAL',
+        message: 'This design carries a proposal price and is also marked as a fixed price. '
+          + 'It is one or the other.' });
+    }
+    if (terms && /\bfixed[- ]price\b/i.test(terms)) {
+      blockers.push({ code: 'TERMS_CLAIM_FIXED_PRICE', severity: 'CRITICAL',
+        message: 'The terms describe this as a fixed price, but the ductwork is a declared '
+          + 'allowance and the figure can move. Reword the terms before issuing.' });
+    }
+  }
+
   // ── A SYSTEM THAT CANNOT MEET THE LOAD IS NOT PRESENTED AS ADEQUATE ──────
   // Internally this is a CRITICAL warning an estimator may knowingly override,
   // and NAC really has installed a 16 kW machine against a 22.5 kW calculated
@@ -543,7 +562,20 @@ function investmentSection(d, ctx) {
   const grand = total + optionsTotal;
   const terms = ctx.paymentTerms || {};
   const depositPct = n(terms.depositPercent);
+  // ── A PROPOSAL PRICE IS LABELLED AS ONE, ON THE PAGE ────────────────────
+  // Not in a footnote and not in the terms. A customer reading a number and a
+  // signature box is entitled to know whether the number can move.
+  const isProposal = c.proposalPrice === true;
   return {
+    proposalPrice: isProposal,
+    priceLabel: isProposal ? 'Proposal price' : 'Your investment',
+    proposalNote: isProposal
+      ? 'This is a proposal price, not a fixed price. The ductwork is carried at NAC\'s '
+        + 'standard installation allowance because the duct design for your home has not '
+        + 'been done yet. Once it is, the ductwork is measured and this figure is confirmed '
+        + 'or adjusted — we will show you exactly what changed and why before any work '
+        + 'starts.'
+      : null,
     subtotalExGst: n(c.sellPriceExGst),
     gst: n(c.gstAmount),
     baseIncGst: total,
@@ -638,7 +670,8 @@ export function buildPresentation({
     };
   }
 
-  const gate = presentationGate(d, { trust, issuing });
+  const gate = presentationGate(d, { trust, issuing,
+                                     termsAndConditions: content.termsAndConditions });
   if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
   const evidence = inclusionEvidence(d, {
     trust, standardInclusions: content.standardInclusions || {}

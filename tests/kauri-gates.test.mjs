@@ -41,6 +41,8 @@ import { buildOutletRegister, checkOutletConsistency } from '../designer/engines
 import { zoningSafety, MINIMUM_SOURCE } from '../designer/engines/zoning-safety.mjs';
 import { presentationGate, looksUnfilled } from '../designer/engines/presentation.mjs';
 import { calibrate } from '../designer/engines/calibration.mjs';
+import { buildPresentation } from '../designer/engines/presentation.mjs';
+import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 
 // A design skeleton with a scale that came off a car on a marketing plan.
@@ -173,6 +175,65 @@ test('4. a proposal does not invent ductwork — it carries a declared allowance
   assert.equal(perCount.amount, 1000 + 10 * 260 + 4 * 180);
   assert.match(perCount.detail, /10 outlet\(s\) × 260/);
   assert.match(perCount.basis, /outlet and zone count/i);
+});
+
+test('4b. a proposal price is allowed, labelled, and is never a fixed price', () => {
+  const settings = { commercial: { ...DEFAULT_SETTINGS.commercial,
+    proposalAllowance: { flat: 4200 } } };
+
+  // Verified areas + a configured allowance = quotable at proposal stage.
+  const d = kauriLikeDesign({
+    designStage: DESIGN_STAGE.PROPOSAL,
+    calibration: { pixelsPerMm: 0.0445, verified: true, source: SCALE_SOURCE.MEASURED }
+  });
+  const caps = capabilities(d, { settings, outletCount: 8, zoneCount: 6 });
+  assert.equal(caps.mayPrice, false, 'a FIXED price was allowed without a duct design');
+  assert.equal(caps.mayQuoteProposal, true, JSON.stringify(caps.reasonFor('quoteProposal')));
+  assert.equal(caps.proposalAllowance.amount, 4200);
+
+  // No allowance configured — no proposal price, and no invented number.
+  const noAllowance = capabilities(d, { settings: DEFAULT_SETTINGS, outletCount: 8 });
+  assert.equal(noAllowance.mayQuoteProposal, false);
+  assert.match(noAllowance.reasonFor('quoteProposal'), /HVAC Design Settings/);
+
+  // Unverified scale — a proposal price rests on the areas like any other.
+  const noScale = capabilities(kauriLikeDesign({ designStage: DESIGN_STAGE.PROPOSAL }),
+    { settings, outletCount: 8 });
+  assert.equal(noScale.mayQuoteProposal, false);
+  assert.match(noScale.reasonFor('quoteProposal'), /rests on the room areas/);
+});
+
+test('4c. the customer page says the proposal price is not fixed', () => {
+  const base = {
+    selectedUnit: { brandName: 'Daikin', model: 'X', capacityKw: 20, phase: '1Ph' },
+    systemLoad: { designKw: 18 },
+    rooms: [{ id: 'r1', label: 'LIVING', conditioned: true }],
+    outlets: { rows: [{ roomId: 'r1', label: 'LIVING', quantity: 1 }] },
+    commercials: { sellPriceIncGst: 19118.53, sellPriceExGst: 17380.48, gstAmount: 1738.05,
+                   proposalPrice: true, fixedPrice: false }
+  };
+  const r = buildPresentation({ design: base, customer: { name: 'A' }, job: {},
+    content: {}, proposalNumber: 'P1', revision: 1, status: 'draft' });
+  assert.equal(r.ok, true, JSON.stringify((r.blockers || []).map(b => b.code)));
+
+  const inv = r.presentation.investment;
+  assert.equal(inv.proposalPrice, true);
+  assert.equal(inv.priceLabel, 'Proposal price');
+  assert.match(inv.proposalNote, /not a fixed price/i);
+  assert.match(inv.proposalNote, /allowance/i);
+
+  // On the page itself, beside the number — not buried in the terms.
+  const html = renderPresentationHtml(r.presentation);
+  assert.ok(html.includes('inv-prov'), 'no caveat block on the page');
+  assert.match(html, /Not a fixed price/);
+
+  // And terms that call it a fixed price stop the proposal going out.
+  const lying = buildPresentation({ design: base, customer: { name: 'A' }, job: {},
+    content: { termsAndConditions: 'This is a fixed-price contract for the works described.' },
+    proposalNumber: 'P1', revision: 1, status: 'issued' });
+  assert.equal(lying.ok, false);
+  assert.ok(lying.blockers.some(b => b.code === 'TERMS_CLAIM_FIXED_PRICE'),
+    JSON.stringify(lying.blockers.map(b => b.code)));
 });
 
 // ── 5 ───────────────────────────────────────────────────────────────────────

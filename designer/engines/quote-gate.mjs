@@ -129,12 +129,17 @@ export function quoteGate(design) {
   // there is a design to price. On 34 Kauri every one of them was false and a
   // sell price of $15,079.33 was printed anyway.
 
+  // A design may carry a FIXED price, or an allowance-based PROPOSAL price, and
+  // either is a quotable number. Only a design that can carry neither is
+  // blocked here. Refusing a proposal price because it is not a fixed price is
+  // refusing the very thing the proposal allowance exists to produce.
   const caps = design?.capabilities || null;
-  if (caps && caps.mayPrice === false) {
+  if (caps && caps.mayPrice === false && caps.mayQuoteProposal !== true) {
     blockers.push({
       code: QUOTE_BLOCK.SCALE_NOT_VERIFIED,
       severity: 'CRITICAL',
-      message: (typeof caps.reasonFor === 'function' ? caps.reasonFor('price') : null)
+      message: (typeof caps.reasonFor === 'function'
+        ? (caps.reasonFor('quoteProposal') || caps.reasonFor('price')) : null)
         || 'This design may not carry a price yet.',
       remedy: 'Measure one known distance on the plan — a printed dimension, a wall the '
             + 'estimator has measured, or a scale bar — and calibrate against it.'
