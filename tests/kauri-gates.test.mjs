@@ -256,6 +256,58 @@ test('4d. a placeholder customer record never becomes a greeting', () => {
   assert.equal(greet('Sarah Whitlock'), 'Hello Sarah');
 });
 
+test('4e. an estimator may state the load, and the calculation survives beside it', async () => {
+  const { runPipeline } = await import('../designer/engines/pipeline.mjs');
+  const { buildCatalogue } = await import('../designer/engines/catalogue.mjs');
+  const { buildRoom, calibratedMeasurement } = await import('../designer/engines/rooms.mjs');
+
+  const calibration = { pixelsPerMm: 0.039, verified: true, source: SCALE_SOURCE.MEASURED,
+                        measuredBy: 'Nick Cahill' };
+  const mkRooms = () => ['LIVING', 'BEDROOM 1', 'BEDROOM 2', 'KITCHEN'].map(label =>
+    buildRoom({ label, roomType: label === 'KITCHEN' ? 'living' : 'bedroom', conditioned: true,
+      ceilingHeightMm: 2440,
+      measurement: calibratedMeasurement({ calibration, widthPx: 160, lengthPx: 170 }) }))
+    .map(r => ({ ...r, status: 'Verified' }));
+
+  const base = { id: 'j', calibration, rooms: mkRooms(),
+                 plan: { widthPx: 714, heightPx: 1179 } };
+  const cat = await buildCatalogue({});
+  const plain = runPipeline({ ...base, rooms: mkRooms() }, { catalogue: cat });
+  const calculated = plain.systemLoad.designKw;
+  assert.ok(calculated > 0);
+
+  // A stated load 20% under the calculation.
+  const stated = Math.round(calculated * 0.8 * 100) / 100;
+  const out = runPipeline({ ...base, rooms: mkRooms(),
+    statedLoad: { designKw: stated, statedBy: 'Nick Cahill',
+                  at: '2026-09-22T00:00:00Z', note: 'Walked the job.' } },
+    { catalogue: cat });
+
+  assert.equal(out.systemLoad.designKw, stated, 'the stated figure did not take');
+  assert.equal(out.systemLoad.loadSource, 'estimator_stated');
+  assert.equal(out.systemLoad.statedBy, 'Nick Cahill');
+  assert.equal(out.systemLoad.statedAt, '2026-09-22T00:00:00Z');
+
+  // THE CALCULATION IS NOT OVERWRITTEN. That is the whole point.
+  assert.equal(out.systemLoad.calculatedKw, calculated);
+  assert.ok(out.systemLoad.calculatedAreaSqM > 0);
+  assert.ok(Math.abs(out.systemLoad.divergencePct + 20) < 1.5,
+    'divergence ' + out.systemLoad.divergencePct);
+
+  // A gap this size is reported, with both numbers in the message.
+  const w = (out.warnings || []).find(x => x.code === 'STATED_LOAD_DIVERGES');
+  assert.ok(w, JSON.stringify((out.warnings || []).map(x => x.code)));
+  assert.match(w.message, new RegExp(String(stated)));
+  assert.match(w.message, new RegExp(String(calculated)));
+  assert.match(w.message, /Nick Cahill/);
+
+  // A stated load with nobody behind it is not a stated load.
+  const anon = runPipeline({ ...base, rooms: mkRooms(),
+    statedLoad: { designKw: stated, statedBy: '' } }, { catalogue: cat });
+  assert.equal(anon.systemLoad.designKw, calculated, 'an unsigned figure was accepted');
+  assert.equal(anon.systemLoad.loadSource, undefined);
+});
+
 // ── 5 ───────────────────────────────────────────────────────────────────────
 test('5. supply mains reconcile against the outlets, or the design is invalid', () => {
   // The Kauri graph: every section parentless, so every duct counted as a main.

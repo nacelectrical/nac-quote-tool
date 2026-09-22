@@ -242,6 +242,60 @@ export function runPipeline(design, ctx = {}) {
       : base;
   }
   d.systemLoad = systemLoad(d.rooms, { ...loadOpts, rooms: included, loadsById, allowOverride: !!ctx.allowLowConfidence });
+
+  // ── A LOAD THE ESTIMATOR STATES ──────────────────────────────────────────
+  //
+  // The calculation is built on room areas measured off a plan image. An
+  // estimator who has walked the house knows things the pixels do not: that an
+  // open-plan rectangle swept in the circulation space, that a room is not
+  // really conditioned, that the glazing is nothing like the default.
+  //
+  // On 34 Kauri the engine read 18.82 kW off 143.1 m² while Nick put the job at
+  // 15.8 kW. He is right that a Family/Meals/Kitchen block measuring 7.5 × 7.6 m
+  // is suspect — but the fix is NOT to quietly shrink a rectangle until the
+  // total matches, because then neither number means anything afterwards.
+  //
+  // So a stated load is a recorded input, exactly like a calibration: a figure,
+  // a person, a time and a reason. The calculated figure is kept beside it,
+  // never overwritten, and a material divergence is reported rather than
+  // smoothed away. Everything downstream — equipment, airflow, price — follows
+  // the stated figure, because that is what the estimator is standing behind.
+  if (d.statedLoad && Number(d.statedLoad.designKw) > 0 && String(d.statedLoad.statedBy ?? '').trim()) {
+    const calculatedKw = d.systemLoad.designKw;
+    const statedKw = round(Number(d.statedLoad.designKw), 2);
+    const scale = calculatedKw > 0 ? statedKw / calculatedKw : 1;
+    d.systemLoad = {
+      ...d.systemLoad,
+      designKw: statedKw,
+      designCoolingKw: round(d.systemLoad.designCoolingKw * scale, 2),
+      designHeatingKw: round(d.systemLoad.designHeatingKw * scale, 2),
+      designCoolingW: round(d.systemLoad.designCoolingW * scale, 0),
+      designHeatingW: round(d.systemLoad.designHeatingW * scale, 0),
+      loadSource: 'estimator_stated',
+      statedBy: String(d.statedLoad.statedBy ?? '').trim(),
+      statedAt: d.statedLoad.at || new Date().toISOString(),
+      statedNote: d.statedLoad.note || null,
+      // NEVER overwritten. The working stays visible.
+      calculatedKw,
+      calculatedAreaSqM: d.systemLoad.totalConditionedAreaSqM,
+      divergencePct: calculatedKw > 0
+        ? round(((statedKw - calculatedKw) / calculatedKw) * 100, 1) : null
+    };
+    const diff = Math.abs(d.systemLoad.divergencePct ?? 0);
+    d.routeWarnings = [...(d.routeWarnings || []), {
+      code: diff > 10 ? 'STATED_LOAD_DIVERGES' : 'LOAD_STATED_BY_ESTIMATOR',
+      severity: diff > 10 ? 'WARNING' : 'INFO',
+      area: 'load',
+      message: 'Design load is ' + statedKw + ' kW as stated by ' + d.systemLoad.statedBy
+        + ', against ' + calculatedKw + ' kW calculated from '
+        + d.systemLoad.calculatedAreaSqM.toFixed(1) + ' m² of measured rooms'
+        + (d.systemLoad.divergencePct !== null
+            ? ' (' + (d.systemLoad.divergencePct > 0 ? '+' : '') + d.systemLoad.divergencePct + '%)' : '')
+        + '. ' + (d.statedLoad.note || '')
+        + (diff > 10 ? ' A gap this size usually means a room rectangle is wrong — '
+            + 'worth resolving before the duct design.' : '')
+    }];
+  }
   d.roomLoads = d.systemLoad.rooms;
   d.totalConditionedAreaSqM = totalConditionedArea(d.rooms);
   d.assumptions = describeAssumptions(settings, loadOpts);
