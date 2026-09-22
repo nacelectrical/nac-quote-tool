@@ -332,7 +332,31 @@ export const DEFAULT_SETTINGS = {
     labourHoursOutdoorUnit: 4,
     labourHoursPerDuctMetre: 0.12,
     labourHoursReturn: 2,
-    labourHoursCommissioning: 2
+    labourHoursCommissioning: 2,
+
+    // ── Proposal ductwork allowance ──────────────────────────────────────
+    //
+    // What the ductwork and installation are worth BEFORE anybody has routed
+    // a duct. A proposal quotes this; it does not quote measured quantities,
+    // because at proposal stage there are none.
+    //
+    // EVERY FIELD SHIPS NULL ON PURPOSE. These are NAC's own commercial
+    // numbers and nobody but Nick can supply them. With nothing set, a
+    // proposal says it has no allowance configured and names the screen to
+    // set it on — it never reaches for a figure that would look like a price.
+    //
+    //   flat       one allowance per job, whatever its size
+    //   perOutlet  added per supply outlet
+    //   perZone    added per motorised zone
+    //
+    // Set `flat` alone for a standard installation allowance. Set `perOutlet`
+    // and/or `perZone` (with or without a base `flat`) for a provisional
+    // allowance that scales with the job.
+    proposalAllowance: {
+      flat: null,
+      perOutlet: null,
+      perZone: null
+    }
   },
 
   // ── Plan interpretation ─────────────────────────────────────────────────────

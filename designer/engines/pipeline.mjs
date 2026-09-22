@@ -36,6 +36,7 @@ import { assessPlacement } from './placement.mjs';
 import { buildNacTopology, validateNacTopology, topologyTable } from './nac-router.mjs';
 import { designReturnAir } from './returnair.mjs';
 import { suggestZones, analyseZones } from './zones.mjs';
+import { zoningSafety } from './zoning-safety.mjs';
 import { suggestOpenPlanGroups, applyOpenPlanGroups, zoneRemedies,
          zoningAlreadySet } from './zoning-groups.mjs';
 import { estimateStaticPressure } from './pressure.mjs';
@@ -909,6 +910,21 @@ export function runPipeline(design, ctx = {}) {
   // built is a schedule nobody checked.
   d.nacSchedule = nacScheduleData(d, { settings });
 
+  // ── ZONING SAFETY (defect 9) ─────────────────────────────────────────────
+  // Asked after the bill of materials, because part of the answer is whether a
+  // spill or bypass is actually ON the order rather than assumed into the
+  // design to make a check pass.
+  d.zoningSafety = zoningSafety({
+    zoneAnalysis: d.zones, selectedUnit: d.selectedUnit, design: d, settings
+  });
+  if (d.zoningSafety.failures.length || d.zoningSafety.notes.length) {
+    d.routeWarnings = [...(d.routeWarnings || []),
+      ...d.zoningSafety.failures.map(f => ({ code: f.code, severity: f.severity,
+                                             area: 'zoning', message: f.message })),
+      ...d.zoningSafety.notes.map(n => ({ code: n.code, severity: n.severity,
+                                          area: 'zoning', message: n.message }))];
+  }
+
   // Now that all three surfaces exist, do they describe the same outlets?
   d.outletConsistency = checkOutletConsistency({
     register: d.outletRegister,
@@ -966,6 +982,43 @@ export function runPipeline(design, ctx = {}) {
         message: 'No sell price is produced for this design. ' + why
       }]
     };
+  }
+
+  // ── 11b. THE PROPOSAL ALLOWANCE (defect 2) ───────────────────────────────
+  //
+  // A proposal must not invent ductwork. The Kauri report produced a duct bill
+  // of materials — lengths, fittings, a plenum, a static-pressure check — for a
+  // job whose ducts had never been routed, and priced it.
+  //
+  // At proposal stage the ductwork is ONE LINE with its basis printed on it.
+  // Not a quantity, not a measured length, not a fitting list. And if NAC has
+  // not configured an allowance, there is no line and no number: the proposal
+  // says what to set and where, rather than reaching for a figure.
+  if (!d.capabilities.mayRouteDucts) {
+    const zoneCount = (d.zones?.zones || []).filter(z => !z.alwaysOpen).length;
+    const allowance = proposalAllowance({
+      outletCount: d.outlets?.totals?.total || 0,
+      zoneCount,
+      settings
+    });
+    d.proposalAllowance = {
+      ...allowance,
+      stage: DESIGN_STAGE.PROPOSAL,
+      // Said out loud on every surface that shows it. An allowance is what the
+      // work is expected to cost, not what it has been measured to cost.
+      label: allowance.ok
+        ? allowance.basis + ' (PROVISIONAL — not a measured quantity)'
+        : 'No proposal ductwork allowance configured',
+      replacedBy: 'Measured duct quantities, once the duct design is run.'
+    };
+    if (!allowance.ok) {
+      d.routeWarnings = [...(d.routeWarnings || []), {
+        code: 'NO_PROPOSAL_ALLOWANCE', severity: 'CRITICAL', area: 'pricing',
+        message: allowance.reason
+      }];
+    }
+  } else {
+    d.proposalAllowance = null;
   }
 
   // ── 12. Warnings (PART 27) ────────────────────────────────────────────────

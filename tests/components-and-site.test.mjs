@@ -327,6 +327,10 @@ test('manual balancing dampers do not exist anywhere', () => {
     }
   }
   for (const w of (job.warnings || [])) {
+    // The rule is that nothing PROPOSES one. A warning that REFUSES one —
+    // zoning-safety rejects a manual damper offered as the fix for a
+    // minimum-airflow failure — is the rule being enforced, not broken.
+    if (w.code === 'MANUAL_DAMPER_PROPOSED_AS_REMEDY') continue;
     assert.ok(!/manual balancing/i.test(w.message || ''));
   }
 });
