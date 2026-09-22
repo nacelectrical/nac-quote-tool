@@ -17,6 +17,7 @@
 
 import { AUTO_ROUTE_NOTICE } from './router.mjs';
 import { isConditionedRoom } from './classify.mjs';
+import { NAC_TRUST } from './presentation-content.mjs';
 
 export const REPORT_KIND = { INTERNAL: 'internal', CUSTOMER: 'customer' };
 
@@ -89,9 +90,12 @@ function header(design, title, kind) {
       phone: design.customer?.phone || '—',
       email: design.customer?.email || '—'
     },
-    abn: '97 636 392 982',
-    business: 'NAC Electrical Air & Refrigeration',
-    website: 'nacelectrical.com.au'
+    // One source for NAC's own numbers — the internal sheet and the customer
+    // proposal must never be able to state two different ABNs.
+    abn: NAC_TRUST.abn,
+    arc: NAC_TRUST.arcAuthorisation,
+    business: NAC_TRUST.businessName,
+    website: NAC_TRUST.website
   };
 }
 

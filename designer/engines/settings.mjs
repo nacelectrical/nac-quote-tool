@@ -398,17 +398,34 @@ export const DEFAULT_SETTINGS = {
     //
     // Until these are entered and confirmed, a customer quote is blocked.
     terms: {
-      depositPercent: null,       // one or the other, not both
+      // NAC's terms, as Nick stated them. These are policy, not the
+      // demonstration figures — the 20% / 30 days that came off the sample
+      // proposal were mine and never shipped.
+      depositPercent: 50,         // one or the other, not both
       depositAmount: null,
       /** [{ label, detail, percent }] — what is due and when. */
-      paymentStages: [],
+      paymentStages: [
+        { label: 'Deposit on acceptance', percent: 50,
+          detail: 'Confirms your booking and orders the equipment.' },
+        { label: 'Balance on completion', percent: 50,
+          detail: 'Payable once the system is installed and commissioned.' }
+      ],
       /** The event that makes the balance payable. */
-      balanceDueEvent: '',
-      /** How long a quote stands. */
+      balanceDueEvent: 'completion',
+      /**
+       * How long a quote stands. STILL EMPTY — Nick has not given a figure,
+       * and a validity period decides when a price NAC is bound to expires.
+       * Guessing it is how a quote gets honoured six months after the
+       * equipment price moved.
+       */
       validityDays: null,
-      /** ['Bank transfer', 'Card', ...] */
-      paymentMethods: [],
-      /** Which version of NAC's terms this quote was issued under. */
+      /** ['Direct deposit', 'EFT', ...] */
+      paymentMethods: ['Direct deposit', 'EFT'],
+      /**
+       * Which version of NAC's terms this quote was issued under. STILL EMPTY
+       * — this is the label on the document a customer is agreeing to, and
+       * only NAC can say which one that is.
+       */
       termsVersion: '',
       /** Set by Nick when the above is right. Nothing publishes until it is. */
       confirmed: false,

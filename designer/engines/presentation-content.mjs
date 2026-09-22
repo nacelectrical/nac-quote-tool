@@ -494,6 +494,41 @@ export const EMPTY_TRUST = Object.freeze({
   points: []
 });
 
+/**
+ * NAC's OWN CREDENTIALS, as Nick has given them.
+ *
+ * These are not defaults in the "plausible-looking placeholder" sense the note
+ * above warns about — they are NAC's registered numbers, stated by the person
+ * they belong to, and they are the same on every quote the business issues.
+ * Carrying them here means a new install does not go out with the ABN missing.
+ *
+ * The electrical contractor licence is NOT here, because it has not been given.
+ * A blank licence stays blank and keeps blocking, which is the whole point:
+ * the one thing worse than a missing licence number on a quote is an invented
+ * one.
+ *
+ * This SEEDS a content library that has never been filled in; it is not folded
+ * into normaliseTrust, which stays a normaliser. An empty admin form must keep
+ * reading as empty, or a form somebody cleared on purpose would quietly refill
+ * itself the next time it was saved.
+ */
+export const NAC_TRUST = Object.freeze({
+  businessName: 'NAC Electrical Air & Refrigeration',
+  abn: '97 636 392 982',
+  arcAuthorisation: 'AU64234',
+  website: 'nacelectrical.com.au'
+});
+
+/**
+ * The trust block a content library starts life with: NAC's own facts, plus
+ * anything already stored, which always wins.
+ */
+export function seedTrust(stored = null) {
+  const hasAny = stored && Object.values(stored).some(v =>
+    Array.isArray(v) ? v.length > 0 : trimmed(v) !== '');
+  return normaliseTrust(hasAny ? { ...NAC_TRUST, ...stored } : { ...NAC_TRUST });
+}
+
 export function normaliseTrust(input = {}) {
   const t = { ...EMPTY_TRUST, ...(input || {}) };
   return {

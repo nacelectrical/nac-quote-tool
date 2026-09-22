@@ -69,24 +69,42 @@ test('the allowance covers every element Nick named, each on its own line', () =
 });
 
 // ── §6 deposit, payment and validity ────────────────────────────────────────
-test('no deposit or validity ships as a default', () => {
+// What ships is what NAC stated, and nothing else. The rule these tests were
+// written to protect was never "ship nothing" — it was "ship nothing NAC has
+// not said". Nick has now given the deposit, the balance event and the payment
+// methods, so those ship; the validity period and the terms version have not
+// been given, so they must still be empty and must still block.
+test('the terms that ship are the ones NAC stated', () => {
   const t = DEFAULT_SETTINGS.commercial.terms;
-  assert.equal(t.depositPercent, null, 'the demonstration 20% deposit shipped as policy');
-  assert.equal(t.depositAmount, null);
-  assert.equal(t.validityDays, null, 'the demonstration 30-day validity shipped as policy');
-  assert.equal(t.balanceDueEvent, '');
-  assert.equal(t.termsVersion, '');
-  assert.deepEqual(t.paymentMethods, []);
-  assert.equal(t.confirmed, false);
+  assert.equal(t.depositPercent, 50);
+  assert.equal(t.depositAmount, null, 'a deposit is set one way, not two');
+  assert.equal(t.balanceDueEvent, 'completion');
+  assert.deepEqual(t.paymentMethods, ['Direct deposit', 'EFT']);
+  // The demonstration figures are gone and must not come back.
+  assert.notEqual(t.depositPercent, 20, 'the demonstration 20% deposit is back');
+  assert.notEqual(t.validityDays, 30, 'the demonstration 30-day validity is back');
+  // The stages add up to the whole job, and to the deposit that was stated.
+  assert.equal(t.paymentStages.reduce((n, p) => n + p.percent, 0), 100);
+  assert.equal(t.paymentStages[0].percent, t.depositPercent);
 });
 
-test('unset terms block, and say exactly what is missing', () => {
+test('what NAC has NOT stated still ships empty', () => {
+  const t = DEFAULT_SETTINGS.commercial.terms;
+  assert.equal(t.validityDays, null, 'a validity period was invented');
+  assert.equal(t.termsVersion, '', 'a terms version was invented');
+  assert.equal(t.confirmed, false, 'terms confirmed themselves');
+});
+
+test('terms that are part-filled still block, and say exactly what is missing', () => {
   const s = commercialTermsStatus(DEFAULT_SETTINGS);
   assert.equal(s.ok, false);
   const keys = s.missing.map(m => m.key);
-  for (const k of ['deposit', 'balanceDueEvent', 'validityDays', 'paymentMethods',
-                   'termsVersion']) {
+  for (const k of ['validityDays', 'termsVersion']) {
     assert.ok(keys.includes(k), k + ' was not reported missing');
+  }
+  // And the ones that ARE set are not reported missing.
+  for (const k of ['deposit', 'balanceDueEvent', 'paymentMethods']) {
+    assert.ok(!keys.includes(k), k + ' is set but was reported missing');
   }
   const f = s.failures.find(x => x.code === 'COMMERCIAL_TERMS_NOT_SET');
   assert.ok(f);

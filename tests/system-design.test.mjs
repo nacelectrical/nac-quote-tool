@@ -960,14 +960,44 @@ test('zone controllers carry their supplier cost and brand lock', () => {
   assert.equal(at5.maxZones, 16);
 });
 
-test('the recommended controller is one that can be costed and fits', () => {
+// Nick: "siemens is used if not airtouch, this is on pricelist also."
+//
+// The old rule was "cheapest that fits", which put the manufacturer's boxed
+// controller first because it is supplied with the system and costs nothing.
+// It is not what NAC install, so the costing was short by the price of the one
+// that is.
+test('the recommended controller is the Siemens kit sized to the zoning', () => {
   const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 8 });
+  assert.equal(r.recommended.id, 'siemens_z8');
+  assert.equal(r.basis, 'nac_house_rule');
   assert.notEqual(r.recommended.cost, null);
   assert.ok(r.recommended.maxZones >= 8);
-  // Cheapest that fits, among the costed ones.
-  const fitting = ZONE_CONTROLLERS.filter(c =>
-    (!c.brandLock || c.brandLock === 'daikin') && (c.maxZones ?? 99) >= 8 && c.cost != null);
-  assert.equal(r.recommended.cost, Math.min(...fitting.map(c => c.cost)));
+  assert.match(r.houseRuleNote, /Siemens/);
+
+  // Sized to the job, not one size for everything.
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 4 }).recommended.id, 'siemens_z4');
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 6 }).recommended.id, 'siemens_z6');
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 5 }).recommended.id, 'siemens_z6',
+    'a 5-zone job cannot go on a 4-zone kit');
+});
+
+test('past 8 zones no Siemens kit fits, and the house rule says so', () => {
+  const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 12 });
+  assert.equal(r.houseRuleApplies, false, 'a kit was found that does not cover 12 zones');
+  assert.equal(r.houseRuleNote, null);
+  assert.ok(!r.recommended || r.recommended.maxZones >= 12,
+    'a controller was recommended that cannot carry the zoning');
+});
+
+test('the estimator naming a controller still beats the house rule', () => {
+  const r = selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 8, preferId: 'at5_daikin' });
+  assert.equal(r.recommended.id, 'at5_daikin');
+  assert.equal(r.basis, 'estimator_choice');
+  assert.equal(r.houseRuleNote, null);
 });
 
 test("NAC's house-standard controller is used when one is set", () => {

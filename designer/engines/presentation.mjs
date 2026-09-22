@@ -591,7 +591,13 @@ function zonesSection(d) {
     controllerSku: trimmed(c.supplierCode || c.sku) || null,
     controllerMaxZones: n(c.maxZones),
     controllerIncludedInSystem: c.includedInSystem === true,
-    controllerPriceIncGst: c.includedInSystem === true ? 0 : (n(c.price) ?? n(c.cost)),
+    // NO PRICE. `controllerPriceIncGst` carried `c.cost` — MMEM's ex-GST
+    // SUPPLIER cost, on a payload that is stored against the issued quote and
+    // served to the customer's browser. Nothing rendered it, so it leaked
+    // silently; it only showed up when the fitted controller stopped being the
+    // $0 one supplied with the system. What a customer may be told about the
+    // controller is the part, its code, how many zones it handles, and whether
+    // it is included — never what NAC paid for it.
     rows: zs.map((z, i) => {
       const name = friendlyLabel(z.name) || ('Zone ' + (i + 1));
       const roomNames = rows(z.rooms).map(friendlyLabel).filter(Boolean);

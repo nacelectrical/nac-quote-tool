@@ -188,9 +188,39 @@ export function selectZoneController(controllers, { brandId, zoneCount, preferId
   });
 
   const preferred = ranked.find(c => c.id === preferId);
+
+  // ── WHAT NAC ACTUALLY FIT ────────────────────────────────────────────────
+  //
+  // Nick: "siemens is used if not airtouch, this is on pricelist also."
+  //
+  // Ranking by cost put the manufacturer's boxed controller first, because it
+  // is supplied with the system and therefore costs nothing. That is true and
+  // it is not what goes in: NAC fit a Siemens zone kit unless the job is on an
+  // AirTouch. A costing built on a controller nobody installs is short by the
+  // price of the one that does, every time.
+  //
+  // This is a house rule, not engineering, so it only decides the DEFAULT. An
+  // estimator naming a controller still gets the one they named, and the
+  // reason is carried out of here so the sheet can say which applied.
+  const siemens = ranked
+    .filter(c => /^siemens_/.test(c.id))
+    .sort((a, b) => (a.maxZones ?? 99) - (b.maxZones ?? 99))[0] || null;
+  const houseChoice = siemens || ranked[0] || null;
+
   return {
     compatible: ranked,
-    recommended: preferred || ranked[0] || null,
+    recommended: preferred || houseChoice,
+    /** Why this one, in a sentence the report can print. */
+    basis: preferred ? 'estimator_choice' : (siemens ? 'nac_house_rule' : 'ranked'),
+    houseRuleNote: preferred || !siemens ? null
+      : 'NAC fit a Siemens zone kit unless the job is on an AirTouch. Sized to '
+        + (zoneCount || 0) + ' zone(s).',
+    /**
+     * Named separately because it is the failure that hid: more zones than any
+     * Siemens kit covers means the house rule cannot apply and somebody has to
+     * choose.
+     */
+    houseRuleApplies: !!siemens,
     incompatible: (controllers || []).filter(c => !compatible.includes(c)).map(c => ({
       ...c,
       reason: c.brandLock && c.brandLock !== brandId
