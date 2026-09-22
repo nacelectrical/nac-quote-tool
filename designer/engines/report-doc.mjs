@@ -638,6 +638,10 @@ export function internalReportDoc(design, { planSnapshot = null,
       ['Sell (inc GST)', money(c.sellPriceIncGst)],
       ['Gross profit', money(c.grossProfit)],
       ['Gross margin', c.grossMarginPct === null || c.grossMarginPct === undefined ? '—' : c.grossMarginPct + '%'],
+      // NAC's commercial method, on the INTERNAL sheet only. It never appears
+      // on anything a customer sees — how NAC arrives at a price is not the
+      // customer's business.
+      ['Pricing mode', c.pricingModeLabel || 'NOT SET'],
       ['Pricing basis', c.pricingBasis?.label || 'none'],
       ['Quote', d.quoteId || 'not yet quoted']
     ]));

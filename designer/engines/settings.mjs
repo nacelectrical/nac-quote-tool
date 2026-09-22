@@ -318,11 +318,28 @@ export const DEFAULT_SETTINGS = {
     // customer) or already includes GST.
     jobFeeExGst: true,
 
-    // How the customer's sell price is arrived at.
-    //   'materials_plus_fee' — total job cost + jobFee
-    //   'catalogue_price'    — the installed price stored per model in the
-    //                          existing Price Setup screen
-    pricingBasis: 'materials_plus_fee',
+    // ── HOW THE CUSTOMER'S PRICE IS ARRIVED AT ──────────────────────────
+    //
+    // ONE method, declared. See pricing-mode.mjs for why: there used to be two
+    // ideas in the codebase with nothing saying which was in force, so a job
+    // could be refused for want of an installed sell price that the
+    // cost-plus-fee method never uses.
+    //
+    //   COST_PLUS_JOB_FEE      job cost + jobFee. The fee IS the margin.
+    //                          Needs verified COSTS. Needs no sell prices.
+    //   COMPONENT_SELL_PRICES  every line carries its own sell price.
+    //                          Needs sell prices. Adds no flat fee.
+    //
+    // This is how NAC prices: everything bought for the job, plus a fixed fee.
+    pricingMode: 'COST_PLUS_JOB_FEE',
+    // NOTE: `pricingBasis` is deliberately NOT shipped here. It is the old
+    // free-text key, still READ from stored settings written before the modes
+    // existed — but shipping it as a default alongside pricingMode meant a
+    // saved pricingBasis was silently overridden by the default pricingMode,
+    // which is precisely the silent mixing this is meant to stop.
+    // Only meaningful on COMPONENT_SELL_PRICES, and false on purpose: adding a
+    // flat fee on top of individually priced lines charges the margin twice.
+    applyJobFeeOnComponentPricing: false,
 
     // Hourly rates, used only when labourMode is 'hourly'.
     labourRatePerHour: 95,

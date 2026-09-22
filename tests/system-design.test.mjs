@@ -609,7 +609,7 @@ test('a BOM line can be edited and the totals follow', () => {
 });
 
 // NAC charges a flat fee per job, so this is the default basis.
-const CATALOGUE_BASIS = settingsWith({ commercial: { pricingBasis: 'catalogue_price' } });
+const CATALOGUE_BASIS = settingsWith({ commercial: { pricingMode: 'COMPONENT_SELL_PRICES' } });
 const HOURLY = settingsWith({ commercial: { labourMode: 'hourly' } });
 const FLAT_LABOUR = { mode: 'flat', totalCost: 0, totalFee: 6000, jobFee: 6000, jobFeeExGst: true };
 

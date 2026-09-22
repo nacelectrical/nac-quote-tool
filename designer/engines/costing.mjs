@@ -19,6 +19,7 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
+import { activeMode, modeLabel, PRICING_MODE } from './pricing-mode.mjs';
 
 /**
  * The install charge.
@@ -117,7 +118,11 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
 
   const flat = labour?.mode === 'flat';
   const feeTotal = flat ? (labour.totalFee ?? C.jobFee) : 0;
-  const usesFee = flat && C.pricingBasis === 'materials_plus_fee';
+  // The ACTIVE MODE decides, not a free-text string compared in three places.
+  const mode = activeMode(settings).mode;
+  const usesFee = flat && (mode === PRICING_MODE.COST_PLUS_JOB_FEE
+    || (mode === PRICING_MODE.COMPONENT_SELL_PRICES
+        && C.applyJobFeeOnComponentPricing === true));
 
   // ── Work out the sell price ───────────────────────────────────────────────
   let sellIncGst = null;
@@ -138,7 +143,8 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
       jobFeeExGst: C.jobFeeExGst !== false,
       feeAppliedExGst: round(feeExGst, 2)
     };
-  } else if (cataloguePrice !== null && cataloguePrice !== undefined) {
+  } else if (mode === PRICING_MODE.COMPONENT_SELL_PRICES
+             && cataloguePrice !== null && cataloguePrice !== undefined) {
     sellIncGst = round(Number(cataloguePrice) + extraSell, 2);
     basis = { key: 'catalogue_price', label: 'Installed price from Price Setup' };
   }
@@ -155,7 +161,7 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
   const warnings = [];
   if (sellIncGst === null) {
     warnings.push({ code: 'NO_SELL_PRICE', severity: 'CHECK',
-      message: C.pricingBasis === 'catalogue_price'
+      message: mode === PRICING_MODE.COMPONENT_SELL_PRICES
         ? 'No NAC installed price is configured for the selected model. Set it in the existing Price Setup screen, or switch the pricing basis to job cost + flat fee.'
         : 'No sell price could be worked out. Check the pricing basis in HVAC Design Settings → Commercial.' });
   }
@@ -206,6 +212,9 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
     totalJobCost,
     jobFee: usesFee ? round(feeTotal, 2) : null,
     pricingBasis: basis,
+    /** The internal estimate states this. The customer document never does. */
+    pricingMode: mode,
+    pricingModeLabel: modeLabel(mode),
     sellPriceIncGst: sellIncGst,
     sellPriceExGst: sellExGst,
     gstAmount,

@@ -129,6 +129,12 @@ export function quoteGate(design) {
   // there is a design to price. On 34 Kauri every one of them was false and a
   // sell price of $15,079.33 was printed anyway.
 
+  // ── THE ACTIVE PRICING MODE HAS WHAT IT NEEDS ───────────────────────────
+  for (const f of (design?.pricing?.failures || [])) {
+    blockers.push({ code: f.code, severity: 'CRITICAL', message: f.message,
+                    lines: f.lines || undefined });
+  }
+
   // A design may carry a FIXED price, or an allowance-based PROPOSAL price, and
   // either is a quotable number. Only a design that can carry neither is
   // blocked here. Refusing a proposal price because it is not a fixed price is

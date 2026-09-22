@@ -50,6 +50,7 @@ import { checkSupplyGraph, checkPlenum, checkDuctSizes, pressureReadiness,
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
 import { buildOutletRegister, checkOutletConsistency } from './outlet-register.mjs';
 import { nacScheduleData } from './nac-schedule.mjs';
+import { pricingRequirements } from './pricing-mode.mjs';
 
 /**
  * The corridors the return-air flexes will occupy, as keep-out segments.
@@ -1127,6 +1128,17 @@ export function runPipeline(design, ctx = {}) {
     }
   } else {
     d.proposalAllowance = null;
+  }
+
+  // ── 11c. WHAT THE ACTIVE PRICING MODE NEEDS ──────────────────────────────
+  // One method, declared, and never mixed with the other. On cost-plus-fee an
+  // equipment SELL price is not asked for at all — the supplier cost is what
+  // the price is built from.
+  d.pricing = pricingRequirements({ design: d, settings });
+  if (!d.pricing.ok) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.pricing.failures.map(f => ({
+      code: f.code, severity: f.severity, area: 'pricing', message: f.message
+    }))];
   }
 
   // ── 12. Warnings (PART 27) ────────────────────────────────────────────────

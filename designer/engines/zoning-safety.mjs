@@ -38,7 +38,14 @@ export const MINIMUM_SOURCE = Object.freeze({
   RULE_OF_THUMB: 'NAC_RULE_OF_THUMB'
 });
 
-const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
+// ABSENT is not ZERO. Number(null) and Number('') are both 0, so an unentered
+// minimum airflow would read as "0 L/s, which is a number" rather than as the
+// missing manufacturer data it is.
+const num = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+};
 
 /**
  * How much room an answer has to have before it counts as one.
