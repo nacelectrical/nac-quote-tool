@@ -26,12 +26,35 @@ await p.reload({ waitUntil: 'load' });
 await p.waitForTimeout(2000);
 
 const M = () => p.evaluate(() => import('/designer/ui/modal.mjs'));
+
+// ── THE DIALOG PROMISE IS NEVER HANDED TO PLAYWRIGHT ─────────────────────
+//
+// `p.evaluate(() => window.__result)` AWAITS whatever it is given, so reading
+// an unsettled dialog promise blocks until the process timeout. That turned
+// one wrong assertion into a 280-second hang and a "Target page, context or
+// browser has been closed" with no indication of which step was at fault.
+//
+// So the promise is tagged when it settles and never returned across the wire.
+// `result()` polls for the tag and gives up with a sentinel, which reads as a
+// clean FAIL line instead of killing the run.
 const open = (fn, arg) => p.evaluate(async ([name, a]) => {
   const m = await import('/designer/ui/modal.mjs');
-  window.__result = m[name](a);          // deliberately NOT awaited — the dialog is on screen
+  window.__settled = false;
+  window.__value = undefined;
+  m[name](a).then(v => { window.__value = v; window.__settled = true; });
   return true;
 }, [fn, arg]);
-const result = () => p.evaluate(() => window.__result);
+
+const NEVER_SETTLED = Symbol('never settled');
+async function result(waitMs = 2500) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const s = await p.evaluate(() => ({ settled: window.__settled, value: window.__value }));
+    if (s.settled) return s.value;
+    if (Date.now() > until) return NEVER_SETTLED;
+    await p.waitForTimeout(60);
+  }
+}
 const shown = () => p.locator('.dlg-host');
 
 // ── confirm ────────────────────────────────────────────────────────────────
@@ -137,11 +160,35 @@ await p.locator('.dlg-btn.primary').click();
 say('the link dialog closes', await shown().count() === 0);
 
 // ── backdrop ───────────────────────────────────────────────────────────────
+//
+// A dialog opened from a tap gets a synthetic click at the same coordinates a
+// moment later, so modal.mjs deliberately makes nothing in the dialog
+// touchable for its first 350 ms — otherwise the backdrop that has just
+// appeared under the finger closes the dialog the instant it opens.
+//
+// This step used to click after 150 ms, INSIDE that guard. The click passed
+// straight through the backdrop to the page underneath, the dialog never
+// cancelled, and reading the promise then hung the whole run. The guard is
+// correct; the test was racing it.
+const GHOST_CLICK_GUARD_MS = 350;
 await open('confirmDialog', { title: 'Backdrop test' });
-await p.waitForTimeout(150);
+await p.waitForTimeout(GHOST_CLICK_GUARD_MS + 150);
+say('the backdrop is touchable once the ghost-click guard has passed',
+  await p.evaluate(() => getComputedStyle(document.querySelector('.dlg-host')).pointerEvents)
+    !== 'none');
 await p.mouse.click(8, 8);
-await p.waitForTimeout(150);
+await p.waitForTimeout(200);
 say('a tap outside cancels', await result() === false && await shown().count() === 0);
+
+// And the guard itself still works: a tap in the first moments must NOT close.
+await open('confirmDialog', { title: 'Ghost click test' });
+await p.waitForTimeout(80);
+await p.mouse.click(8, 8);
+await p.waitForTimeout(120);
+say('a tap in the first moments does NOT close it', await shown().count() === 1,
+  'the ghost-click guard held');
+await p.keyboard.press('Escape');
+await p.waitForTimeout(150);
 
 // ── phone width ────────────────────────────────────────────────────────────
 await p.setViewportSize({ width: 390, height: 844 });

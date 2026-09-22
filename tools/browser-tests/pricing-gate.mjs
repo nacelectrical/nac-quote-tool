@@ -111,8 +111,17 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
 console.log('\n[A] a line with NO cost at all');
 const a=await session({priceTheGaps:false});
 say('the quote is BLOCKED', a.quotes.length===0);
+// The damper line was called "Zone motor" until the component was remodelled
+// as a real inline motorised damper with its own diameter and actuator. The
+// toast has named it correctly ever since — "Motorised zone damper ø250 —
+// 24 V actuator" — and only this expectation was left behind. What the step
+// is actually about is that the estimator is told WHICH lines are unpriced,
+// by name, rather than just that something is missing.
 say('the estimator is told which lines',
-  /have no cost at all/.test(a.toasts) && /Zone motor/i.test(a.toasts));
+  /have no cost at all/.test(a.toasts)
+  && /Motorised zone damper ø\d+/i.test(a.toasts)
+  && /Fabricated BTO branch take-off/i.test(a.toasts),
+  String(a.toasts).slice(0, 160));
 say('no native confirm() was used', a.native.length===0);
 
 console.log('\n[B] gaps priced, but placeholder rates remain — estimator DECLINES');

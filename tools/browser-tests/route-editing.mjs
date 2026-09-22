@@ -135,11 +135,20 @@ say('handles appear in EDIT ROUTE mode', handleCount > 0, handleCount + ' handle
 
 // ── 2 ──────────────────────────────────────────────────────────────────────
 ITEM(2, 'trunk node can be dragged');
+// A MAIN or a TRUNK. Under the NAC flex model the run leaving the plenum is a
+// 'main' and there is no 'trunk' at all, so looking only for 'trunk' found
+// nothing, handed `undefined` to geom(), and threw on `.length` before this
+// step ran a single assertion. The check three lines above already accepted
+// either spelling; this one did not.
 const trunkId = await p.evaluate(() =>
-  window.nacDesigner.design.network.sections.find(s => s.role === 'trunk' && s.points?.length)?.id);
-const trunkBefore = await geom(p, trunkId);
+  window.nacDesigner.design.network.sections
+    .find(s => (s.role === 'main' || s.role === 'trunk') && s.points?.length)?.id);
+say('a main run with geometry exists to drag', !!trunkId, trunkId || 'none found');
+const trunkBefore = (await geom(p, trunkId)) || [];
+say('it has at least two points to drag between', trunkBefore.length >= 2,
+  trunkBefore.length + ' point(s)');
 await dragHandleOnScreen(p, trunkId, trunkBefore.length - 1, 0, -70);
-const trunkAfter = await geom(p, trunkId);
+const trunkAfter = (await geom(p, trunkId)) || [];
 say('the trunk geometry changed', JSON.stringify(trunkAfter) !== JSON.stringify(trunkBefore),
   trunkId + ': ' + trunkBefore.length + ' → ' + trunkAfter.length + ' points');
 const s1 = await snap(p);

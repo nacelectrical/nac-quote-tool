@@ -218,20 +218,52 @@ const target = await p.evaluate(() => {
   // that is the one the pressure figure follows.
   const onIndex = new Set((app.design.pressure?.indexRun?.path || [])
     .map(x => x.id).filter(Boolean));
-  const trunks = app.design.network.sections
-    .filter(s => (s.role === 'trunk' || s.role === 'main') && s.diameterMm < 400);
-  const pick = trunks.find(s => onIndex.has(s.id))
-    || trunks.reduce((a, b) => (b.diameterMm < a.diameterMm ? b : a));
+
+  // ── PICK A RUN THAT CAN ACTUALLY BE CHANGED ────────────────────────────
+  //
+  // This used to look only at trunks and mains under ø400 and then reduce()
+  // that list with no initial value. On a design whose three mains are all
+  // ø400 — which is the correct answer for this house, and what the assertions
+  // above have just confirmed — the list is empty and reduce() throws before a
+  // single assertion in this step runs.
+  //
+  // The step is about one thing: changing a duct size recalculates the bill of
+  // materials and the pressure. So it needs ANY supply run that is legally
+  // resizable, preferring one on the index run because that is the path the
+  // pressure figure follows. Branches run 200-400 under the NAC standard, so
+  // there is effectively always a candidate; finals are excluded because their
+  // legal range stops at 300 and the engine would refuse ø400 on one.
+  const resizable = app.design.network.sections.filter(s =>
+    (s.role === 'trunk' || s.role === 'main' || s.role === 'branch')
+    && s.diameterMm > 0 && s.diameterMm < 400);
+  if (!resizable.length) return { id: null, was: null, onIndex: false, none: true };
+
+  const smallest = (list) => list.slice()
+    .sort((a, b) => a.diameterMm - b.diameterMm)[0];
+  const pick = smallest(resizable.filter(s => onIndex.has(s.id))) || smallest(resizable);
   app.setSegmentDiameter(pick.id, 400);
   return { id: pick.id, was: pick.diameterMm, onIndex: onIndex.has(pick.id) };
 });
 await p.waitForTimeout(900);
 const after = await snap();
-const nowSize = await p.evaluate((id) =>
+const nowSize = target.id === null ? null : await p.evaluate((id) =>
   window.nacDesigner.design.network.sections.find(s => s.id === id)?.diameterMm, target.id);
+say('a resizable supply run exists to test with', !target.none,
+  target.none ? 'every supply run is already at ø400' : target.id + ' at ø' + target.was);
 say('the override took', nowSize === 400, target.id + ': ' + target.was + ' → ' + nowSize);
-say('the pressure figure moved with it', after.pressurePa !== before.pressurePa,
-  before.pressurePa + ' → ' + after.pressurePa);
+// Only a change ON the index run moves the fan's duty. Resizing an arm the
+// index run does not pass through correctly changes nothing, so the pressure
+// assertion applies to the first case and the BOM assertion to both.
+say('the bill of materials followed the change', after.ductBomM !== before.ductBomM
+  || after.ductBomCost !== before.ductBomCost || after.trunkSizes.join() !== before.trunkSizes.join(),
+  'bom ' + before.ductBomM + ' → ' + after.ductBomM);
+if (target.onIndex) {
+  say('the pressure figure moved with it', after.pressurePa !== before.pressurePa,
+    before.pressurePa + ' → ' + after.pressurePa);
+} else {
+  say('the pressure figure is unchanged off the index run', after.pressurePa === before.pressurePa,
+    'resized ' + target.id + ', which the index run does not pass through');
+}
 
 // ── 7. Locking survives a re-route ──────────────────────────────────────────
 STEP('A locked run is not thrown away by RE-ROUTE UNLOCKED');
