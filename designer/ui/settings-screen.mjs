@@ -7,6 +7,8 @@ import { h, card, table, field, input, select, button, banner, mount, money, toa
 import { currentUserEmail } from '../auth.mjs';
 import { MATERIAL_CATALOGUE, resolveCost } from '../engines/materials.mjs';
 import { VERIFICATION_FIELDS } from '../engines/material-verification.mjs';
+import { MINIMUM_AIRFLOW_FIELDS, minimumVerified, minimumMissing }
+  from '../engines/minimum-airflow.mjs';
 import { DEFAULT_SETTINGS } from '../engines/settings.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
 import { MMEM_META, MMEM_ACCESSORIES_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
@@ -588,7 +590,42 @@ export function renderSettingsScreen(app, section = 'load') {
               ...REQUIRED_SPEC_FIELDS.map(f => field(f,
                 input(app.equipmentSpecs?.[app.specModelKey]?.[f] ?? '',
                   v => app.updateSpec(app.specModelKey, f, v),
-                  { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' })))))
+                  { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' }))),
+
+              // ── §7 THE MINIMUM AIRFLOW, WITH ITS SOURCE ──────────────────
+              (() => {
+                const rec = app.equipmentSpecs?.[app.specModelKey]?.minimumAirflow || {};
+                const verified = minimumVerified(rec);
+                const missing = minimumMissing(rec);
+                return card('Minimum airflow',
+                  'The lowest airflow the manufacturer permits through this unit. It decides '
+                  + 'whether a zoned house needs a spill zone, so it has to come off their '
+                  + 'document \u2014 not from a rule of thumb. Until it is entered, the zoning '
+                  + 'check falls back to an internal screening figure that cannot approve a '
+                  + 'design.',
+                  h('div', { class: 'alw' },
+                    ...MINIMUM_AIRFLOW_FIELDS.map(mf => h('div', { class: 'alw-row' },
+                      h('div', { class: 'alw-label' },
+                        h('strong', {}, mf.label + (mf.unit ? ' (' + mf.unit + ')' : '')),
+                        h('span', { class: 'alw-help' }, mf.help)),
+                      h('div', { class: 'alw-input' },
+                        input(rec[mf.key] ?? '',
+                          v => app.updateSpecMinimumAirflow(app.specModelKey, mf.key,
+                            v === '' ? null : (mf.type === 'number' ? Number(v) : v)),
+                          { type: mf.type === 'number' ? 'number'
+                                  : mf.type === 'date' ? 'date' : 'text',
+                            step: 'any', min: '0',
+                            placeholder: mf.required ? 'required' : 'optional' })),
+                      h('div', { class: 'alw-state' },
+                        rec[mf.key] === undefined || rec[mf.key] === null || rec[mf.key] === ''
+                          ? (mf.required ? 'NOT SET' : '\u2014') : 'set')))),
+                  verified
+                    ? banner('ok', 'Verified. The zoning check will use this figure and cite the '
+                        + 'document it came from.')
+                    : banner('warn', 'Still needed: '
+                        + missing.map(m => m.label.toLowerCase()).join(', ')
+                        + '. Until then the zoning check is a provisional screening check only.'));
+              })()))
             : null))
     ]
   };

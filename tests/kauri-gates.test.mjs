@@ -548,18 +548,47 @@ test('11. zoning minimum airflow comes from the unit, or is declared unverified'
                                     settings: DEFAULT_SETTINGS });
   assert.equal(unverified.minimum.source, MINIMUM_SOURCE.RULE_OF_THUMB);
   assert.equal(unverified.minimum.verified, false);
-  assert.match(unverified.minimum.basis, /default rather than a manufacturer limit/);
-  assert.ok(unverified.notes.some(n => n.code === 'MINIMUM_AIRFLOW_UNVERIFIED'));
+  assert.match(unverified.minimum.basis, /internal screening check and not a manufacturer limit/);
+  assert.equal(unverified.minimum.screeningOnly, true);
+  assert.match(unverified.minimum.label, /PROVISIONAL SCREENING CHECK/);
+  // §15: an unverified minimum BLOCKS zoning approval — it is a screening
+  // check, and a screening check cannot sign off a design.
+  const f = unverified.failures.find(x => x.code === 'MINIMUM_AIRFLOW_UNVERIFIED');
+  assert.ok(f, JSON.stringify(unverified.failures.map(x => x.code)));
+  assert.equal(f.severity, 'CRITICAL');
+  assert.equal(f.screeningOnly, true);
+  assert.match(f.message, /Equipment specs/);
 
-  // With the data sheet figure entered, that is the number.
-  const verified = zoningSafety({
+  // A BARE NUMBER IS STILL NOT MANUFACTURER DATA. §7: the figure has to say
+  // which fan setting it applies at, which document and revision it came from,
+  // where in that document, and who read it.
+  const bare = zoningSafety({
     zoneAnalysis,
     selectedUnit: { model: 'FDYAN160AV1', specs: { minimumAirflowLs: 240 } },
     settings: DEFAULT_SETTINGS
   });
+  assert.equal(bare.minimum.source, MINIMUM_SOURCE.RULE_OF_THUMB,
+    'a bare number was accepted as manufacturer data');
+  assert.equal(bare.minimum.screeningOnly, true);
+
+  // With the full record entered, that is the number.
+  const verified = zoningSafety({
+    zoneAnalysis,
+    selectedUnit: { model: 'FDYAN160AV1', specs: { minimumAirflow: {
+      minimumAirflowLs: 240, fanSetting: 'Low fan, cooling',
+      source: 'Daikin FDYA Engineering Data', documentRevision: 'Rev 3',
+      pageReference: 'Table 4-2, p.61',
+      verifiedBy: 'Nick Cahill', verifiedAt: '2026-09-15' } } },
+    settings: DEFAULT_SETTINGS
+  });
   assert.equal(verified.minimum.source, MINIMUM_SOURCE.MANUFACTURER);
-  assert.equal(verified.minimum.verified, true);
+  assert.equal(verified.minimum.verified, true, verified.minimum.basis);
   assert.equal(verified.minimum.requiredLs, 240);
+  assert.equal(verified.minimum.screeningOnly, false);
+  // And the evidence travels with it, so a report can cite the document.
+  assert.equal(verified.minimum.evidence.documentRevision, 'Rev 3');
+  assert.equal(verified.minimum.evidence.pageReference, 'Table 4-2, p.61');
+  assert.match(verified.minimum.basis, /Table 4-2/);
   assert.equal(verified.meetsMinimum, false);
   assert.equal(verified.shortfallLs, 60);
 });

@@ -30,17 +30,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { round } from './units.mjs';
+import { minimumOpenAirflow, MINIMUM_SOURCE as MIN_SRC } from './minimum-airflow.mjs';
+export { minimumOpenAirflow };
 
-export const MINIMUM_SOURCE = Object.freeze({
-  /** The unit's published minimum airflow, entered by NAC from the data sheet. */
-  MANUFACTURER: 'MANUFACTURER_DATA',
-  /** The configured fraction. A default, and never presented as a unit limit. */
-  RULE_OF_THUMB: 'NAC_RULE_OF_THUMB'
-});
+export { MINIMUM_SOURCE } from './minimum-airflow.mjs';
 
-// ABSENT is not ZERO. Number(null) and Number('') are both 0, so an unentered
-// minimum airflow would read as "0 L/s, which is a number" rather than as the
-// missing manufacturer data it is.
+// ABSENT is not ZERO. Number(null) and Number('') are both 0.
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const x = Number(v);
@@ -51,15 +46,11 @@ const num = (v) => {
  * How much room an answer has to have before it counts as one.
  *
  * The Kauri report proposed making Z6 a constant zone and reached 40.0% against
- * a 40% requirement — a margin of two litres a second on a seven-hundred-litre
- * system. That is not clearance, it is the same number written twice. A zone
- * balance shifts with every damper tolerance, every crushed flex and every
- * filter that needs changing, so an option that only just clears is reported as
- * only just clearing.
+ * a 40% requirement — two litres a second on a seven-hundred-litre system. That
+ * is not clearance, it is the same number written twice.
  */
 export const SUFFICIENT_MARGIN_FRACTION = 0.10;
 
-/** Does this much open airflow actually answer the requirement? */
 function verdict(openLs, requiredLs) {
   if (openLs < requiredLs) return { sufficient: false, marginLs: Math.round(openLs - requiredLs) };
   const margin = openLs - requiredLs;
@@ -70,56 +61,12 @@ function verdict(openLs, requiredLs) {
   };
 }
 
-function marginNote(v, requiredLs) {
+function marginNote(v) {
   if (v.sufficient) return ' Clears by ' + v.marginLs + ' L/s.';
   if (v.marginLs < 0) return ' Still ' + Math.abs(v.marginLs) + ' L/s short.';
-  return ' Clears by only ' + v.marginLs + ' L/s ('
-    + (v.marginPct ?? 0) + '%), which is not a margin a real system holds — a damper '
-    + 'tolerance or a dirty filter takes it below. Treat this as not solved.';
-}
-
-/**
- * The minimum airflow this system must keep open, and where that number is
- * from.
- *
- * @param {object} selectedUnit  the chosen unit, or null
- * @param {number} systemLs      design airflow
- * @param {object} settings
- */
-export function minimumOpenAirflow(selectedUnit, systemLs, settings) {
-  const fraction = settings?.zoning?.minOpenAirflowFraction ?? 0.40;
-  const byFraction = round((num(systemLs) || 0) * fraction, 0);
-
-  // NAC may have entered the unit's own minimum from the data sheet. Several
-  // spellings are accepted because this is a field a person types.
-  const specs = selectedUnit?.specs || selectedUnit || {};
-  const published = num(specs.minimumAirflowLs)
-    ?? num(specs.minAirflowLs)
-    ?? num(specs.minimumSupplyAirflowLs);
-
-  if (published !== null && published > 0) {
-    return {
-      requiredLs: round(published, 0),
-      source: MINIMUM_SOURCE.MANUFACTURER,
-      verified: true,
-      basis: (selectedUnit?.model || 'The selected unit') + ' publishes a minimum airflow of '
-        + round(published, 0) + ' L/s.',
-      ruleOfThumbLs: byFraction,
-      fraction
-    };
-  }
-
-  return {
-    requiredLs: byFraction,
-    source: MINIMUM_SOURCE.RULE_OF_THUMB,
-    verified: false,
-    basis: 'No published minimum airflow has been entered for '
-      + (selectedUnit?.model || 'the selected unit') + '. This check uses NAC\'s configured '
-      + round(fraction * 100, 0) + '% of design airflow, which is a default rather than a '
-      + 'manufacturer limit.',
-    ruleOfThumbLs: byFraction,
-    fraction
-  };
+  return ' Clears by only ' + v.marginLs + ' L/s (' + (v.marginPct ?? 0) + '%), which is not a '
+    + 'margin a real system holds \u2014 a damper tolerance or a dirty filter takes it below. '
+    + 'Treat this as not solved.';
 }
 
 /**
@@ -142,11 +89,21 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
   const shortfallLs = round(minimum.requiredLs - openLs, 0);
   const meets = openLs >= minimum.requiredLs;
 
+  // ── §15 A ZONING DESIGN IS NOT APPROVED ON A RULE OF THUMB ──────────────
+  //
+  // An unverified minimum is a SCREENING check. It can tell an estimator to
+  // look harder; it cannot sign off a zoning design, because the number it
+  // compares against is NAC's own fraction and not anything the manufacturer
+  // published. This is a failure, not a note: it blocks approval.
   if (!minimum.verified) {
-    notes.push({
+    failures.push({
       code: 'MINIMUM_AIRFLOW_UNVERIFIED',
-      severity: 'CHECK',
-      message: minimum.basis + ' Enter it from the data sheet before this check is relied on.'
+      severity: 'CRITICAL',
+      screeningOnly: true,
+      message: minimum.basis + ' Enter the published minimum \u2014 with the fan setting, the '
+        + 'document, its revision and page, and who checked it \u2014 in HVAC Design Settings '
+        + '\u2192 Equipment specs before this zoning can be approved.',
+      missing: (minimum.missing || []).map(m => m.key)
     });
   }
 
@@ -218,6 +175,35 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
       requiresApproval: true
     });
 
+    // ── CONTROLLER-ENFORCED MINIMUM ─────────────────────────────────────
+    // The best answer when the controller supports it: the controller itself
+    // refuses to close below the minimum, so nothing depends on the customer
+    // remembering anything. Only offered when the selected controller is known
+    // to do it — claiming a controller behaviour it does not have is worse
+    // than offering nothing.
+    const ctrl = design?.controller || null;
+    if (ctrl && ctrl.enforcesMinimumOpen === true) {
+      options.push({
+        code: 'CONTROLLER_ENFORCED_MINIMUM',
+        title: 'Let the ' + (ctrl.name || 'controller') + ' hold the minimum open',
+        detail: 'The controller will not close the last zones below the unit\u2019s minimum '
+          + 'airflow, whatever the customer selects. Nothing depends on anybody remembering '
+          + 'to leave a zone on.',
+        sufficient: true,
+        costsNothing: true,
+        requiresApproval: true,
+        verifiedBehaviour: true
+      });
+    } else if (ctrl) {
+      notes.push({
+        code: 'CONTROLLER_MINIMUM_BEHAVIOUR_UNKNOWN',
+        severity: 'CHECK',
+        message: 'It is not recorded whether the ' + (ctrl.name || 'selected controller')
+          + ' enforces a minimum open airflow by itself. If it does, that is the cleanest '
+          + 'answer here \u2014 confirm it against the controller manual and record it.'
+      });
+    }
+
     options.push({
       code: 'BYPASS_DAMPER',
       title: 'Add a barometric bypass damper',
@@ -260,9 +246,24 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
     });
   }
 
+  // ── NOTHING CLAIMS EVERY ZONE IS INDEPENDENTLY SWITCHABLE ───────────────
+  // A customer told that any zone can be used on its own, on a system where
+  // that starves the unit, has been sold something the equipment will not do.
+  const closable = (zoneAnalysis.zones || []).filter(z => !z.alwaysOpen);
+  const independentlySafe = closable.every(z =>
+    num(z.airflowLs) !== null && num(z.airflowLs) >= minimum.requiredLs);
+
   return {
     ok: failures.length === 0,
     meetsMinimum: meets,
+    /** May the proposal say every area is independently switchable? */
+    allZonesIndependentlySwitchable: independentlySafe && minimum.verified,
+    independentlySwitchableNote: independentlySafe
+      ? (minimum.verified ? null
+         : 'Every zone carries more than the screening minimum, but the minimum itself is '
+           + 'not verified, so this cannot be stated to a customer yet.')
+      : 'At least one zone carries less than the minimum on its own, so the proposal must '
+        + 'not say every area can be run independently.',
     minimum,
     openLs: round(openLs, 0),
     shortfallLs: meets ? 0 : shortfallLs,
@@ -274,4 +275,4 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
   };
 }
 
-export default { zoningSafety, minimumOpenAirflow, MINIMUM_SOURCE };
+export default { zoningSafety, minimumOpenAirflow, MINIMUM_SOURCE: MIN_SRC };

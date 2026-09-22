@@ -52,6 +52,7 @@ import { buildOutletRegister, checkOutletConsistency } from './outlet-register.m
 import { nacScheduleData } from './nac-schedule.mjs';
 import { pricingRequirements } from './pricing-mode.mjs';
 import { usedRateStatus } from './material-verification.mjs';
+import { proposalStageAudit } from './scale-invalidation.mjs';
 
 /**
  * The corridors the return-air flexes will occupy, as keep-out segments.
@@ -1153,6 +1154,21 @@ export function runPipeline(design, ctx = {}) {
     d.routeWarnings = [...(d.routeWarnings || []), ...d.pricing.failures.map(f => ({
       code: f.code, severity: f.severity, area: 'pricing', message: f.message
     }))];
+  }
+
+  // ── 11d. §11 — A PROPOSAL CARRIES NO DETAILED DUCTWORK ───────────────────
+  // The gate is `mayRouteDucts`, which stops these being produced. This proves
+  // they were not, which is a different and more useful thing to assert: a
+  // future change that lets one through fails here by name.
+  if (d.designStage === DESIGN_STAGE.PROPOSAL || !d.capabilities.mayRouteDucts) {
+    d.proposalAudit = proposalStageAudit(d);
+    if (!d.proposalAudit.ok) {
+      d.routeWarnings = [...(d.routeWarnings || []), ...d.proposalAudit.failures.map(f => ({
+        code: f.code, severity: f.severity, area: 'ductwork', message: f.message
+      }))];
+    }
+  } else {
+    d.proposalAudit = null;
   }
 
   // ── 12. Warnings (PART 27) ────────────────────────────────────────────────

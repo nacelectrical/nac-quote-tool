@@ -19,6 +19,9 @@ import { drawBtoFabricationDetail } from './ui/symbols.mjs';
  * drawing with one set of handles added, so an estimator never loses the design
  * they are working on in order to move something on it.
  */
+import { invalidateForNewScale } from './engines/scale-invalidation.mjs';
+import { SCALE_SOURCE, VERIFIED_SCALE_SOURCES } from './engines/design-stage.mjs';
+import { currentUserEmail } from './auth.mjs';
 export const PLAN_VIEW = Object.freeze({
   CLEAN: 'clean',
   OUTLETS: 'outlets',
@@ -1293,10 +1296,23 @@ export class DesignerApp {
         active ? button('Reset points', () => { this.calibPoints = []; this.viewer.resetCalibrationPoints(); this.render(); }, 'ghost small') : null),
       active ? h('div', { class: 'note' }, pts.length === 0 ? 'Click point A on the plan.'
         : pts.length === 1 ? 'Now click point B.' : 'Two points set — enter the distance below.') : null,
-      active && pts.length === 2 ? h('div', { class: 'grid-2' },
+      active && pts.length === 2 ? h('div', { class: 'grid-3' },
         field('Known distance', input(this.calibDistance ?? '', v => { this.calibDistance = v; },
           { type: 'number', step: 'any', inputmode: 'decimal', placeholder: 'e.g. 6000', live: true })),
-        field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; }))) : null,
+        field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; })),
+        // WHERE THE DISTANCE CAME FROM. A length scaled off a car drawn on a
+        // marketing plan is an illustration, and the estimator says which this
+        // is rather than the software assuming it is survey control.
+        field('Where this came from', select(this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION,
+          [{ value: SCALE_SOURCE.PRINTED_DIMENSION, label: 'A dimension printed on the drawing' },
+           { value: SCALE_SOURCE.MEASURED, label: 'A distance I measured on site' },
+           { value: SCALE_SOURCE.SCALE_BAR, label: 'A scale bar on the sheet' },
+           { value: SCALE_SOURCE.DRAWN_OBJECT, label: 'Scaled off something drawn (NOT accepted)' }],
+          v => { this.calibSource = v; this.render(); }),
+          VERIFIED_SCALE_SOURCES.includes(this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION)
+            ? 'This is a real measurement and unblocks equipment, ductwork and pricing.'
+            : 'A car or a bed on a marketing plan is drawn at whatever size the renderer '
+              + 'liked. This will NOT unblock equipment selection or a price.')) : null,
       active && pts.length === 2
         ? button('Apply calibration', () => this.applyCalibration(), 'primary small') : null,
       d.calibration ? h('div', { class: 'calib-readout' },
@@ -1958,14 +1974,48 @@ export class DesignerApp {
       scaleLabel: this.design.interpretation?.observations?.scaleLabelText
     });
     if (c.error) return toast(c.error, 'bad');
+
+    // ── WHERE THIS DISTANCE CAME FROM ────────────────────────────────────
+    // A dimension printed on the drawing, a wall measured on site, and a scale
+    // bar are all real. A length scaled off a car somebody drew is not, and
+    // the estimator says which this is rather than the software assuming.
+    c.source = this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION;
+    c.measuredBy = currentUserEmail() || 'estimator';
+    c.measuredAt = new Date().toISOString();
+    c.verified = VERIFIED_SCALE_SOURCES.includes(c.source);
+
+    // ── AND EVERYTHING MEASURED THROUGH THE OLD SCALE GOES ───────────────
+    // Room areas, duct runs, fitting positions, the plenum, the index run, the
+    // order and the price were all this number multiplied by pixels. Leaving
+    // them standing is how a job carries routes drawn at one scale beside
+    // rooms measured at another, with every figure looking current.
+    const before = this.design.calibration || null;
+    const { design, cleared, changed } =
+      invalidateForNewScale(this.design, before, c);
+    this.design = design;
     this.design.calibration = c;
     this.design.scaleLabel = c.scaleLabel;
     this.calibPoints = [];
     this.viewer.setMode(MODES.VIEW);
     this.viewer.setCalibration(c);
-    toast('Calibrated: ' + c.display.calculatedScale);
     this.remeasureCalibratedRooms();
     this.update();
+
+    if (changed && cleared.length) {
+      toast('Calibrated: ' + c.display.calculatedScale + '. Cleared '
+        + cleared.length + ' thing(s) measured at the old scale — re-route when you are ready.');
+      confirmDialog({
+        title: 'The scale changed, so these were cleared',
+        message: 'Everything below was measured through the old scale of '
+          + (before ? (before.pixelsPerMm * 1000).toFixed(2) : '?') + ' px/m and is no longer '
+          + 'true at ' + (c.pixelsPerMm * 1000).toFixed(2) + ' px/m.',
+        lines: cleared,
+        confirmLabel: 'Understood',
+        cancelLabel: null
+      });
+    } else {
+      toast('Calibrated: ' + c.display.calculatedScale);
+    }
   }
 
   /** Any room measured from pixels is re-measured when the calibration changes. */
@@ -2754,6 +2804,24 @@ export class DesignerApp {
     // "nothing recorded" and "a record with nothing in it" stay the same thing.
     if (Object.keys(rec).length) this.rateVerifications[id] = rec;
     else delete this.rateVerifications[id];
+    this.update();
+  }
+
+  /**
+   * §7 — the minimum airflow, and the document it came from.
+   *
+   * Nested under the model's spec record rather than flat beside the other
+   * fields, because it is one FACT with its evidence attached: the figure is
+   * meaningless without the fan setting it applies at and the page it is on.
+   */
+  updateSpecMinimumAirflow(specKey, field, value) {
+    if (!this.equipmentSpecs[specKey]) this.equipmentSpecs[specKey] = {};
+    const rec = { ...(this.equipmentSpecs[specKey].minimumAirflow || {}) };
+    if (value === null || value === '') delete rec[field];
+    else rec[field] = value;
+    if (Object.keys(rec).length) this.equipmentSpecs[specKey].minimumAirflow = rec;
+    else delete this.equipmentSpecs[specKey].minimumAirflow;
+    this.rebuildCatalogue();
     this.update();
   }
 
