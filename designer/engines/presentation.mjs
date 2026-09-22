@@ -384,15 +384,26 @@ export function upgradeCapabilities(design) {
 function heroSection(d, ctx) {
   const c = ctx.customer || {};
   const privacy = ctx.privacy || {};
-  const first = trimmed(c.name).split(/\s+/)[0] || '';
+  // ── A NAME, OR NO NAME. NEVER HALF A PLACEHOLDER ───────────────────────
+  //
   // Nick: "no customer first name: use neutral wording". Never "Hi ,".
+  //
+  // And never "Hello Not" either, which is what a customer record reading
+  // "Not recorded" produced — the greeting took the first word of a field that
+  // exists to say the field is empty. Any name that reads as unfilled is no
+  // name: the proposal opens with a plain "Hello" rather than inventing a
+  // person out of a placeholder.
+  const name = trimmed(c.name);
+  const first = (name && !looksUnfilled(name) && !/^not\b/i.test(name))
+    ? (name.split(/\s+/)[0] || '') : '';
   const greeting = first ? 'Hello ' + first : 'Hello';
   const site = privacy.showFullAddress
     ? trimmed(ctx.job?.siteAddress || c.address)
     : suburbOf(ctx.job?.siteAddress || c.address);
   return {
     greeting,
-    customerName: trimmed(c.name),
+    // Same rule: a placeholder is not a name anywhere on the page.
+    customerName: first ? name : '',
     title: 'Your Ducted Air Conditioning Proposal',
     site,
     proposalNumber: trimmed(ctx.proposalNumber),

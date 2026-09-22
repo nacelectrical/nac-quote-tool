@@ -236,6 +236,26 @@ test('4c. the customer page says the proposal price is not fixed', () => {
     JSON.stringify(lying.blockers.map(b => b.code)));
 });
 
+test('4d. a placeholder customer record never becomes a greeting', () => {
+  const base = {
+    selectedUnit: { brandName: 'Daikin', model: 'X', capacityKw: 20, phase: '1Ph' },
+    systemLoad: { designKw: 18 },
+    rooms: [{ id: 'r1', label: 'LIVING', conditioned: true }],
+    outlets: { rows: [{ roomId: 'r1', label: 'LIVING', quantity: 1 }] },
+    commercials: { sellPriceIncGst: 17820.75 }
+  };
+  const greet = (name) => buildPresentation({ design: base, customer: { name }, job: {},
+    content: {}, proposalNumber: 'P', revision: 1, status: 'draft' }).presentation.hero.greeting;
+
+  // The one that actually happened on 34 Kauri.
+  assert.equal(greet('Not recorded'), 'Hello', '"Hello Not" reached the page');
+  for (const junk of ['TBC', 'SAMPLE', 'Test Customer', 'placeholder', '']) {
+    assert.equal(greet(junk), 'Hello', junk + ' was greeted by name');
+  }
+  // A real name still gets one.
+  assert.equal(greet('Sarah Whitlock'), 'Hello Sarah');
+});
+
 // ── 5 ───────────────────────────────────────────────────────────────────────
 test('5. supply mains reconcile against the outlets, or the design is invalid', () => {
   // The Kauri graph: every section parentless, so every duct counted as a main.
