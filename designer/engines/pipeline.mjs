@@ -368,7 +368,13 @@ export function runPipeline(design, ctx = {}) {
   // Geometry the estimator has LOCKED is preserved — re-routing must never
   // throw away a run they positioned around a truss they have seen.
   const mode = d.routingMode || ROUTING_MODE.AUTO;
-  if (mode === ROUTING_MODE.AUTO && !d.routingSuspended) {
+  // A job that may not route ducts may not choose the spigots they leave
+  // through either. Running the arrangement selection on an unrouted design
+  // asks it to reconcile mains that do not exist against outlets that do, and
+  // it correctly answers "0 L/s against 736 L/s" — a real failure, reported
+  // about a duct system nobody has drawn yet. The absent ductwork is already
+  // said once, plainly, by the capability block.
+  if (mode === ROUTING_MODE.AUTO && !d.routingSuspended && d.capabilities.mayRouteDucts) {
     // Zoning is worked out below, but a branch has to know its zone at the
     // moment it is created or the damper has nothing to sit on. Working it out
     // here costs one call and keeps the drawing and the zone plan in step.
@@ -870,6 +876,9 @@ export function runPipeline(design, ctx = {}) {
   // ── 10. Materials (PART 22) ───────────────────────────────────────────────
   d.bom = buildBillOfMaterials({
     selectedUnit: d.selectedUnit,
+    // WHY there is no unit, not just that there isn't one. Without this the
+    // bill of materials is simply short by a machine and says nothing about it.
+    equipmentBlocked: d.equipmentBlocked,
     controller: d.controller,
     network: d.network,
     outlets: d.outlets,

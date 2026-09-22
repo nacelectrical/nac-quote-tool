@@ -262,9 +262,18 @@ export function areaStatus(design) {
   };
 }
 
+/**
+ * Is this job at proposal stage or design stage?
+ *
+ * An explicit stage on the design wins — that is the estimator saying so, and
+ * it is what a "proposal only" control sets. Absent that, it is design stage,
+ * because NAC's own workflow is that uploading a plan produces a complete
+ * design with no extra step, and a default of proposal would stop that dead.
+ *
+ * The stage is NOT what kept ductwork off 34 Kauri. See `mayRouteDucts`.
+ */
 export function inferDesignStage(design) {
   const d = design || {};
-  if (d.designStage === DESIGN_STAGE.DESIGN) return DESIGN_STAGE.DESIGN;
   if (d.designStage === DESIGN_STAGE.PROPOSAL) return DESIGN_STAGE.PROPOSAL;
   return DESIGN_STAGE.DESIGN;
 }
@@ -284,13 +293,32 @@ export function capabilities(design, opts = {}) {
     || deny('selectEquipment', 'Equipment cannot be selected from areas taken off an unverified '
         + 'plan — the load, and with it the model, moves with the scale. ' + areas.reason);
 
-  // Routing needs a real scale AND a stage past proposal. Either one missing
-  // means every duct length, fitting position and plenum dimension it produced
-  // would be describing nothing.
-  const mayRouteDucts = stage === DESIGN_STAGE.DESIGN
-    || deny('routeDucts', 'This job is at proposal stage. Detailed duct design — routes, '
-        + 'fittings, plenums, duct sizes, static pressure and measured quantities — does not '
-        + 'run until the design stage is deliberately started.');
+  // ── WHAT ACTUALLY KEEPS DUCTWORK OFF A PROPOSAL ─────────────────────────
+  //
+  // Nick asked for two things that look like they contradict each other:
+  //
+  //   "Uploading the plan produces a complete design with no advanced step."
+  //   "Prevent the detailed duct pipeline from running until the design stage
+  //    is deliberately started."
+  //
+  // They do not contradict. What went wrong on 34 Kauri was never that routing
+  // ran on an upload — it is that routing ran on a job with NO VERIFIED SCALE.
+  // Every duct length, every fitting position and every plenum dimension it
+  // produced was a pixel measurement multiplied by a number taken off a car
+  // somebody drew. That is not a short duct design; it is a duct design of
+  // nothing.
+  //
+  // So routing is gated on the SCALE, which is the thing it actually needs,
+  // and on an explicit proposal stage, which is the estimator saying not yet.
+  // A plan with a real scale designs itself on upload, exactly as before.
+  const mayRouteDucts = (stage === DESIGN_STAGE.DESIGN && scale.verified)
+    || deny('routeDucts', stage !== DESIGN_STAGE.DESIGN
+        ? 'This job is at proposal stage. Detailed duct design — routes, fittings, plenums, '
+          + 'duct sizes, static pressure and measured quantities — does not run until the '
+          + 'design stage is deliberately started.'
+        : 'Duct design cannot run on an unverified scale. Every duct length, fitting '
+          + 'position and plenum dimension would be a pixel measurement multiplied by a '
+          + 'number nobody has stood behind. ' + (scale.reason || ''));
 
   const mayPrice = (areas.verified && stage === DESIGN_STAGE.DESIGN)
     || deny('price', !areas.verified

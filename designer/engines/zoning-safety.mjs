@@ -41,6 +41,37 @@ export const MINIMUM_SOURCE = Object.freeze({
 const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
 
 /**
+ * How much room an answer has to have before it counts as one.
+ *
+ * The Kauri report proposed making Z6 a constant zone and reached 40.0% against
+ * a 40% requirement — a margin of two litres a second on a seven-hundred-litre
+ * system. That is not clearance, it is the same number written twice. A zone
+ * balance shifts with every damper tolerance, every crushed flex and every
+ * filter that needs changing, so an option that only just clears is reported as
+ * only just clearing.
+ */
+export const SUFFICIENT_MARGIN_FRACTION = 0.10;
+
+/** Does this much open airflow actually answer the requirement? */
+function verdict(openLs, requiredLs) {
+  if (openLs < requiredLs) return { sufficient: false, marginLs: Math.round(openLs - requiredLs) };
+  const margin = openLs - requiredLs;
+  return {
+    sufficient: margin >= requiredLs * SUFFICIENT_MARGIN_FRACTION,
+    marginLs: Math.round(margin),
+    marginPct: requiredLs > 0 ? Math.round((margin / requiredLs) * 1000) / 10 : null
+  };
+}
+
+function marginNote(v, requiredLs) {
+  if (v.sufficient) return ' Clears by ' + v.marginLs + ' L/s.';
+  if (v.marginLs < 0) return ' Still ' + Math.abs(v.marginLs) + ' L/s short.';
+  return ' Clears by only ' + v.marginLs + ' L/s ('
+    + (v.marginPct ?? 0) + '%), which is not a margin a real system holds — a damper '
+    + 'tolerance or a dirty filter takes it below. Treat this as not solved.';
+}
+
+/**
  * The minimum airflow this system must keep open, and where that number is
  * from.
  *
@@ -134,13 +165,15 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
 
     if (biggest) {
       const wouldOpen = round((num(zoneAnalysis.alwaysOpenLs) || 0) + biggest.airflowLs, 0);
+      const v = verdict(wouldOpen, minimum.requiredLs);
       options.push({
         code: 'NOMINATE_CONSTANT_ZONE',
         title: 'Make ' + biggest.name + ' a constant zone',
         detail: 'It carries ' + round(biggest.airflowLs, 0) + ' L/s. Leaving it always open '
           + 'takes the permanently open airflow to ' + wouldOpen + ' L/s against the '
-          + minimum.requiredLs + ' L/s required.',
-        sufficient: wouldOpen >= minimum.requiredLs,
+          + minimum.requiredLs + ' L/s required.' + marginNote(v, minimum.requiredLs),
+        sufficient: v.sufficient,
+        marginLs: v.marginLs,
         costsNothing: true,
         zoneId: biggest.id,
         requiresApproval: true
@@ -151,12 +184,14 @@ export function zoningSafety({ zoneAnalysis, selectedUnit = null, design = null,
     if (twoBiggest.length === 2) {
       const wouldOpen = round((num(zoneAnalysis.alwaysOpenLs) || 0)
         + twoBiggest.reduce((s, z) => s + z.airflowLs, 0), 0);
+      const v = verdict(wouldOpen, minimum.requiredLs);
       options.push({
         code: 'MERGE_INTO_CONSTANT_GROUP',
         title: 'Hold ' + twoBiggest.map(z => z.name).join(' and ') + ' open together',
         detail: 'Two zones open gives ' + wouldOpen + ' L/s. Fewer zones, no extra parts, '
-          + 'and less control over those rooms.',
-        sufficient: wouldOpen >= minimum.requiredLs,
+          + 'and less control over those rooms.' + marginNote(v, minimum.requiredLs),
+        sufficient: v.sufficient,
+        marginLs: v.marginLs,
         costsNothing: true,
         zoneIds: twoBiggest.map(z => z.id),
         requiresApproval: true

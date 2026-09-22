@@ -449,6 +449,21 @@ test('11b. the options are safe, approvable, priced — and never a manual dampe
     assert.equal(o.requiresApproval, true, o.code + ' applies itself');
     assert.ok('costsNothing' in o, o.code + ' does not say whether it costs anything');
   }
+  // An option that only just clears the threshold is not an answer. The Kauri
+  // report proposed a constant zone that reached 40.0% against 40% required —
+  // two litres a second of margin on a seven-hundred-litre system.
+  const bare = zoningSafety({
+    zoneAnalysis: { systemAirflowLs: 736, alwaysOpenLs: 0, minimumOpenAirflowLs: 68,
+      zones: [{ id: 'z6', name: 'Family', airflowLs: 296, alwaysOpen: false },
+              { id: 'z1', name: 'Living',  airflowLs: 111, alwaysOpen: false },
+              { id: 'z2', name: 'Bed 2',   airflowLs: 68,  alwaysOpen: false }] },
+    settings: DEFAULT_SETTINGS
+  });
+  const constant = bare.options.find(o => o.code === 'NOMINATE_CONSTANT_ZONE');
+  assert.equal(constant.marginLs, 2, '296 L/s against 294 required');
+  assert.equal(constant.sufficient, false, '2 L/s of margin was called sufficient');
+  assert.match(constant.detail, /not a margin a real system holds/);
+
   // Spill and bypass are real parts and must be priced.
   for (const code of ['SPILL_TO_COMMON_AREA', 'BYPASS_DAMPER']) {
     const o = r.options.find(x => x.code === code);

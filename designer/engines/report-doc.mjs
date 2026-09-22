@@ -116,11 +116,18 @@ export function internalReportDoc(design, { planSnapshot = null,
     ['Total airflow', (d.airflow?.allocatedAirflowLs ?? '—') + ' L/s'],
     ['Outlets', d.outlets?.totals?.total ?? '—'],
     ['Zones', d.zones?.zoneCount ?? '—', d.controller?.name || ''],
-    ['Total duct length', nn(d.network?.totalDuctLengthM, 1) + ' m'],
+    // "0.0 m" reads as a very short duct design. It was not: the Kauri report
+    // printed it for a job that had never been routed, on the same page as a
+    // passed static-pressure check.
+    ['Total duct length', d.network?.notRouted ? 'NOT ROUTED'
+      : nn(d.network?.totalDuctLengthM, 1) + ' m',
+      d.network?.notRouted ? (d.network.reason || '') : ''],
     ['Return', d.returnDesign
       ? d.returnDesign.returnCount + ' × ' + (d.returnDesign.returns?.[0]?.grilleSize || '') : '—',
       d.returnDesign ? d.returnDesign.perReturnLs + ' L/s each' : ''],
-    ['Estimated static', nn(d.pressure?.estimatedRequirementPa, 0) + ' Pa',
+    ['Estimated static', d.pressure?.calculated === false
+      ? (d.pressure.status || 'NOT CALCULATED')
+      : nn(d.pressure?.estimatedRequirementPa, 0) + ' Pa',
       d.pressure && !d.pressure.checkCompleted ? d.pressure.statusLabel
         : d.pressure?.unitAvailableStaticPa ? 'of ' + d.pressure.unitAvailableStaticPa + ' Pa available'
         : 'unit ESP not on file'],
