@@ -9,6 +9,7 @@ import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
 import { btoBomLines, btoSpec } from './bto.mjs';
 import { btoRateBook, resolveBtoPrice, BTO_PRICE_STATUS } from './bto-pricing.mjs';
 import { damperBomLines } from './zone-dampers.mjs';
+import { buildOutletRegister, outletBomLines } from './outlet-register.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -82,7 +83,18 @@ export function buildBillOfMaterials(design, opts = {}) {
   const items = [];
 
   // ── Equipment ──────────────────────────────────────────────────────────────
-  const unit = design.selectedUnit;
+  //
+  // A BLOCKED SELECTION IS NOT A QUIET OMISSION.
+  //
+  // When the design may not select equipment, `selectedUnit` is null and no
+  // system line is built. That alone would leave a bill of materials that is
+  // simply short by one unit and says nothing about why — which reads as a
+  // costing that nobody finished rather than a design that is not allowed to
+  // name a machine yet. So the omission is recorded, the equipment cost is
+  // declared unknown rather than zero, and the quote gate has something to
+  // refuse on.
+  const equipmentBlocked = design.equipmentBlocked?.blocked === true;
+  const unit = equipmentBlocked ? null : design.selectedUnit;
   if (unit) {
     items.push({
       key: 'indoor_outdoor_system',
@@ -299,21 +311,26 @@ export function buildBillOfMaterials(design, opts = {}) {
   }
 
   // ── Outlets ────────────────────────────────────────────────────────────────
-  // A round diffuser is priced by its neck, which is the duct that reaches it.
-  // Other outlet types are not sized by diameter, so they stay flat-rated.
-  const outletCounts = {};
-  for (const o of (design.outlets?.rows || [])) {
-    const key = OUTLET_MATERIAL_KEY[o.type];
-    if (!key) continue;
-    const d = MATERIAL_CATALOGUE[key]?.byDiameter ? branchDiameterByRoom[o.roomId] || null : null;
-    const bucket = key + '|' + (d || '');
-    outletCounts[bucket] = (outletCounts[bucket] || 0) + o.quantity;
+  //
+  // BOUGHT FROM THE OUTLET REGISTER, NOT RE-DERIVED HERE.
+  //
+  // A round diffuser is priced by its NECK — the hole in the back of the box,
+  // and the size the catalogue is indexed by. This used to price it off
+  // `branchDiameterByRoom`, the branch duct feeding the ROOM, which on a ø250
+  // branch serving a ø200 neck ordered the wrong fitting while the schedule
+  // printed the right one. The register settles the neck once and both read it.
+  const register = design.outletRegister
+    || buildOutletRegister(design, { nacRates });
+  for (const b of outletBomLines(register)) {
+    items.push({
+      ...line(b.key, b.quantity, b.diameterMm ? { ...ctx, diameterMm: b.diameterMm } : ctx),
+      diameterMm: b.diameterMm || null,
+      // Which outlets this line is buying, so a count can be traced rather
+      // than recounted.
+      outletIds: b.outletIds,
+      category: 'outlets'
+    });
   }
-  Object.entries(outletCounts).forEach(([bucket, qty]) => {
-    const [key, d] = bucket.split('|');
-    items.push({ ...line(key, qty, d ? { ...ctx, diameterMm: Number(d) } : ctx),
-      category: 'outlets' });
-  });
 
   // ── Return air ─────────────────────────────────────────────────────────────
   if (design.returnDesign) {
@@ -395,7 +412,11 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
-  return summariseBom(items);
+  // The omission travels with the bill so that re-deriving it after an
+  // estimator edit does not quietly forget that a machine is missing.
+  return summariseBom(items, equipmentBlocked
+    ? { blocked: true, reason: design.equipmentBlocked?.reason || null, costIsUnknown: true }
+    : null);
 }
 
 /**
@@ -408,7 +429,7 @@ export function buildBillOfMaterials(design, opts = {}) {
  * entered the missing cost was still told the line had no cost, and (once the
  * quote gate was added) could never get past it.
  */
-export function summariseBom(items) {
+export function summariseBom(items, equipmentOmitted = null) {
   const placeholderLines = items.filter(i => i.priceSource === PRICE_SOURCE.PLACEHOLDER);
   // A line NAC quote separately carries no rate ON PURPOSE. It is not a price
   // somebody forgot, so it must not block the quote the way a genuine hole
@@ -461,9 +482,19 @@ export function summariseBom(items) {
   // confirmed — the number the estimator needs before sending a quote.
   const placeholderCost = round(placeholderLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
 
+  if (equipmentOmitted?.blocked) {
+    warnings.push({ code: 'EQUIPMENT_OMITTED_FROM_BOM', severity: 'CRITICAL',
+      message: 'No indoor/outdoor system is on this bill of materials: equipment selection is '
+        + 'blocked. ' + (equipmentOmitted.reason || '')
+        + ' The equipment cost is UNKNOWN, not zero, and this order cannot be placed.' });
+  }
+
   return {
     items,
     byCategory,
+    // What is missing and why, so nothing downstream has to infer it from the
+    // absence of a line.
+    equipmentOmitted: equipmentOmitted || null,
     totalCost: round(items.reduce((s, i) => s + (i.totalCost || 0), 0), 2),
     materialsCost: round(items.filter(i => i.category !== 'equipment')
       .reduce((s, i) => s + (i.totalCost || 0), 0), 2),
@@ -518,5 +549,5 @@ export function editBomLine(bom, index, patch) {
   // Re-derive EVERYTHING from the new lines. Recomputing only the totals left
   // the counts and warnings describing a bill of materials that no longer
   // existed.
-  return { ...bom, ...summariseBom(items) };
+  return { ...bom, ...summariseBom(items, bom.equipmentOmitted || null) };
 }

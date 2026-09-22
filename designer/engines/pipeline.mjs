@@ -47,6 +47,8 @@ import { capabilities, DESIGN_STAGE, ROOM_STATUS_PROVISIONAL, proposalAllowance 
 import { checkSupplyGraph, checkPlenum, checkDuctSizes, pressureReadiness,
          supplyMains, PRESSURE_STATUS } from './supply-graph.mjs';
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
+import { buildOutletRegister, checkOutletConsistency } from './outlet-register.mjs';
+import { nacScheduleData } from './nac-schedule.mjs';
 
 /**
  * The corridors the return-air flexes will occupy, as keep-out segments.
@@ -857,6 +859,13 @@ export function runPipeline(design, ctx = {}) {
       .find(c => c.brandId + ':' + c.modelId === key) || d.selectedUnit;
   }
 
+  // ── 9b. THE OUTLET REGISTER ──────────────────────────────────────────────
+  // Built BEFORE the bill of materials, because the order reads it. One record
+  // per physical outlet: id, room, type, airflow, neck, the final duct that
+  // reaches it, the catalogue item, the SKU and the price. The plan, the
+  // schedule and the order all quote from this and from nothing else.
+  d.outletRegister = buildOutletRegister(d, { nacRates: ctx.nacRates });
+
   // ── 10. Materials (PART 22) ───────────────────────────────────────────────
   d.bom = buildBillOfMaterials({
     selectedUnit: d.selectedUnit,
@@ -894,6 +903,24 @@ export function runPipeline(design, ctx = {}) {
   // schedule cannot describe a fitting the drawing does not show.
   d.schedules = buildSchedules({ ...d, btoRates: { ...(ctx.btoRates || {}), ...(d.btoRates || {}) } });
 
+  // The NAC schedule — the sheet an installer reads — is derived HERE rather
+  // than only when a report is rendered, because the consistency check below
+  // has to compare it against the drawing and the order. A schedule nobody
+  // built is a schedule nobody checked.
+  d.nacSchedule = nacScheduleData(d, { settings });
+
+  // Now that all three surfaces exist, do they describe the same outlets?
+  d.outletConsistency = checkOutletConsistency({
+    register: d.outletRegister,
+    design: d,
+    scheduleRooms: d.nacSchedule?.rooms || null
+  });
+  if (d.outletConsistency.failures.length) {
+    d.routeWarnings = [...(d.routeWarnings || []), ...d.outletConsistency.failures.map(f => ({
+      code: f.code, severity: f.severity, area: 'outlets', message: f.message
+    }))];
+  }
+
   d.quoteGate = quoteGate(d);
 
   // ── 11. Costing (PART 24) ─────────────────────────────────────────────────
@@ -911,10 +938,41 @@ export function runPipeline(design, ctx = {}) {
     otherCost: d.otherCost || 0
   }, { settings });
 
+  // ── A DESIGN THAT MAY NOT BE PRICED DOES NOT CARRY A PRICE ───────────────
+  //
+  // The Kauri report printed $15,079.33 inc GST on a job with no verified
+  // scale, no selected equipment, no routed ductwork and no static-pressure
+  // calculation. Every input to that figure was absent; the figure was not.
+  //
+  // The internal COST working stays — an estimator needs to see what the parts
+  // would come to, and the warnings above explain what is missing. What goes
+  // is the sell price: the one number somebody could copy into a quote, read
+  // off a screen, or take to a customer over the phone. It is null, and the
+  // record says why rather than leaving a blank that reads as $0.
+  if (!d.capabilities.mayPrice) {
+    const why = d.capabilities.reasonFor('price');
+    d.commercials = {
+      ...d.commercials,
+      priceBlocked: true,
+      priceBlockedReason: why,
+      sellPriceIncGst: null,
+      sellPriceExGst: null,
+      gstAmount: null,
+      grossProfit: null,
+      grossMarginPct: null,
+      basis: { key: 'blocked', label: 'PRICE WITHHELD — ' + why },
+      warnings: [...(d.commercials.warnings || []), {
+        code: 'PRICE_WITHHELD', severity: 'CRITICAL',
+        message: 'No sell price is produced for this design. ' + why
+      }]
+    };
+  }
+
   // ── 12. Warnings (PART 27) ────────────────────────────────────────────────
   d.warnings = collectWarnings(d, ctx);
   d.warningSummary = summarise(d.warnings);
-  d.quoteLineItems = toQuoteLineItems(d, d.commercials);
+  // Quote lines ARE the price in another shape. A blocked design has none.
+  d.quoteLineItems = d.capabilities.mayPrice ? toQuoteLineItems(d, d.commercials) : [];
   d.stage = 'complete';
   d.settingsSnapshot = { version: settings.version };
   return d;
@@ -936,8 +994,7 @@ export function runPipeline(design, ctx = {}) {
  */
 /** The longest main this design has actually been routed with, if it has. */
 function measuredLongestMainM(d) {
-  const mains = (d.network?.sections || [])
-    .filter(x => !x.parentId && x.role !== 'return' && x.lengthM > 0);
+  const mains = supplyMains(d.network).filter(x => x.lengthM > 0);
   return mains.length ? Math.max(...mains.map(x => x.lengthM)) : null;
 }
 
@@ -971,9 +1028,15 @@ export function designSummary(d) {
     totalConditionedAreaSqM: d.systemLoad?.totalConditionedAreaSqM ?? 0,
     totalCoolingLoadKw: d.systemLoad ? round(d.systemLoad.designCoolingW / 1000, 2) : null,
     totalHeatingLoadKw: d.systemLoad ? round(d.systemLoad.designHeatingW / 1000, 2) : null,
-    recommendedSystem: d.equipmentSelection?.recommended?.[0]
-      ? d.equipmentSelection.recommended[0].brandName + ' ' + d.equipmentSelection.recommended[0].model +
-        ' (' + d.equipmentSelection.recommended[0].capacityKw + ' kW)' : null,
+    // On a blocked design the candidates are a COMPARISON LIST, not a
+    // recommendation. Printing one here is how "no equipment selected" and
+    // "the 16 kW Daikin" ended up on the same page.
+    equipmentBlocked: d.equipmentBlocked?.blocked === true,
+    recommendedSystem: d.equipmentBlocked?.blocked
+      ? null
+      : d.equipmentSelection?.recommended?.[0]
+        ? d.equipmentSelection.recommended[0].brandName + ' ' + d.equipmentSelection.recommended[0].model +
+          ' (' + d.equipmentSelection.recommended[0].capacityKw + ' kW)' : null,
     selectedSystem: d.selectedUnit
       ? d.selectedUnit.brandName + ' ' + d.selectedUnit.model + ' (' + d.selectedUnit.capacityKw + ' kW ' + d.selectedUnit.phase + ')' : null,
     totalAirflowLs: d.airflow?.allocatedAirflowLs ?? null,

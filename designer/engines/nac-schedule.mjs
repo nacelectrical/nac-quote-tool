@@ -21,6 +21,7 @@ import {
   MIN_MAIN_DIAMETER_MM, RETURN_DUCT_SIZES_MM, plenumBalance
 } from './nac-standard.mjs';
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { buildOutletRegister } from './outlet-register.mjs';
 
 const pad = (v, n) => String(v ?? '').padEnd(n);
 const rpad = (v, n) => String(v ?? '').padStart(n);
@@ -168,18 +169,38 @@ export function nacScheduleData(design, opts = {}) {
     });
 
   // ── 4. Final outlets, per room ───────────────────────────────────────────
+  //
+  // READ OFF THE OUTLET REGISTER. The neck printed here is the neck the order
+  // buys and the neck the plan draws, because all three now read one record.
+  // This used to take `row.neckMm` straight from the outlet engine while the
+  // size column beside it came from the network, so a declared ø250 outlet duct
+  // was listed as a ø300 neck on the same line as the ø250 flex feeding it.
+  const register = design?.outletRegister || buildOutletRegister(design);
+  const regByRoom = new Map();
+  for (const o of register) {
+    if (!regByRoom.has(o.roomId)) regByRoom.set(o.roomId, []);
+    regByRoom.get(o.roomId).push(o);
+  }
+
   const rooms = [];
   for (const row of (design?.outlets?.rows || [])) {
     const runs = finals.filter(f => f.roomId === row.roomId);
     if (!runs.length) continue;
+    const regRows = regByRoom.get(row.roomId) || [];
+    const necks = [...new Set(regRows.map(o => o.neckMm).filter(Boolean))];
     rooms.push({
       room: row.label,
       zone: runs[0].zone || null,
-      outletCount: row.quantity,
+      outletCount: regRows.length || row.quantity,
       perOutletLs: row.perOutletLs,
       totalLs: row.airflowLs,
       finalSizesMm: [...new Set(runs.map(r => r.diameterMm))].sort((a, b) => a - b),
-      neckMm: row.neckMm,
+      // One neck size per room in every real case; the array form is there so a
+      // room with two different outlets cannot be silently reduced to one.
+      neckMm: necks.length === 1 ? necks[0] : (necks.length ? necks : row.neckMm),
+      neckByBandMm: regRows[0]?.neckByBandMm ?? row.neckMm,
+      neckFollowsDeclaredDuct: regRows.some(o => o.neckFollowsDeclaredDuct),
+      outletIds: regRows.map(o => o.id),
       outletType: row.typeLabel,
       velocityMs: velocityMs(row.perOutletLs, runs[0].diameterMm),
       btoNumbers: runs.map(r => r.btoNumber).sort((a, b) => a - b)

@@ -20,7 +20,20 @@ export const QUOTE_BLOCK = Object.freeze({
   DAMPER_PRICE_REQUIRED: 'DAMPER_PRICE_REQUIRED',
   PLACEHOLDER_RATES: 'PLACEHOLDER_RATES',
   UNPRICED_LINES: 'UNPRICED_LINES',
-  COMPONENT_SIZE_MISMATCH: 'COMPONENT_SIZE_MISMATCH'
+  COMPONENT_SIZE_MISMATCH: 'COMPONENT_SIZE_MISMATCH',
+  // ── The Kauri set ───────────────────────────────────────────────────────
+  // A price is the last number in a chain, and every one of these breaks the
+  // chain further up. A design that cannot say how big the house is cannot say
+  // what the machine costs; a supply graph that carries 1921 L/s of air
+  // through 800 L/s of outlets cannot have its ductwork counted.
+  SCALE_NOT_VERIFIED: 'SCALE_NOT_VERIFIED',
+  EQUIPMENT_NOT_SELECTED: 'EQUIPMENT_NOT_SELECTED',
+  SUPPLY_GRAPH_INVALID: 'SUPPLY_GRAPH_INVALID',
+  PLENUM_INVALID: 'PLENUM_INVALID',
+  DUCT_SIZE_INCONSISTENT: 'DUCT_SIZE_INCONSISTENT',
+  PRESSURE_NOT_CALCULATED: 'PRESSURE_NOT_CALCULATED',
+  CAPACITY_BELOW_LOAD: 'CAPACITY_BELOW_LOAD',
+  OUTLET_SCHEDULE_DISAGREEMENT: 'OUTLET_SCHEDULE_DISAGREEMENT'
 });
 
 /**
@@ -108,6 +121,74 @@ export function quoteGate(design) {
         'Settings → Material rates before issuing a quote.',
       placeholderCost: bom.placeholderCost || 0
     });
+  }
+
+  // ── THE DESIGN ITSELF HAS TO BE VALID BEFORE ITS PRICE MEANS ANYTHING ───
+  //
+  // Everything above asks whether the parts are priced. These ask whether
+  // there is a design to price. On 34 Kauri every one of them was false and a
+  // sell price of $15,079.33 was printed anyway.
+
+  const caps = design?.capabilities || null;
+  if (caps && caps.mayPrice === false) {
+    blockers.push({
+      code: QUOTE_BLOCK.SCALE_NOT_VERIFIED,
+      severity: 'CRITICAL',
+      message: (typeof caps.reasonFor === 'function' ? caps.reasonFor('price') : null)
+        || 'This design may not carry a price yet.',
+      remedy: 'Measure one known distance on the plan — a printed dimension, a wall the '
+            + 'estimator has measured, or a scale bar — and calibrate against it.'
+    });
+  }
+
+  if (design?.equipmentBlocked?.blocked) {
+    blockers.push({
+      code: QUOTE_BLOCK.EQUIPMENT_NOT_SELECTED,
+      severity: 'CRITICAL',
+      message: 'No equipment is selected, so there is no machine to quote. '
+        + (design.equipmentBlocked.reason || '')
+        + ' The candidate list is for internal comparison only and no model may be named '
+        + 'to the customer.'
+    });
+  }
+
+  for (const f of (design?.supplyGraphCheck?.failures || [])) {
+    blockers.push({ code: QUOTE_BLOCK.SUPPLY_GRAPH_INVALID, severity: 'CRITICAL',
+                    message: f.message, failureCode: f.code });
+  }
+  for (const f of (design?.plenumCheck?.failures || [])) {
+    blockers.push({ code: QUOTE_BLOCK.PLENUM_INVALID, severity: 'CRITICAL',
+                    message: f.message, failureCode: f.code });
+  }
+  for (const f of (design?.ductSizeCheck?.failures || [])) {
+    blockers.push({ code: QUOTE_BLOCK.DUCT_SIZE_INCONSISTENT, severity: 'CRITICAL',
+                    message: f.message, failureCode: f.code });
+  }
+
+  // A static-pressure check is part of what a customer is paying for. An
+  // uncalculated one is not a passed one.
+  if (design?.network?.sections?.length && design?.pressureReadiness
+      && design.pressureReadiness.ok === false) {
+    blockers.push({
+      code: QUOTE_BLOCK.PRESSURE_NOT_CALCULATED,
+      severity: 'CRITICAL',
+      message: 'Static pressure is ' + (design.pressure?.status || 'NOT CALCULATED') + '. '
+        + (design.pressureReadiness.reason || '')
+    });
+  }
+
+  // A unit below the calculated load is NOT handled here. It is a real thing an
+  // estimator knowingly signs off — the approved Dungannon job runs a 16 kW
+  // machine against a 22.5 kW calculated load — and it already carries a
+  // CRITICAL SYSTEM_UNDERSIZED warning that blocks final approval. What it may
+  // never do is reach a customer described as adequate, so that rejection lives
+  // in the PRESENTATION gate, next to the words it would contradict.
+
+  // The plan, the schedule and the order must describe the same outlets.
+  const consistency = design?.outletConsistency || null;
+  for (const f of (consistency?.failures || [])) {
+    blockers.push({ code: QUOTE_BLOCK.OUTLET_SCHEDULE_DISAGREEMENT, severity: 'CRITICAL',
+                    message: f.message, failureCode: f.code });
   }
 
   return {
