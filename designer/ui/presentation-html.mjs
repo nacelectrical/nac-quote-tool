@@ -519,7 +519,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + when(!!p.demonstration,
         '<div class="demo-banner" role="note">' + esc(p.demonstrationNote
           || 'DEMONSTRATION — this is not a quote.') + '</div>'
-        + '<div class="demo-mark" aria-hidden="true">DEMONSTRATION</div>')
+        + '<div class="demo-mark" aria-hidden="true"><span>DEMONSTRATION</span></div>')
     + '<main class="doc">' + body + '</main>'
     + when(!print, stickyHtml(p))
     + when(!print, '<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" '
@@ -553,11 +553,19 @@ body{font-family:var(--sans);color:var(--body);background:var(--bg);line-height:
   font-weight:800;letter-spacing:.06em;text-transform:uppercase;font-size:13px;
   text-align:center;padding:10px 16px;line-height:1.4;
   -webkit-print-color-adjust:exact;print-color-adjust:exact}
-.demo-mark{position:fixed;inset:0;z-index:0;pointer-events:none;
+/* The BOX stays the size of the viewport and clips; only the TEXT inside it is
+   rotated. Rotating the box itself pushed its own bounding rect past the edge
+   of the page, which is horizontal overflow however invisible it looks. */
+.demo-mark{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
-  font-size:min(18vw,190px);font-weight:900;letter-spacing:.08em;
-  color:rgba(138,28,28,.10);transform:rotate(-28deg);white-space:nowrap;
   -webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* Sized so the ROTATED text fits the viewport rather than relying on the
+   parent to clip it. At -28 degrees a run of text w wide and h tall occupies
+   w·cos28 + h·sin28, so the cap is well under the page width at every size the
+   proposal is read at. */
+.demo-mark span{display:block;transform:rotate(-28deg);white-space:nowrap;
+  font-size:min(7vw,96px);font-weight:900;letter-spacing:.08em;
+  color:rgba(138,28,28,.10);line-height:1}
 body.demo .doc{position:relative;z-index:1}
 img{max-width:100%;display:block}
 h1,h2,h3{color:var(--ink);line-height:1.22;font-weight:700;letter-spacing:-.01em}
@@ -831,7 +839,7 @@ const PRINT_ONLY = `
 /* The demonstration mark has to be on every printed page, not only the first,
    so it is repeated per page rather than fixed to the viewport. */
 .demo-banner{position:static}
-.demo-mark{position:fixed;font-size:120pt}
+.demo-mark span{font-size:40pt}
 body{font-size:11pt;background:#fff}
 .doc{max-width:none;padding-bottom:0}
 .sec{padding:16pt 0;break-inside:auto}

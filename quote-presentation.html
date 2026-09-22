@@ -835,10 +835,14 @@ function renderPreview() {
     design: PREVIEW_DESIGN,
     customer: { name: 'Preview Customer', address: '1 Example Street, Peregian Springs QLD 4573' },
     job: { siteAddress: '1 Example Street, Peregian Springs QLD 4573' },
-    content: C,
+    // A PREVIEW IS A DEMONSTRATION. It is built from PREVIEW_DESIGN — a sample
+    // job with placeholder figures — so it carries the DEMONSTRATION watermark
+    // and is a draft, never an issued proposal. Marking it any other way would
+    // produce a page an estimator could screenshot and send.
+    content: { ...C, demonstration: true },
     proposalNumber: 'PREVIEW', preparedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-    revision: 1, status: 'issued',
+    revision: 1, status: 'draft',
     heroImage: C.heroImage || null
   });
   if (!built.ok) {
@@ -862,7 +866,13 @@ function renderPreview() {
 const PREVIEW_DESIGN = {
   selectedUnit: { brandName: 'Daikin', model: 'FDYAN160AV1 / RZA160C2V1',
                   capacityKw: 16, phase: '1Ph' },
-  controller: { name: 'Brand Standard Controller', maxZones: 8 },
+  // The controller as the CATALOGUE carries it, price included. A stand-in
+  // that names a controller without its price is a component nobody has
+  // costed, and the presentation gate refuses one.
+  controller: { id: 'std', name: 'Brand Standard Controller', maxZones: 8,
+                cost: 0, includedInSystem: true,
+                note: 'Manufacturer\u2019s own zone controller, supplied with the system '
+                    + '\u2014 no separate charge.' },
   rooms: [
     { label: 'MASTER BEDROOM', conditioned: true }, { label: 'BEDROOM 2', conditioned: true },
     { label: 'BEDROOM 3', conditioned: true }, { label: 'LIVING', conditioned: true },

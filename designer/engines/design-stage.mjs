@@ -348,8 +348,13 @@ export function proposalAllowance({ outletCount = 0, zoneCount = 0, settings = n
              provisional: true, reason: null };
   }
   if (perOutlet === null && perZone === null && flat === null) {
+    // The block exists but every field is null, which is how it ships. Same
+    // answer as no block at all, and the same instruction: a blocker that does
+    // not name the screen leaves somebody hunting for it.
     return { ok: false, amount: null, basis: null,
-      reason: 'The proposal allowance is configured but empty.' };
+      reason: 'No proposal ductwork allowance has been set. Enter a flat allowance, or a '
+            + 'per-outlet and per-zone rate, in HVAC Design Settings → Commercial before '
+            + 'quoting at proposal stage.' };
   }
   const amount = (flat ?? 0) + (perOutlet ?? 0) * outletCount + (perZone ?? 0) * zoneCount;
   const parts = [];

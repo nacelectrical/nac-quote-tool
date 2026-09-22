@@ -236,6 +236,9 @@ export function presentationGate(design, opts = {}) {
         message: 'This is a ' + zoneCount + '-zone system with no zone controller selected. '
           + 'A zoned proposal has to name the controller the customer is buying.'
       });
+    } else if (c.includedInSystem === true) {
+      // The manufacturer's own controller, in the box with the system. Zero is
+      // its real price, not a missing one.
     } else if (n(c.cost) === null && n(c.price) === null) {
       blockers.push({
         code: 'ZONE_CONTROLLER_NOT_PRICED',

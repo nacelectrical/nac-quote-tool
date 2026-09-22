@@ -74,11 +74,34 @@ const built = buildPresentation({
   content: DEMO_CONTENT,
   proposalNumber: 'NAC-2026-0184',
   preparedAt: '2026-09-22T00:00:00Z', expiresAt: '2026-10-22T00:00:00Z',
-  revision: 1, status: 'issued',
+  // DRAFT. DEMO_CONTENT is demonstration data and the builder refuses to
+  // issue, accept or send one — that refusal is asserted below. Everything
+  // this suite looks at (layout, images, options, accept form, print) renders
+  // identically on the preview, with a DEMONSTRATION watermark over it.
+  revision: 1, status: 'draft',
   heroImage: { src: hero.derivatives[1].ref, alt: hero.alt, width: 1600, height: 700,
                srcset: hero.derivatives.map(d => ({ ref: d.ref, width: d.width })) }
 });
-if (!built.ok) { console.error('demo presentation did not build'); process.exit(1); }
+if (!built.ok) {
+  console.error('demo presentation did not build:',
+    JSON.stringify((built.blockers || []).map(b => b.code + ': ' + b.message), null, 2));
+  process.exit(1);
+}
+if (built.presentation.demonstration !== true) {
+  console.error('the demo fixture is not flagged as demonstration data');
+  process.exit(1);
+}
+// And it may not be issued, from here or anywhere else.
+for (const status of ['issued', 'accepted', 'sent']) {
+  const refused = buildPresentation({
+    design: demo.out, customer: { name: 'Sample Customer' }, job: {},
+    content: DEMO_CONTENT, proposalNumber: 'NAC-2026-0184', revision: 1, status
+  });
+  if (refused.ok || refused.presentation !== null) {
+    console.error('demonstration content was allowed to be ' + status);
+    process.exit(1);
+  }
+}
 const P = built.presentation;
 const HTML = renderPresentationHtml(P);
 
