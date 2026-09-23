@@ -29,7 +29,7 @@ export const PLAN_VIEW = Object.freeze({
   ROOMS: 'rooms'
 });
 import { renderPdfPage } from './ui/pdf.mjs';
-import { tilePlan, mergeTileObservations } from './ui/image.mjs';
+import { preparePlanImage, tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport,
@@ -1897,6 +1897,24 @@ export class DesignerApp {
         pageCount = page.pageCount;
       }
 
+      // ── A PHONE PHOTO IS NOT A FLOOR PLAN SCAN ────────────────────────────
+      //
+      // A plan photographed on a phone arrives at 12 to 48 megapixels. Nothing
+      // downstream wanted that: the data URL is megabytes of string held twice
+      // on the design and then written to the database, the decoded bitmap is
+      // tens of megabytes of memory, and iOS Safari refuses to draw a canvas
+      // past about 16.7 million pixels — which is how a plan "won't upload"
+      // with nothing on screen to say why.
+      //
+      // So an oversized image is scaled down before anything else touches it.
+      // The limit is generous enough to keep printed dimensions legible, and
+      // the scale is recorded rather than silently applied. Calibration is
+      // cleared on every new plan anyway, so no measurement can survive the
+      // change in pixel size.
+      this.planStatus = 'Preparing the image…'; this.render();
+      const prepared = await preparePlanImage(imageUrl);
+      imageUrl = prepared.dataUrl;
+
       // QUICK QUOTE MODE uploads a plan before any screen that builds the
       // viewer has been opened, so it has to exist before the image reaches it.
       // Without this the first thing an estimator does throws.
@@ -1906,17 +1924,28 @@ export class DesignerApp {
       this.design.plan = {
         fileName: file.name, mediaType: file.type, isPdf,
         dataUrl: imageUrl,
-        originalDataUrl: dataUrl,      // kept so another page can be rendered
+        // Only a PDF needs its original kept — that is what another page is
+        // rendered from. Holding a second copy of a phone photo doubled the
+        // size of every design that had one, for nothing.
+        originalDataUrl: isPdf ? dataUrl : null,
         pageNumber, pageCount,
         widthPx: dims.width, heightPx: dims.height,
+        // What arrived, and what was done to it, so the sheet can say so.
+        sourceWidthPx: prepared.sourceWidth,
+        sourceHeightPx: prepared.sourceHeight,
+        downscaled: prepared.downscaled,
         uploadedAt: new Date().toISOString()
       };
       // A new plan invalidates the old calibration — it is never carried over.
       this.design.calibration = null;
       this.dirty = true;
-      toast(pageCount > 1
+      const shrunk = prepared.downscaled
+        ? ' Scaled from ' + prepared.sourceWidth + '×' + prepared.sourceHeight + ' to ' +
+          dims.width + '×' + dims.height + ' so it will open on any device.'
+        : '';
+      toast((pageCount > 1
         ? 'Page 1 of ' + pageCount + ' loaded. Switch pages if the floor plan is further in, then calibrate.'
-        : 'Plan loaded. Calibrate it next.');
+        : 'Plan loaded. Calibrate it next.') + shrunk);
       this.update();
     } catch (e) {
       const detail = String(e.message || 'unknown error').replace(/\.?$/, '.');

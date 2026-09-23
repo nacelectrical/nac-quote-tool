@@ -221,3 +221,91 @@ export function mergeTileObservations(results) {
 
   return { observations: merged, notes, quality, conflictCount: conflicts.length };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A PLAN AS THE APPLICATION CAN ACTUALLY HOLD IT
+//
+// A floor plan photographed on a phone arrives at 12 to 48 megapixels. Held at
+// that size it is megabytes of base64 on the design record, tens of megabytes
+// of decoded bitmap in memory, and — past about 16.7 million pixels — a canvas
+// iOS Safari will not draw at all. The plan then "will not upload", with
+// nothing on screen to say why.
+//
+// Nothing needs that resolution. A dimension printed on a builder's sheet is
+// legible at a fraction of it, and every measurement in this application is
+// taken from the calibrated scale rather than from the pixels themselves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The long edge a plan is held at. Generous: printed text stays readable. */
+export const MAX_PLAN_EDGE_PX = 2600;
+
+/**
+ * Well under the iOS canvas ceiling (~16.7 Mpx), with room for the drawing
+ * surface the viewer puts on top of it.
+ */
+export const MAX_PLAN_PIXELS = 8_000_000;
+
+/** Decode a data URL, or reject with something a person can act on. */
+function decode(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      if (!img.naturalWidth || !img.naturalHeight) {
+        reject(new Error('the image could not be decoded — if it came off an iPhone it may ' +
+                         'be a HEIC file; send it as a JPG, or set Camera → Formats to ' +
+                         '"Most Compatible"'));
+        return;
+      }
+      resolve(img);
+    };
+    img.onerror = () => reject(new Error('the image could not be decoded — if it came off an ' +
+                                         'iPhone it may be a HEIC file; send it as a JPG'));
+    img.src = src;
+  });
+}
+
+/**
+ * Scale a plan image down to something every device can open.
+ *
+ * Returns the image unchanged when it is already small enough, so nothing is
+ * re-encoded — and therefore nothing is degraded — without cause.
+ *
+ * @returns {Promise<{dataUrl:string,width:number,height:number,
+ *                    sourceWidth:number,sourceHeight:number,downscaled:boolean}>}
+ */
+export async function preparePlanImage(dataUrl, opts = {}) {
+  const maxEdge = Number(opts.maxEdge) || MAX_PLAN_EDGE_PX;
+  const maxPixels = Number(opts.maxPixels) || MAX_PLAN_PIXELS;
+  const img = await decode(dataUrl);
+  const w = img.naturalWidth, h = img.naturalHeight;
+
+  const edgeScale = Math.min(1, maxEdge / Math.max(w, h));
+  const areaScale = Math.min(1, Math.sqrt(maxPixels / (w * h)));
+  const scale = Math.min(edgeScale, areaScale);
+
+  if (scale >= 1) {
+    return { dataUrl, width: w, height: h, sourceWidth: w, sourceHeight: h, downscaled: false };
+  }
+
+  const tw = Math.max(1, Math.round(w * scale));
+  const th = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = tw; canvas.height = th;
+  const ctx = canvas.getContext('2d');
+  // A plan is line work; a smooth downscale keeps thin lines and printed
+  // dimensions legible where a nearest-neighbour one drops them entirely.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, tw, th);
+
+  let out;
+  try {
+    out = canvas.toDataURL('image/jpeg', 0.92);
+  } catch (e) {
+    // A tainted or over-large canvas. Better the original than nothing.
+    return { dataUrl, width: w, height: h, sourceWidth: w, sourceHeight: h, downscaled: false };
+  }
+  return { dataUrl: out, width: tw, height: th,
+           sourceWidth: w, sourceHeight: h, downscaled: true };
+}
