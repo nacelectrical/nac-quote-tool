@@ -210,15 +210,27 @@ test('sample plan: the job is priced at cost plus the flat fee', () => {
   assert.equal(c.totalJobCost,
     Math.round((c.equipmentCost + c.materialsCost + c.subcontractorCost + c.otherCost) * 100) / 100);
 
-  // Price is that cost plus the fee, then GST, exactly the way the existing
-  // quote tool derives GST.
-  assert.equal(c.sellPriceExGst, Math.round((c.totalJobCost + c.jobFee) * 100) / 100);
+  // Price is that cost, plus the fee over that cost, plus the lines NAC charge
+  // at a fixed price — which come AFTER the fee, never inside the base it is
+  // worked out on, or their margin would be charged twice.
+  assert.ok(c.fixedSellExGst > 0, 'the sample has no fixed-price lines to check');
+  assert.equal(c.sellPriceExGst,
+    Math.round((c.totalJobCost + c.jobFee + c.fixedSellExGst) * 100) / 100);
+  assert.equal(c.pricingBasis.feeBaseExGst, c.totalJobCost,
+    'the fee was worked out over something other than the job cost');
+  assert.equal(c.pricingBasis.fixedSellExGst, c.fixedSellExGst);
   assert.equal(c.gstRate, 0.10);
   assert.equal(c.gstAmount, Math.round((c.sellPriceExGst * 0.1) * 100) / 100);
   assert.equal(c.sellPriceIncGst, Math.round((c.sellPriceExGst * 1.1) * 100) / 100);
 
-  // Gross profit is the fee, whatever the job cost.
-  assert.equal(c.grossProfit, c.jobFee);
+  // Gross profit is the fee plus the fixed-price lines — and the sheet says
+  // outright that the second part is overstated, because what NAC pay for
+  // those lines is not recorded.
+  assert.equal(c.grossProfit, Math.round((c.jobFee + c.fixedSellExGst) * 100) / 100);
+  assert.ok(c.marginExcludesCostOf, 'the margin is overstated and nothing says so');
+  assert.match(c.marginExcludesCostOf.note, /not recorded/);
+  assert.ok(!c.warnings.some(w => w.code === 'MARGIN_NOT_EQUAL_TO_FEE'),
+    'the expected-profit check did not allow for the fixed-price lines');
   assert.ok(c.grossMarginPct > 0 && c.grossMarginPct < 100);
 
   // The unit cost comes from the supplier price list, not a guess.

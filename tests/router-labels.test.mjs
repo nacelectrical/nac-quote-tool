@@ -22,15 +22,15 @@ const section = (over = {}) => ({
 
 test('the default label shows the diameter at minimum', () => {
   assert.equal(DEFAULT_LABEL_DETAIL, LABEL_DETAIL.DIAMETER);
-  assert.equal(segmentLabel(section()), '200Ø');
+  assert.equal(segmentLabel(section()), '\u00f8200');
 });
 
 test('diameter + airflow reads as one line', () => {
-  assert.equal(segmentLabel(section(), LABEL_DETAIL.DIAMETER_FLOW), '200Ø — 105 L/s');
+  assert.equal(segmentLabel(section(), LABEL_DETAIL.DIAMETER_FLOW), '\u00f8200 — 105 L/s');
 });
 
 test('full detail names the room first, then the numbers', () => {
-  assert.equal(segmentLabel(section(), LABEL_DETAIL.FULL), 'BED 1\n200Ø — 105 L/s — 5.2 m');
+  assert.equal(segmentLabel(section(), LABEL_DETAIL.FULL), 'BED 1\n\u00f8200 — 105 L/s — 5.2 m');
 });
 
 test('labels can be turned off entirely', () => {
@@ -41,7 +41,7 @@ test('a section with no measured length still labels', () => {
   // A route that has not been drawn yet has no length. The diameter is still
   // known, and hiding the label would lose the most useful number on the plan.
   assert.equal(segmentLabel(section({ lengthM: null }), LABEL_DETAIL.FULL),
-    'BED 1\n200Ø — 105 L/s');
+    'BED 1\n\u00f8200 — 105 L/s');
 });
 
 test('a missing section labels nothing rather than inventing a size', () => {

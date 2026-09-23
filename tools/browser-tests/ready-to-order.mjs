@@ -80,12 +80,34 @@ const ready = await p.evaluate(() => {
   // The static pressure figure this model has no data sheet for.
   app.design.equipmentSpecs = { ...(app.design.equipmentSpecs || {}) };
   app.update();
+  const unpricedLines = (app.design.bom?.items || []).filter(i => !i.priced);
   return { unpriced: app.design.bom?.unpricedCount ?? null,
+           unpricedKeys: [...new Set(unpricedLines.map(i => i.key))],
+           btoConfigs: unpricedLines.filter(i => i.key === 'bto_fitting').map(i => i.configKey),
+           gateOk: app.design.quoteGate?.ok ?? null,
+           gateCodes: (app.design.quoteGate?.blockers || []).map(b => b.code),
            sell: app.design.commercials?.sellPriceIncGst ?? null };
 });
 console.log('     ', JSON.stringify(ready));
 say('the design has a sell price', ready.sell > 0, '$' + ready.sell);
-say('no material line is left unpriced', ready.unpriced === 0, String(ready.unpriced));
+// EVERY BRANCH TAKE-OFF IS PRICED, AND SAYS HOW.
+//
+// `bto_400_250_250_250` is still not the same fitting as `bto_350_250_250_250`,
+// and neither borrows the other's price. What changed is where a price comes
+// from when nobody has entered one: a configuration MMEM stock is priced as
+// that part, and one they do not stock carries the interim rate Nick
+// authorised — "just do all bto as 75+ each no matter what until i get the
+// exact descriptions". So there are no unpriced lines left, and the quote is
+// no longer blocked by them.
+say('no line is left with no cost at all',
+  ready.unpricedKeys.length === 0,
+  ready.unpricedKeys.join(', ') || 'none');
+say('and each take-off names the exact configuration it is priced on',
+  ready.btoConfigs.every(k => /^bto_\d+(_\d+)+$/.test(k)),
+  ready.btoConfigs.join(', ') || 'none');
+say('the take-offs no longer block the customer quote',
+  !ready.gateCodes.includes('BTO_PRICE_REQUIRED'),
+  ready.gateCodes.join(', ') || 'nothing blocking');
 
 // ── 2. Push it to a quote ───────────────────────────────────────────────────
 STEP('Create the customer quote');

@@ -165,7 +165,7 @@ test('extra quantities multiply', () => {
 
 // ── Hourly mode, for the basis NAC no longer uses but the code still supports ─
 test('hourly labour is a COST, and the price comes from the catalogue', () => {
-  const s = settingsWith({ commercial: { labourMode: 'hourly', pricingBasis: 'catalogue_price' } });
+  const s = settingsWith({ commercial: { labourMode: 'hourly', pricingMode: 'COMPONENT_SELL_PRICES' } });
   const labour = calculateLabour({}, { settings: s });
   assert.equal(labour.mode, 'hourly');
   assert.ok(labour.totalCost > 0);
@@ -178,7 +178,7 @@ test('hourly labour is a COST, and the price comes from the catalogue', () => {
 });
 
 test('no price at all is reported rather than guessed', () => {
-  const s = settingsWith({ commercial: { labourMode: 'hourly', pricingBasis: 'catalogue_price' } });
+  const s = settingsWith({ commercial: { labourMode: 'hourly', pricingMode: 'COMPONENT_SELL_PRICES' } });
   const r = calculateCommercials({ bom: bom(5000, 3000), labour: calculateLabour({}, { settings: s }) },
                                  { settings: s });
   assert.equal(r.sellPriceIncGst, null);

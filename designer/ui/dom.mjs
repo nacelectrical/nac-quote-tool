@@ -118,8 +118,10 @@ export function checkbox(checked, label, onchange) {
     h('span', {}, label));
 }
 
-export function button(label, onclick, kind = '') {
-  return h('button', { class: 'btn ' + kind, onclick, type: 'button' }, label);
+export function button(label, onclick, kind = '', attrs = {}) {
+  // `attrs` is optional and additive — a tooltip on a toggle, an aria label,
+  // a disabled state — so every existing three-argument call is unaffected.
+  return h('button', { class: 'btn ' + kind, onclick, type: 'button', ...attrs }, label);
 }
 
 /** Progressive disclosure: a collapsed panel of engineering detail. */

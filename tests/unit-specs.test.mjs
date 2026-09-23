@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { UNIT_SPECS, UNIT_SPEC_META, findUnitSpec, specsForBrand } from '../designer/engines/unit-specs.mjs';
 import { designReturnAir, selectReturnDuct } from '../designer/engines/returnair.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
+import { RETURN_DUCT_SIZES_MM } from '../designer/engines/nac-standard.mjs';
+import { maxAirflowPerReturnLs, returnCountFor } from '../designer/engines/nac-standard.mjs';
 
 test('the data is attributed to the sheets it came off', () => {
   assert.match(UNIT_SPEC_META.source, /TECH DATA SHEETS/);
@@ -110,9 +112,11 @@ test('a unit with a rectangular flange falls back to NAC standard sizing', () =>
   const ret = designReturnAir({ totalAirflowLs: 787, returnCount: 1, ductLengthMm: 3000,
     unit: { brandId: 'fujitsu', model: 'ARTH60KHTA / AOTH60KBTA' } });
   assert.equal(ret.duct.fromUnitSpec, false);
-  // Which lands on the same answer, by NAC's own rule.
-  assert.equal(ret.duct.ductCount, 2);
-  assert.equal(ret.duct.diameterMm, 400);
+  // ONE duct back from the return point, sized to carry the lot. 787 L/s in a
+  // 450 is 4.95 m/s — inside the 5 m/s maximum, and the only size on the
+  // return ladder that manages it.
+  assert.equal(ret.duct.ductCount, 1);
+  assert.equal(ret.duct.diameterMm, 450);
 });
 
 test('no unit given still designs a return', () => {
@@ -122,30 +126,117 @@ test('no unit given still designs a return', () => {
   assert.equal(ret.duct.diameterMm, 400);
 });
 
-test('NAC never size a return above 400, they add a second duct', () => {
+test('the return runs ONE duct per point, on the 350 / 400 / 450 ladder', () => {
+  // A 450 IS fitted on the return — on the 25 kW unit the returns are 2 x 450.
+  // That is not a contradiction of "NAC never fit a 450": that rule is about
+  // SUPPLY. Here the whole system comes back through one or two ducts, and a
+  // 400 runs them too fast.
   const S = DEFAULT_SETTINGS;
-  for (const ls of [300, 450, 600, 787, 900, 1200]) {
+  const band = S.duct.velocity.return;
+  for (const ls of [300, 450, 600, 787]) {
     const d = selectReturnDuct(ls, S);
-    assert.ok(d.diameterMm <= 400, ls + ' L/s picked ' + d.diameterMm + ' mm');
-    assert.ok([350, 400].includes(d.diameterMm));
-    assert.ok(d.ductCount <= 2);
+    assert.ok(RETURN_DUCT_SIZES_MM.includes(d.diameterMm),
+      ls + ' L/s picked ' + d.diameterMm + ' mm');
+    assert.equal(d.ductCount, 1, ls + ' L/s ran ' + d.ductCount + ' ducts from one point');
+    assert.ok(d.velocityMs <= band.max, ls + ' L/s at ' + d.velocityMs + ' m/s');
     assert.equal(d.exceedsStandard, false, ls + ' L/s should be within standard');
   }
 });
 
-test('beyond two 400s it asks for another return rather than inventing a duct', () => {
+test('the return picks the smallest duct that stays inside the band', () => {
+  const S = DEFAULT_SETTINGS;
+  assert.equal(selectReturnDuct(300, S).diameterMm, 350);
+  assert.equal(selectReturnDuct(450, S).diameterMm, 400);
+  assert.equal(selectReturnDuct(600, S).diameterMm, 450);
+});
+
+test('a 25 kW system returns through 2 x 450', () => {
+  // 1202 L/s, two return points, 601 L/s each: a 450 at 3.78 m/s.
+  const ret = designReturnAir({ totalAirflowLs: 1202, returnCount: 2, ductLengthMm: 4000 });
+  assert.equal(ret.returnCount, 2, 'two return grilles');
+  assert.equal(ret.duct.ductCount, 2, 'two ducts back to the unit');
+  assert.equal(ret.perDuctLs, ret.perReturnLs, 'one duct per grille when the unit has no spigots');
+  assert.equal(ret.duct.diameterMm, 450);
+  assert.ok(ret.duct.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max);
+  assert.ok(!ret.warnings.some(w => w.code === 'RESTRICTED_RETURN_PATH'));
+});
+
+test('beyond what one 450 carries it asks for another return point', () => {
   const d = selectReturnDuct(1600, DEFAULT_SETTINGS);
   assert.equal(d.exceedsStandard, true);
-  assert.equal(d.diameterMm, 400);
-  assert.equal(d.ductCount, 2);
+  assert.equal(d.diameterMm, 450);
+  assert.equal(d.ductCount, 1);
+  assert.match(d.reason, /another return air point/i);
   const ret = designReturnAir({ totalAirflowLs: 1600, returnCount: 1 });
   assert.ok(ret.warnings.some(w => w.code === 'RETURN_EXCEEDS_NAC_STANDARD'));
 });
 
-test('450 and 500 are not on the duct ladder at all', () => {
+test('450 and 500 are not on the SUPPLY duct ladder at all', () => {
+  // The supply side is unchanged: nothing above a 400 is installed.
   const ladder = DEFAULT_SETTINGS.duct.availableDiametersMm;
   assert.ok(!ladder.includes(450));
   assert.ok(!ladder.includes(500));
   assert.equal(Math.max(...ladder), 400);
   assert.equal(DEFAULT_SETTINGS.duct.maxDiameterMm, 400);
+});
+
+// ── How many return points, decided by the duct rather than a round number ──
+
+test('one return point carries only what one duct can carry', () => {
+  // The biggest duct on the return ladder at the fastest it may run.
+  const cap = maxAirflowPerReturnLs(5);
+  assert.ok(Math.abs(cap - 795) < 1, cap + ' L/s');
+  // It is derived, so it moves with the band rather than disagreeing with it.
+  assert.ok(maxAirflowPerReturnLs(4) < cap);
+});
+
+test('a second return is fitted as soon as one duct cannot carry the air', () => {
+  // The bug: at 800 L/s the design stayed on ONE return, which no return duct
+  // NAC fits can carry inside its band. The tool reported 5.03 m/s and told
+  // the estimator to add a return, instead of fitting one.
+  assert.equal(returnCountFor(790), 1);
+  assert.equal(returnCountFor(800), 2);
+  assert.equal(returnCountFor(1202), 2);
+  // And the estimator's own call still wins.
+  assert.equal(returnCountFor(1202, { override: 1 }), 1);
+});
+
+test('no return point is ever left over its velocity band', () => {
+  for (const total of [300, 500, 790, 800, 1000, 1202, 1400]) {
+    const count = returnCountFor(total);
+    const d = selectReturnDuct(total / count, DEFAULT_SETTINGS);
+    assert.ok(d.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max,
+      total + ' L/s over ' + count + ' return(s) runs at ' + d.velocityMs + ' m/s');
+    assert.equal(d.exceedsStandard, false, total + ' L/s exceeded the standard');
+  }
+});
+
+// ── The unit's own spigots, which the pipeline never used to ask for ────────
+
+test('the Daikin 16 kW return runs on its own 2 x 400 spigots', () => {
+  // Manufacturer data, and 46 of the 489 units in the sheet state it. Nothing
+  // was passing the unit into designReturnAir, so all of it was being ignored.
+  const ret = designReturnAir({ totalAirflowLs: 800, ductLengthMm: 4000,
+    unit: { brandId: 'daikin', model: 'FDYAN160AV1 / RZA160C2V1' } });
+  assert.equal(ret.duct.fromUnitSpec, true);
+  assert.equal(ret.duct.ductCount, 2);
+  assert.equal(ret.duct.diameterMm, 400);
+  assert.equal(ret.duct.unitReturnFlangeText, '2 x 400 Oval');
+  // And the velocity is worked out on the air in ONE duct.
+  assert.equal(ret.perDuctLs, Math.round(ret.designAirflowLs / 2));
+  assert.ok(ret.duct.velocityMs <= DEFAULT_SETTINGS.duct.velocity.return.max,
+    ret.duct.velocityMs + ' m/s');
+});
+
+test('a unit that states no spigots still gets NAC standard sizing', () => {
+  // The 25 kW Daikin publishes a rectangular flange, not round spigots, so
+  // NAC install practice sizes it — and that is what the schedule says.
+  const spec = findUnitSpec('daikin', 'FDYQN250LBV1');
+  assert.equal(spec.returnSpigots, null);
+  assert.match(spec.returnFlangeText, /x/);
+  const ret = designReturnAir({ totalAirflowLs: 1202, ductLengthMm: 4000,
+    unit: { brandId: 'daikin', model: 'FDYQN250LBV1' } });
+  assert.equal(ret.duct.fromUnitSpec, false);
+  assert.equal(ret.duct.diameterMm, 450);
+  assert.equal(ret.duct.ductCount, 2);
 });

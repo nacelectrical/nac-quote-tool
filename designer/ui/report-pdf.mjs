@@ -12,6 +12,14 @@ import { PdfDoc, textWidth, wrapText, jpegInfo } from './pdf-writer.mjs';
 
 const A4 = { width: 595.28, height: 841.89 };
 const M = 40;                                  // margin, points
+/** The footer's type size, and the metal it keeps between itself and the edge. */
+const FOOT_SIZE = 7;
+/** Clear space between the page number and the right margin. Never zero. */
+const FOOT_SAFE = 6;
+/** Clear space between the business line and the page number. */
+const FOOT_GAP = 14;
+/** A no-wrap column may shrink to this, and no further, before it wraps. */
+const NOWRAP_MIN_SIZE = 6;
 
 const INK      = [0.078, 0.078, 0.173];
 const MUTED    = [0.42, 0.45, 0.59];
@@ -48,6 +56,8 @@ class Layout {
     this.y = 0;
     this.pageCount = 0;
     this.pending = null;                        // a heading waiting for its content
+    /** Which pages are sideways, so the footer is drawn to the right edge. */
+    this.landscapePages = new Set();
     this.newPage();
   }
 
@@ -156,10 +166,17 @@ class Layout {
   kv(items) {
     const cols = 4, gap = 6;
     const w = (this.contentW - gap * (cols - 1)) / cols;
-    this.flushHeading(items.some(it => it[2]) ? 46 : 37);
+    this.flushHeading(items.some(it => it[2]) ? 54 : 37);
     for (let i = 0; i < items.length; i += cols) {
       const row = items.slice(i, i + cols);
-      const h = row.some(it => it[2]) ? 40 : 31;
+      // THE CAPTION WRAPS RATHER THAN BEING CUT OFF. `Fabricated transition
+      // plenum: 1152 ...` is the one line on the sheet that says what is being
+      // ordered instead of a stock box, and an ellipsis took the numbers off
+      // the end of it. Two lines is the ceiling: the box is a summary, and past
+      // that the reader wants the bill of materials.
+      const subs = row.map(it => it[2] ? wrapText(String(it[2]), w - 12, 6.5, false).slice(0, 2) : []);
+      const subH = Math.max(0, ...subs.map(l => l.length)) * 8;
+      const h = subH ? 32 + subH : 31;
       this.need(h + 6);
       const top = this.y;
       row.forEach((it, c) => {
@@ -170,7 +187,8 @@ class Layout {
         // to fit before it is ever shortened with an ellipsis.
         const fit = fitSize(it[1], w - 12, 10, 6.5, true);
         this.pdf.text(clip(it[1], w - 12, fit, true), x + 6, top - 24, { size: fit, bold: true, colour: INK });
-        if (it[2]) this.pdf.text(clip(it[2], w - 12, 6.5, false), x + 6, top - 34, { size: 6.5, colour: MUTED });
+        subs[c].forEach((line, li) =>
+          this.pdf.text(line, x + 6, top - 34 - li * 8, { size: 6.5, colour: MUTED }));
       });
       this.y = top - h - gap;
     }
@@ -188,19 +206,38 @@ class Layout {
     const total = weights.reduce((a, b) => a + b, 0);
     const widths = weights.map(w => (this.contentW * w) / total);
 
-    // Wrap every cell up front so a row's height is known before it is drawn.
-    const wrapped = rows.map(r => r.map((cell, i) => wrapText(cell, widths[i] - pad * 2, size, false)));
+    // ── A COLUMN THAT MUST NOT WRAP ────────────────────────────────────────
+    //
+    // `BTO-C1` and `BTO-C2` broke over two lines in the fabrication schedule —
+    // `BTO-C` on one line and `1` on the next, which reads as a different
+    // fitting. A column marked `nw` is set at the largest size at which its
+    // WIDEST cell fits on one line, down to a floor that is still legible; the
+    // heading keeps the table's own heading size and may still wrap. Shrinking a
+    // shared row is not on: only the marked column moves.
+    const { cellSize, wrapped } = columnLayout(cols, rows, widths, size, pad);
+
+    // A HEADING WRAPS; IT DOES NOT GET CUT OFF.
+    //
+    // Clipped to the column it came out as `DIAMETE...`, `VELOCIT...`,
+    // `PRESSUR...` and `CONFIDE...` — four columns on the ductwork table whose
+    // heading no longer said what the numbers under it were. Wrapping costs a
+    // few points of page and says the whole word at any column width.
+    const HEAD_LEAD = 8;
+    const headLines = cols.map((c, i) => wrapText(c.label.toUpperCase(), widths[i] - pad * 2, 6.5, true));
+    const headH = Math.max(14, Math.max(...headLines.map(l => l.length)) * HEAD_LEAD + 6);
 
     const headerRow = () => {
-      const h = 14;
+      const h = headH;
       this.need(h + lead + 4);
       const top = this.y;
       this.pdf.rect(M, top - h, this.contentW, h, { fill: HEADFILL, stroke: RULE, lineWidth: 0.4 });
       let x = M;
       cols.forEach((c, i) => {
-        const label = clip(c.label.toUpperCase(), widths[i] - pad * 2, 6.5, true);
-        const tx = c.r ? x + widths[i] - pad - textWidth(label, 6.5, true) : x + pad;
-        this.pdf.text(label, tx, top - 9.5, { size: 6.5, bold: true, colour: [0.29, 0.33, 0.47] });
+        headLines[i].forEach((line, li) => {
+          const tx = c.r ? x + widths[i] - pad - textWidth(line, 6.5, true) : x + pad;
+          this.pdf.text(line, tx, top - 9.5 - li * HEAD_LEAD,
+                        { size: 6.5, bold: true, colour: [0.29, 0.33, 0.47] });
+        });
         x += widths[i];
       });
       this.y = top - h;
@@ -215,9 +252,10 @@ class Layout {
       if (r % 2 === 1) this.pdf.rect(M, top - h, this.contentW, h, { fill: [0.976, 0.98, 0.992] });
       let x = M;
       cells.forEach((lines, i) => {
+        const cs = cellSize[i];
         lines.forEach((line, li) => {
-          const tx = cols[i].r ? x + widths[i] - pad - textWidth(line, size, false) : x + pad;
-          this.pdf.text(line, tx, top - pad - size - li * lead, { size, colour: INK });
+          const tx = cols[i].r ? x + widths[i] - pad - textWidth(line, cs, false) : x + pad;
+          this.pdf.text(line, tx, top - pad - size - li * lead, { size: cs, colour: INK });
         });
         x += widths[i];
       });
@@ -256,20 +294,212 @@ class Layout {
     else this.y -= 6;
   }
 
-  /** Footer and page numbers, written once the page count is known. */
+  /**
+   * THE FLOOR PLAN, ON ITS OWN LANDSCAPE SHEET.
+   *
+   * A4 turned sideways, the plan filling it, its caption underneath. A house
+   * plan is wider than it is tall: on a portrait page it is scaled to the
+   * narrow dimension and the ø250 written on a final becomes a smudge. This is
+   * the page that goes in somebody's hand on site, so it gets the paper.
+   */
+  planPage(src, caption, legend) {
+    const img = dataUrlBytes(src);
+    if (!img || img.mime !== 'image/jpeg') { this.image(src, caption); return; }
+    const meta = probeJpeg(img.bytes);
+    if (!meta) { this.image(src, caption); return; }
+    const W = A4.height, H = A4.width;                  // landscape
+    this.pdf.addPage({ width: W, height: H });
+    this.pageCount++;
+    this.landscapePages.add(this.pdf.pages.length - 1);
+
+    // ── THE PLAN GETS THE HEIGHT; EVERYTHING ELSE GOES IN A COLUMN ──────────
+    //
+    // Nick: "The landscape page has excessive unused white space. Increase the
+    // floor-plan drawing by approximately 25–35%… Move the zone schedule, duct
+    // legend and symbol legend into a compact aligned side column."
+    //
+    // A house plan taller than it is wide is HEIGHT-bound on a landscape sheet:
+    // widening the picture does nothing, because it is already far short of the
+    // width. So every band that used to eat height — the page heading across the
+    // top, the caption across the foot, the key baked into the same bitmap — is
+    // moved into the column beside it, where the sheet has width going spare.
+    const key = legend ? dataUrlBytes(legend) : null;
+    const keyMeta = (key && key.mime === 'image/jpeg') ? probeJpeg(key.bytes) : null;
+    if (keyMeta) {
+      // The document's own LEFT and RIGHT margins are kept — that is what Nick
+      // means by "while maintaining margins", and the side column has to sit
+      // inside them like every other block. Only the TOP is tightened, because
+      // height is the one thing the drawing is short of and the heading that
+      // used to take it has moved into the column.
+      const MT = 24;
+      const footerTop = M + 20;
+      const bottom = footerTop + 6;
+      const top = H - MT;
+      const boxH = top - bottom;
+      const colW = 200, gap = 16;
+      const planW = W - M * 2 - colW - gap;
+      const scale = Math.min(planW / meta.width, boxH / meta.height);
+      const dw = meta.width * scale, dh = meta.height * scale;
+      this.pdf.image(img.bytes, M + (planW - dw) / 2, top - dh, dw, dh);
+
+      const cx = W - M - colW;
+      let cy = top;
+      this.pdf.text('FLOOR PLAN — DUCT LAYOUT', cx, cy - 9,
+                    { size: 9.5, bold: true, colour: BLUE });
+      this.pdf.line(cx, cy - 15, cx + colW, cy - 15, { colour: YELLOW, lineWidth: 1.4 });
+      cy -= 27;
+      const kh = colW * keyMeta.height / keyMeta.width;
+      this.pdf.image(key.bytes, cx, cy - kh, colW, kh);
+      cy -= kh + 14;
+      for (const line of wrapText(caption || '', colW, 6.8, false)) {
+        if (cy < bottom) break;
+        this.pdf.text(line, cx, cy, { size: 6.8, colour: MUTED });
+        cy -= 8.6;
+      }
+      this.pdf.addPage();                            // back to portrait
+      this.pageCount++;
+      this.y = A4.height - M;
+      return;
+    }
+    // THE CAPTION HAS ITS ROOM RESERVED BEFORE THE PICTURE IS SIZED.
+    //
+    // A fixed 34 pt allowance was a guess at how many lines the caption would
+    // wrap to. It wrapped to two, the picture was scaled to fill everything
+    // above the guess, and the second line was written straight across the
+    // footer rule. So the lines are measured first and the picture gets what is
+    // left — which is the only order in which the two cannot collide.
+    const boxW = W - M * 2;
+    const capLines = caption ? wrapText(caption, boxW, 7.5, false) : [];
+    const CAP_LEAD = 10, CAP_GAP = 12;
+    const footerTop = M + 20;                       // the rule the footer sits on
+    const capH = capLines.length ? capLines.length * CAP_LEAD + CAP_GAP : 0;
+    const headH = 20;
+    const boxH = H - M - headH - (footerTop + 10) - capH;
+    const scale = Math.min(boxW / meta.width, boxH / meta.height);
+    const dw = meta.width * scale, dh = meta.height * scale;
+    this.pdf.text('FLOOR PLAN — DUCT LAYOUT', M, H - M + 2,
+      { size: 9.5, bold: true, colour: BLUE });
+    this.pdf.line(M, H - M - 4, W - M, H - M - 4, { colour: YELLOW, lineWidth: 1.4 });
+    const top = H - M - headH + 8;
+    this.pdf.image(img.bytes, M + (boxW - dw) / 2, top - dh, dw, dh);
+    if (capLines.length) {
+      // Anchored to the FOOTER, not to the bottom of the picture: wherever the
+      // picture ends up, the last line of the caption sits a clear 10 pt above
+      // the rule.
+      let cy = footerTop + 10 + (capLines.length - 1) * CAP_LEAD;
+      for (const line of capLines) {
+        this.pdf.text(line, M, cy, { size: 7.5, colour: MUTED });
+        cy -= CAP_LEAD;
+      }
+    }
+    // Back to portrait for whatever follows.
+    this.pdf.addPage();
+    this.pageCount++;
+    this.y = A4.height - M;
+  }
+
+  /**
+   * An enlarged crop, printed as big as the page will take it.
+   *
+   * Unlike `image` this never shrinks to fit the gap left on the current page —
+   * the whole point of an inset is that it is bigger than the thing it came
+   * from, so it starts a page rather than being squeezed into a corner.
+   */
+  inset(src, caption) {
+    const img = dataUrlBytes(src);
+    if (!img || img.mime !== 'image/jpeg') { this.image(src, caption); return; }
+    const meta = probeJpeg(img.bytes);
+    if (!meta) { this.image(src, caption); return; }
+    const maxH = A4.height - M * 2 - 150;
+    const scale = Math.min(this.contentW / meta.width, maxH / meta.height);
+    const dw = meta.width * scale, dh = meta.height * scale;
+    this.flushHeading(dh + 16);
+    if (this.y - dh - 16 < this.bottom) this.newPage();
+    this.pdf.image(img.bytes, M + (this.contentW - dw) / 2, this.y - dh, dw, dh);
+    this.y -= dh + 6;
+    if (caption) this.paragraph(caption);
+  }
+
+  /**
+   * Footer and page numbers, written once the page count is known.
+   *
+   * ── THE PAGE NUMBER KEEPS ITS LAST DIGIT ─────────────────────────────────
+   *
+   * This right-aligned the number so its last glyph landed EXACTLY on the right
+   * margin — measured at 555.28 pt against a margin of 555.28 pt, with nothing
+   * in hand. A viewer that rounds, a printer with its own unprintable border,
+   * or a font whose real advance runs a hair past the metric it was positioned
+   * with, and the final character is gone: "Page 14 of 15" prints as
+   * "Page 14 of 1", which reads as a one-page document.
+   *
+   * So the number now sits a clear gap inside the margin, and the two halves of
+   * the footer are measured against each other: if the business line would ever
+   * reach the page number, it is the business line that gives way.
+   */
   finish() {
     this.flushHeading(0);                       // a heading with nothing after it still prints
-    for (let i = 0; i < this.pdf.pages.length; i++) {
+    const total = this.pdf.pages.length;
+    for (let i = 0; i < total; i++) {
       this.pdf.current = this.pdf.pages[i];
-      this.pdf.line(M, M + 20, M + this.contentW, M + 20, { colour: RULE, lineWidth: 0.5 });
+      // A landscape sheet is wider, so its footer runs to ITS right margin —
+      // drawn at the portrait width it stopped two thirds of the way across.
+      const w = (this.pdf.pages[i].width ?? A4.width) - M * 2;
+      this.pdf.line(M, M + 20, M + w, M + 20, { colour: RULE, lineWidth: 0.5 });
+
+      const right = 'Page ' + (i + 1) + ' of ' + total;
+      const rightW = textWidth(right, FOOT_SIZE, false);
+      const rightX = M + w - FOOT_SAFE - rightW;
+      this.pdf.text(right, rightX, M + 9, { size: FOOT_SIZE, colour: MUTED });
+
+      // Everything left of the page number, and not one point further.
       const left = this.doc.business + '  ·  ABN ' + this.doc.abn + '  ·  ' + this.doc.website;
-      this.pdf.text(left, M, M + 9, { size: 7, colour: MUTED });
-      const right = 'Page ' + (i + 1) + ' of ' + this.pdf.pages.length;
-      this.pdf.text(right, M + this.contentW - textWidth(right, 7, false), M + 9, { size: 7, colour: MUTED });
+      const room = rightX - M - FOOT_GAP;
+      this.pdf.text(clip(left, room, FOOT_SIZE, false), M, M + 9,
+                    { size: FOOT_SIZE, colour: MUTED });
     }
     return this.pdf.bytes();
   }
 }
+
+/**
+ * How a table's cells are set: the size each column is drawn at, and the lines
+ * every cell breaks into.
+ *
+ * Pulled out of `table()` so it can be checked on its own. A column marked `nw`
+ * is set at the largest size at which its WIDEST cell fits on one line, down to
+ * a floor that is still legible, and it is the only column that moves.
+ */
+export function columnLayout(cols, rows, widths, size, pad) {
+  const cellSize = cols.map((c, i) => {
+    if (!c.nw) return size;
+    const room = widths[i] - pad * 2;
+    return rows.reduce((s, r) =>
+      Math.min(s, fitSize(String(r[i] ?? ''), room, size, NOWRAP_MIN_SIZE, false)), size);
+  });
+  const wrapped = rows.map(r => r.map((cell, i) =>
+    wrapText(cell, widths[i] - pad * 2, cellSize[i], false)));
+  return { cellSize, wrapped };
+}
+
+/** The column widths a table of these weights gets across `contentW`. */
+export function columnWidths(cols, contentW = A4.width - 80) {
+  const weights = cols.map(c => c.w || 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+  return weights.map(w => (contentW * w) / total);
+}
+
+/** The footer's geometry, so it can be checked without rendering a page. */
+export const FOOTER = Object.freeze({
+  size: FOOT_SIZE, safeMm: FOOT_SAFE, gap: FOOT_GAP, margin: M,
+  minSize: NOWRAP_MIN_SIZE,
+  /** Where `Page n of m` starts and ends on a page this wide. */
+  pageNumberBox(pageWidth, text) {
+    const w = pageWidth - M * 2;
+    const tw = textWidth(text, FOOT_SIZE, false);
+    const x = M + w - FOOT_SAFE - tw;
+    return { x, right: x + tw, limit: pageWidth - M, width: tw };
+  }
+});
 
 function probeJpeg(bytes) { return jpegInfo(bytes); }
 
@@ -307,12 +537,17 @@ export function renderReportPdf(doc, { logo = null } = {}) {
     switch (blk.t) {
       case 'h2':        L.heading(blk.text); break;
       case 'pagebreak': if (L.y < A4.height - M - 80) L.newPage(); break;
+      // Break only when what is left of the page cannot hold the section's
+      // heading and the first few rows of its table.
+      case 'softbreak': if (L.y - L.bottom < (blk.min || 170)) L.newPage(); break;
       case 'note':      L.paragraph(blk.text); break;
       case 'flag':      L.flag(blk.level, blk.text); break;
       case 'bullets':   L.bullets(blk.items); break;
       case 'kv':        L.kv(blk.items); break;
       case 'table':     L.table(blk.cols, blk.rows); break;
       case 'image':     L.image(blk.src, blk.caption); break;
+      case 'planpage':  L.planPage(blk.src, blk.caption, blk.legend); break;
+      case 'inset':     L.inset(blk.src, blk.caption); break;
       default: break;
     }
   }

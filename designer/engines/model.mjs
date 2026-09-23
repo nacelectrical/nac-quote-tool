@@ -33,6 +33,17 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     job: { description: job.description || 'Ducted AC Supply & Install',
            houseType: job.houseType || '', climate: job.climate || settings.load.defaultClimate },
 
+    // ── THE RULES THIS JOB IS DESIGNED TO ────────────────────────────────────
+    //
+    // Seeded from settings once, then owned by the design. Settings are a
+    // default for the NEXT job; they are not allowed to resize THIS one after
+    // it has been approved — which is how a job approved at ø250 came back with
+    // ø200 on five rooms.
+    designRules: {
+      minimumSupplyBranchDiameterMm: settings.duct.minimumSupplyBranchDiameterMm,
+      minimumBtoToOutletDuctLengthM: settings.duct.minimumBtoToOutletDuctLengthM
+    },
+
     status: 'draft',                // draft | in_review | approved | quoted | superseded
     createdAt: now,
     updatedAt: now,
@@ -49,10 +60,50 @@ export function createDesign({ customer = {}, job = {}, quoteId = null, settings
     detectedDimensions: [],         // DetectedDimension[]
     chains: [],                     // DimensionChain[]
     walls: [],                      // PlanWall[]
+    // WALLS THE JOB HAS TAKEN OUT. A renovation leaves the old partitions
+    // printed on the sheet the estimator uploaded; the duct has to be routed
+    // through the house as it WILL BE, not as it was drawn. Each entry names
+    // the partition and records that it is no longer an obstacle — it is never
+    // erased from `walls`, because the drawing still shows it and somebody has
+    // to be able to see why it was ignored.
+    demolishedWalls: [],            // { id, label, between, x0,y0,x1,y1, reason, approvedBy }
     openings: [],                   // windows / doors / sliders
     interpretation: null,           // raw AI reader output, kept for audit
 
     // ── Rooms & loads ────────────────────────────────────────────────────────
+    // ── Equipment and outlet placement, and who is responsible for it ──────
+    // Rooms served by spill air: conditioned and loaded, but no outlet, no duct.
+    spillRoomIds: [],
+    spillIntoRoomIds: null,         // null = spread across every other room
+    spillAllocations: [],
+    outletPositionSources: {},      // roomId -> 'plan_detected' | 'estimator_placed'
+
+    // New designs use practical installer areas. Loaded older designs do not
+    // have this field and therefore retain their original spine routing.
+    routingStrategy: null,
+    // Optional installer-approved details and explicit area/BTO hierarchy.
+    supplyMainConfig: null,
+    spigotRecommendation: null,
+    supplySpigots: null,
+
+    fanCoilStatus: null,            // 'assumed' | 'estimator' | 'approved'
+    fanCoilApprovedBy: null,
+    placement: null,                // assessPlacement() result — preview vs final
+    /** The return side as its own typed entities — never supply, never a BTO. */
+  returnComponents: null,
+  /** Proof that the two sides did not get mixed up. */
+  returnSeparation: null,
+  /**
+   * FIVE COUNTS THAT ARE NOT THE SAME COUNT, and four more on the return.
+   * Supply spigots, main ducts, BTO fittings, BTO ports and outlets are
+   * different quantities that had been drifting into one another; return
+   * grilles, ducts and boxes are a separate system again, and returnBtos is
+   * carried explicitly because it is always zero.
+   */
+  componentCounts: null,
+  btos: [],                       // physical BTO fittings
+    btoValidation: null,
+
     rooms: [],                      // DesignRoom[] (each carries a RoomMeasurement)
     roomLoads: [],                  // RoomLoad[]
     systemLoad: null,

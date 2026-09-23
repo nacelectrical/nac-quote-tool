@@ -153,14 +153,14 @@ test('a material line with no price stops the quote and names the line', () => {
   assert.match(i.detail, /Zone motor 150 mm/);
 });
 
-test('placeholder rates are confirmed, not blocked, and say what they are worth', () => {
+test('placeholder rates block customer quotes and say what they are worth', () => {
   const r = collectInterruptions(clean({
     bom: { unpricedCount: 0, placeholderCount: 19, placeholderValue: 812.5 }
   }));
   const i = find(r, 'BOM_PLACEHOLDER');
-  assert.equal(i.level, INTERRUPT.CONFIRM);
+  assert.equal(i.level, INTERRUPT.BLOCKING);
   assert.match(i.detail, /\$812\.5/);
-  assert.equal(r.canQuote, true);
+  assert.equal(r.canQuote, false);
 });
 
 test('a job with no fee is sold at cost, so it blocks', () => {

@@ -50,7 +50,20 @@ async function makeAndRead(kind) {
     // The real plan snapshot, exactly as the Reports button passes it.
     const snap = window.nacDesigner.viewer?.snapshot() || null;
     window.__snapMime = (/^data:([^;,]+)/.exec(snap || '') || [])[1] || 'none';
-    const built = R.buildReportPdf(window.nacDesigner.design, kind, { logo: null, planSnapshot: snap });
+    // The equipment inset goes in the same way the Reports button passes it.
+    const inset = window.nacDesigner.viewer?.equipmentInset() || null;
+    window.__insetMime = (/^data:([^;,]+)/.exec(inset || '') || [])[1] || 'none';
+    // THE SAME FOUR PICTURES THE REPORTS BUTTON PASSES. The landscape sheet
+    // takes the plan WITHOUT the key baked in plus the key on its own, so it
+    // can give the drawing the full height of the paper; testing with only
+    // `planSnapshot` exercised the layout the app no longer uses.
+    const plate = window.nacDesigner.viewer?.snapshot({ clean: true, legend: false }) || null;
+    const planLegend = window.nacDesigner.viewer?.legendStrip() || null;
+    window.__plateMime = (/^data:([^;,]+)/.exec(plate || '') || [])[1] || 'none';
+    window.__keyMime = (/^data:([^;,]+)/.exec(planLegend || '') || [])[1] || 'none';
+    const built = R.buildReportPdf(window.nacDesigner.design, kind,
+      { logo: null, planSnapshot: snap, planPlate: plate, planLegend,
+        equipmentInset: inset });
     const pdfjs = window.pdfjsLib;
     pdfjs.GlobalWorkerOptions.workerSrc = '/designer/vendor/pdf.worker.min.js';
     const doc = await pdfjs.getDocument({ data: built.bytes.slice() }).promise;
@@ -66,7 +79,10 @@ async function makeAndRead(kind) {
         if (x < 38) overflow.push(n + ': (left) ' + it.str);
       }
       pages.push({ w: Math.round(vp.width), h: Math.round(vp.height),
-                   text: items.map(i => i.str).join(' ') });
+                   text: items.map(i => i.str).join(' '),
+                   // PDF user space, origin bottom-left — so a bigger y is
+                   // higher up the page.
+                   items: items.map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5] })) });
     }
     const info = (await doc.getMetadata()).info;
     return { numPages: doc.numPages, pages, overflow, info,
@@ -79,8 +95,126 @@ console.log('\n[internal] DOWNLOAD INTERNAL HVAC DESIGN PDF');
 const I = await makeAndRead('internal');
 const itext = I.pages.map(p => p.text).join('\n');
 say('it is a PDF pdf.js can open', I.numPages >= 1, I.numPages + ' pages, ' + Math.round(I.size / 1024) + ' KB');
-say('A4 pages', I.pages.every(p => p.w === 595 && p.h === 842), I.pages[0].w + '×' + I.pages[0].h);
+// A4 EITHER WAY UP. The floor plan gets its own LANDSCAPE sheet — a house plan
+// is wider than it is tall, and squeezed onto a portrait page the duct sizes
+// stop being readable. Every other page stays portrait.
+const portrait = I.pages.filter(p => p.w === 595 && p.h === 842);
+const landscape = I.pages.filter(p => p.w === 842 && p.h === 595);
+say('every page is A4, portrait or landscape',
+  portrait.length + landscape.length === I.pages.length,
+  I.pages.map(p => p.w + '×' + p.h).join(' '));
+say('the floor plan has a landscape sheet of its own', landscape.length === 1,
+  landscape.length + ' landscape page(s)');
+say('everything else is portrait', portrait.length === I.pages.length - 1,
+  portrait.length + ' portrait page(s)');
+say('page 1 opens with the summary', /DESIGN SUMMARY/i.test(I.pages[0].text));
 say('every line sits inside the margins', I.overflow.length === 0, I.overflow.slice(0, 3).join(' | ') || 'clean');
+say('the equipment inset is embedded and described',
+  /EQUIPMENT ARRANGEMENT/i.test(itext) && /RETURN PLENUM/i.test(itext) &&
+  /SUPPLY PLENUM/i.test(itext),
+  'inset source ' + (await p.evaluate(() => window.__insetMime)));
+// ── THE TYPOGRAPHY DEFECTS, READ BACK OUT OF THE FILE ──────────────────────
+say('no bullet printed as a question mark', !/\?\s+(Return|Supply|Fan-coil|Each|The)/.test(itext),
+  (itext.match(/\?[^\n]{0,40}/g) || []).slice(0, 2).join(' | ') || 'none');
+say('the bullet character survived into the text layer', /\u2022/.test(itext),
+  (itext.match(/\u2022/g) || []).length + ' bullet(s)');
+// THE LANDSCAPE CAPTION MUST CLEAR THE FOOTER. Both are drawn near the bottom
+// of the same page, and a fixed allowance for a caption that wrapped to two
+// lines put the second one across the footer rule.
+const land = I.pages.find(p => p.w === 842);
+// The sheet's POSITION is not the test — where it lands depends on how many
+// warnings the job carries ahead of it, and a job with more blockers than
+// another legitimately pushes it later. What must be true is that the page it
+// does land on is captioned and footed like every other page.
+const landPageNo = /Page (\d+) of (\d+)/.exec(land.text);
+say('the floor-plan page has both a caption and a footer',
+  /Duct colour is SIZE/.test(land.text) && !!landPageNo,
+  landPageNo ? 'page ' + landPageNo[1] + ' of ' + landPageNo[2] : 'no page number on it');
+const capBottom = land.items.filter(i => /Duct colour is SIZE|follows diameter/.test(i.str))
+  .reduce((n, i) => Math.min(n, i.y), Infinity);
+const footTop = land.items.filter(i => /nacelectrical\.com\.au|Page \d+ of/.test(i.str))
+  .reduce((n, i) => Math.max(n, i.y), -Infinity);
+say('the caption sits clear above the footer', capBottom - footTop >= 8,
+  'caption bottom ' + capBottom.toFixed(1) + ' pt, footer top ' + footTop.toFixed(1) + ' pt');
+
+// ── THE LANDSCAPE SHEET, SIZED ────────────────────────────────────────────
+//
+// Nick: "The landscape page has excessive unused white space. Increase the
+// floor-plan drawing by approximately 25-35% while maintaining margins. Move
+// the zone schedule, duct legend and symbol legend into a compact aligned side
+// column."
+//
+// A house plan taller than it is wide is HEIGHT-bound on a landscape sheet, so
+// this is measured off the image placement matrix in the file: build the page
+// BOTH ways from the same drawing and compare how much paper the plan gets.
+const grow = await p.evaluate(async () => {
+  const R = await import('/designer/ui/reports.mjs');
+  const { REPORT_KIND } = await import('/designer/engines/report-doc.mjs');
+  const v = window.nacDesigner.viewer;
+  const snap = v.snapshot({ clean: true, legend: true });
+  const plate = v.snapshot({ clean: true, legend: false });
+  const key = v.legendStrip();
+  const dims = (url) => new Promise((res) => { const i = new Image();
+    i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight }); i.src = url; });
+  const bytesOf = (o) => R.buildReportPdf(window.nacDesigner.design, REPORT_KIND.INTERNAL,
+    { logo: null, planSnapshot: snap, equipmentInset: null, ...o }).bytes;
+  // `a 0 0 d e f cm /ImN Do` — the landscape plan is the first picture in the
+  // file, because page 1 carries none.
+  const firstImage = (bytes) => {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    const m = /([\d.]+) 0 0 ([\d.]+) ([\d.]+) ([\d.]+) cm\s*\/Im\d+ Do/.exec(s);
+    return m ? { w: +m[1], h: +m[2], x: +m[3], y: +m[4] } : null;
+  };
+  const before = firstImage(bytesOf({}));
+  const after = firstImage(bytesOf({ planPlate: plate, planLegend: key }));
+  const snapDim = await dims(snap), plateDim = await dims(plate);
+  return { before, after, snapDim, plateDim,
+           ptPerPxBefore: before && before.h / snapDim.h,
+           ptPerPxAfter: after && after.h / plateDim.h };
+});
+const gain = grow.ptPerPxAfter / grow.ptPerPxBefore - 1;
+say('the key is captured apart from the drawing',
+  (await p.evaluate(() => window.__keyMime)) === 'image/jpeg' &&
+  (await p.evaluate(() => window.__plateMime)) === 'image/jpeg',
+  'plate ' + (await p.evaluate(() => window.__plateMime)) +
+  ', key ' + (await p.evaluate(() => window.__keyMime)));
+// How much is bought depends on the plan: a drawing that is taller than it is
+// wide is height-bound on this sheet and gains the most, a wide one gains less.
+// So the floor asserted here is the one that must hold for ANY plan, and the
+// figure is printed so the gain on the job in front of you is on the record.
+say('the plan is drawn materially larger than on the one-bitmap page',
+  gain >= 0.12,
+  (gain * 100).toFixed(1) + '% linear — ' +
+  grow.before.w.toFixed(0) + 'x' + grow.before.h.toFixed(0) + ' pt becomes ' +
+  grow.after.w.toFixed(0) + 'x' + grow.after.h.toFixed(0) + ' pt');
+say('the height it gained is what the column bought it',
+  grow.after.h > grow.before.h * 1.1,
+  grow.before.h.toFixed(0) + ' pt of page height becomes ' + grow.after.h.toFixed(0) + ' pt');
+say('the column carries the page title, so the drawing keeps the full height',
+  /FLOOR PLAN . DUCT LAYOUT/.test(land.text), 'title on the landscape sheet');
+say('the plan and the key are two separate pictures on that sheet',
+  grow.after.x + grow.after.w < 842 - 24,
+  'plan ends at ' + (grow.after.x + grow.after.w).toFixed(0) + ' pt of 842');
+// ── NO PAGE IS THROWN AWAY ────────────────────────────────────────────────
+//
+// Nick: "Page 5 is mostly blank. Allow tables to continue naturally so the
+// internal report does not contain an unnecessarily empty page." A hard break
+// before every major section did that — the room loads ran a few rows onto a
+// fresh page and the break after threw the rest of it away.
+const filled = I.pages.map((pg, i) => {
+  const rows = pg.items.filter(it => !/^Page \d+ of|NAC Electrical|nacelectrical/.test(it.str));
+  const top = rows.reduce((n, it) => Math.max(n, it.y), 0);
+  const bot = rows.reduce((n, it) => Math.min(n, it.y), Infinity);
+  return { page: i + 1, items: rows.length, span: rows.length ? top - bot : 0,
+           landscape: pg.w === 842 };
+});
+const sparse = filled.filter(f => !f.landscape && f.items > 0 && f.items < 40 &&
+                                  f.span < 200 && f.page < I.pages.length);
+say('no page in the middle of the document is nearly empty', sparse.length === 0,
+  sparse.length ? sparse.map(f => 'page ' + f.page + ': ' + f.items + ' lines over ' +
+    Math.round(f.span) + ' pt').join(' | ')
+  : filled.map(f => f.items).join('/') + ' lines per page');
 say('it carries the NAC identity', /NAC Electrical/.test(itext) && /97 636 392 982/.test(itext));
 say('it is titled the internal sheet', /Internal HVAC Design Sheet/.test(itext));
 say('it carries the bill of materials', /BILL OF MATERIALS/i.test(itext));

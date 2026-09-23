@@ -2,11 +2,19 @@
 // Every engineering assumption the deterministic engines use is edited here,
 // not buried in source. Saved to the existing nac_settings store.
 
-import { h, card, table, field, input, select, button, banner, mount, money } from './dom.mjs';
+import { h, card, table, field, input, select, button, banner, mount, money, toast,
+         badge, empty } from './dom.mjs';
+import { currentUserEmail } from '../auth.mjs';
 import { MATERIAL_CATALOGUE, resolveCost } from '../engines/materials.mjs';
+import { VERIFICATION_FIELDS } from '../engines/material-verification.mjs';
+import { MINIMUM_AIRFLOW_FIELDS, minimumVerified, minimumMissing }
+  from '../engines/minimum-airflow.mjs';
 import { DEFAULT_SETTINGS } from '../engines/settings.mjs';
 import { REQUIRED_SPEC_FIELDS, allModels } from '../engines/catalogue.mjs';
 import { MMEM_META, MMEM_ACCESSORIES_META, MMEM_DUCTED, MMEM_ZONE_CONTROLS } from '../engines/supplier-pricing.mjs';
+import { ALLOWANCE_FIELDS } from '../engines/design-stage.mjs';
+import { commercialTermsStatus } from '../engines/commercial-terms.mjs';
+import { activeMode } from '../engines/pricing-mode.mjs';
 
 /** Read a nested settings value by dotted path. Writes go through app.updateSetting. */
 function pathGet(obj, path) {
@@ -21,6 +29,65 @@ function pathGet(obj, path) {
  * the worst case and the easiest to miss. Both are offered here, so there is
  * nowhere the application can ask for a price that cannot then be entered.
  */
+/**
+ * §5 — MATERIAL RATES REQUIRING CONFIRMATION.
+ *
+ * The lines THIS job actually leans on, and what is still missing from each.
+ * Only used lines: the catalogue carries rates for sizes a given house will
+ * never see, and blocking a quote on those is noise that teaches an estimator
+ * to ignore the check.
+ */
+function ratesRequiringConfirmation(app) {
+  const status = app.design?.rateVerification || null;
+  if (!status) {
+    return card('Material rates requiring confirmation',
+      'Open a design to see which rates it uses.', empty('No design open.'));
+  }
+  const V = app.rateVerifications || {};
+  const write = (id, key, v) => app.updateRateVerification(id, key, v);
+
+  const rows = status.rows.map(r => ({ id: r.id, ...r, rec: V[r.id] || {} }));
+  const needing = rows.filter(r => r.needsConfirmation);
+
+  const cell = (r, f) => f.key === 'cost'
+    ? input(r.rec.cost ?? '', v => write(r.id, 'cost', v === '' ? null : Number(v)),
+        { type: 'number', step: '0.01', inputmode: 'decimal',
+          placeholder: r.currentRate === null ? '' : Number(r.currentRate).toFixed(2) })
+    : input(r.rec[f.key] || '', v => write(r.id, f.key, v),
+        { type: /Date$/.test(f.key) ? 'date' : 'text',
+          placeholder: f.required ? 'required' : 'optional' });
+
+  return card('Material rates requiring confirmation',
+    'Every rate this job uses, and what each still needs. A customer quote is blocked '
+    + 'until every used line is verified \u2014 marking a rate as "not a placeholder" is not '
+    + 'the same as being able to say where it came from.',
+    needing.length === 0
+      ? banner('ok', 'All ' + rows.length + ' rate(s) this job uses are verified.')
+      : banner('warn', needing.length + ' of ' + rows.length + ' rate(s) this job uses are '
+          + 'not verified. The quote is blocked until they are.'),
+    table([
+      { key: 'label', label: 'Item', render: (r) => h('div', {},
+          h('strong', {}, r.label),
+          h('div', { class: 'alw-help' },
+            (r.diameterMm ? '\u00f8' + r.diameterMm + ' mm \u00b7 ' : '')
+            + 'per ' + r.unit
+            + (r.supplierCode ? ' \u00b7 ' + r.supplierCode : '')
+            + (r.placeholder ? ' \u00b7 SHIPPED PLACEHOLDER'
+               : r.unpriced ? ' \u00b7 NO PRICE AT ALL' : ''))) },
+      { key: 'cur', label: 'Current', align: 'right', width: '90px',
+        render: (r) => r.currentRate === null ? '\u2014' : money(r.currentRate) },
+      ...VERIFICATION_FIELDS.map(f => ({
+        key: f.key, label: f.label, width: f.key === 'supplierDesc' ? '180px' : '130px',
+        render: (r) => cell(r, f)
+      })),
+      { key: 'state', label: 'Status', width: '160px', render: (r) => r.verified
+          ? badge('VERIFIED', 'ok')
+          : h('div', { class: 'alw-help' },
+              'Needs: ' + (r.missing.length
+                ? r.missing.map(m => m.label.toLowerCase()).join(', ') : 'nothing')) }
+    ], rows));
+}
+
 function materialRateCards(app) {
   const LADDER = DEFAULT_SETTINGS.duct.availableDiametersMm;
   const rateInput = (id, shipped) => input(pathGet(app.materialRates || {}, id) ?? '',
@@ -304,19 +371,158 @@ export function renderSettingsScreen(app, section = 'load') {
             money(S.commercial.jobFee) + ' fee. Gross profit on every job comes out at exactly the fee, ' +
             'so anything you enter as a cost is automatically recovered.') : null),
 
-        card('How the sell price is worked out', null,
-          field('Pricing basis', select(S.commercial.pricingBasis,
-            [{ value: 'materials_plus_fee', label: 'Job cost + flat fee' },
-             { value: 'catalogue_price', label: 'Installed price from Price Setup' }],
-            v => app.updateSetting('commercial.pricingBasis', v)),
-            S.commercial.pricingBasis === 'materials_plus_fee'
-              ? 'The per-model installed prices in Price Setup are ignored for pricing. They are still shown ' +
-                'on the Financials tab for comparison, and a price typed on that tab still overrides everything.'
-              : 'Uses the installed price NAC has stored against the selected model.'),
-          S.commercial.pricingBasis === 'materials_plus_fee'
-            ? banner('warn', 'On this basis your material rates go straight through to the customer. ' +
-                'Any line still on a shipped placeholder rate raises a warning on the design.')
-            : null),
+        // ── §4 ONE PRICING METHOD, CHOSEN OUT LOUD ────────────────────────
+        (() => {
+          const mode = activeMode(S).mode;
+          const costPlus = mode === 'COST_PLUS_JOB_FEE';
+          return card('How the sell price is worked out',
+            'One method at a time. The two are never combined.',
+            field('Pricing method', select(mode || '',
+              [{ value: 'COST_PLUS_JOB_FEE',
+                 label: 'Cost plus job fee — what the job costs, plus the fixed fee' },
+               { value: 'COMPONENT_SELL_PRICES',
+                 label: 'Component sell prices — every line priced individually' }],
+              v => app.updateSetting('commercial.pricingMode', v)),
+              costPlus
+                ? 'The customer pays what NAC paid for everything, plus the fee. The fee IS the '
+                  + 'margin. You need verified COSTS on every line — you do NOT need a sell price '
+                  + 'on anything, including the equipment.'
+                : 'Every line carries its own sell price and the price is their sum. The flat job '
+                  + 'fee is NOT added on top, because these prices already carry the margin.'),
+            costPlus
+              ? banner('warn', 'On this method your material rates go straight through to the '
+                  + 'customer. Any line still on a shipped placeholder rate blocks the quote.')
+              : field('Also add the flat job fee?',
+                  select(S.commercial.applyJobFeeOnComponentPricing === true ? 'yes' : 'no',
+                    [{ value: 'no', label: 'No — the line prices already include the margin' },
+                     { value: 'yes', label: 'Yes — add the job fee on top as well' }],
+                    v => app.updateSetting('commercial.applyJobFeeOnComponentPricing', v === 'yes')),
+                  'Adding a flat fee on top of individually priced lines charges the margin '
+                  + 'twice. Only say yes if you mean it.'));
+        })(),
+
+        // ── §3 THE PROPOSAL ALLOWANCE ─────────────────────────────────────
+        (() => {
+          const a = S.commercial.proposalAllowance || {};
+          const set = ALLOWANCE_FIELDS.filter(f => a[f.key] !== null && a[f.key] !== undefined
+                                                   && a[f.key] !== '');
+          const rows = ALLOWANCE_FIELDS.map(f => {
+            const v = a[f.key];
+            const unset = v === null || v === undefined || v === '';
+            return h('div', { class: 'alw-row' + (unset && !f.optional ? ' unset' : '') },
+              h('div', { class: 'alw-label' },
+                h('strong', {}, f.label + (f.unit ? ' (' + f.unit + ')' : '')),
+                h('span', { class: 'alw-help' }, f.help)),
+              h('div', { class: 'alw-input' },
+                input(v ?? '', (nv) => {
+                  const t = String(nv).trim();
+                  if (t === '') return app.updateSetting(
+                    'commercial.proposalAllowance.' + f.key, null);
+                  const num = Number(t);
+                  // VALIDATED BEFORE IT IS SAVED. A typo here is a typo on a
+                  // customer's price.
+                  if (!Number.isFinite(num) || num < 0) {
+                    return toast('"' + t + '" is not an amount. Enter a number, or clear '
+                      + 'the box to leave ' + f.label.toLowerCase() + ' unset.');
+                  }
+                  if (f.unit === '%' && num > 100) {
+                    return toast('A contingency of ' + num + '% more than doubles the job.', 'bad');
+                  }
+                  app.updateSetting('commercial.proposalAllowance.' + f.key, num);
+                }, { type: 'number', step: 'any', min: '0',
+                     placeholder: f.optional ? 'optional' : 'not set' })),
+              h('div', { class: 'alw-state' },
+                unset ? (f.optional ? '—' : 'NOT SET') : 'set'));
+          });
+          return card('Proposal allowance — what a job is worth before it is designed',
+            'A proposal quotes a job whose ductwork has not been designed yet, so the ductwork '
+            + 'is a declared allowance instead of measured quantities. These are NAC\u2019s own '
+            + 'commercial numbers — nothing here has a default, and nothing is invented.',
+            h('div', { class: 'alw' }, ...rows),
+            set.length === 0
+              ? banner('warn', 'No allowance is set, so no proposal-stage quote can be produced. '
+                  + 'Enter at least the standard ductwork figure, or the per-outlet and per-zone '
+                  + 'rates, above.')
+              : banner('info', set.length + ' of ' + ALLOWANCE_FIELDS.length + ' elements set. '
+                  + 'A proposal shows each one as its own line, so an estimator can see what the '
+                  + 'allowance covers and judge whether a job needs more.'));
+        })(),
+
+        // ── §6 DEPOSIT, PAYMENT AND VALIDITY ──────────────────────────────
+        (() => {
+          const t = S.commercial.terms || {};
+          const status = commercialTermsStatus(S);
+          const stages = Array.isArray(t.paymentStages) ? t.paymentStages : [];
+          return card('Deposit, payment and validity',
+            'These are the terms a customer agrees to when they accept a quote. Nothing here '
+            + 'has a default and no quote can be issued until they are entered and confirmed.',
+            h('div', { class: 'grid-3' },
+              field('Deposit (%)', input(t.depositPercent ?? '',
+                v => app.updateSetting('commercial.terms.depositPercent',
+                  String(v).trim() === '' ? null : Number(v)),
+                { type: 'number', step: 'any', min: '0', max: '100', placeholder: 'not set' }),
+                'A percentage of the quote. Use this OR the fixed amount, not both.'),
+              field('Deposit ($)', input(t.depositAmount ?? '',
+                v => app.updateSetting('commercial.terms.depositAmount',
+                  String(v).trim() === '' ? null : Number(v)),
+                { type: 'number', step: 'any', min: '0', placeholder: 'not set' }),
+                'A fixed amount, whatever the job is worth.'),
+              field('Quote valid for (days)', input(t.validityDays ?? '',
+                v => app.updateSetting('commercial.terms.validityDays',
+                  String(v).trim() === '' ? null : Number(v)),
+                { type: 'number', step: '1', min: '1', placeholder: 'not set' }),
+                'After this the quote shows as expired and cannot be accepted.')),
+            h('div', { class: 'grid-2' },
+              field('Balance due on', input(t.balanceDueEvent || '',
+                v => app.updateSetting('commercial.terms.balanceDueEvent', v),
+                { placeholder: 'e.g. completion and commissioning' }),
+                'The event that makes the balance payable. Not a date \u2014 the install day is '
+                + 'not known when the quote goes out.'),
+              field('Payment methods', input((t.paymentMethods || []).join(', '),
+                v => app.updateSetting('commercial.terms.paymentMethods',
+                  String(v).split(',').map(x => x.trim()).filter(Boolean)),
+                { placeholder: 'e.g. Bank transfer, Card' }),
+                'Comma separated. How the customer can actually pay.'),
+              field('Terms and conditions version', input(t.termsVersion || '',
+                v => app.updateSetting('commercial.terms.termsVersion', v),
+                { placeholder: 'e.g. NAC-T&C-2026-01' }),
+                'Recorded on every accepted quote, so what was agreed is on file.')),
+            card('Payment stages', 'Optional. Leave empty if it is simply deposit then balance.',
+              (() => {
+                // updateSetting walks a dotted path creating plain OBJECTS, so
+                // 'paymentStages.0.label' would quietly turn the array into
+                // {0:{...}}. The whole array is written instead.
+                const writeStage = (i, key, v) => app.updateSetting(
+                  'commercial.terms.paymentStages',
+                  stages.map((st, j) => j === i ? { ...st, [key]: v } : st));
+                return table([
+                  { key: 'label', label: 'Stage', render: (r) => input(r.label || '',
+                      v => writeStage(r.id, 'label', v)) },
+                  { key: 'detail', label: 'Detail', render: (r) => input(r.detail || '',
+                      v => writeStage(r.id, 'detail', v)) },
+                  { key: 'x', label: '', width: '60px', render: (r) =>
+                      button('Remove', () => app.updateSetting(
+                        'commercial.terms.paymentStages',
+                        stages.filter((_, j) => j !== r.id)), 'ghost') }
+                ], stages.map((st, i) => ({ id: i, ...st })));
+              })(),
+              button('Add a stage', () => app.updateSetting('commercial.terms.paymentStages',
+                [...stages, { label: '', detail: '' }]), 'ghost')),
+            status.missing.length
+              ? banner('warn', 'Still to enter: ' + status.missing.map(m => m.label).join(', ')
+                  + '. A customer quote is blocked until these are set.')
+              : status.confirmed
+                ? banner('ok', 'Confirmed by ' + (t.confirmedBy || 'nobody')
+                    + (t.confirmedAt ? ' on ' + String(t.confirmedAt).slice(0, 10) : '') + '.')
+                : h('div', {},
+                    banner('warn', 'Everything is filled in, but confirming is a separate step \u2014 '
+                      + 'these are the terms NAC honours if a customer signs.'),
+                    button('I confirm these are NAC\u2019s terms', () => {
+                      app.updateSetting('commercial.terms.confirmedBy', currentUserEmail() || 'estimator');
+                      app.updateSetting('commercial.terms.confirmedAt', new Date().toISOString());
+                      app.updateSetting('commercial.terms.confirmed', true);
+                    }, 'primary')));
+        })(),
 
         !flat ? card('Hourly rates', 'Used only while the charging basis is hourly',
           h('div', { class: 'grid-3' },
@@ -346,6 +552,8 @@ export function renderSettingsScreen(app, section = 'load') {
     ],
 
     materials: () => [
+      // WHAT THIS JOB IS BLOCKED ON, FIRST. The full catalogue is below it.
+      ratesRequiringConfirmation(app),
       banner('info', 'Rates marked ' + MMEM_ACCESSORIES_META.quoteNo + ' come straight off the MMEM ' +
         'quotation of ' + MMEM_ACCESSORIES_META.date + ' (' + MMEM_ACCESSORIES_META.basis + ') and are real ' +
         'costs. Rates marked PLACEHOLDER are shipped starting values that nobody at NAC has confirmed — ' +
@@ -382,7 +590,42 @@ export function renderSettingsScreen(app, section = 'load') {
               ...REQUIRED_SPEC_FIELDS.map(f => field(f,
                 input(app.equipmentSpecs?.[app.specModelKey]?.[f] ?? '',
                   v => app.updateSpec(app.specModelKey, f, v),
-                  { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' })))))
+                  { type: /Mm$|Pa$|Ls$|Kw$|A$/.test(f) ? 'number' : 'text' }))),
+
+              // ── §7 THE MINIMUM AIRFLOW, WITH ITS SOURCE ──────────────────
+              (() => {
+                const rec = app.equipmentSpecs?.[app.specModelKey]?.minimumAirflow || {};
+                const verified = minimumVerified(rec);
+                const missing = minimumMissing(rec);
+                return card('Minimum airflow',
+                  'The lowest airflow the manufacturer permits through this unit. It decides '
+                  + 'whether a zoned house needs a spill zone, so it has to come off their '
+                  + 'document \u2014 not from a rule of thumb. Until it is entered, the zoning '
+                  + 'check falls back to an internal screening figure that cannot approve a '
+                  + 'design.',
+                  h('div', { class: 'alw' },
+                    ...MINIMUM_AIRFLOW_FIELDS.map(mf => h('div', { class: 'alw-row' },
+                      h('div', { class: 'alw-label' },
+                        h('strong', {}, mf.label + (mf.unit ? ' (' + mf.unit + ')' : '')),
+                        h('span', { class: 'alw-help' }, mf.help)),
+                      h('div', { class: 'alw-input' },
+                        input(rec[mf.key] ?? '',
+                          v => app.updateSpecMinimumAirflow(app.specModelKey, mf.key,
+                            v === '' ? null : (mf.type === 'number' ? Number(v) : v)),
+                          { type: mf.type === 'number' ? 'number'
+                                  : mf.type === 'date' ? 'date' : 'text',
+                            step: 'any', min: '0',
+                            placeholder: mf.required ? 'required' : 'optional' })),
+                      h('div', { class: 'alw-state' },
+                        rec[mf.key] === undefined || rec[mf.key] === null || rec[mf.key] === ''
+                          ? (mf.required ? 'NOT SET' : '\u2014') : 'set')))),
+                  verified
+                    ? banner('ok', 'Verified. The zoning check will use this figure and cite the '
+                        + 'document it came from.')
+                    : banner('warn', 'Still needed: '
+                        + missing.map(m => m.label.toLowerCase()).join(', ')
+                        + '. Until then the zoning check is a provisional screening check only.'));
+              })()))
             : null))
     ]
   };

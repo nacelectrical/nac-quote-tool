@@ -254,6 +254,7 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
           specSource,
           returnSpigots: sheet?.returnSpigots || null,
           returnFlangeText: sheet?.returnFlangeText || null,
+      supplyFlangeText: sheet?.supplyFlangeText || null,
           missingSpecs: missing,
           specStatus: missing.length === 0 ? 'complete'
             : missing.length === REQUIRED_SPEC_FIELDS.length ? 'none' : 'partial',
@@ -299,6 +300,7 @@ export function buildCatalogue({ savedBrands = null, specStore = null, base = DU
       specSource,
       returnSpigots: sheet?.returnSpigots || null,
       returnFlangeText: sheet?.returnFlangeText || null,
+      supplyFlangeText: sheet?.supplyFlangeText || null,
       missingSpecs: missing,
       specStatus: missing.length === 0 ? 'complete' : missing.length === REQUIRED_SPEC_FIELDS.length ? 'none' : 'partial',
       specNotice: missing.length ? SPEC_REQUIRED + ': ' + missing.join(', ') : null,

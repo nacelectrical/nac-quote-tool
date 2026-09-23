@@ -19,6 +19,7 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
+import { activeMode, modeLabel, PRICING_MODE } from './pricing-mode.mjs';
 
 /**
  * The install charge.
@@ -115,9 +116,24 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
 
   const extraSell = (extras || []).reduce((s, e) => s + (Number(e.price) || 0) * (Number(e.qty) || 1), 0);
 
+  // ── LINES CHARGED AT A FIXED SELL PRICE ───────────────────────────────────
+  //
+  // Nick set a price for six sundry lines and said they are what NAC CHARGE.
+  // They are therefore not in `totalJobCost` — nothing above counted them,
+  // because their totalCost is null — and the job fee is NOT worked out over
+  // them. They are added to the customer's price after the fee.
+  //
+  // Doing it the other way round charges margin on them twice: once in the
+  // price NAC set, and again as their share of the $6,000.
+  const fixedSellExGst = round(Number(bom?.fixedSellTotal) || 0, 2);
+
   const flat = labour?.mode === 'flat';
   const feeTotal = flat ? (labour.totalFee ?? C.jobFee) : 0;
-  const usesFee = flat && C.pricingBasis === 'materials_plus_fee';
+  // The ACTIVE MODE decides, not a free-text string compared in three places.
+  const mode = activeMode(settings).mode;
+  const usesFee = flat && (mode === PRICING_MODE.COST_PLUS_JOB_FEE
+    || (mode === PRICING_MODE.COMPONENT_SELL_PRICES
+        && C.applyJobFeeOnComponentPricing === true));
 
   // ── Work out the sell price ───────────────────────────────────────────────
   let sellIncGst = null;
@@ -129,16 +145,24 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
   } else if (usesFee) {
     // Everything bought for the job, plus the fee on top.
     const feeExGst = C.jobFeeExGst !== false ? feeTotal : feeTotal / (1 + gstRate);
-    const exGst = totalJobCost + feeExGst;
+    // Job cost, plus the fee over that cost, plus the fixed-price lines AFTER
+    // the fee. The fee base is stated so the sheet can show the arithmetic.
+    const exGst = totalJobCost + feeExGst + fixedSellExGst;
     sellIncGst = round(exGst * (1 + gstRate) + extraSell, 2);
     basis = {
       key: 'materials_plus_fee',
-      label: 'Job cost + flat fee',
+      label: fixedSellExGst > 0
+        ? 'Job cost + flat fee, plus fixed-price lines'
+        : 'Job cost + flat fee',
       jobFee: round(feeTotal, 2),
       jobFeeExGst: C.jobFeeExGst !== false,
-      feeAppliedExGst: round(feeExGst, 2)
+      feeAppliedExGst: round(feeExGst, 2),
+      /** The base the fee was worked out over — NOT the whole sell price. */
+      feeBaseExGst: totalJobCost,
+      fixedSellExGst
     };
-  } else if (cataloguePrice !== null && cataloguePrice !== undefined) {
+  } else if (mode === PRICING_MODE.COMPONENT_SELL_PRICES
+             && cataloguePrice !== null && cataloguePrice !== undefined) {
     sellIncGst = round(Number(cataloguePrice) + extraSell, 2);
     basis = { key: 'catalogue_price', label: 'Installed price from Price Setup' };
   }
@@ -151,11 +175,25 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
   const grossProfit = sellExGst !== null ? round(sellExGst - totalJobCost, 2) : null;
   const grossMarginPct = sellExGst && sellExGst !== 0 ? round((grossProfit / sellExGst) * 100, 1) : null;
 
+  // ── THE MARGIN FIGURE IS NOT THE WHOLE TRUTH WHEN A LINE IS SELL-PRICED ──
+  //
+  // `grossProfit` is sell minus RECORDED cost. The fixed-price lines have no
+  // recorded cost, so every dollar of them reads as profit — and some of it is
+  // what NAC paid the supplier. The number is stated with what is unknown
+  // beside it rather than quietly overstated.
+  const marginExcludesCostOf = fixedSellExGst > 0
+    ? { fixedSellExGst, lines: bom?.fixedSellLabels || [],
+        note: 'Gross profit is the job fee plus whatever margin is inside $'
+          + fixedSellExGst.toFixed(2) + ' of fixed-price lines. What NAC pay for those '
+          + 'lines is not recorded, so the true margin is lower than the figure shown '
+          + 'by exactly their cost.' }
+    : null;
+
   // ── Warnings ──────────────────────────────────────────────────────────────
   const warnings = [];
   if (sellIncGst === null) {
     warnings.push({ code: 'NO_SELL_PRICE', severity: 'CHECK',
-      message: C.pricingBasis === 'catalogue_price'
+      message: mode === PRICING_MODE.COMPONENT_SELL_PRICES
         ? 'No NAC installed price is configured for the selected model. Set it in the existing Price Setup screen, or switch the pricing basis to job cost + flat fee.'
         : 'No sell price could be worked out. Check the pricing basis in HVAC Design Settings → Commercial.' });
   }
@@ -183,10 +221,14 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
       message: 'Job cost includes ' + bom.placeholderCount + ' material line(s) still on shipped placeholder rates.' });
   }
 
-  if (usesFee && grossProfit !== null && Math.abs(grossProfit - (C.jobFeeExGst !== false ? feeTotal : feeTotal / (1 + gstRate))) > 1 && !extraSell) {
+  const expectedProfit = (C.jobFeeExGst !== false ? feeTotal : feeTotal / (1 + gstRate))
+    + fixedSellExGst;
+  if (usesFee && grossProfit !== null && Math.abs(grossProfit - expectedProfit) > 1 && !extraSell) {
     warnings.push({ code: 'MARGIN_NOT_EQUAL_TO_FEE', severity: 'CHECK',
-      message: 'Gross profit is ' + round(grossProfit, 2) + ' rather than the ' + feeTotal +
-        ' job fee — check the extra sell lines and cost entries.' });
+      message: 'Gross profit is ' + round(grossProfit, 2) + ' rather than the ' +
+        round(expectedProfit, 2) + ' expected (the ' + feeTotal + ' job fee' +
+        (fixedSellExGst > 0 ? ' plus $' + fixedSellExGst.toFixed(2) + ' of fixed-price lines' : '') +
+        ') — check the extra sell lines and cost entries.' });
   }
   if (!usesFee && grossMarginPct !== null && grossMarginPct < 20) {
     warnings.push({ code: 'LOW_GROSS_MARGIN', severity: 'WARNING',
@@ -206,6 +248,9 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
     totalJobCost,
     jobFee: usesFee ? round(feeTotal, 2) : null,
     pricingBasis: basis,
+    /** The internal estimate states this. The customer document never does. */
+    pricingMode: mode,
+    pricingModeLabel: modeLabel(mode),
     sellPriceIncGst: sellIncGst,
     sellPriceExGst: sellExGst,
     gstAmount,
@@ -213,6 +258,9 @@ export function calculateCommercials({ bom, labour, cataloguePrice = null, sellO
     cataloguePrice: cataloguePrice ?? null,
     grossProfit,
     grossMarginPct,
+    /** Non-null when the margin above is known to be overstated, and by what. */
+    marginExcludesCostOf,
+    fixedSellExGst,
     extras,
     warnings
   };

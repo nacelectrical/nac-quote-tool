@@ -16,6 +16,7 @@ import { designReturnAir } from '../designer/engines/returnair.mjs';
 import { suggestZones, analyseZones } from '../designer/engines/zones.mjs';
 import { estimateStaticPressure } from '../designer/engines/pressure.mjs';
 import { buildBillOfMaterials, editBomLine } from '../designer/engines/bom.mjs';
+import { buildZoneDampers } from '../designer/engines/zone-dampers.mjs';
 import { calculateLabour, calculateCommercials, toQuoteLineItems } from '../designer/engines/costing.mjs';
 import { collectWarnings, summarise, acknowledge } from '../designer/engines/warnings.mjs';
 import { calibrate } from '../designer/engines/calibration.mjs';
@@ -262,7 +263,12 @@ test('duct diameters are chosen from the configured list within the velocity ban
   assert.equal(branch.diameterMm, 200);   // 175 is not a stocked flex size
   assert.ok(branch.velocityMs <= DEFAULT_SETTINGS.duct.velocity.branch.preferred);
   assert.ok(DEFAULT_SETTINGS.duct.availableDiametersMm.includes(branch.diameterMm));
-  assert.ok(branch.considered.length === DEFAULT_SETTINGS.duct.availableDiametersMm.length);
+  // Only the sizes NAC would actually fit on a branch are considered — the
+  // velocity band picks from NAC's install rules, not the other way round.
+  assert.ok(branch.considered.every(c => DEFAULT_SETTINGS.duct.availableDiametersMm.includes(c.diameterMm)));
+  assert.ok(branch.considered.every(c => c.diameterMm >= DEFAULT_SETTINGS.duct.branchMinMm),
+    'a branch is never sized below NAC\'s minimum');
+  assert.ok(branch.considered.length > 1, 'there is a real choice to make');
 });
 
 test('the brief\'s example is reproduced: 150 mm at 105 L/s is over the preferred branch velocity', () => {
@@ -509,16 +515,29 @@ function sampleDesignParts() {
     routesByRoomId: Object.fromEntries(a.rows.map((r, i) => [r.roomId, { lengthMm: 6000 + i * 500 }])) });
   const z = suggestZones(ROOMS, a);
   const ret = designReturnAir({ totalAirflowLs: a.allocatedAirflowLs, returnCount: 2, ductLengthMm: 2500 });
-  return { a, o, net, z, ret };
+  // THE BOM READS DAMPER COMPONENTS. One per closable zone, on the biggest
+  // branch that zone owns — which is where the router puts the motor — so the
+  // size on the order is the size of the duct it is fitted in.
+  const byRoom = new Map((net.sections || [])
+    .map(sec => [(/^branch_(.+)$/.exec(sec.id || '') || [])[1], sec])
+    .filter(([id]) => id));
+  const placements = z.zones.filter(x => !x.alwaysOpen).map((zone, i) => {
+    const secs = (zone.roomIds || []).map(id => byRoom.get(id)).filter(Boolean);
+    const sec = secs.sort((p, q) => (q.diameterMm || 0) - (p.diameterMm || 0))[0] || null;
+    return { id: 'damper_' + (sec?.id || zone.id || i), sectionId: sec?.id || null,
+             zone: zone.name || zone.id, roomId: zone.roomIds?.[0] ?? null };
+  });
+  const dampers = buildZoneDampers(placements, net);
+  return { a, o, net, z, ret, dampers };
 }
 
 test('the BOM is derived from the design, with quantities that trace back', () => {
-  const { o, net, z, ret } = sampleDesignParts();
+  const { o, net, z, ret, dampers } = sampleDesignParts();
   const bom = buildBillOfMaterials({
     selectedUnit: { brandName: 'Daikin', model: 'FDYQN140LCV1', capacityKw: 14, phase: '1Ph',
                     supplierCost: 6800, sellPrice: 20400 },
     controller: { name: 'Airtouch 5', cost: 1450 },
-    network: net, outlets: o, zones: z, returnDesign: ret,
+    network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers,
     refrigerantPipeM: 8, drainPipeM: 6, cableM: 12
   });
 
@@ -550,16 +569,53 @@ test('the BOM is derived from the design, with quantities that trace back', () =
 });
 
 test('placeholder material rates are declared, never passed off as NAC prices', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret });
-  assert.ok(bom.placeholderCount > 0);
-  assert.ok(bom.warnings.some(w => w.code === 'MATERIAL_PRICE_PLACEHOLDER'));
-  assert.ok(bom.items.filter(i => i.priceSource === 'default_placeholder').length === bom.placeholderCount);
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
+  // Whatever the count, the count and the warning agree with the lines.
+  assert.equal(bom.items.filter(i => i.priceSource === 'default_placeholder').length,
+    bom.placeholderCount);
+  assert.equal(bom.placeholderCount > 0,
+    bom.warnings.some(w => w.code === 'MATERIAL_PRICE_PLACEHOLDER'),
+    'the placeholder warning and the placeholder count disagree');
+  // On this design there are none left at all: the six sundries that used to
+  // be shipped guesses are now priced lines, and the last two placeholders in
+  // the catalogue (reducer, joiner) are fittings this design does not use.
+  assert.equal(bom.placeholderCount, 0, bom.placeholderLabels.join(', '));
+});
+
+test('the six sundries NAC priced are sell lines, not shipped placeholders', () => {
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
+  // This fixture builds the DUCTWORK side only — no selected unit, so no
+  // isolator, cabling, feet or drain kit. The consumables line is here, and
+  // one is enough to hold the contract; the whole set is checked on the
+  // approved job in tests/acceptance.test.mjs.
+  const fixed = bom.items.filter(i => i.fixedSell);
+  assert.equal(fixed.length, bom.fixedSellCount);
+  assert.ok(fixed.length >= 1, 'no fixed-price line is on the order at all');
+  for (const l of fixed) {
+    assert.equal(l.priceSource, 'nac_sell');
+    assert.equal(l.priced, true, l.label + ' reads as unpriced');
+    assert.equal(l.totalCost, null, l.label + ' put a sell price into the job cost');
+    assert.ok(l.sellTotal > 0);
+    assert.match(l.priceNote, /SELL price, not a cost/);
+  }
+  assert.equal(bom.fixedSellTotal,
+    Math.round(fixed.reduce((n, l) => n + l.sellTotal, 0) * 100) / 100);
+  // None of them is counted in the materials cost the fee is worked out over.
+  assert.ok(bom.warnings.some(w => w.code === 'LINES_CHARGED_AT_FIXED_SELL'));
+
+  // And the hanging strap is still bought, just not charged for on its own.
+  const strap = bom.items.find(i => i.key === 'hanging_kit');
+  assert.ok(strap, 'the duct hanging strap fell off the order');
+  assert.equal(strap.noCharge, true);
+  assert.ok(strap.quantity > 0);
+  assert.equal(strap.totalCost, 0);
 });
 
 test("NAC's own material rates take over from the placeholders", () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret },
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers },
     { nacRates: { zone_motor: 189, flex_duct: { 200: 24.5 } } });
   // A flat NAC rate wins even on a line the tool sizes by diameter.
   for (const motor of bom.items.filter(i => i.key === 'zone_motor')) {
@@ -579,8 +635,8 @@ test("NAC's own material rates take over from the placeholders", () => {
 });
 
 test('a BOM line can be edited and the totals follow', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret });
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
   const i = bom.items.findIndex(x => x.key === 'zone_motor');
   const edited = editBomLine(bom, i, { unitCost: 200, quantity: 4 });
   assert.equal(edited.items[i].totalCost, 800);
@@ -590,7 +646,7 @@ test('a BOM line can be edited and the totals follow', () => {
 });
 
 // NAC charges a flat fee per job, so this is the default basis.
-const CATALOGUE_BASIS = settingsWith({ commercial: { pricingBasis: 'catalogue_price' } });
+const CATALOGUE_BASIS = settingsWith({ commercial: { pricingMode: 'COMPONENT_SELL_PRICES' } });
 const HOURLY = settingsWith({ commercial: { labourMode: 'hourly' } });
 const FLAT_LABOUR = { mode: 'flat', totalCost: 0, totalFee: 6000, jobFee: 6000, jobFeeExGst: true };
 
@@ -823,7 +879,7 @@ test('supplier cost can come from the designer store when Price Setup has none',
 });
 
 test('the BOM reports which lines have no cost at all', () => {
-  const { o, net, z, ret } = sampleDesignParts();
+  const { o, net, z, ret, dampers } = sampleDesignParts();
   const bom = buildBillOfMaterials({
     selectedUnit: { brandName: 'Daikin', model: 'X', capacityKw: 14, phase: '1Ph', supplierCost: null },
     network: net, outlets: o, zones: z, returnDesign: ret
@@ -941,14 +997,44 @@ test('zone controllers carry their supplier cost and brand lock', () => {
   assert.equal(at5.maxZones, 16);
 });
 
-test('the recommended controller is one that can be costed and fits', () => {
+// Nick: "siemens is used if not airtouch, this is on pricelist also."
+//
+// The old rule was "cheapest that fits", which put the manufacturer's boxed
+// controller first because it is supplied with the system and costs nothing.
+// It is not what NAC install, so the costing was short by the price of the one
+// that is.
+test('the recommended controller is the Siemens kit sized to the zoning', () => {
   const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 8 });
+  assert.equal(r.recommended.id, 'siemens_z8');
+  assert.equal(r.basis, 'nac_house_rule');
   assert.notEqual(r.recommended.cost, null);
   assert.ok(r.recommended.maxZones >= 8);
-  // Cheapest that fits, among the costed ones.
-  const fitting = ZONE_CONTROLLERS.filter(c =>
-    (!c.brandLock || c.brandLock === 'daikin') && (c.maxZones ?? 99) >= 8 && c.cost != null);
-  assert.equal(r.recommended.cost, Math.min(...fitting.map(c => c.cost)));
+  assert.match(r.houseRuleNote, /Siemens/);
+
+  // Sized to the job, not one size for everything.
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 4 }).recommended.id, 'siemens_z4');
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 6 }).recommended.id, 'siemens_z6');
+  assert.equal(selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 5 }).recommended.id, 'siemens_z6',
+    'a 5-zone job cannot go on a 4-zone kit');
+});
+
+test('past 8 zones no Siemens kit fits, and the house rule says so', () => {
+  const r = selectZoneController(ZONE_CONTROLLERS, { brandId: 'daikin', zoneCount: 12 });
+  assert.equal(r.houseRuleApplies, false, 'a kit was found that does not cover 12 zones');
+  assert.equal(r.houseRuleNote, null);
+  assert.ok(!r.recommended || r.recommended.maxZones >= 12,
+    'a controller was recommended that cannot carry the zoning');
+});
+
+test('the estimator naming a controller still beats the house rule', () => {
+  const r = selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount: 8, preferId: 'at5_daikin' });
+  assert.equal(r.recommended.id, 'at5_daikin');
+  assert.equal(r.basis, 'estimator_choice');
+  assert.equal(r.houseRuleNote, null);
 });
 
 test("NAC's house-standard controller is used when one is set", () => {
@@ -969,8 +1055,8 @@ test('paircoil is priced per metre off the roll rate, not as a placeholder', () 
 });
 
 test('a supplier-list rate does not count as a placeholder in the BOM', () => {
-  const { o, net, z, ret } = sampleDesignParts();
-  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret,
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers,
     refrigerantPipeM: 8 });
   const pipe = bom.items.find(i => i.key === 'refrigerant_pipe');
   assert.equal(pipe.priceSource, 'supplier_list');

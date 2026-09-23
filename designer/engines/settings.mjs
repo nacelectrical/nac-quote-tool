@@ -2,6 +2,9 @@
 // Every engineering assumption the deterministic engines use lives here.
 // Nothing in the engines may hard-code a design constant that belongs in this file.
 
+import NAC from './nac-standard.mjs';
+import { NAC_TERMS_LABEL, NAC_TERMS_EFFECTIVE } from './nac-terms.mjs';
+
 export const DEFAULT_SETTINGS = {
   version: 1,
 
@@ -156,35 +159,64 @@ export const DEFAULT_SETTINGS = {
 
   // ── Outlets (PART 15) ───────────────────────────────────────────────────────
   outlets: {
-    // Practical capacity per outlet before noise becomes an issue.
-    // What NAC actually fit. The 4-way, slot and sidewall outlets were in here
-    // from the shipped defaults and NAC do not use them; offering them only
-    // meant an outlet type that could be chosen and then had no confirmed
-    // price behind it. The linear bar grille stays because it does go on
-    // occasionally — it is quoted separately, which the bill of materials says.
+    // Practical capacity per outlet before noise becomes an issue. What NAC
+    // actually fit.
     types: {
       round_diffuser:  { label: 'Round ceiling diffuser', minLs: 25, nominalLs: 90,  maxLs: 130, throwM: 4.0, faceVelocityMs: 2.5 },
       linear_bar:      { label: 'Linear bar grille',      minLs: 30, nominalLs: 110, maxLs: 160, throwM: 5.0, faceVelocityMs: 2.6 }
     },
     defaultType: 'round_diffuser',
-    // Rooms with a long dimension over this get a second outlet for throw.
     splitIfLongestDimM: 5.5,
-    maxOutletsPerRoom: 4
+    // From the NAC DUCT DESIGN STANDARD — how many outlets a room gets, the
+    // neck sizes, and why the face size is left blank.
+    maxOutletsPerRoom: NAC.outlets.maxPerRoom,
+    byRoomType: JSON.parse(JSON.stringify(NAC.outlets.byRoomType)),
+    neckSizesMm: [...NAC.outlets.neckSizesMm],
+    neckByAirflowLs: NAC.finalSizeByAirflow.map(b => ({ upToLs: b.upToLs, neckMm: b.sizeMm })),
+    faceSizeByNeckMm: { ...NAC.outlets.faceSizeByNeckMm },
+    faceSizeNote: NAC.outlets.faceSizeNote
   },
 
   // ── Duct sizing (PART 16) ───────────────────────────────────────────────────
+  // ── Duct sizing (PART 16) ───────────────────────────────────────────────────
+  // Every install rule here comes from the NAC DUCT DESIGN STANDARD. They are
+  // republished into settings so the HVAC Design Settings screen can show and
+  // edit them, but the STANDARD is where they are decided — this is a view of
+  // it, not a second copy.
   duct: {
-    // Standard Australian flex sizes. 175 and 225 are not stocked lines — MMEM
-    // quote 200–400 — so the engine no longer sizes to a duct NAC cannot buy.
-    //
-    // NAC do not install 450 or 500. Anything that would need more than a 400
-    // is run as two ducts instead, which is how it goes in on site: 450 and 500
-    // flex is a fight to get through a truss roof and NAC do not carry it.
-    availableDiametersMm: [100, 125, 150, 200, 250, 300, 350, 400],
-    // Hard ceiling on any single duct. Raise this only if NAC start carrying
-    // larger flex — the engine splits the run rather than exceed it.
-    maxDiameterMm: 400,
-    // Preferred / maximum velocities in m/s by duct role.
+    availableDiametersMm: [...NAC.stockedDiametersMm],
+    maxDiameterMm: NAC.maxDiameterMm,
+    finalBranch: {
+      autoLadderMm: [...NAC.finalFlex.autoSizesMm],
+      preferredMinMm: NAC.finalFlex.minMm,
+      maxMm: NAC.finalFlex.maxMm,
+      manualOnlyMm: [...NAC.finalFlex.manualOnlyMm]
+    },
+    branchMinMm: NAC.branchMinMm,
+    autoMinDiameterMm: NAC.autoMinDiameterMm,
+    // THE INSTALLER'S OWN MINIMUM for a run to an outlet. Raising it never
+    // changes the calculation — the airflow, the velocity and the size the
+    // bands asked for are all still reported — it only changes what gets
+    // fitted, and the engine says so against every duct it raises.
+    minimumSupplyBranchDiameterMm: NAC.defaultMinSupplyBranchMm,
+    // THE SHORTEST FINAL DUCT THE DESIGN WILL ACCEPT, in metres, measured on
+    // the calibrated plan. A take-off collar discharges a jet; a diffuser hung
+    // straight underneath it gets that jet down its neck, which is noise, a
+    // draught and a pattern nobody can balance. Two metres is the run in which
+    // the air settles — so when a fitting lands too close to an outlet the
+    // FITTING is moved and everything downstream is recalculated. The run is
+    // never padded to make the number.
+    minimumBtoToOutletDuctLengthM: 2.0,
+    junctionClusterFraction: NAC.bto.clusterFraction,
+    majorBranchMinRooms: NAC.bto.minRoomsForMajorBranch,
+    // A ROUTING PREFERENCE, NOT A FABRICATION LIMIT. Past this many outlets
+    // straight off one local BTO the router looks for two clear spatial groups
+    // and builds a distribution fitting with two arms instead. An installer who
+    // has verified a larger body may raise it on the job.
+    preferredMaxDirectOutletPortsPerLocalBto: NAC.bto.preferredMaxDirectOutletPortsPerLocalBto,
+
+    // Preferred / maximum velocities in m/s by duct role. PHYSICS, not install
+    // practice, so these stay here rather than in the standard.
     velocity: {
       main:   { preferredMin: 4.0, preferred: 6.0, max: 8.0 },
       branch: { preferredMin: 3.0, preferred: 4.5, max: 6.0 },
@@ -209,15 +241,25 @@ export const DEFAULT_SETTINGS = {
     maxFilterFaceVelocityMs: 1.5,
     // Free area of a typical return grille core.
     grilleFreeAreaRatio: 0.72,
+    // The ratio above is a generic ASSUMPTION, not a data sheet. Set this true
+    // only when the figure has been taken from the grille manufacturer, and the
+    // engine will stop marking the free-area velocity unverified.
+    grilleFreeAreaRatioVerified: false,
     standardGrilleSizesMm: [
       [400, 400], [500, 400], [600, 400], [600, 500],
       [700, 500], [800, 500], [900, 600], [1000, 600], [1200, 600]
     ],
     maxSingleReturnLs: 700,
-    // NAC's return standard: one 400 mm duct, or two ducts at 350 or 400.
-    // Nothing larger — 450 and 500 flex is not installed.
-    returnDuctSizesMm: [350, 400],
-    maxReturnDucts: 2
+    // NAC's return standard. 450 IS fitted on the return — on the 25 kW unit
+    // the returns are 2 x 450 — which is not a contradiction of "never a 450":
+    // that rule is about SUPPLY. Republished from the standard so the Design
+    // Settings screen edits one list, not a second copy.
+    returnDuctSizesMm: [...NAC.returnDuctSizesMm],
+    // ONE DUCT PER RETURN POINT. The number of RETURNS is what scales with the
+    // system. Running two ducts back from a single grille divided the airflow
+    // twice, so the return engine and the drawing disagreed about how much air
+    // was in each duct.
+    maxReturnDucts: 1
   },
 
   // ── Zoning (PART 20) ────────────────────────────────────────────────────────
@@ -242,7 +284,6 @@ export const DEFAULT_SETTINGS = {
       reducer: 1.5,
       bend_90: 2.5,
       bend_45: 1.2,
-      damper_open: 1.0,
       takeoff: 2.0,
       joiner: 0.5
     },
@@ -279,11 +320,28 @@ export const DEFAULT_SETTINGS = {
     // customer) or already includes GST.
     jobFeeExGst: true,
 
-    // How the customer's sell price is arrived at.
-    //   'materials_plus_fee' — total job cost + jobFee
-    //   'catalogue_price'    — the installed price stored per model in the
-    //                          existing Price Setup screen
-    pricingBasis: 'materials_plus_fee',
+    // ── HOW THE CUSTOMER'S PRICE IS ARRIVED AT ──────────────────────────
+    //
+    // ONE method, declared. See pricing-mode.mjs for why: there used to be two
+    // ideas in the codebase with nothing saying which was in force, so a job
+    // could be refused for want of an installed sell price that the
+    // cost-plus-fee method never uses.
+    //
+    //   COST_PLUS_JOB_FEE      job cost + jobFee. The fee IS the margin.
+    //                          Needs verified COSTS. Needs no sell prices.
+    //   COMPONENT_SELL_PRICES  every line carries its own sell price.
+    //                          Needs sell prices. Adds no flat fee.
+    //
+    // This is how NAC prices: everything bought for the job, plus a fixed fee.
+    pricingMode: 'COST_PLUS_JOB_FEE',
+    // NOTE: `pricingBasis` is deliberately NOT shipped here. It is the old
+    // free-text key, still READ from stored settings written before the modes
+    // existed — but shipping it as a default alongside pricingMode meant a
+    // saved pricingBasis was silently overridden by the default pricingMode,
+    // which is precisely the silent mixing this is meant to stop.
+    // Only meaningful on COMPONENT_SELL_PRICES, and false on purpose: adding a
+    // flat fee on top of individually priced lines charges the margin twice.
+    applyJobFeeOnComponentPricing: false,
 
     // Hourly rates, used only when labourMode is 'hourly'.
     labourRatePerHour: 95,
@@ -293,7 +351,91 @@ export const DEFAULT_SETTINGS = {
     labourHoursOutdoorUnit: 4,
     labourHoursPerDuctMetre: 0.12,
     labourHoursReturn: 2,
-    labourHoursCommissioning: 2
+    labourHoursCommissioning: 2,
+
+    // ── Proposal ductwork allowance ──────────────────────────────────────
+    //
+    // What the ductwork and installation are worth BEFORE anybody has routed
+    // a duct. A proposal quotes this; it does not quote measured quantities,
+    // because at proposal stage there are none.
+    //
+    // EVERY FIELD SHIPS NULL ON PURPOSE. These are NAC's own commercial
+    // numbers and nobody but Nick can supply them. With nothing set, a
+    // proposal says it has no allowance configured and names the screen to
+    // set it on — it never reaches for a figure that would look like a price.
+    //
+    //   flat       one allowance per job, whatever its size
+    //   perOutlet  added per supply outlet
+    //   perZone    added per motorised zone
+    //
+    // Set `flat` alone for a standard installation allowance. Set `perOutlet`
+    // and/or `perZone` (with or without a base `flat`) for a provisional
+    // allowance that scales with the job.
+    proposalAllowance: {
+      // ── PER JOB ──────────────────────────────────────────────────────
+      ductwork: null,        // standard ductwork allowance for a job
+      returns: null,         // return-air grilles, boxes and the run back
+      plenums: null,         // fabricated supply and return plenums
+      electrical: null,      // isolator, cabling, connection
+      refrigeration: null,   // paircoil, gas, vacuum, commissioning
+      condensate: null,      // drain, insulation, tray or pump
+      labour: null,          // installation labour, where it is not in the fee
+      roofAccess: null,      // roof space, access and site-difficulty allowance
+      // ── PER COUNT ────────────────────────────────────────────────────
+      perOutlet: null,       // added for each supply outlet
+      perZone: null,         // added for each motorised zone
+      // ── OPTIONAL ─────────────────────────────────────────────────────
+      contingencyPct: null,  // a percentage on top of everything above
+      // The original single-figure field. Still read, so a job configured
+      // before the breakdown existed keeps its number.
+      flat: null
+    },
+
+    // ── DEPOSIT, PAYMENT AND VALIDITY ───────────────────────────────────
+    //
+    // EVERY FIELD IS EMPTY ON PURPOSE. The demonstration proposal carried a
+    // 20% deposit and 30-day validity, and those were mine, not NAC's. Shipping
+    // them as defaults would have made an invented payment term look like
+    // company policy the first time a real quote went out.
+    //
+    // Until these are entered and confirmed, a customer quote is blocked.
+    terms: {
+      // NAC's terms, as Nick stated them. These are policy, not the
+      // demonstration figures — the 20% / 30 days that came off the sample
+      // proposal were mine and never shipped.
+      depositPercent: 50,         // one or the other, not both
+      depositAmount: null,
+      /** [{ label, detail, percent }] — what is due and when. */
+      paymentStages: [
+        { label: 'Deposit on acceptance', percent: 50,
+          detail: 'Confirms your booking and orders the equipment.' },
+        { label: 'Balance on completion', percent: 50,
+          detail: 'Payable once the system is installed and commissioned.' }
+      ],
+      /** The event that makes the balance payable. */
+      balanceDueEvent: 'completion',
+      /**
+       * How long a quote stands. 30 days — Nick's figure, and clause 2.1 of
+       * NAC's own terms says the same: "Our quotations hold for 30 days from
+       * the date of issue." checkTermsAgainstSettings proves they still agree,
+       * because the customer receives both documents.
+       */
+      validityDays: 30,
+      /** ['Direct deposit', 'EFT', ...] */
+      paymentMethods: ['Direct deposit', 'EFT'],
+      /**
+       * Which version of NAC's terms this quote was issued under. Taken from
+       * the document itself rather than typed here twice, so raising the
+       * version in nac-terms.mjs is the only place it has to change.
+       */
+      termsVersion: NAC_TERMS_LABEL,
+      /** The date that version took effect, as the document states it. */
+      termsEffectiveDate: NAC_TERMS_EFFECTIVE,
+      /** Set by Nick when the above is right. Nothing publishes until it is. */
+      confirmed: false,
+      confirmedBy: '',
+      confirmedAt: ''
+    }
   },
 
   // ── Plan interpretation ─────────────────────────────────────────────────────

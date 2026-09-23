@@ -238,11 +238,12 @@ export function collectInterruptions(design, opts = {}) {
       { covers: ['MATERIAL_PRICE_MISSING', 'PRICE_MISSING_COST_LINES'] }));
   }
   if (bom?.placeholderCount) {
-    out.push(item(INTERRUPT.CONFIRM, 'BOM_PLACEHOLDER',
+    out.push(item(INTERRUPT.BLOCKING, 'BOM_PLACEHOLDER',
       bom.placeholderCount + ' material rate' + (bom.placeholderCount > 1 ? 's are' : ' is') + ' a shipped placeholder',
       'Worth ' + (bom.placeholderValue != null ? '$' + round(bom.placeholderValue, 2) : 'an unconfirmed amount') +
       ' of this job. These are NAC-supplied starting values, not confirmed prices, and on ' +
-      'cost-plus-fee they go straight to the customer.', FIX_IN.MATERIALS,
+      'cost-plus-fee they go straight to the customer. Replace every placeholder ' +
+      'before finalising or producing a customer quote.', FIX_IN.MATERIALS,
       { covers: ['MATERIAL_PRICE_PLACEHOLDER', 'COST_BASED_ON_PLACEHOLDERS',
                  'PRICE_BASED_ON_PLACEHOLDER_RATES'] }));
   }

@@ -38,23 +38,24 @@
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { isConditionedRoom } from './classify.mjs';
+import { ZONING } from './nac-standard.mjs';
 
 /**
  * Room types that form a single open-plan living area. A kitchen, the meals
  * area and the family room in a modern Australian house are one volume of air
  * with no door anywhere in it.
  */
-export const OPEN_PLAN_TYPES = new Set(['kitchen', 'dining', 'living']);
+export const OPEN_PLAN_TYPES = new Set(ZONING.openPlanTypes);
 
 /**
  * Circulation. A hallway or entry is open to whatever it runs into, so it can
  * join a group — but it never STARTS one, or two bedrooms either side of a
  * passage would be pulled into the same zone.
  */
-export const CIRCULATION_TYPES = new Set(['hallway']);
+export const CIRCULATION_TYPES = new Set(ZONING.circulationTypes);
 
 /** How close two room rectangles must be to count as touching: one wall. */
-export const ADJACENCY_TOLERANCE_MM = 400;
+export const ADJACENCY_TOLERANCE_MM = ZONING.adjacencyToleranceMm;
 
 const rect = (r) => {
   const b = r?.boundaryPx;

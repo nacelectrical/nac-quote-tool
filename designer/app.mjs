@@ -7,14 +7,33 @@
 // the deterministic engines in ./engines; nothing is computed here.
 
 import { h, mount, clear, button, badge, banner, empty, toast, input, field, select, card, table,
-         confidenceBadge, num } from './ui/dom.mjs';
+         confidenceBadge, num, money } from './ui/dom.mjs';
 import { createPlanViewer, MODES } from './ui/plan-viewer.mjs';
+import { createSiteAdjust } from './ui/site-adjust.mjs';
+import { drawBtoFabricationDetail } from './ui/symbols.mjs';
+
+/**
+ * THE FOUR WAYS TO LOOK AT THE PLAN TAB.
+ *
+ * CLEAN is the installer drawing and the default. The other three are the same
+ * drawing with one set of handles added, so an estimator never loses the design
+ * they are working on in order to move something on it.
+ */
+import { invalidateForNewScale } from './engines/scale-invalidation.mjs';
+import { SCALE_SOURCE, VERIFIED_SCALE_SOURCES } from './engines/design-stage.mjs';
+import { currentUserEmail } from './auth.mjs';
+export const PLAN_VIEW = Object.freeze({
+  CLEAN: 'clean',
+  OUTLETS: 'outlets',
+  ROUTES: 'routes',
+  ROOMS: 'rooms'
+});
 import { renderPdfPage } from './ui/pdf.mjs';
 import { tilePlan, mergeTileObservations } from './ui/image.mjs';
 import * as Tabs from './ui/tabs.mjs';
 import { renderSettingsScreen } from './ui/settings-screen.mjs';
 import { internalReportHtml, customerReportHtml, openReport,
-         downloadReportPdf, REPORT_KIND } from './ui/reports.mjs';
+         downloadReportPdf, REPORT_KIND, loadPdfFonts } from './ui/reports.mjs';
 import { confirmDialog, alertDialog, formDialog, pickDialog, linkDialog } from './ui/modal.mjs';
 
 import { DEFAULT_SETTINGS, settingsWith } from './engines/settings.mjs';
@@ -29,6 +48,7 @@ import { CONDITIONING, CONDITIONING_LABELS, EXCLUDED_BANNER, isConditionedRoom,
          isExcludedRoom, needsClassificationReview,
          classificationSummary } from './engines/classify.mjs';
 import { buildCatalogue, ZONE_CONTROLLERS } from './engines/catalogue.mjs';
+import { zoneColours, zoneChips } from './engines/zones.mjs';
 import { runPipeline, designSummary } from './engines/pipeline.mjs';
 import { routeLength } from './engines/ducts.mjs';
 import { routeOverlayFromNetwork, routedOverlay, routedMarkers,
@@ -73,14 +93,18 @@ export class DesignerApp {
     this.settings = structuredClone(DEFAULT_SETTINGS);
     this.settingsOverride = {};
     this.materialRates = {};
+    this.rateVerifications = {};
     this.equipmentSpecs = {};
     this.nacBrands = null;
     this.nacControllers = null;
     this.catalogue = buildCatalogue({});
     this.controllers = ZONE_CONTROLLERS;
     this.design = createDesign({});
+    this.design.routingStrategy = 'area';
     this.summary = {};
     this.tab = 'plan';
+    // The Plan tab opens on the installer drawing, not on the setup workings.
+    this.planView = PLAN_VIEW.CLEAN;
     // QUICK QUOTE MODE is the default. An estimator quoting a normal house
     // should never have to walk through thirteen engineering tabs; those stay
     // one click away under ADVANCED DESIGN for the jobs that need them.
@@ -134,16 +158,18 @@ export class DesignerApp {
   }
 
   async loadConfig() {
-    const [override, rates, specs, brands, controllers] = await Promise.all([
+    const [override, rates, specs, rateVerifications, brands, controllers] = await Promise.all([
       Store.getJson(Store.SETTINGS_KEYS.hvacSettings, {}),
       Store.getJson(Store.SETTINGS_KEYS.materialRates, {}),
       Store.getJson(Store.SETTINGS_KEYS.equipmentSpecs, {}),
+      Store.getJson(Store.SETTINGS_KEYS.rateVerifications, {}),
       Store.loadNacBrands(),
       Store.loadNacControllers()
     ]);
     this.settingsOverride = override || {};
     this.settings = settingsWith(this.settingsOverride);
     this.materialRates = rates || {};
+    this.rateVerifications = rateVerifications || {};
     this.equipmentSpecs = specs || {};
     this.nacBrands = brands;
     this.nacControllers = controllers;
@@ -170,6 +196,7 @@ export class DesignerApp {
       controllers: this.controllers,
       controllerPricing: this.controllerPricing,
       nacRates: this.materialRates,
+      rateVerifications: this.rateVerifications,
       allowLowConfidence: !!this.design.allowLowConfidence
     });
     this.summary = designSummary(this.design);
@@ -177,6 +204,161 @@ export class DesignerApp {
   }
 
   update() { this.recompute(); this.render(); }
+
+  // ── SITE ADJUST ───────────────────────────────────────────────────────────
+
+  /** Open the iPad mode. The approved design is kept aside, untouched. */
+  openSiteAdjust() {
+    this.siteBaseDesign = JSON.parse(JSON.stringify(this.design));
+    this.siteAdjust = createSiteAdjust(this);
+    this.render();
+    // Anything the last session left on this iPad comes back before the
+    // installer has to wonder whether it survived.
+    if (this.siteAdjust.resume()) {
+      toast('Recovered unsynced site edits from this iPad.');
+    }
+  }
+
+  closeSiteAdjust() {
+    this.siteAdjust = null;
+    this.siteBaseDesign = null;
+    // Hand the canvas back: leaving it armed with a site gesture would make the
+    // office screen move fittings when somebody meant to pan.
+    this.viewer?.setSiteTargets?.([]);
+    this.viewer?.setSiteRoute?.(null);
+    this.viewer?.setAutoFit?.(false);
+    this.viewer?.setMode?.(MODES.VIEW);
+    this.render();
+  }
+
+  /** The design Site Adjust replays its edits onto: the one it was opened at. */
+  baseDesign() { return this.siteBaseDesign || this.design; }
+
+  /** A site edit landed: take the patched design and recalculate everything. */
+  applySiteDesign(patched) {
+    this.design = patched;
+    this.recompute();
+  }
+
+  userName() { return this.user?.email || this.user?.name || 'site'; }
+  serverUpdatedAt() { return this.serverDesignUpdatedAt || null; }
+
+  /** Push a site session to storage. Rejects so the local copy is kept. */
+  async pushSiteSession(record) {
+    if (!this.saveDesign) throw new Error('No connection');
+    return this.saveDesign();
+  }
+
+  /** The plan host, so Site Adjust can put the real viewer inside its layout. */
+  viewerHost() { this.ensureViewer(); return this.viewer.element || null; }
+
+  mountSitePlan() {
+    this.ensureViewer();
+    const slot = this.root.querySelector('.sa-canvas');
+    const el = this.viewer.element;
+    // The viewer's wrapper is position:absolute;inset:0, so it needs a sized,
+    // positioned box around it — dropped in bare it anchors to the page and
+    // covers the mode bar.
+    if (slot && el && el.parentNode !== slot) mount(slot, el);
+    this.viewer.setDesignView(true);
+    this.viewer.setShowAnalysis(false);
+    // THE BOX CHANGES SHAPE WHEN A SHEET OPENS. In landscape the sheet takes
+    // half the width; the plan has to be re-fitted to what is left or the
+    // drawing runs off behind it. Re-fitting is cheap and only happens when the
+    // box has actually changed size.
+    const box = slot ? slot.getBoundingClientRect() : null;
+    const size = box ? Math.round(box.width) + 'x' + Math.round(box.height) : '';
+    if (size && size !== this.sitePlanSize) {
+      this.sitePlanSize = size;
+      // AFTER the ResizeObserver has re-measured the canvas, not just after
+      // layout: the viewer sizes its backing store from that observer, and a
+      // fit computed against the old backing store puts the drawing half off
+      // the edge — which is what happens every time a sheet opens.
+      // TWICE, deliberately. The viewer sizes its backing store from a
+      // ResizeObserver, which fires on its own schedule; a fit computed before
+      // that lands is computed against the OLD canvas and puts the drawing half
+      // behind the sheet. The first fit covers the usual case and the second
+      // covers the slow one. Both are cheap — a fit is arithmetic and a redraw.
+      clearTimeout(this.siteFitTimer);
+      clearTimeout(this.siteFitTimer2);
+      const refit = () => { this.viewer.fit?.(); this.viewer.redraw?.(); };
+      this.siteFitTimer = setTimeout(refit, 80);
+      this.siteFitTimer2 = setTimeout(refit, 320);
+    }
+    this.viewer.redraw?.();
+  }
+
+  // ── THE SITE CANVAS ───────────────────────────────────────────────────────
+  //
+  // Site Adjust never touches the viewer directly; it says what it wants and
+  // this translates. That keeps the gesture layer in plan-viewer.mjs and the
+  // meaning of what is under the finger in site-adjust.mjs, with one seam.
+
+  /** Arm the canvas with a gesture. Panning and moving are different modes. */
+  setSiteGesture(g) {
+    this.ensureViewer();
+    this.viewer.setMode(MODES.SITE);
+    // The iPad canvas changes shape every time a sheet opens, so the drawing is
+    // kept fitted to whatever box it has — unless a finger has moved it.
+    this.viewer.setAutoFit(true);
+    this.viewer.setSiteGesture(g);
+  }
+  /** Everything a finger can grab, in image coordinates. */
+  setSiteTargets(list) { this.viewer?.setSiteTargets?.(list || []); }
+  setSiteSelected(id) { this.viewer?.setSiteSelected?.(id ?? null); }
+  /** The one run open for route editing, with its points. */
+  setSiteRoute(route) { this.viewer?.setSiteRoute?.(route || null); }
+  /** The grab radius in IMAGE px at the current zoom, so hit tests agree. */
+  siteTouchRadius() { return this.viewer?.siteTouchRadius?.() ?? 24; }
+  siteRedraw() { this.viewer?.siteRedraw?.(); }
+  /** Every supply run that can carry a fitting or be re-routed. */
+  siteSections() {
+    return (this.design.network?.sections || [])
+      .filter(s => s.role !== 'return' && !/^return(_|$)/.test(String(s.id || '')))
+      .filter(s => Array.isArray(s.points) && s.points.length >= 2);
+  }
+  /** Which room a tap landed in, for adding an outlet. */
+  siteRoomAt(at) {
+    for (const r of (this.design.rooms || [])) {
+      const b = r.boundaryPx;
+      if (!b) continue;
+      if (at.x >= b.x && at.x <= b.x + b.w && at.y >= b.y && at.y <= b.y + b.h) return r;
+    }
+    return null;
+  }
+
+  /** Outlets an installer can connect a BTO port to. */
+  outletChoices() {
+    return (this.design.outlets?.rows || []).map(r => ({
+      id: r.roomId, label: r.label + ' — ' + (r.airflowLs ?? '?') + ' L/s' }));
+  }
+
+  /**
+   * SAVE AS-INSTALLED — beside the approved design, never over it.
+   *
+   * Nick: "Do not overwrite the quoted design or approved design. Create
+   * separate revisions that can be compared."
+   */
+  saveAsInstalled({ by, reason, changes, stage }) {
+    const before = this.siteBaseDesign?.commercials?.totalJobCost ?? null;
+    const after = this.design?.commercials?.totalJobCost ?? null;
+    this.design = addRevision(this.design, {
+      by, reason,
+      label: stage + ' — ' + changes.length + ' component change(s)' +
+        (before !== null && after !== null && before !== after
+          ? ', cost ' + money(before) + ' → ' + money(after) : '')
+    });
+    // The component-level before/after, kept on the revision itself so the two
+    // designs can be compared without re-deriving anything.
+    const rev = this.design.revisions[this.design.revisions.length - 1];
+    rev.stage = stage;
+    rev.changes = changes;
+    rev.costBefore = before;
+    rev.costAfter = after;
+    this.saveDesign?.();
+    toast('As-installed revision ' + rev.number + ' saved. The approved design is unchanged.');
+    this.render();
+  }
 
   // ── Shell ─────────────────────────────────────────────────────────────────
 
@@ -191,6 +373,17 @@ export class DesignerApp {
   }
 
   render() {
+    // ── SITE ADJUST TAKES THE WHOLE SCREEN ──────────────────────────────────
+    //
+    // Nick: "It must work without opening the full advanced-design interface."
+    // So it is not a tab inside the office layout — it replaces it. The header,
+    // the step rail, the tab bar and the assistant are all gone, and what is
+    // left is the plan, six mode buttons and the sheet for whatever was tapped.
+    if (this.siteAdjust) {
+      mount(this.root, this.siteAdjust.render());
+      this.mountSitePlan();
+      return;
+    }
     this.renderHeader();
     this.renderSteps();
     this.renderTabs();
@@ -234,6 +427,11 @@ export class DesignerApp {
           : button('◂ QUICK QUOTE', () => this.enterQuick(), 'ghost small'),
         button(this.assistantOpen ? 'Hide assistant' : 'NAC Design Assistant',
           () => { this.assistantOpen = !this.assistantOpen; this.render(); }, 'ghost small'),
+        // ON SITE, ONE TAP FROM ANYWHERE. An installer on a roof should not have
+        // to find their way through the office screens to move a diffuser.
+        this.design.network?.routed
+          ? button('SITE ADJUST', () => this.openSiteAdjust(), 'small')
+          : null,
         button('Save', () => this.save(), 'small'),
         button('Customers', () => this.showCustomerPicker(), 'ghost small'),
         button('Designs', () => this.showDesignList(), 'ghost small'),
@@ -544,8 +742,28 @@ export class DesignerApp {
   downloadInternalReport() { return this.downloadReport(REPORT_KIND.INTERNAL); }
 
   async downloadReport(kind) {
+    if (kind === REPORT_KIND.CUSTOMER) {
+      const i = collectInterruptions(this.design);
+      if (!i.canQuote) return void await alertDialog({
+        title: 'Customer quote blocked',
+        message: i.summary,
+        lines: i.blocking.map(x => x.title)
+      });
+    }
+    // The embedded faces, before anything is laid out — `textWidth` measures
+    // with whichever font will actually be drawn, so the wait has to happen
+    // before the document is built rather than after.
+    await loadPdfFonts();
     const opts = { logo: document.querySelector('.brand img')?.src || null,
-                   planSnapshot: this.viewer?.snapshot() || null };
+                   planSnapshot: this.viewer?.snapshot({ clean: true, legend: true }) || null,
+                   // The same drawing without the key, and the key on its own,
+                   // so the landscape sheet can give the plan its full height.
+                   planPlate: this.viewer?.snapshot({ clean: true, legend: false }) || null,
+                   planLegend: this.viewer?.legendStrip() || null,
+                   // The enlarged equipment crop, taken from the same Clean View
+                   // drawing so the inset and the plan can never disagree.
+                   equipmentInset: this.viewer?.equipmentInset() || null,
+                   btoDetails: this.btoFabricationDetails() };
     const label = kind === REPORT_KIND.CUSTOMER ? 'customer summary' : 'internal design sheet';
     const r = downloadReportPdf(this.design, kind, opts);
     if (r.ok) return void toast('Saved ' + r.filename + ' (' + Math.round(r.bytes / 1024) + ' KB).');
@@ -582,7 +800,27 @@ export class DesignerApp {
         onHandleHold: (h) => this.onHandleHold(h),
         onRoutePick: (at, r) => this.pickRoute(at, r),
         onRouteTap: (leg, at) => this.onRouteTap(leg, at),
-        onLayoutMove: (key, item) => { this.design.layout[key] = { ...item }; this.dirty = true; }
+        // ── SITE ADJUST ─────────────────────────────────────────────────
+        // The viewer owns the gestures; Site Adjust owns what is under the
+        // finger and what changing it means. These forward one to the other so
+        // neither has to know the other's job.
+        onSiteHit: (at, r) => this.siteAdjust?.hitTest(at, r) || null,
+        onSiteSelect: (t) => this.siteAdjust?.onCanvasSelect(t),
+        onSiteMoveEnd: (t, at) => this.siteAdjust?.onCanvasMoveEnd(t, at),
+        onSiteAdd: (at, t) => this.siteAdjust?.onCanvasAdd(at, t),
+        onSiteDelete: (t, at) => this.siteAdjust?.onCanvasDelete(t, at),
+        onSiteRouteHit: (at, r) => this.siteAdjust?.routeHit(at, r) || null,
+        onSiteRouteTap: (hit, at) => this.siteAdjust?.onCanvasRouteTap(hit, at),
+        onSiteRoutePointEnd: (hit, at) => this.siteAdjust?.onCanvasRoutePointEnd(hit, at),
+        onSiteRoutePointHold: (hit) => this.siteAdjust?.onCanvasRoutePointHold(hit),
+        onLayoutPick: () => this.pushEditHistory('Moved plan item'),
+        onLayoutMove: (key, item) => {
+          this.design.layout[key] = { ...item };
+          // Recalculate once on drop: routes, lengths, pressure, BOM and price
+          // immediately follow the on-site change without making an iPad rerun
+          // the engine on every pointermove.
+          this.update();
+        }
       });
     }
 
@@ -601,14 +839,182 @@ export class DesignerApp {
     this.viewer.setCalibration(d.calibration);
     this.viewer.setRoutes(this.routeOverlay());
     this.viewer.setMarkers(d.network?.routed
-      ? [...routedMarkers(d.network, d.autoRoute),
+      ? [...this.labelledBtoMarkers(routedMarkers(d.network, d.autoRoute)),
          ...(d.zoneDampers || []).map(z => ({ type: 'damper', x: z.x, y: z.y,
+           // The angle of the duct it sits on, so the drawing can put the
+           // damper ACROSS the run rather than along it.
+           angle: z.angle ?? 0, sectionId: z.sectionId, diameterMm: z.diameterMm ?? null,
            label: z.zone, title: 'Zone damper — ' + z.zone }))]
       : []);
     this.viewer.setLayout(d.layout || {});
-    this.viewer.setHandles(this.currentHandles());
+    // Handles exist only in the mode that edits them. They were loaded on every
+    // render and merely not DRAWN outside edit mode, which left a live grab
+    // target under every fitting on a drawing nobody was editing.
+    this.viewer.setHandles(
+      (this.planView || PLAN_VIEW.CLEAN) === PLAN_VIEW.ROUTES ? this.currentHandles() : []);
+
+    // Zone shading, the figure blocks, the diffusers and the indoor unit — the
+    // things that turn a schematic into something an installer can read.
+    const zc = zoneColours(d.zones);
+    this.viewer.setZones({
+      chips: zoneChips(d.zones, { rooms: d.rooms || [], roomLoads: d.roomLoads || [] }),
+      byRoomId: zc.byRoomId
+    });
+    this.viewer.setOutlets(this.outletPoints());
+    // The symbol library draws what the job IS, so it is handed the job's own
+    // equipment: the unit model under the FCU, the designed grille sizes on the
+    // return symbols, and the outlet type that was actually selected.
+    this.viewer.setEquipment({
+      // The INDOOR model under the FCU. The paired outdoor code belongs on the
+      // equipment schedule — putting both on the symbol made a label wider than
+      // the unit it names.
+      unitModel: String(d.equipmentSelection?.model || d.selectedUnit?.model || '')
+        .split('/')[0].trim() || null,
+      returnGrilles: (d.returnComponents?.grilles || []).map(g => ({
+        id: g.id, widthMm: g.widthMm, heightMm: g.heightMm, airflowLs: g.airflowLs })),
+      outletType: (d.outlets?.rows || [])[0]?.outletType
+        || d.outletTypeOverride || 'square',
+      // HOW THE SUPPLY PLENUM IS MADE. The drawing showed three ø400 collars
+      // crammed into the unit's own width while the report beside it warned
+      // that they need 1320 mm across a 1152 mm discharge. One record, read by
+      // both, so the sheet cannot contradict itself.
+      supplyPlenum: d.supplyPlenum || null
+    });
+    this.viewer.setPlenum(d.layout?.indoorUnit || d.layout?.plenum || d.autoRoute?.plenum || null);
+    // DESIGN view is the installer's drawing; ANALYSIS is the estimator's
+    // workings. Quick mode's review screen is the former.
+    // ── WHAT THE PLAN TAB SHOWS ───────────────────────────────────────────
+    //
+    // The Plan tab used to open on the SETUP view in full mode — green room
+    // boxes, analysis labels, route nodes and big editing rectangles over every
+    // outlet — because the installer drawing was only ever switched on for
+    // quick mode's review step. It is the same design either way, so the Plan
+    // tab now opens on the drawing and the workings are what you switch ON.
+    //
+    // CLEAN is the default. The three edit modes keep the same drawing and add
+    // only their own handles; EDIT ROOMS is the one view that goes back to the
+    // setup linework, because room boxes ARE the thing being edited.
+    const view = this.planView || PLAN_VIEW.CLEAN;
+    const quickDesign = this.mode === 'quick' && this.quickStep === 'design';
+    this.viewer.setDesignView(quickDesign || view !== PLAN_VIEW.ROOMS);
+    this.viewer.setShowAnalysis(!!this.showAnalysisOverlay || view === PLAN_VIEW.ROOMS);
+    // Green room boxes belong to Edit rooms and nowhere else.
+    this.viewer.setVisibility({ rooms: view === PLAN_VIEW.ROOMS || !!this.showAnalysisOverlay });
     this.viewer.redraw();
     return this.viewer;
+  }
+
+  /**
+   * Put each BTO's own identity on its marker.
+   *
+   * `BTO-C` / `400-350-350` / `233 L/s` — the fitting, what it is made of, and
+   * what it carries. The spec is built from the derived fitting's real inlet and
+   * collar sizes, so the label on the drawing and the line on the order describe
+   * the same piece of metal by construction.
+   */
+  labelledBtoMarkers(markers) {
+    const btos = this.design.btos || [];
+    if (!btos.length) return markers;
+    const near = (a, b) => Math.hypot((a.x ?? 0) - (b.x ?? 0), (a.y ?? 0) - (b.y ?? 0)) < 14;
+    // THE NAME IS ON THE COMPONENT. It used to be worked out here, which is how
+    // the plan came to say BTO-C1 while the schedule and the order said bto_4.
+    const letterOf = (b) => b.label;
+    return markers.map(m => {
+      if (m.type !== 'bto' && !m.bto) return m;
+      const b = btos.find(x => near(x, m));
+      if (!b) return m;
+      return { ...m,
+        btoLabel: m.label || letterOf(b) || b.label,
+        btoSpec: [b.inletDiameterMm, ...b.ports.map(p => p.diameterMm)]
+          .filter(Boolean).join('-'),
+        inletAirflowLs: b.inletAirflowLs,
+        id: b.id };
+    });
+  }
+
+  /**
+   * Where the diffusers actually sit, taken off the end of each final run.
+   *
+   * The router already put a final segment on every outlet, so the end of that
+   * segment IS the outlet — deriving it any other way would let the symbol
+   * drift away from the duct that feeds it.
+   */
+  outletPoints() {
+    const d = this.design;
+    const sections = d.network?.sections || [];
+    const out = [];
+    // A DUCT THAT FEEDS ANOTHER DUCT DOES NOT END AT A DIFFUSER.
+    //
+    // This took every branch end as an outlet, because in the older topology a
+    // branch did end at the first diffuser in a room. The area router's ø350
+    // DISTRIBUTION ARMS do not: they end at a BTO fitting. So the approved job
+    // drew twelve diffusers for ten outlets, two of them stacked on top of the
+    // fittings they actually feed.
+    //
+    // Having children is the general test — it holds for both routers and needs
+    // no flag — so a run is an outlet only when nothing hangs off it.
+    const hasChildren = new Set(sections.map(s => s.parentId).filter(Boolean));
+    for (const sec of sections) {
+      if (sec.role !== 'branch' && sec.role !== 'final') continue;
+      if (!sec.points?.length) continue;
+      if (hasChildren.has(sec.id)) continue;
+      const end = sec.points[sec.points.length - 1];
+      out.push({ x: end.x, y: end.y, roomId: sec.roomId || null,
+                 neckMm: sec.diameterMm ?? null, sectionId: sec.id,
+                 // `O3 · FAMILY · 121 L/s` is built from these three.
+                 number: out.length + 1,
+                 label: sec.destination || null,
+                 airflowLs: sec.airflowLs ?? null,
+                 outletType: sec.outletType || null });
+    }
+    return out;
+  }
+
+  /**
+   * How much each duct label says.
+   *
+   * The default is the size and nothing else, because that is what an
+   * installer reads off a drawing. The airflow and the length are still one
+   * press away for whoever is checking the engineering.
+   */
+  cycleLabelDetail() {
+    const order = [LABEL_DETAIL.DIAMETER, LABEL_DETAIL.DIAMETER_FLOW, LABEL_DETAIL.FULL, LABEL_DETAIL.HIDE];
+    const at = order.indexOf(this.labelDetail || DEFAULT_LABEL_DETAIL);
+    this.labelDetail = order[(at + 1) % order.length];
+    this.render();
+  }
+
+  /**
+   * SWITCH THE PLAN TAB BETWEEN THE DRAWING AND THE THREE EDIT MODES.
+   *
+   * Each mode owns one viewer mode, so the handles on screen are always the
+   * handles for the thing being edited and nothing else. Selecting a mode never
+   * recalculates anything — dropping a moved item does, exactly as before.
+   */
+  setPlanView(view) {
+    this.planView = view;
+    const MODE_FOR = {
+      [PLAN_VIEW.CLEAN]: MODES.VIEW,
+      [PLAN_VIEW.OUTLETS]: MODES.LAYOUT,
+      [PLAN_VIEW.ROUTES]: MODES.EDIT_ROUTE,
+      [PLAN_VIEW.ROOMS]: MODES.ROOM
+    };
+    this.ensureViewer().setMode(MODE_FOR[view] || MODES.VIEW);
+    this.render();
+  }
+
+  /** Keep the toggles honest when a panel button changes the viewer mode. */
+  planViewForMode(mode) {
+    if (mode === MODES.LAYOUT) return PLAN_VIEW.OUTLETS;
+    if (mode === MODES.EDIT_ROUTE) return PLAN_VIEW.ROUTES;
+    if (mode === MODES.ROOM) return PLAN_VIEW.ROOMS;
+    return PLAN_VIEW.CLEAN;
+  }
+
+  /** SHOW ANALYSIS OVERLAY — the estimator's workings, back on top. */
+  toggleAnalysisOverlay() {
+    this.showAnalysisOverlay = !this.showAnalysisOverlay;
+    this.render();
   }
 
   renderPlanTab() {
@@ -622,6 +1028,7 @@ export class DesignerApp {
     this.viewer.redraw();
 
     mount(tools,
+      this.renderPlanViewPanel(),
       this.renderUploadPanel(),
       this.renderNumbersPanel(),
       this.renderIntakePanel(),
@@ -629,6 +1036,40 @@ export class DesignerApp {
       this.renderPlanModePanel(),
       this.renderRoutePanel(),
       this.renderLayoutPanel());
+  }
+
+  /**
+   * THE VIEW SWITCH — one row, four states, clean first.
+   *
+   * Deliberately the first thing in the Plan tab's tool column: what you are
+   * looking at matters more than any individual setting below it, and an
+   * estimator who has accidentally left an edit mode on needs to see that
+   * immediately rather than wonder why the drawing is covered in handles.
+   */
+  renderPlanViewPanel() {
+    const view = this.planView || PLAN_VIEW.CLEAN;
+    const pick = (value, label, hint) =>
+      button(label, () => this.setPlanView(value),
+        view === value ? 'primary small' : 'small', { title: hint });
+    const HINT = {
+      [PLAN_VIEW.CLEAN]: 'The installer drawing — no handles, no boxes',
+      [PLAN_VIEW.OUTLETS]: 'Drag the fan coil, plenum, return grilles and outlets',
+      [PLAN_VIEW.ROUTES]: 'Drag a duct or BTO handle, add or remove a route point',
+      [PLAN_VIEW.ROOMS]: 'Draw, move and resize the room boxes'
+    };
+    const NOTE = {
+      [PLAN_VIEW.CLEAN]: 'The approved installer drawing. Switch on an edit mode to change something on site.',
+      [PLAN_VIEW.OUTLETS]: 'Drag an item to move it. Dropping it reruns the design once — lengths, pressure, materials and price update together.',
+      [PLAN_VIEW.ROUTES]: 'Drag a handle to move a duct or a BTO. Add or remove a route point to get around a real roof obstacle.',
+      [PLAN_VIEW.ROOMS]: 'Room boxes and the analysis workings. This is the only view that shows them.'
+    };
+    return card('View', 'What the plan shows',
+      h('div', { class: 'btn-row' },
+        pick(PLAN_VIEW.CLEAN, 'Clean view', HINT[PLAN_VIEW.CLEAN]),
+        pick(PLAN_VIEW.OUTLETS, 'Edit outlets/equipment', HINT[PLAN_VIEW.OUTLETS]),
+        pick(PLAN_VIEW.ROUTES, 'Edit routes/BTOs', HINT[PLAN_VIEW.ROUTES]),
+        pick(PLAN_VIEW.ROOMS, 'Edit rooms', HINT[PLAN_VIEW.ROOMS])),
+      h('div', { class: 'note' }, NOTE[view]));
   }
 
   renderUploadPanel() {
@@ -650,7 +1091,10 @@ export class DesignerApp {
             h('span', {}, 'of ' + plan.pageCount))
         : null,
       d.plan ? h('div', { class: 'note' },
-        d.plan.fileName +
+        // A design restored from a saved record, or the approved reference job,
+        // has no uploaded file behind it — so there is no filename, and this
+        // line used to read "undefined — 1179 × 1262 px".
+        (d.plan.fileName || d.plan.name || 'Approved reference plan') +
         (d.plan.widthPx ? ' — ' + d.plan.widthPx + ' × ' + d.plan.heightPx + ' px' : '') +
         (d.plan.isPdf && d.plan.pageCount > 1 ? ' · page ' + d.plan.pageNumber + ' of ' + d.plan.pageCount : '') +
         (d.plan.fromIntake ? ' · from the customer\'s intake form' : '')) : null,
@@ -852,10 +1296,23 @@ export class DesignerApp {
         active ? button('Reset points', () => { this.calibPoints = []; this.viewer.resetCalibrationPoints(); this.render(); }, 'ghost small') : null),
       active ? h('div', { class: 'note' }, pts.length === 0 ? 'Click point A on the plan.'
         : pts.length === 1 ? 'Now click point B.' : 'Two points set — enter the distance below.') : null,
-      active && pts.length === 2 ? h('div', { class: 'grid-2' },
+      active && pts.length === 2 ? h('div', { class: 'grid-3' },
         field('Known distance', input(this.calibDistance ?? '', v => { this.calibDistance = v; },
           { type: 'number', step: 'any', inputmode: 'decimal', placeholder: 'e.g. 6000', live: true })),
-        field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; }))) : null,
+        field('Units', select(this.calibUnit || 'mm', ['mm', 'm'], v => { this.calibUnit = v; })),
+        // WHERE THE DISTANCE CAME FROM. A length scaled off a car drawn on a
+        // marketing plan is an illustration, and the estimator says which this
+        // is rather than the software assuming it is survey control.
+        field('Where this came from', select(this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION,
+          [{ value: SCALE_SOURCE.PRINTED_DIMENSION, label: 'A dimension printed on the drawing' },
+           { value: SCALE_SOURCE.MEASURED, label: 'A distance I measured on site' },
+           { value: SCALE_SOURCE.SCALE_BAR, label: 'A scale bar on the sheet' },
+           { value: SCALE_SOURCE.DRAWN_OBJECT, label: 'Scaled off something drawn (NOT accepted)' }],
+          v => { this.calibSource = v; this.render(); }),
+          VERIFIED_SCALE_SOURCES.includes(this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION)
+            ? 'This is a real measurement and unblocks equipment, ductwork and pricing.'
+            : 'A car or a bed on a marketing plan is drawn at whatever size the renderer '
+              + 'liked. This will NOT unblock equipment selection or a price.')) : null,
       active && pts.length === 2
         ? button('Apply calibration', () => this.applyCalibration(), 'primary small') : null,
       d.calibration ? h('div', { class: 'calib-readout' },
@@ -912,7 +1369,9 @@ export class DesignerApp {
 
   renderPlanModePanel() {
     const mode = this.viewer?.getMode() || MODES.VIEW;
-    const set = (m) => { this.viewer.setMode(mode === m ? MODES.VIEW : m); this.render(); };
+    // Route every mode change through setPlanView so the view toggles above and
+    // the viewer can never disagree about what is being edited.
+    const set = (m) => this.setPlanView(this.planViewForMode(mode === m ? MODES.VIEW : m));
     return card('3. Rooms on the plan', 'Drag to draw a room, drag a corner to resize, drag the middle to move',
       h('div', { class: 'btn-row' },
         button(mode === MODES.ROOM ? 'Editing rooms…' : 'Edit rooms', () => set(MODES.ROOM),
@@ -960,9 +1419,10 @@ export class DesignerApp {
       routed ? h('div', { class: 'btn-row' },
         button(mode === MODES.EDIT_ROUTE ? '✓ EDITING ROUTES' : 'EDIT ROUTES',
           () => {
-            this.viewer.setMode(mode === MODES.EDIT_ROUTE ? MODES.VIEW : MODES.EDIT_ROUTE);
+            this.setPlanView(this.planViewForMode(
+              mode === MODES.EDIT_ROUTE ? MODES.VIEW : MODES.EDIT_ROUTE));
             this.viewer.setHandles(this.currentHandles());
-            this.render();
+            this.viewer.redraw();
           },
           mode === MODES.EDIT_ROUTE ? 'primary small' : 'small'),
         button('↶ Undo', () => this.undoEdit(), this.canUndo() ? 'small' : 'ghost small disabled'),
@@ -1033,8 +1493,20 @@ export class DesignerApp {
   /** Everything the estimator can grab, recomputed from the sized sections. */
   currentHandles() {
     if (!this.design.network?.routed) return [];
-    return routeHandles(this.design.network,
+    const all = routeHandles(this.design.network,
       { lockedIds: Object.keys(this.design.lockedRoutes || {}) });
+    // ONLY THE HANDLES THAT MEAN SOMETHING.
+    //
+    // Every run is a swept curve of thirteen points, so a handle per point put
+    // roughly a hundred and eighty grab targets on the plan and drew the whole
+    // system as a chain of blue squares — unusable with a finger and impossible
+    // to read. The points worth grabbing are the JUNCTIONS (which is where the
+    // BTOs are), the ENDS (the plenum and the outlets), and any point a person
+    // ADDED to get around an obstacle. The rest is curve tessellation.
+    //
+    // Hit testing reads this same list on purpose: an estimator should be able
+    // to grab exactly what they can see, and nothing they cannot.
+    return all.filter(h => h.kind !== 'node' || h.added);
   }
 
   /** What is under the finger. The radius comes in already converted to image px. */
@@ -1165,12 +1637,17 @@ export class DesignerApp {
     toast((label || 'Route edited') + (n != null ? ' — now ' + n + ' m of duct' : ''));
   }
 
-  /** Geometry only, so an undo can never desynchronise the drawing and the numbers. */
+  /** Every on-plan adjustment needed on site, rebuilt through the pipeline. */
   editSnapshot() {
     return JSON.stringify({
       routeEdits: this.design.routeEdits || {},
       lockedRoutes: this.design.lockedRoutes || {},
-      ductDiameterOverrides: this.design.ductDiameterOverrides || {}
+      ductDiameterOverrides: this.design.ductDiameterOverrides || {},
+      layout: this.design.layout || {},
+      outletOverrides: this.design.outletOverrides || {},
+      supplyMainConfig: this.design.supplyMainConfig || null,
+      returnCount: this.design.returnCount ?? null,
+      returnGrilleOverrides: this.design.returnGrilleOverrides || []
     });
   }
 
@@ -1186,6 +1663,11 @@ export class DesignerApp {
     this.design.routeEdits = s.routeEdits;
     this.design.lockedRoutes = s.lockedRoutes;
     this.design.ductDiameterOverrides = s.ductDiameterOverrides;
+    this.design.layout = s.layout || {};
+    this.design.outletOverrides = s.outletOverrides || {};
+    this.design.supplyMainConfig = s.supplyMainConfig || null;
+    this.design.returnCount = s.returnCount;
+    this.design.returnGrilleOverrides = s.returnGrilleOverrides || [];
     this.update();
   }
 
@@ -1376,9 +1858,10 @@ export class DesignerApp {
     const layout = this.design.layout || {};
     return card('5. Equipment layout', 'Drag anything into place on the plan',
       h('div', { class: 'btn-row' },
-        button(mode === MODES.LAYOUT ? 'Moving items…' : 'Move items', () => {
-          this.viewer.setMode(mode === MODES.LAYOUT ? MODES.VIEW : MODES.LAYOUT); this.render();
-        }, mode === MODES.LAYOUT ? 'primary small' : 'small'),
+        button(mode === MODES.LAYOUT ? 'Moving items…' : 'Move items',
+          () => this.setPlanView(this.planViewForMode(
+            mode === MODES.LAYOUT ? MODES.VIEW : MODES.LAYOUT)),
+          mode === MODES.LAYOUT ? 'primary small' : 'small'),
         button('+ Indoor unit', () => this.placeLayout('indoorUnit', 'Indoor unit'), 'ghost small'),
         button('+ Supply plenum', () => this.placeLayout('plenum', 'Supply plenum'), 'ghost small'),
         button('+ Return grille', () => this.placeLayout('returnGrille', 'Return'), 'ghost small'),
@@ -1491,14 +1974,48 @@ export class DesignerApp {
       scaleLabel: this.design.interpretation?.observations?.scaleLabelText
     });
     if (c.error) return toast(c.error, 'bad');
+
+    // ── WHERE THIS DISTANCE CAME FROM ────────────────────────────────────
+    // A dimension printed on the drawing, a wall measured on site, and a scale
+    // bar are all real. A length scaled off a car somebody drew is not, and
+    // the estimator says which this is rather than the software assuming.
+    c.source = this.calibSource || SCALE_SOURCE.PRINTED_DIMENSION;
+    c.measuredBy = currentUserEmail() || 'estimator';
+    c.measuredAt = new Date().toISOString();
+    c.verified = VERIFIED_SCALE_SOURCES.includes(c.source);
+
+    // ── AND EVERYTHING MEASURED THROUGH THE OLD SCALE GOES ───────────────
+    // Room areas, duct runs, fitting positions, the plenum, the index run, the
+    // order and the price were all this number multiplied by pixels. Leaving
+    // them standing is how a job carries routes drawn at one scale beside
+    // rooms measured at another, with every figure looking current.
+    const before = this.design.calibration || null;
+    const { design, cleared, changed } =
+      invalidateForNewScale(this.design, before, c);
+    this.design = design;
     this.design.calibration = c;
     this.design.scaleLabel = c.scaleLabel;
     this.calibPoints = [];
     this.viewer.setMode(MODES.VIEW);
     this.viewer.setCalibration(c);
-    toast('Calibrated: ' + c.display.calculatedScale);
     this.remeasureCalibratedRooms();
     this.update();
+
+    if (changed && cleared.length) {
+      toast('Calibrated: ' + c.display.calculatedScale + '. Cleared '
+        + cleared.length + ' thing(s) measured at the old scale — re-route when you are ready.');
+      confirmDialog({
+        title: 'The scale changed, so these were cleared',
+        message: 'Everything below was measured through the old scale of '
+          + (before ? (before.pixelsPerMm * 1000).toFixed(2) : '?') + ' px/m and is no longer '
+          + 'true at ' + (c.pixelsPerMm * 1000).toFixed(2) + ' px/m.',
+        lines: cleared,
+        confirmLabel: 'Understood',
+        cancelLabel: null
+      });
+    } else {
+      toast('Calibrated: ' + c.display.calculatedScale);
+    }
   }
 
   /** Any room measured from pixels is re-measured when the calibration changes. */
@@ -1731,6 +2248,9 @@ export class DesignerApp {
         labelDetail: this.labelDetail || DEFAULT_LABEL_DETAIL,
         returnRoute: this.design.returnRoute,
         returnDesign: this.design.returnDesign,
+        // Each run takes its zone's colour, so an installer can follow one
+        // colour from the trunk to the outlet and know which damper shuts it.
+        zoneColourByRoomId: zoneColours(this.design.zones).byRoomId,
         activeId: this.activeSegmentId || null
       });
       // A second return is a second duct to buy and draw.
@@ -2267,6 +2787,44 @@ export class DesignerApp {
     this.update();
   }
 
+  /**
+   * §5 — record WHO stood behind a material rate, and on what evidence.
+   *
+   * Separate from `materialRates`, which holds the figure. A number and the
+   * evidence for it are different things: the rate is what NAC pays, this is
+   * the supplier, the date it was quoted, and the person who checked it. A
+   * used line without a complete record here blocks the customer quote.
+   */
+  updateRateVerification(id, field, value) {
+    if (!this.rateVerifications) this.rateVerifications = {};
+    const rec = { ...(this.rateVerifications[id] || {}) };
+    if (value === null || value === '') delete rec[field];
+    else rec[field] = value;
+    // An empty record is removed rather than left as an empty object, so
+    // "nothing recorded" and "a record with nothing in it" stay the same thing.
+    if (Object.keys(rec).length) this.rateVerifications[id] = rec;
+    else delete this.rateVerifications[id];
+    this.update();
+  }
+
+  /**
+   * §7 — the minimum airflow, and the document it came from.
+   *
+   * Nested under the model's spec record rather than flat beside the other
+   * fields, because it is one FACT with its evidence attached: the figure is
+   * meaningless without the fan setting it applies at and the page it is on.
+   */
+  updateSpecMinimumAirflow(specKey, field, value) {
+    if (!this.equipmentSpecs[specKey]) this.equipmentSpecs[specKey] = {};
+    const rec = { ...(this.equipmentSpecs[specKey].minimumAirflow || {}) };
+    if (value === null || value === '') delete rec[field];
+    else rec[field] = value;
+    if (Object.keys(rec).length) this.equipmentSpecs[specKey].minimumAirflow = rec;
+    else delete this.equipmentSpecs[specKey].minimumAirflow;
+    this.rebuildCatalogue();
+    this.update();
+  }
+
   setSpecModel(key) { this.specModelKey = key; this.render(); }
 
   updateSpec(specKey, fieldName, value) {
@@ -2284,6 +2842,7 @@ export class DesignerApp {
     const parts = [
       ['design settings', Store.SETTINGS_KEYS.hvacSettings, this.settingsOverride],
       ['material rates', Store.SETTINGS_KEYS.materialRates, this.materialRates],
+      ['rate verifications', Store.SETTINGS_KEYS.rateVerifications, this.rateVerifications],
       ['equipment specs', Store.SETTINGS_KEYS.equipmentSpecs, this.equipmentSpecs]
     ];
     const results = await Promise.all(parts.map(([, key, value]) => Store.setJson(key, value)));
@@ -2652,8 +3211,47 @@ export class DesignerApp {
 
   // ── Reports (PART 26) ─────────────────────────────────────────────────────
 
+  /**
+   * THE FABRICATION DEVELOPMENT OF EVERY BTO, AS IMAGES FOR THE PDF.
+   *
+   * Nick: "Add a BTO fabrication detail or diagram showing: inlet face; outlet
+   * faces; collar sizes; collar locations; body dimensions." It is drawn from
+   * the same `faceLayout` the schedule and the order read, so the picture and
+   * the numbers cannot disagree.
+   */
+  btoFabricationDetails() {
+    const rows = this.design?.schedules?.bto || [];
+    const out = [];
+    for (const r of rows) {
+      if (!r.faceLayout) continue;
+      const W = 1120, H = 360, dpr = 2;
+      const cv = document.createElement('canvas');
+      cv.width = W * dpr; cv.height = H * dpr;
+      const c = cv.getContext('2d');
+      c.scale(dpr, dpr);
+      drawBtoFabricationDetail(c, r.faceLayout, { x: 0, y: 0, w: W, h: H }, {
+        title: r.id + '  \u2014  ' + r.shapeText,
+        subtitle: r.bodyText + '  \u00b7  ' + (r.layoutStatus || '')
+      });
+      out.push({
+        label: r.id,
+        // JPEG, because the PDF writer embeds JPEG: a PNG is silently dropped
+        // and replaced with an apology in the middle of the fabrication
+        // section. The drawing is line work on white, which JPEGs cleanly.
+        src: cv.toDataURL('image/jpeg', 0.94),
+        caption: r.id + ' — ' + r.shapeText + '. Body ' + r.bodyText + ', collars on ' +
+          (r.facesUsed || []).length + ' face(s). ' + (r.layoutStatus || '')
+      });
+    }
+    return out;
+  }
+
   async showReportMenu() {
-    const snapshot = this.viewer?.snapshot() || null;
+    await loadPdfFonts();
+    const snapshot = this.viewer?.snapshot({ clean: true, legend: true }) || null;
+    const plate = this.viewer?.snapshot({ clean: true, legend: false }) || null;
+    const planLegend = this.viewer?.legendStrip() || null;
+    const inset = this.viewer?.equipmentInset() || null;
     const logo = document.querySelector('.brand img')?.src || null;
     const which = await pickDialog({
       title: 'Which document?',
@@ -2671,7 +3269,8 @@ export class DesignerApp {
       ]
     });
     if (!which) return;
-    const opts = { logo, planSnapshot: snapshot };
+    const opts = { logo, planSnapshot: snapshot, planPlate: plate, planLegend,
+                   equipmentInset: inset, btoDetails: this.btoFabricationDetails() };
 
     if (which === 'internal-view') return void openReport(internalReportHtml(this.design, opts), 'internal sheet');
     if (which === 'customer-view') return void openReport(customerReportHtml(this.design, opts), 'customer summary');
@@ -2774,6 +3373,7 @@ export class DesignerApp {
       job: { description: draft.jobDescription, climate: this.settings.load.defaultClimate },
       quoteId: draft.quoteId
     });
+    d.routingStrategy = 'area';
     d.notes = draft.intakePack || '';
     d.intake = {
       quoteId: draft.quoteId,
@@ -2843,6 +3443,7 @@ export class DesignerApp {
     }, { settings: this.settings });
 
     const d = createDesign({ customer: Sample.SAMPLE_CUSTOMER, job: Sample.SAMPLE_JOB });
+    d.routingStrategy = 'area';
     d.calibration = cal;
     d.scaleLabel = cal.scaleLabel;
     d.detectedDimensions = interp.detectedDimensions;
@@ -2906,5 +3507,3 @@ function bayContaining(chain, mm) {
   }
   return null;
 }
-
-

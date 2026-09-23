@@ -1,6 +1,7 @@
 // NAC AI HVAC DESIGNER — PART 19: return air design.
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
+import { RETURN_AIR, returnCountFor } from './nac-standard.mjs';
 import { round } from './units.mjs';
 import { selectDiameter, velocity } from './ducts.mjs';
 import { findUnitSpec } from './unit-specs.mjs';
@@ -10,14 +11,73 @@ import { findUnitSpec } from './unit-specs.mjs';
  * Supports a single return or several, and always shows the face velocities so
  * an undersized return is obvious before it becomes a noise complaint.
  */
-export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm = null,
+/**
+ * THE ONE PLACE A RETURN GRILLE'S SIZE IS READ.
+ *
+ * The return engine wrote `grilleWidthMm` / `grilleHeightMm`; the component
+ * model that feeds the drawing read `widthMm` / `heightMm`. Neither was wrong
+ * on its own and nothing ever failed, so the drawing simply had no grille size
+ * on it — a 700 x 500 chosen on the schedule was drawn as nothing at all.
+ *
+ * One reader, used by both, so the two names cannot drift apart again. It
+ * takes either spelling, and falls back to parsing the printed size so a
+ * record that only carries the text still yields numbers.
+ */
+export function grilleDimensionsOf(record) {
+  if (!record) return { widthMm: null, heightMm: null, text: null };
+  const w = record.grilleWidthMm ?? record.widthMm ?? null;
+  const h = record.grilleHeightMm ?? record.heightMm ?? null;
+  if (w && h) return { widthMm: Number(w), heightMm: Number(h), text: grilleSizeText(w, h) };
+  const m = String(record.grilleSize || '').match(/(\d+)\s*[x×]\s*(\d+)/i);
+  if (m) return { widthMm: Number(m[1]), heightMm: Number(m[2]), text: grilleSizeText(m[1], m[2]) };
+  return { widthMm: null, heightMm: null, text: record.grilleSize || null };
+}
+
+/** The printed size, written once so the schedule, drawing and order match. */
+export function grilleSizeText(widthMm, heightMm) {
+  return (widthMm && heightMm) ? widthMm + ' × ' + heightMm + ' mm' : null;
+}
+
+export function designReturnAir({ totalAirflowLs, returnCount = null, grilleSizesMm = null,
                                   filterSizeMm = null, ductLengthMm = null, diameterOverrideMm = null,
                                   unit = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const R = settings.returnAir;
 
   const designLs = Number(totalAirflowLs) * R.designFraction;
-  const perReturnLs = designLs / Math.max(1, returnCount);
+
+  // THE FAN COIL'S OWN RETURN CONNECTION COMES FIRST.
+  //
+  // A ducted indoor unit has a fixed return spigot arrangement — the Daikin
+  // 16 kW is 2 × ø400 oval — and the return runs to it. That is manufacturer
+  // data, and 46 of the 489 units in the spec sheet state it. Calculating a
+  // return the unit has no connection for is not a design, it is a number.
+  //
+  // So the SPIGOTS decide how many ducts come back and what size they are.
+  // The velocity band still gets checked against them, but it does not get to
+  // overrule a physical connection.
+  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
+  const spigots = spec?.returnSpigots || null;
+
+  // GRILLES AND DUCTS ARE NOT THE SAME COUNT.
+  //
+  // A return POINT is a grille in a ceiling. A return DUCT is a run back to a
+  // spigot on the fan coil. One grille can feed a box that splits into the
+  // unit's two spigots, so the unit fixes the ducts and the airflow fixes the
+  // grilles. Collapsing the two is what had 601 L/s going through a duct the
+  // design thought was carrying 300.
+  //
+  // THE NAC RETURN RULE: one return point, or two. Never an arbitrary number
+  // and never zero.
+  const count = Math.min(RETURN_AIR.maxReturns,
+    Math.max(RETURN_AIR.minReturns,
+      returnCount == null ? returnCountFor(designLs) : Number(returnCount)));
+  const perReturnLs = designLs / count;
+
+  // Ducts back to the unit: its spigots where it states them, otherwise one
+  // duct per return point.
+  const ductCount = diameterOverrideMm ? 1 : (spigots ? spigots.count : count);
+  const perDuctLs = designLs / ductCount;
   const warnings = [];
 
   if (perReturnLs > R.maxSingleReturnLs) {
@@ -32,7 +92,7 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
   const requiredGrossAreaM2 = requiredFreeAreaM2 / R.grilleFreeAreaRatio;
 
   const returns = [];
-  for (let i = 0; i < Math.max(1, returnCount); i++) {
+  for (let i = 0; i < count; i++) {
     const override = grilleSizesMm && grilleSizesMm[i];
     const candidates = R.standardGrilleSizesMm.map(([w, h]) => ({
       widthMm: w, heightMm: h,
@@ -46,6 +106,17 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
           manual: true }
       : (candidates.find(c => c.grossAreaM2 >= requiredGrossAreaM2) || candidates[candidates.length - 1]);
 
+    // GROSS FACE VELOCITY IS A FACT. EFFECTIVE FREE-AREA VELOCITY IS NOT,
+    // unless the grille's manufacturer has published its free area.
+    //
+    // The 0.72 ratio in settings is an ASSUMPTION carried over from generic
+    // practice, not a data sheet. Reporting a free-area velocity off it and
+    // calling it a result is the kind of invented number this tool must never
+    // produce — so both figures are given, and the derived one is marked
+    // unverified until somebody enters the real free area.
+    const freeAreaVerified = !!R.grilleFreeAreaRatioVerified;
+    const grossFaceVelocity = chosen.grossAreaM2 > 0
+      ? (perReturnLs / 1000) / chosen.grossAreaM2 : Infinity;
     const faceVelocity = chosen.freeAreaM2 > 0 ? (perReturnLs / 1000) / chosen.freeAreaM2 : Infinity;
     const rWarnings = [];
     if (faceVelocity > R.maxGrilleFaceVelocityMs) {
@@ -53,13 +124,32 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
         message: 'Return ' + (i + 1) + ': ' + round(faceVelocity, 2) + ' m/s face velocity exceeds the ' +
           R.maxGrilleFaceVelocityMs + ' m/s limit — expect noise.' });
     }
+    if (!freeAreaVerified) {
+      rWarnings.push({ code: 'RETURN_FREE_AREA_UNVERIFIED', severity: 'CHECK',
+        message: 'Return ' + (i + 1) + ': gross face velocity is ' + round(grossFaceVelocity, 2) +
+          ' m/s on ' + round(chosen.grossAreaM2, 3) + ' m² gross. The effective free-area ' +
+          'velocity of ' + round(faceVelocity, 2) + ' m/s assumes a ' +
+          Math.round(R.grilleFreeAreaRatio * 100) + '% free area — UNVERIFIED. Enter the ' +
+          'grille manufacturer\u2019s free area to confirm it.' });
+    }
     returns.push({
       index: i + 1,
+      id: 'R' + (i + 1),
       airflowLs: round(perReturnLs, 0),
       grilleWidthMm: chosen.widthMm,
       grilleHeightMm: chosen.heightMm,
-      grilleSize: chosen.widthMm + ' × ' + chosen.heightMm + ' mm',
+      // Both spellings, off the same two numbers. Downstream reads whichever it
+      // always read and gets the same grille.
+      widthMm: chosen.widthMm,
+      heightMm: chosen.heightMm,
+      grilleSize: grilleSizeText(chosen.widthMm, chosen.heightMm),
+      grossAreaM2: round(chosen.grossAreaM2, 3),
+      grossFaceVelocityMs: round(grossFaceVelocity, 2),
+      freeAreaRatio: R.grilleFreeAreaRatio,
+      freeAreaRatioSource: freeAreaVerified ? 'manufacturer' : 'assumed \u2014 not manufacturer data',
       freeAreaM2: round(chosen.freeAreaM2, 3),
+      effectiveFreeAreaVelocityMs: round(faceVelocity, 2),
+      freeAreaVerified,
       faceVelocityMs: round(faceVelocity, 2),
       manual: !!chosen.manual,
       warnings: rWarnings
@@ -89,20 +179,22 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
   // one. A ducted unit has a fixed return spigot arrangement — one 400 or two
   // at 350/400 — and the duct runs to it. Calculating a diameter that the unit
   // has no connection for is not a design, it is a number.
-  const spec = unit ? findUnitSpec(unit.brandId, unit.model || unit.code) : null;
-  const spigots = spec?.returnSpigots || null;
-
+  // ONE DUCT PER RETURN POINT. Where the spigots set the count, each spigot is
+  // one return duct carrying its share — dividing perReturnLs by the spigot
+  // count again would be counting the same split twice.
+  // Velocity is always worked out on the air in ONE DUCT — perDuctLs — never
+  // on the air at one grille.
   const duct = diameterOverrideMm
     ? { diameterMm: diameterOverrideMm, ductCount: 1,
-        velocityMs: round(velocity(diameterOverrideMm, perReturnLs), 2),
+        velocityMs: round(velocity(diameterOverrideMm, perDuctLs), 2),
         reason: 'Diameter set manually by the estimator.', manual: true }
     : spigots
       ? { diameterMm: spigots.diameterMm, ductCount: spigots.count,
-          velocityMs: round(velocity(spigots.diameterMm, perReturnLs / spigots.count), 2),
+          velocityMs: round(velocity(spigots.diameterMm, perDuctLs), 2),
           fromUnitSpec: true,
           reason: spec.model + ' has a ' + spigots.count + ' × ' + spigots.diameterMm +
             ' mm return connection (' + spec.returnFlangeText + '), so that is the return duct.' }
-      : selectReturnDuct(perReturnLs, settings);
+      : { ...selectReturnDuct(perDuctLs, settings), ductCount: count };
 
   if (duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'RESTRICTED_RETURN_PATH', severity: 'WARNING',
@@ -113,9 +205,10 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
   // above the band that is a note about the unit, not a sizing choice.
   if (duct.fromUnitSpec && duct.velocityMs > settings.duct.velocity.return.max) {
     warnings.push({ code: 'UNIT_RETURN_CONNECTION_TIGHT', severity: 'CHECK',
-      message: 'At ' + round(perReturnLs, 0) + ' L/s the unit\'s own ' + duct.ductCount + ' × ' +
+      message: 'At ' + round(perDuctLs, 0) + ' L/s each, the unit\'s own ' + duct.ductCount + ' × ' +
         duct.diameterMm + ' mm return connection runs at ' + duct.velocityMs + ' m/s. ' +
-        'Split the return across more grilles, or accept the noise.' });
+        'That is the connection the unit has — add return grilles to share the ' +
+        'air, or accept the noise.' });
   }
   if (duct.exceedsStandard) {
     warnings.push({ code: 'RETURN_EXCEEDS_NAC_STANDARD', severity: 'WARNING',
@@ -124,10 +217,33 @@ export function designReturnAir({ totalAirflowLs, returnCount = 1, grilleSizesMm
         ' m/s. Add another return air point, or set the duct manually.' });
   }
 
+  // Each grille is labelled with its own rounded share, so the labelled shares
+  // can add up to a litre or two either side of the design airflow. That is
+  // rounding and nothing else, and it is reported as rounding rather than left
+  // for someone to find in the tables.
+  const labelledTotalLs = returns.reduce((a, r) => a + r.airflowLs, 0);
+  const designRoundedLs = round(designLs, 0);
+  const reconciliation = {
+    designAirflowLs: designRoundedLs,
+    labelledTotalLs,
+    differenceLs: labelledTotalLs - designRoundedLs,
+    rounding: labelledTotalLs !== designRoundedLs,
+    note: labelledTotalLs === designRoundedLs
+      ? 'Return air reconciles exactly with the design airflow.'
+      : 'Return air differs from the design airflow by ' +
+        Math.abs(labelledTotalLs - designRoundedLs) + ' L/s. This is ROUNDING of ' +
+        count + ' equal grille shares (' + round(perReturnLs, 1) +
+        ' L/s each), not a design imbalance.'
+  };
+
   return {
-    designAirflowLs: round(designLs, 0),
-    returnCount: Math.max(1, returnCount),
+    designAirflowLs: designRoundedLs,
+    reconciliation,
+    returnCount: count,
+    returnCountRule: 'NAC fits ' + RETURN_AIR.minReturns + ' or ' + RETURN_AIR.maxReturns + ' returns; ' + count + ' at ' + Math.round(designLs) + ' L/s.',
     perReturnLs: round(perReturnLs, 0),
+    /** Air in ONE duct back to the unit — not the same as air at one grille. */
+    perDuctLs: round(perDuctLs, 0),
     requiredFreeAreaM2: round(requiredFreeAreaM2, 3),
     requiredGrossAreaM2: round(requiredGrossAreaM2, 3),
     returns,

@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { buildDuctTree, measureTree, deriveFootprint, trunkSpine, insideFootprint,
          AUTO_ROUTE_NOTICE } from '../designer/engines/router.mjs';
 import { buildDuctNetwork, indexRun } from '../designer/engines/ducts.mjs';
+import { MIN_MAIN_DIAMETER_MM } from '../designer/engines/nac-standard.mjs';
 
 // ── A house: bedrooms along the top, living along the bottom ────────────────
 //
@@ -46,6 +47,12 @@ const build = (over = {}) => buildDuctTree({
 
 const seg = (tree, id) => tree.segments.find(s => s.id === id);
 const trunks = (tree) => tree.segments.filter(s => s.role === 'main' || s.role === 'trunk');
+/** The trunk chain of one arm, in the order the air travels it. */
+const armChain = (tree, armKey) =>
+  trunks(tree).filter(s => s.arm === armKey)
+    .sort((a, b) => (a.parentId === null ? -1 : b.parentId === null ? 1 : 0) ||
+                     (a.id === b.parentId ? 1 : b.id === a.parentId ? -1 : 0));
+const armKeys = (tree) => [...new Set(trunks(tree).map(s => s.arm))];
 const branches = (tree) => tree.segments.filter(s => s.role === 'branch');
 
 // ── The tree is a tree ──────────────────────────────────────────────────────
@@ -97,34 +104,41 @@ test('the tree reaches every outlet from the plenum with no orphan', () => {
 // ── Airflow ─────────────────────────────────────────────────────────────────
 
 test('the trunk carries the whole system at the plenum', () => {
+  // The plenum feeds two to four ARMS, not one spine, so what leaves it is the
+  // sum of the first run on each arm. That still has to be the whole system:
+  // air that leaves the fan has to be on a duct somewhere.
   const t = build();
-  const main = seg(t, 'main');
-  assert.equal(main.airflowLs, AIRFLOW.allocatedAirflowLs,
-    'the first trunk run must carry everything');
+  const leaving = t.segments.filter(s => s.parentId === null);
+  assert.ok(leaving.length >= 1, 'something has to leave the plenum');
+  const total = leaving.reduce((sum, s) => sum + s.airflowLs, 0);
+  assert.ok(Math.abs(total - AIRFLOW.allocatedAirflowLs) < 0.5,
+    'the runs leaving the plenum carry ' + total + ', not ' + AIRFLOW.allocatedAirflowLs);
 });
 
 test('trunk airflow DECREASES after every branch take-off', () => {
   const t = build();
-  const line = trunks(t);
-  for (let i = 1; i < line.length; i++) {
-    assert.ok(line[i].airflowLs < line[i - 1].airflowLs,
-      line[i].id + ' carries ' + line[i].airflowLs + ' after ' + line[i - 1].id +
-      ' carried ' + line[i - 1].airflowLs + ' — a trunk cannot gain air');
+  const byId = new Map(t.segments.map(s => [s.id, s]));
+  for (const s of trunks(t)) {
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    if (!parent) continue;
+    assert.ok(s.airflowLs < parent.airflowLs,
+      s.id + ' carries ' + s.airflowLs + ' after ' + parent.id + ' carried ' +
+      parent.airflowLs + ' — a trunk cannot gain air');
   }
 });
 
 test('airflow is conserved: what leaves a junction equals what arrives', () => {
+  // Checked over the whole tree rather than one chain, so it holds however the
+  // house is split into arms: everything arriving on a run either carries on
+  // down that arm or goes off a branch at its junction.
   const t = build();
-  const line = trunks(t);
-  for (let i = 0; i < line.length; i++) {
-    const arriving = line[i].airflowLs;
-    const onwards = line[i + 1]?.airflowLs || 0;
-    // Branches hung off the junction this trunk run ends at.
-    const jId = 'junction_' + (i + 1);
-    const off = branches(t).filter(b => b.junctionId === jId)
-      .reduce((s, b) => s + b.airflowLs, 0);
-    assert.ok(Math.abs(arriving - (onwards + off)) < 0.5,
-      jId + ': ' + arriving + ' in, ' + onwards + ' on + ' + off + ' off');
+  for (const run of trunks(t)) {
+    const onwards = t.segments.filter(s => s.parentId === run.id && (s.role === 'trunk' || s.role === 'main'))
+      .reduce((sum, s) => sum + s.airflowLs, 0);
+    const off = t.segments.filter(s => s.parentId === run.id && s.role === 'branch')
+      .reduce((sum, s) => sum + s.airflowLs, 0);
+    assert.ok(Math.abs(run.airflowLs - (onwards + off)) < 0.5,
+      run.id + ': ' + run.airflowLs + ' in, ' + onwards + ' on + ' + off + ' off');
   }
 });
 
@@ -148,7 +162,13 @@ test('a room with two outlets gets a final, and the finals split its air', () =>
 test('it does NOT draw a straight line from the plenum to every outlet', () => {
   const t = build();
   const fromPlenum = t.segments.filter(s => s.parentId === null);
-  assert.equal(fromPlenum.length, 1, 'exactly one run leaves the plenum, not one per room');
+  // A real system leaves the fan coil in a few directions and branches off each
+  // run. One run per room would be a star; one run for the whole house would be
+  // the comb this replaced.
+  assert.ok(fromPlenum.length >= 1 && fromPlenum.length <= 4,
+    fromPlenum.length + ' runs leave the plenum — expected between 1 and 4 arms');
+  assert.ok(fromPlenum.length < ROOMS.length,
+    'a run per room is a star, not trunk and branch');
   assert.ok(trunks(t).length >= 2, 'a seven room house needs more than one trunk run');
 });
 
@@ -158,12 +178,20 @@ test('nearby rooms share a junction rather than each getting their own', () => {
     t.junctionCount + ' junctions for ' + ROOMS.length + ' rooms is a star, not a tree');
 });
 
-test('the big trunk stays on the spine and does not chase individual rooms', () => {
+test('each trunk arm runs straight and does not chase individual rooms', () => {
+  // An arm leaves the plenum on one axis and stays on it. A trunk that wanders
+  // room to room is a duct nobody can hang in a truss roof.
   const t = build();
-  for (const s of trunks(t)) {
-    for (const p of s.points) {
-      const off = t.spine.horizontal ? Math.abs(p.y - t.spine.axisPos) : Math.abs(p.x - t.spine.axisPos);
-      assert.ok(off < 1, s.id + ' leaves the spine by ' + off + ' px');
+  const plenum = t.plenum;
+  for (const key of armKeys(t)) {
+    const runs = trunks(t).filter(s => s.arm === key);
+    const horizontal = key === 'E' || key === 'W';
+    const axis = horizontal ? plenum.y : plenum.x;
+    for (const s of runs) {
+      for (const p of s.points) {
+        const off = horizontal ? Math.abs(p.y - axis) : Math.abs(p.x - axis);
+        assert.ok(off < 1, s.id + ' (arm ' + key + ') leaves its axis by ' + off + ' px');
+      }
     }
   }
 });
@@ -197,9 +225,15 @@ test('a unit at one end of the house still produces a sensible trunk', () => {
   assert.ok(trunks(t).length >= 2);
   // Everything still reached.
   for (const r of ROOMS) assert.ok(seg(t, 'branch_' + r.id), r.label);
-  // And the trunk still only gets smaller.
-  const line = trunks(t);
-  for (let i = 1; i < line.length; i++) assert.ok(line[i].airflowLs < line[i - 1].airflowLs);
+  // And each run still only gets smaller than the one FEEDING it — the plenum
+  // leaves on two or three mains, so a flat list is not one chain.
+  const byId = new Map(t.segments.map(x => [x.id, x]));
+  for (const run of trunks(t)) {
+    const parent = run.parentId ? byId.get(run.parentId) : null;
+    if (!parent) continue;
+    assert.ok(run.airflowLs < parent.airflowLs,
+      run.id + ' carries ' + run.airflowLs + ' after ' + parent.id + ' carried ' + parent.airflowLs);
+  }
 });
 
 test('with no plenum placed it says so rather than pretending', () => {
@@ -276,25 +310,66 @@ test('the sized network uses the routed tree, and steps the trunk down', () => {
 
   const line = net.sections.filter(s => s.role === 'main' || s.role === 'trunk');
   assert.ok(line.length >= 2);
-  // Diameters may repeat where the ladder has no finer step, but must never grow.
-  for (let i = 1; i < line.length; i++) {
-    assert.ok(line[i].diameterMm <= line[i - 1].diameterMm,
-      line[i].id + ' is BIGGER than the trunk feeding it');
+  // Compared against the run that actually FEEDS each one, not against the
+  // previous entry in a flat list — the house is served by several arms, and
+  // the first run of one arm is not downstream of the last run of another.
+  const byId = new Map(net.sections.map(x => [x.id, x]));
+  for (const s of line) {
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    if (!parent) continue;
+    assert.ok(s.diameterMm <= parent.diameterMm,
+      s.id + ' is BIGGER than the trunk feeding it (' + parent.id + ')');
   }
-  // Somewhere along a seven-room house the trunk has to get smaller.
-  assert.ok(line[line.length - 1].diameterMm < line[0].diameterMm,
-    'the trunk never reduced across the whole house');
+  // And no main is under the size NAC actually runs. On a house this small
+  // every trunk tail is already AT that minimum, so nothing steps down — which
+  // is the rule working, not a trunk that forgot to reduce.
+  for (const s of line) {
+    assert.ok(s.diameterMm >= MIN_MAIN_DIAMETER_MM,
+      s.id + ' is a ' + s.diameterMm + ' main');
+  }
 });
 
-test('a reducer is recorded wherever the trunk changes size', () => {
-  const t = measureTree(build(), CAL);
-  const net = buildDuctNetwork({ airflow: AIRFLOW, outlets: OUTLETS, topology: t });
-  const reducers = net.sections.filter(s => s.reducerFrom);
-  assert.ok(reducers.length > 0, 'a stepping trunk must produce reducers to buy');
-  for (const r of reducers) {
-    assert.ok(r.reducerFrom > r.reducerTo, r.id + ' reduces upward');
+// The same house with the air a big system moves, so the trunk has room to
+// step down above the minimum. This is what keeps reducer recording covered
+// now that a small house legitimately produces none.
+const BIG_FLOW = { bed1: 260, bed2: 260, bed3: 250, study: 200, living: 620,
+                   dining: 400, kitchen: 320 };
+const BIG_AIRFLOW = {
+  rows: ROOMS.map(r => ({ roomId: r.id, label: r.label, adjustedLs: BIG_FLOW[r.id] })),
+  allocatedAirflowLs: Object.values(BIG_FLOW).reduce((a, b) => a + b, 0)
+};
+
+test('a trunk carrying real air does step down, above the minimum', () => {
+  const t = measureTree(build({ airflow: BIG_AIRFLOW }), CAL);
+  const net = buildDuctNetwork({ airflow: BIG_AIRFLOW, outlets: OUTLETS, topology: t });
+  const byId = new Map(net.sections.map(x => [x.id, x]));
+  const line = net.sections.filter(s => s.role === 'main' || s.role === 'trunk');
+  assert.ok(line.some(s => {
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    return parent && s.diameterMm < parent.diameterMm;
+  }), 'no trunk run reduced: ' + line.map(s => s.id + ':' + s.diameterMm).join(' '));
+  for (const s of line) assert.ok(s.diameterMm >= MIN_MAIN_DIAMETER_MM);
+});
+
+test('a reducer is recorded wherever the trunk changes size, and only there', () => {
+  for (const airflow of [AIRFLOW, BIG_AIRFLOW]) {
+    const t = measureTree(build({ airflow }), CAL);
+    const net = buildDuctNetwork({ airflow, outlets: OUTLETS, topology: t });
+    const byId = new Map(net.sections.map(x => [x.id, x]));
+    const reducers = net.sections.filter(s => s.reducerFrom);
+    for (const r of reducers) {
+      assert.ok(r.reducerFrom > r.reducerTo, r.id + ' reduces upward');
+    }
+    // One reducer for every trunk run that is a different size from its
+    // parent, and not one anywhere else.
+    const stepped = net.sections.filter(s => {
+      if (s.role !== 'main' && s.role !== 'trunk') return false;
+      const parent = s.parentId ? byId.get(s.parentId) : null;
+      return parent && parent.diameterMm !== s.diameterMm;
+    });
+    assert.equal(reducers.length, stepped.length);
+    assert.equal(net.reducerCount, reducers.length);
   }
-  assert.equal(net.reducerCount, reducers.length);
 });
 
 test('the geometry travels WITH the sized section, not in a parallel model', () => {
@@ -350,9 +425,16 @@ test('the index run walks the REAL tree, not just main → branch → final', ()
   assert.ok(run, 'a routed network must have an index run');
   const roles = run.path.map(s => s.role);
   assert.equal(roles[0], 'main', 'the path starts at the plenum');
-  assert.ok(roles.filter(r => r === 'trunk').length >= 1,
-    'the index run must include the intermediate trunk runs: ' + roles.join(' → '));
   assert.ok(roles.includes('branch'), 'and it must reach a branch: ' + roles.join(' → '));
+  // The old flat walk only ever saw main → branch → final, so every run in
+  // between was invisible and the figure came out LOW. What matters is that the
+  // path has the intermediate runs on it — whether they are trunk steps along
+  // an arm or a major branch feeding a group of rooms.
+  assert.ok(run.path.length >= 3,
+    'the index run must include what is between the plenum and the room: ' + roles.join(' → '));
+  const intermediate = run.path.slice(1, -1);
+  assert.ok(intermediate.length >= 1,
+    'there is nothing between the plenum and the outlet: ' + roles.join(' → '));
 
   // Every step is genuinely connected to the one before it.
   const byId = new Map(net.sections.map(s => [s.id, s]));
@@ -370,8 +452,15 @@ test('ignoring the intermediate trunks would understate the pressure', () => {
   const t = measureTree(build(), CAL);
   const net = buildDuctNetwork({ airflow: AIRFLOW, outlets: OUTLETS, topology: t });
   const run = indexRun(net);
-  const trunkPa = run.path.filter(s => s.role === 'trunk')
-    .reduce((s, x) => s + x.pressureDropPa, 0);
-  assert.ok(trunkPa > 0,
-    'the intermediate trunks carry real resistance — leaving them out is not conservative');
+  // Everything between the plenum run and the final connection: trunk steps
+  // along an arm, and the major branch feeding a group of rooms. All of it is
+  // duct the fan has to push through.
+  const intermediatePa = run.path.slice(1, -1)
+    .reduce((sum, x) => sum + (x.pressureDropPa || 0), 0);
+  assert.ok(intermediatePa > 0,
+    'the intermediate runs carry real resistance — leaving them out is not conservative');
+  // And they are a real share of the total, not a rounding error.
+  assert.ok(intermediatePa / run.totalPa > 0.02,
+    'the runs between the plenum and the room contribute only ' +
+    Math.round((intermediatePa / run.totalPa) * 100) + '% — that looks like they were skipped');
 });

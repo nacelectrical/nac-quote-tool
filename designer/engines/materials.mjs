@@ -19,8 +19,53 @@ import {
 export const PRICE_SOURCE = {
   NAC: 'nac',                          // a rate NAC has entered
   SUPPLIER: 'supplier_list',           // straight off the MMEM price list
-  PLACEHOLDER: 'default_placeholder'   // the shipped starting value
+  PLACEHOLDER: 'default_placeholder',  // the shipped starting value
+  NAC_SELL: 'nac_sell',                // a fixed SELL price NAC charges (see FIXED_SELL)
+  NAC_INTERIM: 'nac_interim'           // a stopgap rate NAC set, pending the real one
 };
+
+/**
+ * ── LINES NAC CHARGE AT A FIXED PRICE ────────────────────────────────────────
+ *
+ * Nick, of these six: "these look good as sell price."
+ *
+ * That is not the same as a cost, and the difference is the whole job fee.
+ * Everywhere else in this application a material line is what NAC PAYS, and
+ * the $6,000 fee goes on top of the total. If a sell price were entered as a
+ * cost, the customer would pay it PLUS its share of the fee — margin charged
+ * twice, on every quote, quietly.
+ *
+ * So these lines carry a SELL price and no cost. They are added to the
+ * customer's price after the fee, not before it, and they are excluded from
+ * the base the fee is worked out on. The internal sheet says so; the pricing
+ * mode is not silently mixed.
+ *
+ * What NAC actually pay for them is NOT recorded, because it has not been
+ * given. That has one consequence and the costing states it rather than
+ * papering over it: the gross profit on the job is the job fee plus whatever
+ * margin is inside these six lines, and the second part is unknown.
+ */
+export const FIXED_SELL = Object.freeze({
+  outdoor_feet:       { sell: 95.00,  stated: 'Nick, 2026-09-22' },
+  drain_kit:          { sell: 80.00,  stated: 'Nick, 2026-09-22' },
+  interconnect_cable: { sell: 7.20,   stated: 'Nick, 2026-09-22' },
+  power_cable:        { sell: 9.40,   stated: 'Nick, 2026-09-22' },
+  isolator:           { sell: 68.00,  stated: 'Nick, 2026-09-22' },
+  consumables:        { sell: 145.00, stated: 'Nick, 2026-09-22' }
+});
+
+/**
+ * Lines that carry no separate charge.
+ *
+ * Nick, of the duct hanging strap: "dont worry about". It is still ORDERED —
+ * an installer without strap cannot hang the duct — so it stays on the bill of
+ * materials with its quantity, and it simply is not charged for separately;
+ * the sundries line covers it. It is recorded here rather than deleted,
+ * because a material that vanishes from the order is a material nobody buys.
+ */
+export const NO_CHARGE = Object.freeze({
+  hanging_kit: { reason: 'No separate charge — covered by the sundries line.' }
+});
 
 const ACC_NOTE = MMEM_ACCESSORIES_META.source + ' quote ' + MMEM_ACCESSORIES_META.quoteNo +
   ', ' + MMEM_ACCESSORIES_META.date + ', ' + MMEM_ACCESSORIES_META.basis;
@@ -104,10 +149,10 @@ const DIFFUSERS = diameterRates('diffuser', {
  * the gap is visible rather than buried in the table below.
  */
 export const UNQUOTED = [
-  'reducer', 'joiner', 'damper_manual',
-  'drain_kit', 'interconnect_cable', 'power_cable', 'isolator',
-  'hanging_kit', 'outdoor_feet'
+  'reducer', 'joiner'
 ];
+// The other six former placeholders are now FIXED_SELL lines and the hanging
+// strap is NO_CHARGE, so none of them is a shipped guess any more.
 
 /**
  * Outlets NAC quote as a separate line, not out of this price book.
@@ -172,6 +217,13 @@ export const MATERIAL_CATALOGUE = {
   // These defaults are the mid-range item; the estimator can swap the line.
   takeoff:          fromAccessory('MMAB9',   'Butterfly take-off (B9)'),
   takeoff_double:   fromAccessory('MMADB6',  'Double butterfly take-off (DB6)'),
+  // THE PHYSICAL BTO MANIFOLD. A fabricated multi-spigot body, not a saddle
+  // collar: it is what the mains actually terminate at. Priced off the double
+  // take-off until NAC gives the real fabrication rate, and flagged so the
+  // rate audit can see it is a placeholder rather than a supplier price.
+  bto_fitting:      { ...fromAccessory('MMADB6', 'BTO branch take-off manifold'),
+                      unit: 'each', placeholderRate: true,
+                      rateNote: 'Placeholder \u2014 confirm NAC\u2019s fabricated BTO rate.' },
   y_piece:          fromAccessory('MMADY14', 'Y-piece (Y4 / DY14)'),
   zone_cable:       { ...fromAccessory('MMADZ15', 'Zone cable lead (15 m)'), unit: 'each',
                       cost: findAccessory('MMADZ15').cost, pack: null },
@@ -187,17 +239,24 @@ export const MATERIAL_CATALOGUE = {
   // ── Not quoted — shipped placeholders until NAC enter a rate ───────────────
   reducer:          { label: 'Duct reducer',                     unit: 'each', cost: 18.00 },
   joiner:           { label: 'Duct joiner',                      unit: 'each', cost: 9.50 },
-  damper_manual:    { label: 'Manual balancing damper',          unit: 'each', cost: 42.00 },
+  // NO `damper_manual`. Nick: "Manual balancing dampers are not required ...
+  // Remove manual balancing dampers completely." It is not a catalogue item,
+  // so it cannot be priced, ordered, scheduled or drawn. Motorised zone control
+  // is untouched — see `zone_motor`, which is stocked in every size.
   // Quoted separately on the jobs it appears on, so it carries NO rate here.
   grille_linear:    { label: 'Linear bar grille',                unit: 'each', cost: null,
                       quotedSeparately: true },
-  drain_kit:        { label: 'Condensate safety tray / pump',    unit: 'each', cost: 120.00 },
-  interconnect_cable:{ label: 'Interconnecting cable',           unit: 'm',    cost: 7.20 },
-  power_cable:      { label: 'Power supply cable',               unit: 'm',    cost: 9.40 },
-  isolator:         { label: 'Weatherproof isolator',            unit: 'each', cost: 68.00 },
-  hanging_kit:      { label: 'Duct hanging strap / support',     unit: 'each', cost: 4.80 },
-  consumables:      { label: 'Sealant, screws, cable ties, sundries', unit: 'job', cost: 145.00 },
-  outdoor_feet:     { label: 'Outdoor unit mounting feet / slab', unit: 'set', cost: 95.00 }
+  // ── Charged at a fixed sell price (FIXED_SELL) ───────────────────────────
+  // `cost: null` is deliberate and is not a gap: NAC gave the price they
+  // charge, not the price they pay.
+  drain_kit:        { label: 'Condensate safety tray',           unit: 'each', cost: null },
+  interconnect_cable:{ label: 'Interconnecting cable',           unit: 'm',    cost: null },
+  power_cable:      { label: 'Power supply cable',               unit: 'm',    cost: null },
+  isolator:         { label: 'Weatherproof isolator',            unit: 'each', cost: null },
+  consumables:      { label: 'Sealant, screws, cable ties, sundries', unit: 'job', cost: null },
+  outdoor_feet:     { label: 'Outdoor unit mounting feet / slab', unit: 'set', cost: null },
+  // ── Ordered, not charged for separately (NO_CHARGE) ──────────────────────
+  hanging_kit:      { label: 'Duct hanging strap / support',     unit: 'each', cost: 0 }
 };
 
 /**
@@ -247,6 +306,26 @@ export function resolveCost(key, { diameterMm = null, nacRates = null } = {}) {
   }
   // A line whose shipped rate came off the supplier list is a real cost, not a
   // placeholder, so it does not raise the placeholder warning.
+  // A fixed SELL line: NAC charge this, and it is not a cost. A rate NAC types
+  // in Material rates still wins above — entering what the line actually costs
+  // turns it back into an ordinary cost-plus line, which is the right way out
+  // of this arrangement if NAC ever want one.
+  const fixed = FIXED_SELL[key];
+  if (fixed) {
+    return { cost: null, sell: fixed.sell, fixedSell: true, statedBy: fixed.stated,
+             source: PRICE_SOURCE.NAC_SELL, label: def.label, unit: def.unit,
+             note: 'Charged at NAC\u2019s fixed price of $' + fixed.sell.toFixed(2) +
+                   ' per ' + def.unit + '. This is a SELL price, not a cost, so the job ' +
+                   'fee is not applied to it.',
+             pack: null, supplierCode: null, missing: false };
+  }
+  const free = NO_CHARGE[key];
+  if (free) {
+    return { cost: 0, noCharge: true, source: PRICE_SOURCE.NAC, label: def.label,
+             unit: def.unit, note: free.reason, pack: null, supplierCode: null,
+             missing: false };
+  }
+
   return { cost: def.cost ?? null,
            source: def.cost === null || def.cost === undefined
              ? null : (def.source || PRICE_SOURCE.PLACEHOLDER),

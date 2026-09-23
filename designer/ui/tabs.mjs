@@ -55,9 +55,20 @@ export function renderOverview(app) {
     stat('Total heating load', num(s.totalHeatingLoadKw, 2) + ' kW',
       load ? '×' + app.settings.load.heatingFactor + ' of cooling' : null),
     stat('Recommended system', s.recommendedSystem || '—', 'From the NAC catalogue'),
+    // WHAT THE QUOTE IS ACTUALLY BUILT FROM.
+    //
+    // hasPrice means NAC has typed a RETAIL price for this model. On the
+    // job-cost-plus-fee basis that price is never used — the sell price is the
+    // supplier COST plus the fee — so warning about it on a unit whose cost is
+    // known is noise, and it reads as "this unit has no price at all". It does
+    // not: 62 supplier lines carry a real trade cost.
     stat('Selected system', s.selectedSystem || '—',
-      d.selectedUnit?.hasPrice ? 'Priced in NAC Price Setup' : 'No NAC price configured',
-      d.selectedUnit?.hasPrice ? '' : 'warn'),
+      d.selectedUnit?.supplierCost
+        ? 'Cost $' + num(d.selectedUnit.supplierCost, 2) + ' — ' +
+          (d.selectedUnit.supplierSource || 'supplier price list')
+        : d.selectedUnit?.hasPrice ? 'Priced in NAC Price Setup'
+        : 'No cost for this unit — the quote will be short',
+      d.selectedUnit?.supplierCost || d.selectedUnit?.hasPrice ? '' : 'warn'),
     stat('Total airflow', int(s.totalAirflowLs) + ' L/s',
       d.airflow ? d.airflow.basisLabel : null),
     stat('Outlets', int(s.outletCount), d.outlets ? Object.entries(d.outlets.totals.byType)
@@ -750,6 +761,14 @@ export function renderMaterials(app) {
       stat('Equipment cost', money(bom.equipmentCost)),
       stat('Materials cost', money(bom.materialsCost)),
       stat('Total cost', money(bom.totalCost)),
+      ...(bom.fixedSellCount
+        ? [stat('Charged at a set price', money(bom.fixedSellTotal),
+            bom.fixedSellCount + ' line(s), added after the job fee')]
+        : []),
+      ...(bom.interimCount
+        ? [stat('On an interim rate', money(bom.interimCost),
+            bom.interimCount + ' line(s) awaiting a supplier price', 'warn')]
+        : []),
       stat('On placeholder rates', bom.placeholderCount, bom.placeholderCount ? 'Set NAC rates in Settings' : 'All NAC rates',
         bom.placeholderCount ? 'warn' : '')),
 
@@ -774,11 +793,27 @@ export function renderMaterials(app) {
             { type: 'number', step: '0.01' }) },
         { key: 'unit', label: 'Unit', width: '60px' },
         { key: 'unitCost', label: 'Unit cost', align: 'right', width: '110px',
-          render: (r, i) => input(r.unitCost ?? '', v => app.editBom(i, { unitCost: v === '' ? null : Number(v) }),
-            { type: 'number', step: '0.01', placeholder: 'no price' }) },
-        { key: 'totalCost', label: 'Total', align: 'right', format: v => v === null ? '—' : money(v) },
+          // A FIXED-SELL LINE HAS NO COST, AND THAT IS NOT A HOLE. Showing the
+          // cost box empty next to a "—" total made NAC's six sell-priced
+          // sundries read as six missing prices — the estimator's eye goes
+          // straight to them, and a browser test dutifully "fixed" all six by
+          // typing a cost over the top. What the line needs to say is that it
+          // is charged at a set price, and what that price is.
+          render: (r, i) => r.fixedSell
+            ? h('div', { class: 'hint' }, money(r.sellPrice) + ' sell')
+            : input(r.unitCost ?? '', v => app.editBom(i, { unitCost: v === '' ? null : Number(v) }),
+                { type: 'number', step: '0.01', placeholder: 'no price' }) },
+        { key: 'totalCost', label: 'Total', align: 'right',
+          render: (r) => r.fixedSell
+            ? h('div', {}, money(r.sellTotal),
+                h('div', { class: 'hint' }, 'charged, not costed'))
+            : r.noCharge ? h('div', { class: 'hint' }, 'no charge')
+            : r.totalCost === null ? '—' : money(r.totalCost) },
         { key: 'priceSource', label: 'Price', align: 'center',
-          render: (r) => r.priceSource === 'nac' ? badge('NAC', 'ok')
+          render: (r) => r.priceSource === 'nac_sell' ? badge('sell', 'ok')
+            : r.priceSource === 'nac_interim' ? badge('interim', 'warn')
+            : r.noCharge ? badge('included', 'muted')
+            : r.priceSource === 'nac' ? badge('NAC', 'ok')
             : r.priceSource === 'supplier_list' ? badge('supplier', 'ok')
             : r.priceSource === 'default_placeholder' ? badge('placeholder', 'warn') : badge('none', 'bad') }
       ], bom.items, { rowClass: (r) => r.priced ? '' : 'bad-row' }),

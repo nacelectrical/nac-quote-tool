@@ -66,7 +66,15 @@ export function calibrate({ pointA, pointB, knownDistance, unit = 'mm', imageWid
     imageWidthPx: imageWidthPx ?? null,
     imageHeightPx: imageHeightPx ?? null,
     scaleLabel: scaleLabel ? parseScaleLabel(scaleLabel) : null,
-    calibratedAt: new Date().toISOString()
+    calibratedAt: new Date().toISOString(),
+    // Two points clicked on the drawing against a distance the estimator read
+    // off it IS a measurement of the plan — the one thing the scale gate is
+    // asking for. It is marked as such HERE, at the point the measurement is
+    // taken, so no later stage has to guess where a px/mm number came from.
+    // A scale inferred from a car or a bed drawn on a marketing plan does not
+    // pass through this function and does not get this flag.
+    verified: true,
+    source: 'measured'
   };
 }
 

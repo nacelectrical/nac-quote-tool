@@ -12,8 +12,9 @@
 // security is applied, and the first anyone knows is a customer saying they
 // filled the form in and never heard back.
 //
-// This answers that before it happens, by reading the role claim out of the
-// key's own JWT payload and then confirming it against the live database.
+// This answers that before it happens. It reports PASS or FAIL and the remedy.
+// It never reports which key is configured: no key, no fragment of a key, no
+// key length, no JWT, no token and no role name appears in any response.
 
 const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
@@ -68,24 +69,30 @@ export default async function handler(req, res) {
   }
 
   const role = roleOf(KEY);
+  // Present / not present, and the role claim. NOT the key, NOT a prefix or a
+  // suffix, NOT a fingerprint, and NOT its length — a length alone tells an
+  // onlooker which of the two keys is configured.
   add('SUPABASE_KEY is set on the server', true,
-    'Present (' + KEY.length + ' characters). The key itself is never returned by this check.');
+    'Present. No part of the key — not a character of it, nor its length — is returned by ' +
+    'this check, written to a response, or logged.');
 
+  // ── PASS OR FAIL, AND THE REMEDY. NOT WHAT THE KEY IS ────────────────────
+  //
+  // The role claim is read to decide the answer and is NEVER reported. Saying
+  // "it is the anon key" describes the server's configured credential to
+  // whoever is reading, and a failing check does not need it: the remedy is
+  // the same either way, and it is the remedy that is useful.
   if (role === 'service_role') {
-    add('It is the SERVICE ROLE key', true,
-      'Correct. The service role bypasses row level security, so the intake form and the splits ' +
-      'quote builder keep creating quotes after the security is applied.');
-  } else if (role === 'anon') {
-    add('It is the SERVICE ROLE key', false,
-      'It is the ANON key. Once designer/production-setup.sql is applied, an anon INSERT into ' +
-      'nac_quotes is refused, so the intake form and /api/savequote will stop creating quotes. ' +
-      'Fix: copy the service_role key from Supabase → Project Settings → API into the Vercel ' +
-      'variable SUPABASE_KEY, then redeploy. It is only ever used server-side and is never sent ' +
-      'to a browser.');
+    add('SUPABASE_KEY has the access the write endpoints need', true,
+      'It does. The intake form and the splits quote builder keep creating quotes after the ' +
+      'security SQL is applied.');
   } else {
-    add('It is the SERVICE ROLE key', false,
-      'The role could not be read from the key' + (role ? ' (it says "' + role + '")' : '') +
-      '. Check SUPABASE_KEY is a Supabase API key and not something else.');
+    add('SUPABASE_KEY has the access the write endpoints need', false,
+      'It does not. Once designer/production-setup.sql is applied, the INSERT into nac_quotes ' +
+      'is refused and the intake form and /api/savequote stop creating quotes. Fix: copy the ' +
+      'service_role key from Supabase → Project Settings → API into the Vercel variable ' +
+      'SUPABASE_KEY (all environments), then redeploy. It is used server-side only and is ' +
+      'never sent to a browser.');
   }
 
   // Confirm it against the live database rather than trusting the claim. Once
@@ -106,22 +113,24 @@ export default async function handler(req, res) {
       : 'HTTP ' + probe.status + ', ' + (probe.rows === null ? 'no rows field' : probe.rows + ' row(s)') +
         (probe.ok && probe.rows > 0
           ? '. The server key has staff-level access.'
-          : '. If the SQL has been applied, this is the anon key and server writes are already failing.'));
+          : '. If the SQL has been applied, the configured key lacks staff-level access and '
+            + 'server writes are already failing.'));
 
-  // Named separately because it is the one that costs NAC a job.
+  // Named separately because it is the one that costs NAC a job. A boolean —
+  // whether writes will work — not which credential is configured.
   const willWrite = role === 'service_role';
   const ready = checks.every(c => c.result === 'PASS');
   return res.status(200).json({
     ready,
     willWrite,
     summary: ready
-      ? 'The server writes quotes with the service role key. Applying the security SQL will not ' +
-        'stop the intake form or the splits quote builder.'
-      : 'NOT READY. ' + (role === 'anon'
-          ? 'SUPABASE_KEY is the anon key. Applying the security SQL WILL stop the intake form ' +
-            'creating quotes until it is changed to the service role key and redeployed.'
-          : 'See the failed check(s) below.'),
+      ? 'PASS. The server can write quotes. Applying the security SQL will not stop the intake ' +
+        'form or the splits quote builder.'
+      : 'FAIL. Applying the security SQL WILL stop the intake form creating quotes until '
+        + 'SUPABASE_KEY is set to the service-role key and the project is redeployed. '
+        + 'See the failed check(s) below.',
     checks,
-    note: 'Read-only. No quote, customer or job is created, and no key is returned.'
+    note: 'Read-only. No quote, customer or job is created. No key, no part of a key, no key '
+        + 'length, no JWT, no token fragment and no role name is returned by this endpoint.'
   });
 }

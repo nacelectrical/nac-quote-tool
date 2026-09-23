@@ -37,6 +37,10 @@ const CSS = `
              border-radius: 0 6px 6px 0; margin-bottom: 10px; font-size: 10px; }
   .warnbox.crit { border-left-color: #c0392b; background: #fdf1f0; }
   .planimg { width: 100%; border: 1px solid #dbe2f2; border-radius: 6px; margin-bottom: 6px; }
+  /* The key is a column, not a sheet — printed at the drawing's width it
+     took a page of its own. */
+  .keyimg { width: 190px; max-width: 45%; border: 1px solid #dbe2f2; border-radius: 6px;
+            margin-bottom: 6px; }
   footer { margin-top: 18px; font-size: 9px; color: #6b7396; border-top: 1px solid #e6e9f2; padding-top: 8px; }
   .pagebreak { page-break-before: always; }
   @media print { .noprint { display: none !important; } }
@@ -49,11 +53,24 @@ function block(blk) {
   switch (blk.t) {
     case 'h2':        return '<h2>' + esc(blk.text) + '</h2>';
     case 'pagebreak': return '<div class="pagebreak"></div>';
+    // A print page has no page counter to ask, so a soft break is simply
+    // nothing: the browser already flows the section onto the next sheet when
+    // it will not fit.
+    case 'softbreak': return '';
     case 'note':      return '<p class="note">' + esc(blk.text) + '</p>';
     case 'flag':      return '<div class="warnbox' + (blk.level === 'crit' ? ' crit' : '') + '"><strong>' +
                              esc(blk.text) + '</strong></div>';
     case 'bullets':   return '<ul class="bullets">' + blk.items.map(i => '<li>' + esc(i) + '</li>').join('') + '</ul>';
+    // The print page has one column and no MediaBox to turn, so a landscape
+    // plan sheet and an enlarged inset are both just a wide picture here. They
+    // stay separate BLOCK TYPES so the PDF can do the right thing with each.
+    case 'planpage':
+    case 'inset':
     case 'image':     return '<img class="planimg" src="' + esc(blk.src) + '">' +
+                             // The key is a separate capture on the PDF's landscape
+                             // sheet; on a print page it simply follows the drawing,
+                             // so the sheet is never printed without its legend.
+                             (blk.legend ? '<img class="keyimg" src="' + esc(blk.legend) + '">' : '') +
                              (blk.caption ? '<p class="note">' + esc(blk.caption) + '</p>' : '');
     case 'kv':        return '<div class="kv">' + blk.items.map(i =>
                              '<div><div class="l">' + esc(i[0]) + '</div><div class="v">' + esc(i[1]) + '</div>' +

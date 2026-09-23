@@ -15,18 +15,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildBillOfMaterials, editBomLine, applyBomEdits, summariseBom } from '../designer/engines/bom.mjs';
+import { buildZoneDampers } from '../designer/engines/zone-dampers.mjs';
 import { MATERIAL_CATALOGUE } from '../designer/engines/materials.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { calculateCommercials, calculateLabour } from '../designer/engines/costing.mjs';
 
-const design = () => ({
-  network: { sections: [{ id: 'branch_a', role: 'branch', diameterMm: 150, lengthM: 8, fittings: [] }],
-             totalDuctLengthM: 8 },
-  outlets: { rows: [{ roomId: 'a', type: 'round_diffuser', quantity: 1 }] },
-  zones: { zones: [{ id: 'z', roomIds: ['a'] }] },
-  returnDesign: { returnCount: 1 },
-  drainPipeM: 6, cableM: 12
-});
+const design = () => {
+  const network = {
+    sections: [{ id: 'branch_a', role: 'branch', diameterMm: 150, lengthM: 8,
+                 airflowLs: 60, fittings: [] }],
+    totalDuctLengthM: 8
+  };
+  return {
+    network,
+    outlets: { rows: [{ roomId: 'a', type: 'round_diffuser', quantity: 1 }] },
+    zones: { zones: [{ id: 'z', roomIds: ['a'] }] },
+    // A ø150 branch: MMEM quote no motor that size, so the damper line is
+    // unpriced — which is the case this fixture exists to exercise.
+    zoneDampers: buildZoneDampers(
+      [{ id: 'damper_branch_a', sectionId: 'branch_a', zone: 'z', roomId: 'a' }], network),
+    returnDesign: { returnCount: 1 },
+    drainPipeM: 6, cableM: 12
+  };
+};
 
 test('a bill of materials reports what is unpriced and what is a placeholder', () => {
   const bom = buildBillOfMaterials(design());

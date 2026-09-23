@@ -27,7 +27,8 @@
 import { h, card, badge, banner, button, field, input, select, empty,
          money, num, int, table } from './dom.mjs';
 import { collectInterruptions, INTERRUPT } from '../engines/interruptions.mjs';
-import { AUTO_ROUTE_NOTICE } from '../engines/router.mjs';
+import { AUTO_ROUTE_NOTICE, LABEL_DETAIL } from '../engines/router.mjs';
+import { sizeColour } from './flex-renderer.mjs';
 import { supplierOrderList, JOB_STATE, READY_TO_ORDER } from '../engines/order.mjs';
 import { CONDITIONING, EXCLUDED_BANNER, classificationSummary,
          isExcludedRoom, needsClassificationReview } from '../engines/classify.mjs';
@@ -41,6 +42,21 @@ export const QUICK_STEPS = [
 ];
 
 /** Which steps are behind us, so the stepper can show progress honestly. */
+/**
+ * The SIZE KEY for the drawing's legend: every supply diameter this design
+ * actually contains, smallest first, in the colour it is drawn in.
+ *
+ * Built from the design rather than from the ladder, so the key never lists a
+ * size the house does not have.
+ */
+function ductSizeKey(d) {
+  const sizes = new Set((d?.network?.sections || [])
+    .filter(x => x.role !== 'return' && x.diameterMm)
+    .map(x => x.diameterMm));
+  return [...sizes].sort((a, b) => a - b)
+    .map(mm => ({ diameterMm: mm, colour: sizeColour(mm, 'supply') }));
+}
+
 export function quickStepState(design, interruptions) {
   const d = design || {};
   // RULE 4 — a plan whose conditioned rooms all carry printed dimensions is
@@ -377,6 +393,15 @@ function stepDesign(app, interruptions) {
         h('div', { class: 'qreview-plan-head' },
           h('strong', {}, 'Floor plan'),
           h('span', { class: 'note' }, 'Indoor unit, outlets, ducts, diameters, return and zones'),
+          // The estimator's workings are off by default once the design is
+          // being reviewed — room boxes, calibration marks and confidence
+          // colours are what the measuring was done with, not what the
+          // installer reads.
+          button(app.showAnalysisOverlay ? 'Hide analysis overlay' : 'SHOW ANALYSIS OVERLAY',
+            () => app.toggleAnalysisOverlay(),
+            app.showAnalysisOverlay ? 'small' : 'ghost small'),
+          button(app.labelDetail === LABEL_DETAIL.FULL ? 'Less detail' : 'More detail',
+            () => app.cycleLabelDetail(), 'ghost small'),
           button('Open the plan', () => app.setTab('plan'), 'ghost small')),
         app.quickPlanHost || h('div', { class: 'qplan-placeholder' }, 'Plan'),
         // RULE 5 / the closing line of Nick's brief — the layout is not
@@ -385,16 +410,25 @@ function stepDesign(app, interruptions) {
         // rather than discovered on site.
         routed
           ? h('div', { class: 'qlegend' },
-              h('span', { class: 'qlegend-item trunk' }, 'TRUNK'),
-              h('span', { class: 'qlegend-item branch' }, 'BRANCH'),
-              h('span', { class: 'qlegend-item final' }, 'OUTLET RUN'),
+              // COLOUR MEANS SIZE on the drawing, so the legend is a SIZE KEY
+              // built from the sizes this design actually uses — not a list of
+              // roles, and not a list of sizes it does not contain.
+              ...ductSizeKey(d).map(k =>
+                h('span', { class: 'qlegend-item', style: 'color:' + k.colour },
+                  '\u00f8' + k.diameterMm)),
               h('span', { class: 'qlegend-item return' }, 'RETURN'),
+              h('span', { class: 'qlegend-sym bto' }, h('i', {}, '\u25CF'), 'TAKE-OFF'),
+              h('span', { class: 'qlegend-sym damper' }, h('i', {}, '\u29C4'), 'ZONE DAMPER'),
+              h('span', { class: 'qlegend-sym outlet' }, h('i', {}, '\u2295'), 'OUTLET'),
               h('span', { class: 'qlegend-count' },
-                net.sections.length + ' sized runs · ' +
-                (d.outlets?.rows?.length ?? 0) + ' outlets · ' +
+                (d.network?.mainSupplyCount ?? 0) + ' supply mains · ' +
+                (d.network?.btoCount ?? 0) + ' take-offs · ' +
+                // Outlets, not outlet ROWS: a room with two diffusers is two
+                // things to install, and the drawing shows two.
+                (d.outlets?.rows || []).reduce((n, r) => n + (r.quantity ?? 1), 0) + ' outlets · ' +
                 (d.returnRoutes?.length ?? (d.returnRoute ? 1 : 0)) + ' return · ' +
                 (d.zones?.zoneCount ?? 0) + ' zones · ' +
-                (d.zoneDampers?.length ?? 0) + ' dampers · every run labelled with its diameter'))
+                (d.zoneDampers?.length ?? 0) + ' dampers'))
           : banner('warn', 'The duct layout has not been drawn on the plan. ' +
               'Generate it before this design goes anywhere.',
               button('Draw the duct layout', () => app.autoRoute(), 'small'))),

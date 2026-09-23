@@ -6,6 +6,10 @@ import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { resolveCost, OUTLET_MATERIAL_KEY, PRICE_SOURCE, MATERIAL_CATALOGUE,
          QUOTED_SEPARATELY } from './materials.mjs';
+import { btoBomLines, btoSpec } from './bto.mjs';
+import { btoRateBook, resolveBtoPrice, BTO_PRICE_STATUS } from './bto-pricing.mjs';
+import { damperBomLines } from './zone-dampers.mjs';
+import { buildOutletRegister, outletBomLines } from './outlet-register.mjs';
 
 function line(key, quantity, ctx, extra = {}) {
   const r = resolveCost(key, ctx);
@@ -21,7 +25,16 @@ function line(key, quantity, ctx, extra = {}) {
     priceSource: r.source,
     priceNote: r.note || null,
     supplierCode: r.supplierCode || null,
-    priced: r.cost !== null,
+    // ── A FIXED SELL LINE IS PRICED, AND IT IS NOT A COST ──────────────────
+    // `totalCost` stays null, so it never enters the job cost the fee is
+    // worked out on. `sellTotal` is what the customer is charged, added after
+    // the fee. A line with neither is the only kind that is a genuine hole.
+    fixedSell: r.fixedSell === true,
+    sellPrice: r.fixedSell === true ? r.sell : null,
+    sellTotal: r.fixedSell === true ? round(r.sell * qty, 2) : null,
+    statedBy: r.statedBy || null,
+    noCharge: r.noCharge === true,
+    priced: r.cost !== null || r.fixedSell === true,
     diameterMm: ctx.diameterMm ?? null,
     ...extra
   };
@@ -75,11 +88,22 @@ function packLine(key, metres, ctx, extra = {}) {
 export function buildBillOfMaterials(design, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const nacRates = opts.nacRates || null;
-  const ctx = { nacRates };
+  const ctx = { nacRates, btoRates: opts.btoRates || null };
   const items = [];
 
   // ── Equipment ──────────────────────────────────────────────────────────────
-  const unit = design.selectedUnit;
+  //
+  // A BLOCKED SELECTION IS NOT A QUIET OMISSION.
+  //
+  // When the design may not select equipment, `selectedUnit` is null and no
+  // system line is built. That alone would leave a bill of materials that is
+  // simply short by one unit and says nothing about why — which reads as a
+  // costing that nobody finished rather than a design that is not allowed to
+  // name a machine yet. So the omission is recorded, the equipment cost is
+  // declared unknown rather than zero, and the quote gate has something to
+  // refuse on.
+  const equipmentBlocked = design.equipmentBlocked?.blocked === true;
+  const unit = equipmentBlocked ? null : design.selectedUnit;
   if (unit) {
     items.push({
       key: 'indoor_outdoor_system',
@@ -108,43 +132,80 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
-  // ── Zone motors and zone wiring ────────────────────────────────────────────
-  // A zone damper is the size of the branch duct feeding it, so the diameter
-  // comes from the duct network rather than being assumed.
+  // ── The proposal ductwork allowance ────────────────────────────────────────
+  //
+  // ONE LINE, and it says on its face that it is an allowance. Not a length of
+  // flex, not a count of fittings, not a plenum — those do not exist yet and
+  // inventing them is what put a 4,660 mm plenum on a job nobody had routed.
+  //
+  // It is a real cost line, so the fee, the GST and the margin all behave
+  // exactly as they do on a fully designed job. What changes is that the
+  // customer document has to say the ductwork is an allowance, and the estimator
+  // has to see it replaced by measured quantities once the design is done.
+  const allowance = design.proposalAllowance;
+  if (allowance && allowance.ok && Number(allowance.amount) > 0) {
+    items.push({
+      key: 'proposal_ductwork_allowance',
+      label: allowance.basis + ' — PROVISIONAL ALLOWANCE',
+      unit: 'allowance', quantity: 1,
+      unitCost: round(Number(allowance.amount), 2),
+      totalCost: round(Number(allowance.amount), 2),
+      priceSource: PRICE_SOURCE.NAC,
+      priced: true,
+      category: 'ductwork',
+      /** Read by the report and the proposal so neither can present it as measured. */
+      provisional: true,
+      allowanceBasis: allowance.detail || null,
+      replacedBy: 'Measured duct quantities, once the duct design is run.'
+    });
+  }
+
+  // Which duct feeds each room, for the outlet neck sizes further down.
   const branchDiameterByRoom = {};
   for (const sec of (design.network?.sections || [])) {
     const m = /^branch_(.+)$/.exec(sec.id || '');
     if (m && sec.diameterMm) branchDiameterByRoom[m[1]] = sec.diameterMm;
   }
-  const closableZones = (design.zones?.zones || []).filter(z => !z.alwaysOpen);
-  if (closableZones.length) {
-    const motorsByDiameter = {};
-    let unsized = 0;
-    for (const z of closableZones) {
-      // A zone can gather several rooms; the damper sits on the largest branch.
-      const diameters = (z.roomIds || []).map(id => branchDiameterByRoom[id]).filter(Boolean);
-      if (!diameters.length) { unsized += 1; continue; }
-      const d = Math.max(...diameters);
-      motorsByDiameter[d] = (motorsByDiameter[d] || 0) + 1;
-    }
-    Object.keys(motorsByDiameter).sort((a, b) => Number(a) - Number(b)).forEach(d => {
-      items.push({ ...line('zone_motor', motorsByDiameter[d], { ...ctx, diameterMm: Number(d) }),
-        category: 'zoning' });
-    });
-    if (unsized) {
-      items.push({ ...line('zone_motor', unsized, ctx), category: 'zoning',
-        sizeUnknown: true });
-    }
-    // One 15 m zone lead per motorised damper.
-    items.push({ ...line('zone_cable', closableZones.length, ctx), category: 'zoning' });
+
+  // ── MOTORISED ZONE DAMPERS, BY EXACT SIZE ──────────────────────────────
+  //
+  // Read straight off the damper COMPONENTS, which took their diameter from the
+  // duct each one is fitted in. There is no generic line: a ø250 motor and a
+  // ø300 motor are different part numbers at different prices, and a BOM that
+  // says "zone motor × 5" cannot be ordered. Nick: "The BOM must state the
+  // actual diameter. A generic damper line is not acceptable."
+  //
+  // There is no manual balancing damper line at all. Not on a main, not on a
+  // BTO port, not on an outlet branch, not on a return.
+  const dampers = design.zoneDampers || [];
+  for (const row of damperBomLines(dampers, { nacRates: ctx.nacRates || null })) {
+    items.push({ key: row.key, label: row.label, unit: row.unit, quantity: row.quantity,
+      unitCost: row.unitCost, totalCost: row.totalCost, priced: row.priced,
+      priceSource: row.priceSource, supplierCode: row.supplierCode,
+      diameterMm: row.diameterMm, actuator: row.actuator, skuKey: row.skuKey,
+      effectiveDate: row.effectiveDate, priceStatus: row.priceStatus,
+      dampers: row.dampers,
+      category: 'zoning', airSide: 'supply',
+      note: 'Motorised zone control. The damper is the size of the duct it is ' +
+            'fitted in; change the duct and this line changes with it.' });
+  }
+  // One 15 m zone lead per motorised damper.
+  if (dampers.length) {
+    items.push({ ...line('zone_cable', dampers.length, ctx), category: 'zoning' });
   }
 
   // ── Ductwork ───────────────────────────────────────────────────────────────
   const byDiameter = {};
   const fittingCounts = {};
+  // A RUN OFF A BTO DOES NOT ALSO NEED A SADDLE COLLAR. The spigot it leaves
+  // is part of the manifold. Counting both bought twelve butterfly take-offs
+  // AND four fittings for the same eleven connections.
+  const onAManifold = new Set((design.btos || [])
+    .flatMap(b => b.ports.map(p => p.sectionId).filter(Boolean)));
   for (const s of (design.network?.sections || [])) {
     if (s.lengthM) byDiameter[s.diameterMm] = round((byDiameter[s.diameterMm] || 0) + s.lengthM, 2);
     for (const f of (s.fittings || [])) {
+      if (f.type === 'takeoff' && onAManifold.has(s.id)) continue;
       fittingCounts[f.type] = (fittingCounts[f.type] || 0) + f.quantity;
     }
   }
@@ -159,13 +220,133 @@ export function buildBillOfMaterials(design, opts = {}) {
       category: 'ductwork' });
   });
 
+  // NO MANUAL BALANCING DAMPER. Nick: "Manual balancing dampers are not
+  // required ... Only actual motorised zone dampers are permitted." The design
+  // balances with duct size and motorised zone control, so a manual damper is
+  // neither drawn, scheduled nor bought — the previous BOM carried ten of them
+  // at $420 that nobody was going to install. `damper_open` is no longer
+  // emitted by any router; the mapping is gone so a stale design cannot revive
+  // it through the order either.
   const fittingMap = { supply_plenum: 'supply_plenum', y_piece: 'y_piece', reducer: 'reducer',
-                       takeoff: 'takeoff', joiner: 'joiner', damper_open: 'damper_manual' };
+                       takeoff: 'takeoff', joiner: 'joiner' };
   Object.entries(fittingCounts).forEach(([type, qty]) => {
     const key = fittingMap[type];
     if (!key) return;                             // bends are part of the flex run
-    items.push({ ...line(key, qty, ctx), category: 'ductwork' });
+    const row = { ...line(key, qty, ctx), category: 'ductwork' };
+    // THE SUPPLY PLENUM IS ORDERED AS IT IS DRAWN. A generic "supply plenum"
+    // line against a drawing that shows a 1152 → 1440 mm fabricated transition
+    // is a line the sheet metal shop cannot make. The arrangement is recorded
+    // once in the design and read here, so the order and the sheet agree.
+    if (type === 'supply_plenum' && design.supplyPlenum) {
+      const a = design.supplyPlenum;
+      row.airSide = 'supply';
+      row.label = (a.kind === 'widened'
+        ? 'Fabricated transition supply plenum — ' + a.flangeWidthMm + ' mm throat widening to ' +
+          a.bodyWidthMm + ' mm'
+        : 'Supply plenum — ' + a.bodyWidthMm + ' mm flush to the discharge') +
+        ', ' + a.collarCount + ' × ø' + a.collarDiameterMm + ' collars in one row';
+      row.note = a.description;
+    }
+    items.push(row);
   });
+
+  // THE NAC BOM RULE: the order follows the REAL topology. A reducer is only
+  // known once the tree has been sized — it is where a main steps down because
+  // the air it still carries has dropped — so it is counted off the sized
+  // sections rather than from a fitting list written before sizing. Counting it
+  // the old way bought nothing for four reducers the drawing showed.
+  const realReducers = (design.network?.sections || []).filter(s => s.reducerFrom).length;
+  const alreadyCounted = fittingCounts.reducer || 0;
+  if (realReducers > alreadyCounted) {
+    items.push({ ...line('reducer', realReducers - alreadyCounted, ctx), category: 'ductwork',
+      note: 'Where a main or major duct steps down. A take-off to outlet size is not a reducer.' });
+  }
+
+  // ── PHYSICAL BRANCH TAKE-OFFS ───────────────────────────────────────────
+  // The fittings are real metal with a part number. They are counted off the
+  // derived BTO entities — one line per inlet size and port count, because a
+  // 400 three-port body and a 300 two-port body are different things to order.
+  // EVERY LINE IS PRICED ON ITS OWN EXACT CONFIGURATION. There is no generic
+  // BTO rate any more: `bto_400_250_250_250` and `bto_350_250_250_250` are two
+  // different pieces of metal, and pricing one off the other is a guess that
+  // ends up on an invoice.
+  const btoBook = btoRateBook(ctx.btoRates || null);
+  for (const row of btoBomLines(design.btos || [])) {
+    const first = (design.btos || []).find(b => b.id === row.fittings[0]);
+    const body = first?.body || null;
+    const price = resolveBtoPrice(row.configKey, { book: btoBook });
+    items.push({ ...line('bto_fitting', row.quantity, ctx),
+      // The exact rate REPLACES the catalogue rate, and when there is no exact
+      // rate the line carries no price at all rather than a borrowed one.
+      unitCost: price.cost,
+      totalCost: price.cost === null ? null : round(price.cost * row.quantity, 2),
+      priced: price.cost !== null,
+      // An interim rate NAC set is not a rate this application shipped. Keeping
+      // them apart matters: "shipped placeholder rates" is a instruction to go
+      // and set NAC's prices, and on a BTO that is not the job — the job is to
+      // wait for MMEM's list.
+      priceSource: price.status === BTO_PRICE_STATUS.VERIFIED ? PRICE_SOURCE.SUPPLIER
+        : price.interim === true ? PRICE_SOURCE.NAC_INTERIM
+        : price.status === BTO_PRICE_STATUS.PLACEHOLDER ? PRICE_SOURCE.PLACEHOLDER : null,
+      supplierCode: price.sku,
+      configKey: row.configKey,
+      groupKey: row.groupKey,
+      outletDiametersMm: row.outletDiametersMm,
+      btoPrice: price,
+      priceStatus: price.status,
+      /** True only for the declared interim rate, never for a typed one. */
+      priceInterim: price.interim === true,
+      fabricator: price.supplier,
+      quoteRef: price.quoteRef,
+      effectiveDate: price.effectiveDate,
+      // SUPPLY AIR, EXPLICITLY. A return box is priced on its own lines under
+      // the return category and must never total into these.
+      category: 'ductwork', airSide: 'supply',
+      diameterMm: row.inletDiameterMm,
+      label: row.label,
+      portCount: row.portCount,
+      fittings: row.fittings,
+      // What the sheet metal shop is actually being asked for.
+      bodyText: body?.bodyText || null,
+      collarDiametersMm: body?.collarDiametersMm || null,
+      requiredCollarRunMm: body?.requiredCollarRunMm ?? null,
+      fabricationDescription: body?.bomDescription || null,
+      dimensionsVerified: body ? body.verified : null,
+      // ── THE COLLAR LAYOUT THE SHOP HAS TO MARK OUT ──────────────────────
+      // Which face, which centre, what clearance. A body on this line is
+      // fabrication-ready ONLY when somebody gave us the box and the collars
+      // were laid out on it and fitted.
+      bodyLengthMm: body?.bodyLengthMm ?? null,
+      bodyWidthMm: body?.bodyWidthMm ?? null,
+      bodyHeightMm: body?.bodyHeightMm ?? null,
+      bodySource: body?.faceLayout?.bodySource || null,
+      proposedBodyText: body?.proposedBodyText || null,
+      collarFaceLayout: body?.faceLayout
+        ? { pass: body.faceLayout.pass, validated: body.faceLayout.validated,
+            status: body.faceLayout.status, multiFace: body.faceLayout.multiFace,
+            facesUsed: body.faceLayout.facesUsed,
+            collars: body.faceLayout.collars.map(c => ({
+              portIndex: c.portIndex, face: c.face, faceLabel: c.faceLabel,
+              nominalDiameterMm: c.nominalDiameterMm,
+              outsideDiameterMm: c.outsideDiameterMm,
+              centreUmm: c.centreUmm, centreVmm: c.centreVmm,
+              edgeClearanceMm: c.edgeClearanceUmm,
+              clearanceToPreviousMm: c.clearanceToPreviousMm,
+              destination: c.destination })),
+            unplaced: body.faceLayout.unplacedCollars }
+        : null,
+      fabricationReady: !!body?.layoutValidated,
+      layoutStatus: body?.layoutStatus || null,
+      note: 'Supply-air multi-spigot branch take-off. Not a saddle collar, not one ' +
+            'per outlet, and never a return-air component.' +
+            (body && !body.verified
+              ? ' Body size is a PROPOSAL worked out from a collar-by-collar face ' +
+                'layout, not a fabricator\u2019s standard body — confirm against the ' +
+                'fabricator\u2019s bodies before ordering.' : '') +
+            (body && body.verified && !body.layoutValidated
+              ? ' THE COLLARS DO NOT FIT THIS BODY: ' +
+                (body.issues || []).map(i => i.message).join(' ') : '') });
+  }
 
   const totalDuctM = design.network?.totalDuctLengthM || 0;
   if (totalDuctM > 0) {
@@ -174,32 +355,64 @@ export function buildBillOfMaterials(design, opts = {}) {
   }
 
   // ── Outlets ────────────────────────────────────────────────────────────────
-  // A round diffuser is priced by its neck, which is the duct that reaches it.
-  // Other outlet types are not sized by diameter, so they stay flat-rated.
-  const outletCounts = {};
-  for (const o of (design.outlets?.rows || [])) {
-    const key = OUTLET_MATERIAL_KEY[o.type];
-    if (!key) continue;
-    const d = MATERIAL_CATALOGUE[key]?.byDiameter ? branchDiameterByRoom[o.roomId] || null : null;
-    const bucket = key + '|' + (d || '');
-    outletCounts[bucket] = (outletCounts[bucket] || 0) + o.quantity;
+  //
+  // BOUGHT FROM THE OUTLET REGISTER, NOT RE-DERIVED HERE.
+  //
+  // A round diffuser is priced by its NECK — the hole in the back of the box,
+  // and the size the catalogue is indexed by. This used to price it off
+  // `branchDiameterByRoom`, the branch duct feeding the ROOM, which on a ø250
+  // branch serving a ø200 neck ordered the wrong fitting while the schedule
+  // printed the right one. The register settles the neck once and both read it.
+  const register = design.outletRegister
+    || buildOutletRegister(design, { nacRates });
+  for (const b of outletBomLines(register)) {
+    items.push({
+      ...line(b.key, b.quantity, b.diameterMm ? { ...ctx, diameterMm: b.diameterMm } : ctx),
+      diameterMm: b.diameterMm || null,
+      // Which outlets this line is buying, so a count can be traced rather
+      // than recounted.
+      outletIds: b.outletIds,
+      category: 'outlets'
+    });
   }
-  Object.entries(outletCounts).forEach(([bucket, qty]) => {
-    const [key, d] = bucket.split('|');
-    items.push({ ...line(key, qty, d ? { ...ctx, diameterMm: Number(d) } : ctx),
-      category: 'outlets' });
-  });
 
   // ── Return air ─────────────────────────────────────────────────────────────
   if (design.returnDesign) {
+    // THE GRILLE ON THE ORDER IS THE GRILLE ON THE DRAWING. The catalogue rate
+    // is for one standard size; when the design specifies another — 600 x 400
+    // here — the line has to say so, or the drawing and the order describe two
+    // different pieces of metal.
+    const spec = design.returnDesign.returns?.[0];
+    const sizeText = spec ? spec.grilleWidthMm + ' x ' + spec.grilleHeightMm + ' mm' : null;
     const grille = line('return_grille', design.returnDesign.returnCount, ctx);
-    items.push({ ...grille, category: 'return' });
+    const sameAsRate = !sizeText || grille.label.includes(sizeText.replace(' mm', ''));
+    items.push({ ...grille, category: 'return', airSide: 'return',
+      designedSize: sizeText,
+      label: sizeText ? 'Return air grille and filter ' + sizeText : grille.label,
+      note: sameAsRate ? undefined
+        : 'Design calls for ' + sizeText + '. Rate shown is the catalogue\u2019s ' +
+          'standard grille — confirm the price for this size.',
+      rateIsForAnotherSize: !sameAsRate });
     // MMEM supply the grille and filter as one item. Only add a separate filter
     // line if the grille rate in use does not already cover it.
     if (!resolveCost('return_grille', ctx).includesFilter) {
-      items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx), category: 'return' });
+      items.push({ ...line('return_filter', design.returnDesign.returnCount, ctx),
+        category: 'return', airSide: 'return' });
     }
-    items.push({ ...line('return_plenum', design.returnDesign.returnCount, ctx), category: 'return' });
+    // THE FAN-COIL RETURN BOX — ONE, not one per grille.
+    //
+    // This bought a "return plenum" per grille, which described a fitting on
+    // each return path. There isn't one. Both return ducts land on the SAME box
+    // on the return side of the fan coil, so that is one item, and the grille
+    // count is not the box count. Nick: "Return-air plenum/box: 1."
+    const rc = design.returnComponents;
+    items.push({ ...line('return_plenum', 1, ctx), category: 'return', airSide: 'return',
+      label: 'Fan-coil return-air plenum / box — ' +
+             (rc?.plenum?.inletCount ?? design.returnDesign.returnCount) + ' × ø' +
+             (rc?.plenum?.inletDiameterMm ?? design.returnDesign.duct?.diameterMm ?? '?') +
+             ' inlet',
+      note: 'One box on the return side of the fan coil, taking every return duct. ' +
+            'Not a BTO and not counted with the supply fittings.' });
     // The return duct is counted with the supply flex above, so it is not
     // added again here.
   }
@@ -243,7 +456,11 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
-  return summariseBom(items);
+  // The omission travels with the bill so that re-deriving it after an
+  // estimator edit does not quietly forget that a machine is missing.
+  return summariseBom(items, equipmentBlocked
+    ? { blocked: true, reason: design.equipmentBlocked?.reason || null, costIsUnknown: true }
+    : null);
 }
 
 /**
@@ -256,13 +473,18 @@ export function buildBillOfMaterials(design, opts = {}) {
  * entered the missing cost was still told the line had no cost, and (once the
  * quote gate was added) could never get past it.
  */
-export function summariseBom(items) {
+export function summariseBom(items, equipmentOmitted = null) {
   const placeholderLines = items.filter(i => i.priceSource === PRICE_SOURCE.PLACEHOLDER);
   // A line NAC quote separately carries no rate ON PURPOSE. It is not a price
   // somebody forgot, so it must not block the quote the way a genuine hole
   // does — but it still appears on the bill of materials saying what it is.
   const separateLines = items.filter(i => i.quotedSeparately);
   const unpricedLines = items.filter(i => !i.priced && !i.quotedSeparately);
+  // Lines NAC charge at a fixed price rather than cost plus the fee.
+  const fixedSellLines = items.filter(i => i.fixedSell);
+  const noChargeLines = items.filter(i => i.noCharge);
+  // Lines on a stopgap rate NAC set while the real one is outstanding.
+  const interimLines = items.filter(i => i.priceSource === PRICE_SOURCE.NAC_INTERIM);
 
   const warnings = [];
   if (separateLines.length) {
@@ -309,9 +531,42 @@ export function summariseBom(items) {
   // confirmed — the number the estimator needs before sending a quote.
   const placeholderCost = round(placeholderLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
 
+  // What the fixed-price lines add to the customer's total. It is stated
+  // separately from the job cost everywhere, because it is not one.
+  const fixedSellTotal = round(fixedSellLines.reduce((s, i) => s + (i.sellTotal || 0), 0), 2);
+  if (fixedSellLines.length) {
+    warnings.push({ code: 'LINES_CHARGED_AT_FIXED_SELL', severity: 'CHECK',
+      message: fixedSellLines.length + ' line(s) are charged at NAC\u2019s fixed price rather '
+        + 'than cost plus the job fee, worth $' + fixedSellTotal.toFixed(2) + ': '
+        + fixedSellLines.map(l => l.label).join(', ')
+        + '. What NAC pay for them is not recorded, so the margin inside them is unknown.' });
+  }
+  const interimCost = round(interimLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
+  if (interimLines.length) {
+    warnings.push({ code: 'LINES_ON_INTERIM_RATE', severity: 'WARNING',
+      message: interimLines.length + ' line(s) are on an interim rate worth $'
+        + interimCost.toFixed(2) + ': ' + interimLines.map(l => l.label).join(', ')
+        + '. It is a stopgap NAC set, not a supplier\u2019s price for these items.' });
+  }
+  if (noChargeLines.length) {
+    warnings.push({ code: 'LINES_NOT_SEPARATELY_CHARGED', severity: 'CHECK',
+      message: noChargeLines.map(l => l.label).join(', ')
+        + ' is on the order so it gets bought, but carries no separate charge.' });
+  }
+
+  if (equipmentOmitted?.blocked) {
+    warnings.push({ code: 'EQUIPMENT_OMITTED_FROM_BOM', severity: 'CRITICAL',
+      message: 'No indoor/outdoor system is on this bill of materials: equipment selection is '
+        + 'blocked. ' + (equipmentOmitted.reason || '')
+        + ' The equipment cost is UNKNOWN, not zero, and this order cannot be placed.' });
+  }
+
   return {
     items,
     byCategory,
+    // What is missing and why, so nothing downstream has to infer it from the
+    // absence of a line.
+    equipmentOmitted: equipmentOmitted || null,
     totalCost: round(items.reduce((s, i) => s + (i.totalCost || 0), 0), 2),
     materialsCost: round(items.filter(i => i.category !== 'equipment')
       .reduce((s, i) => s + (i.totalCost || 0), 0), 2),
@@ -326,6 +581,17 @@ export function summariseBom(items) {
                                                     totalCost: l.totalCost })),
     unpricedCount: unpricedLines.length,
     unpricedLabels: unpricedLines.map(l => l.label),
+    fixedSellTotal,
+    fixedSellCount: fixedSellLines.length,
+    fixedSellLabels: fixedSellLines.map(l => l.label),
+    fixedSellDetail: fixedSellLines.map(l => ({ label: l.label, quantity: l.quantity,
+                                                unit: l.unit, sellPrice: l.sellPrice,
+                                                sellTotal: l.sellTotal, statedBy: l.statedBy })),
+    noChargeCount: noChargeLines.length,
+    noChargeLabels: noChargeLines.map(l => l.label),
+    interimCount: interimLines.length,
+    interimCost,
+    interimLabels: interimLines.map(l => l.label),
     quotedSeparatelyCount: separateLines.length,
     quotedSeparatelyLabels: separateLines.map(l => l.label),
     warnings
@@ -366,5 +632,5 @@ export function editBomLine(bom, index, patch) {
   // Re-derive EVERYTHING from the new lines. Recomputing only the totals left
   // the counts and warnings describing a bill of materials that no longer
   // existed.
-  return { ...bom, ...summariseBom(items) };
+  return { ...bom, ...summariseBom(items, bom.equipmentOmitted || null) };
 }

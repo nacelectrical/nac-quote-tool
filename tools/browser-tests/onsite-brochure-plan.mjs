@@ -240,9 +240,15 @@ const after = await p.evaluate(async () => {
   return { blockReason: i.blockReason, blocking: i.blocking.map(x => x.title),
            stage: d.stage, calReq: d.calibrationRequirement?.statusLabel };
 });
+// This step is about the two rooms whose sizes the sheet does not print. It
+// used to match any blocker naming MEALS or STUDY, which now catches the
+// stocked-fitting blocker too — that one lists every room on an overloaded
+// main, and STUDY is one of them. What is being asked here is whether a
+// DIMENSION is still missing, so that is what it asks.
 say('no conditioned room blocks the design any more',
-  !after.blocking.some(t => /MEALS|STUDY|DIMENSIONS/.test(t)),
-  after.blocking.join(' | ') || 'nothing blocking');
+  !after.blocking.some(t => /DIMENSION/i.test(t)
+    || /\b(MEALS|STUDY)\b[^|]*\b(size|measure|measured|dimension)/i.test(t)),
+  after.blocking.filter(t => /DIMENSION|MEALS|STUDY/i.test(t)).join(' | ') || 'nothing blocking');
 
 // ── 6. THE COMPLETE AUTO DESIGN ─────────────────────────────────────────────
 STEP('COMPLETE AUTO DESIGN — every stage, without ADVANCED DESIGN');
@@ -292,28 +298,54 @@ const drawn = await p.evaluate(() => {
   return {
     canvas: !!document.querySelector('.main canvas'),
     routes: routes.length,
-    labelled: routes.filter(r => /Ø/.test(r.label || '')).length,
+    labelled: routes.filter(r => /\u00f8\d+/.test(r.label || '')).length,
     trunk: routes.filter(r => r.role === 'trunk' || r.role === 'main').length,
     branch: routes.filter(r => r.role === 'branch').length,
     final: routes.filter(r => r.role === 'final').length,
     ret: routes.filter(r => r.role === 'return').length,
     markers: (v?.state?.markers || []).length,
     markerTypes: [...new Set((v?.state?.markers || []).map(m => m.type))].sort(),
-    diameters: [...new Set(routes.map(r => (r.label || '').match(/(\d+)Ø/)?.[1]).filter(Boolean))]
+    diameters: [...new Set(routes.map(r => (r.label || '').match(/\u00f8(\d+)/)?.[1]).filter(Boolean))],
+    // SUPPLY and RETURN have different size ladders, so they are counted apart.
+    supplyDiameters: [...new Set(routes.filter(r => r.role !== 'return')
+      .map(r => r.diameterMm).filter(Boolean))],
+    returnDiameters: [...new Set(routes.filter(r => r.role === 'return')
+      .map(r => r.diameterMm).filter(Boolean))]
   };
 });
 console.log('      ' + JSON.stringify(drawn));
 say('the plan canvas is on the DESIGN step', drawn.canvas);
 say('duct runs are drawn on it', drawn.routes > 0, drawn.routes + ' polylines');
-say('every run carries its diameter', drawn.labelled === drawn.routes,
-  drawn.labelled + ' of ' + drawn.routes + ' labelled');
-say('TRUNK is drawn', drawn.trunk > 0, drawn.trunk + ' trunk runs');
-say('BRANCHES are drawn', drawn.branch > 0, drawn.branch + ' branches');
+// A run that repeats the size of the run feeding it is deliberately left
+// unlabelled — the same number twice on one duct is clutter, not information.
+say('the sizes are on the drawing, without labelling the same duct twice',
+  drawn.labelled > 0 && drawn.labelled <= drawn.routes,
+  drawn.labelled + ' labels on ' + drawn.routes + ' runs');
+say('the SUPPLY MAINS are drawn', drawn.trunk > 0, drawn.trunk + ' main/trunk runs');
+// Under the NAC flex model every outlet is fed by ONE continuous final flex off
+// a take-off. A major branch only exists where several outlets sit well off the
+// main and share one run out to them, so zero of them on this plan is the model
+// working, not a gap: what must never be zero is the finals.
+say('a FINAL FLEX is drawn to every outlet',
+  drawn.final === 15 && drawn.branch >= 0, drawn.final + ' finals, ' + drawn.branch + ' major branches');
 say('the RETURN is drawn', drawn.ret > 0, drawn.ret + ' return run');
-say('zone dampers and fittings are drawn', drawn.markers > 0, drawn.markerTypes.join(','));
-say('no 450 or 500 duct is anywhere on it',
-  !drawn.diameters.includes('450') && !drawn.diameters.includes('500'),
-  drawn.diameters.sort((a, c) => a - c).join('/') + ' mm');
+say('zone dampers and take-offs are drawn',
+  drawn.markerTypes.includes('bto') && drawn.markerTypes.includes('damper'),
+  drawn.markerTypes.join(','));
+// "NAC never fit a 450 or a 500" is a rule about SUPPLY. On the return a 450 is
+// what goes on a big unit — the whole system comes back through one or two
+// ducts and a 400 runs them too fast.
+say('no 450 or 500 on the SUPPLY side',
+  !drawn.supplyDiameters.some(mm => mm >= 450),
+  drawn.supplyDiameters.sort((a, c) => a - c).join('/') + ' mm');
+say('the return is a size NAC fits',
+  drawn.returnDiameters.every(mm => [350, 400, 450].includes(mm)),
+  drawn.returnDiameters.join('/') + ' mm');
+// NAC's install rules, enforced by the sizing engine and therefore visible on
+// the drawing: nothing below 200, and nothing above 300 on an outlet run.
+say('no 150 or smaller anywhere in the auto design',
+  !drawn.supplyDiameters.some(mm => mm < 200),
+  drawn.supplyDiameters.filter(mm => mm < 200).join('/') || 'smallest is 200');
 
 const designText = await main();
 say('AUTO ROUTE — VERIFY SITE CONDITIONS is on screen',
@@ -393,7 +425,12 @@ say('the house is not one zone per room', z.count < 11, z.count + ' zones, not 1
 say('the open-plan living area is one zone', z.grouping.grouped >= 3,
   z.grouping.rooms.join(' + '));
 say('the minimum open airflow rule is met', z.meets === true, z.minOpenPct + '% stays open');
-say('the controller in the box is enough', z.controllerCost === 0, z.controller);
+// NAC fit a Siemens zone kit unless the job is on an AirTouch, so the
+// controller is a real line with a real cost. It used to be the manufacturer's
+// boxed controller at $0 — which was cheap because nobody installs it.
+say('the controller is the Siemens kit sized to the zoning',
+  /Siemens/i.test(String(z.controller)) && z.controllerCost > 0,
+  z.controller + ' at $' + z.controllerCost);
 // A constant zone is by definition a zone with NO damper — it is the path the
 // air always has. So it is one motor per CLOSABLE zone, never one per room.
 const closable = z.zones.filter(x => !x.open).length;

@@ -196,6 +196,25 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 .settings-head h2{margin:0;font-size:16px;font-weight:800;color:var(--yellow)}
 .settings-head > div{display:flex;gap:8px;flex-wrap:wrap}
 .settings-nav{display:flex;gap:7px;flex-wrap:wrap}
+/* ── Proposal allowance rows ──────────────────────────────────────────────
+   Every element on its own line with its own explanation, because a single
+   figure told nobody what it covered. An unset required element is marked, so
+   the screen says what is missing rather than looking finished. */
+.alw{display:flex;flex-direction:column;gap:2px}
+.alw-row{display:grid;grid-template-columns:1fr 150px 78px;gap:12px;align-items:center;
+  padding:10px 12px;border-radius:8px;border:1px solid transparent}
+.alw-row:nth-child(odd){background:rgba(255,255,255,.02)}
+.alw-row.unset{border-color:rgba(245,194,0,.35);background:rgba(245,194,0,.06)}
+.alw-label strong{display:block;font-size:13px}
+.alw-help{display:block;font-size:11.5px;color:var(--ink-3);line-height:1.45;margin-top:2px}
+.alw-input input{width:100%}
+.alw-state{font-size:11px;font-weight:800;letter-spacing:.04em;text-align:right;
+  color:var(--ink-3)}
+.alw-row.unset .alw-state{color:var(--yellow)}
+@media(max-width:700px){
+  .alw-row{grid-template-columns:1fr 110px;grid-template-areas:'l l' 'i s'}
+  .alw-label{grid-area:l}.alw-input{grid-area:i}.alw-state{grid-area:s}
+}
 .settings-body{display:flex;flex-direction:column;gap:14px}
 
 /* ── Assistant ────────────────────────────────────────────────────────── */
@@ -298,7 +317,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .qwork-plan{min-height:60vh}
   .qwork-plan .plan-host,.qwork-plan .qplan-placeholder{min-height:55vh}
   .qreview-plan{min-height:380px}
-  .qreview-plan .plan-host,.qplan-placeholder{min-height:320px}
+  .qreview-plan .plan-host,.qplan-placeholder{min-height:min(62vh,520px)}
   .qcards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   .qactions{flex-direction:column;align-items:stretch}
 }
@@ -353,7 +372,10 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   overflow:hidden;display:flex;flex-direction:column;min-height:520px}
 .qreview-plan-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   padding:10px 13px;border-bottom:1px solid var(--line)}
-.qreview-plan .plan-host,.qplan-placeholder{flex:1;min-height:460px}
+/* THE DRAWING IS THE POINT OF THIS SCREEN.
+   460px of canvas on a 1400px display left the plan the size of a postcard —
+   the ducts were right, and unreadable. It now takes the height it needs. */
+.qreview-plan .plan-host,.qplan-placeholder{flex:1;min-height:min(78vh,860px)}
 .qplan-placeholder{display:flex;align-items:center;justify-content:center;
   color:var(--ink-3);font-size:12px}
 .qreview-side{display:flex;flex-direction:column;gap:12px}
@@ -410,10 +432,20 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
     .qlegend-item { display:inline-flex; align-items:center; gap:5px;
                     letter-spacing:.06em; color:var(--muted, #8b93a7); }
     .qlegend-item::before { content:''; width:16px; height:3px; border-radius:2px; background:currentColor; }
-    .qlegend-item.trunk  { color:#2B6CB8; }
-    .qlegend-item.branch { color:#3fbf6f; }
-    .qlegend-item.final  { color:#F5C200; }
-    .qlegend-item.return { color:#c07fd0; }
+    /* These are the colours the plan viewer actually draws with — they come
+       from NAC_DUCT_DESIGN_STANDARD.drawing. A legend that disagrees with the
+       drawing beside it is worse than no legend. */
+    .qlegend-item.trunk  { color:#B061C6; }
+    .qlegend-item.branch { color:#5fa8ff; }
+    .qlegend-item.final  { color:#E8A33D; }
+    .qlegend-item.return { color:#8A8FA3; }
+    /* The three symbols on the drawing, drawn as symbols rather than bars. */
+    .qlegend-sym { display:inline-flex; align-items:center; gap:5px;
+                   font:700 10px/1 -apple-system, system-ui, sans-serif; letter-spacing:.06em; }
+    .qlegend-sym i { font-style:normal; font-size:12px; line-height:1; }
+    .qlegend-sym.bto i { color:#F5C200; }
+    .qlegend-sym.damper i { color:#3fbf6f; }
+    .qlegend-sym.outlet i { color:#E8A33D; }
     .qlegend-count { flex:1 1 100%; color:var(--muted, #8b93a7); }
     @media (max-width: 720px) { .qexc-name { min-width:0; } }
 
@@ -427,6 +459,138 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
     .qzone-room { display:inline-flex; align-items:center; gap:4px; font-size:11px;
                   background:rgba(255,255,255,.05); border-radius:4px; padding:2px 4px 2px 8px; }
     @media (max-width: 720px) { .qzone-flow { margin-left:0; width:100%; } }
+
+/* ══ SITE ADJUST — the iPad mode ═══════════════════════════════════════════
+   Built for a roof space: 56 px targets, 12 px apart, nothing small enough to
+   need a fingernail. It takes the whole viewport, so there is no office
+   chrome to mis-tap and no way to drag the plan and move a fitting at once. */
+.site-adjust{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;
+  background:#0d1020;color:#eef1ff;font-size:17px;-webkit-user-select:none;user-select:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.sa-top{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#161a33}
+.sa-title{display:flex;flex-direction:column;line-height:1.25;flex:1;min-width:0}
+.sa-title strong{font-size:15px;letter-spacing:.08em;color:#F5C200}
+.sa-title span{font-size:14px;color:#aab2d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sa-btn{min-height:56px;min-width:56px;padding:0 20px;border-radius:12px;border:1px solid #3a4270;
+  background:#222850;color:#eef1ff;font-size:16px;font-weight:700;cursor:pointer}
+.sa-btn[disabled]{opacity:.35}
+.sa-btn.big{min-height:60px;font-size:17px}
+.sa-btn.primary{background:#F5C200;color:#16162e;border-color:#F5C200}
+.sa-modes{display:flex;gap:12px;padding:12px 16px 0;overflow-x:auto}
+.sa-mode{flex:1;min-width:104px;min-height:60px;border-radius:14px;border:2px solid #3a4270;
+  background:#1b2040;color:#c9d0f5;font-size:17px;font-weight:800;letter-spacing:.02em;cursor:pointer}
+.sa-mode.on{background:#2B6CB8;border-color:#7fb0ff;color:#fff}
+.sa-hint{margin:8px 16px 0;color:#aab2d8;font-size:14.5px;line-height:1.35}
+.sa-sync{display:flex;align-items:center;gap:12px;margin:12px 16px 0;padding:12px 16px;
+  border-radius:12px;font-size:15px}
+.sa-sync strong{font-size:15px;letter-spacing:.04em}
+.sa-sync.ok{background:#12351f;color:#9be3b4}
+.sa-sync.warn{background:#3a3212;color:#ffdf8a}
+.sa-sync.bad{background:#3d1520;color:#ffb3c0}
+.sa-sync span{flex:1;min-width:0}
+.sa-conflict{margin:12px 16px 0;padding:14px 16px;border-radius:12px;background:#3d1520;
+  color:#ffd9e0;display:flex;flex-direction:column;gap:10px;font-size:15px}
+.sa-bar{display:flex;align-items:center;gap:12px;padding:10px 16px;overflow-x:auto}
+.sa-history{display:flex;align-items:center;gap:12px}
+/* The things that have nowhere on the drawing to be tapped: a note, a photo, a
+   new return, and the lock on whichever route is open. Same 56 px targets. */
+.sa-tools{display:flex;align-items:center;gap:12px}
+.sa-tool{min-height:56px;padding:0 18px;border-radius:12px;border:1px solid #3a4270;
+  background:#1b2040;color:#c9d0f5;font-size:16px;font-weight:700;white-space:nowrap;
+  cursor:pointer}
+.sa-tool.on{background:#3a3212;border-color:#8a7420;color:#ffdf8a}
+.sa-tool-note{color:#aab2d8;font-size:14px;white-space:nowrap}
+.sa-busy{margin:10px 16px 0;padding:12px 16px;border-radius:12px;background:#222850;
+  color:#ffdf8a;font-size:15px}
+/* The collar layout, as the shop reads it: one line per collar, monospaced so
+   the centres line up under each other. */
+.sa-layout{display:flex;flex-direction:column;gap:4px;background:#12162c;border-radius:10px;
+  padding:12px;border:1px solid #242a4d}
+.sa-layout-line{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d0f5;
+  white-space:pre-wrap}
+.sa-count{color:#aab2d8;font-size:15px}
+.sa-canvas{flex:1;min-height:0;margin:0 16px 12px;border-radius:14px;overflow:hidden;
+  position:relative;background:#fff}
+.sa-foot{display:flex;align-items:center;gap:16px;padding:0 16px 14px;flex-wrap:wrap}
+.sa-foot .sa-btn{flex:1 1 320px;min-width:260px}
+.sa-ok{color:#9be3b4;font-size:15px}
+.sa-bad{color:#ffb3c0;font-size:15px}
+.sa-note{color:#aab2d8;font-size:14px;margin:12px 0 0}
+
+/* The bottom sheet: what you tapped, everything about it, in reach of a thumb. */
+/* LANDSCAPE: a side panel, so the plan stays visible while a fitting is open —
+   an iPad in landscape has width to spare and no height to give away.
+   PORTRAIT: a bottom sheet, in reach of a thumb. Same markup, same component. */
+.sa-sheet{position:absolute;right:0;top:0;bottom:0;width:min(560px,48%);display:flex;
+  flex-direction:column;background:#161a33;border-left:2px solid #F5C200;
+  box-shadow:-12px 0 40px rgba(0,0,0,.5)}
+/* The sheet floats, so the CANVAS has to give it room — otherwise the plan is
+   simply hidden behind it and the installer loses sight of what they tapped. */
+.site-adjust.has-sheet .sa-canvas{margin-right:calc(min(560px,48%) + 16px)}
+/* EVERY BAR STOPS AT THE SHEET, not just the canvas.
+   The sheet is absolutely positioned, so a bar that spans the full width runs
+   underneath it — which put Route, Add, Delete, Done and the whole tool bar
+   behind the panel the moment anything was tapped. An installer could open a
+   fitting and then not change mode without closing it again. */
+.site-adjust.has-sheet .sa-top,
+.site-adjust.has-sheet .sa-modes,
+.site-adjust.has-sheet .sa-hint,
+.site-adjust.has-sheet .sa-sync,
+.site-adjust.has-sheet .sa-conflict,
+.site-adjust.has-sheet .sa-bar{padding-right:calc(min(560px,48%) + 28px)}
+.site-adjust.has-sheet .sa-hint,
+.site-adjust.has-sheet .sa-sync,
+.site-adjust.has-sheet .sa-conflict{margin-right:0}
+.site-adjust.has-sheet .sa-foot{padding-right:calc(min(560px,48%) + 32px)}
+@media (orientation:portrait){
+  .sa-sheet{left:0;right:0;top:auto;bottom:0;width:auto;max-height:56vh;
+    border-left:0;border-top:2px solid #F5C200;border-radius:18px 18px 0 0;
+    box-shadow:0 -12px 40px rgba(0,0,0,.5)}
+  .site-adjust.has-sheet .sa-canvas{margin-right:16px;margin-bottom:calc(56vh + 12px)}
+  .site-adjust.has-sheet .sa-top,
+  .site-adjust.has-sheet .sa-modes,
+  .site-adjust.has-sheet .sa-hint,
+  .site-adjust.has-sheet .sa-sync,
+  .site-adjust.has-sheet .sa-conflict,
+  .site-adjust.has-sheet .sa-bar{padding-right:16px}
+  /* Portrait has no height to spare. With a sheet open the secondary bars step
+     aside so the DRAWING keeps a usable band — an installer has to be able to
+     see what they tapped while they are changing it. */
+  .site-adjust.has-sheet .sa-sync,
+  .site-adjust.has-sheet .sa-history,
+  .site-adjust.has-sheet .sa-hint,
+  .site-adjust.has-sheet .sa-bar,
+  .site-adjust.has-sheet .sa-foot{display:none}
+}
+.sa-sheet-head{display:flex;align-items:center;gap:12px;padding:16px 18px 10px}
+.sa-sheet-head h2{margin:0;font-size:22px;letter-spacing:.04em}
+.sa-chip{background:#222850;border:1px solid #3a4270;border-radius:999px;padding:6px 12px;
+  font-size:14px;color:#c9d0f5}
+.sa-close{margin-left:auto;min-width:56px;min-height:56px;border-radius:12px;border:0;
+  background:#222850;color:#eef1ff;font-size:20px;cursor:pointer}
+.sa-sheet-body{overflow:auto;padding:0 18px 20px;-webkit-overflow-scrolling:touch}
+.sa-sheet-body h3{margin:18px 0 10px;font-size:15px;letter-spacing:.08em;color:#F5C200}
+.sa-row{display:flex;justify-content:space-between;gap:16px;padding:12px 0;
+  border-bottom:1px solid #242a4d;font-size:16px}
+.sa-row .k{color:#aab2d8}
+.sa-row .v{font-weight:700;text-align:right}
+.sa-ports{display:flex;flex-direction:column;gap:12px}
+.sa-port{background:#1b2040;border:1px solid #2c3260;border-radius:14px;padding:14px}
+.sa-port-head{font-size:17px;font-weight:800}
+.sa-port-sub{color:#aab2d8;font-size:15px;margin-top:4px}
+.sa-port-actions,.sa-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.sa-action{min-height:56px;padding:0 18px;border-radius:12px;border:1px solid #3a4270;
+  background:#222850;color:#eef1ff;font-size:16px;font-weight:700;cursor:pointer}
+.sa-action.danger{background:#3d1520;border-color:#7a2536;color:#ffd9e0}
+
+/* PORTRAIT iPad: the mode bar wraps to two rows rather than shrinking the
+   buttons, because a smaller target is the one thing that must not happen. */
+@media (orientation:portrait){
+  .sa-modes{flex-wrap:wrap}
+  .sa-mode{flex:1 1 30%}
+  .sa-foot{flex-direction:column;align-items:stretch}
+}
 </style>
 </head>
 <body>

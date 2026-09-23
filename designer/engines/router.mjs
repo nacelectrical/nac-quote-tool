@@ -23,12 +23,13 @@
 
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { isConditionedRoom } from './classify.mjs';
+import { mainSupplyCount, ROUTING, DRAWING, BTO as BTO_RULES } from './nac-standard.mjs';
 import { round } from './units.mjs';
 import { polylineLengthMm } from './calibration.mjs';
+import { isReturnSection } from './bto.mjs';
 
 /** Stamped on every auto-generated route. Never remove it from a route. */
-export const AUTO_ROUTE_NOTICE =
-  'AUTO ROUTE — VERIFY SITE CONDITIONS, STRUCTURE AND CLEARANCES BEFORE INSTALLATION';
+export const AUTO_ROUTE_NOTICE = ROUTING.notice;
 
 export const ROUTING_MODE = { AUTO: 'auto', ASSISTED: 'assisted', MANUAL: 'manual' };
 
@@ -57,7 +58,8 @@ export const DEFAULT_LABEL_DETAIL = LABEL_DETAIL.DIAMETER;
  */
 export function segmentLabel(section, detail = DEFAULT_LABEL_DETAIL, opts = {}) {
   if (!section || detail === LABEL_DETAIL.HIDE) return null;
-  const dia = section.diameterMm ? section.diameterMm + 'Ø' : null;
+  // NAC's own drawings write the size as "ø300", so the tool does too.
+  const dia = section.diameterMm ? DRAWING.diameterPrefix + section.diameterMm : null;
   if (!dia && section.airflowLs == null) return null;
 
   const flow = section.airflowLs != null ? round(section.airflowLs, 0) + ' L/s' : null;
@@ -93,16 +95,40 @@ export function lineWidthForDiameter(diameterMm, opts = {}) {
 }
 
 /** Colour by the job the duct does, so a drawing reads at a glance. */
+/**
+ * The colours a run takes when it belongs to no zone.
+ *
+ * The trunk serves everything, so it carries a neutral colour of its own rather
+ * than borrowing one zone's. The return is a different system and is deliberately
+ * the only grey line on the drawing — it must never be read as a supply run.
+ * Branches and finals are normally overpainted with their ZONE colour; these are
+ * the fallbacks for a design that has not been zoned yet.
+ */
 export const ROLE_COLOUR = {
-  main:   '#F5C200',   // trunk from the unit — NAC yellow, the spine of the drawing
-  trunk:  '#F5C200',
+  main:   DRAWING.trunkColour,   // the spine, in its own neutral colour
+  trunk:  DRAWING.trunkColour,
   branch: '#5fa8ff',
   final:  '#8fd0ff',
-  return: '#ff9d5c'    // return air is a different system and must never be read as supply
+  return: DRAWING.returnColour   // the only grey line on the drawing
 };
 
 export function roleColour(role) {
   return ROLE_COLOUR[role] || ROLE_COLOUR.branch;
+}
+
+/**
+ * The colour a run is drawn in.
+ *
+ * A branch or a final takes the colour of the ZONE it feeds, so an installer
+ * can follow one colour from the trunk to the outlet and know which damper
+ * controls it. The trunk and the return keep their own.
+ */
+export function runColour(section, zoneColourByRoomId = {}) {
+  if (!section) return ROLE_COLOUR.branch;
+  if (section.role === 'main' || section.role === 'trunk') return ROLE_COLOUR.main;
+  if (section.role === 'return') return ROLE_COLOUR.return;
+  const z = section.roomId ? zoneColourByRoomId[section.roomId] : null;
+  return z?.colour || roleColour(section.role);
 }
 
 // ── Linking drawn geometry to the calculated design ─────────────────────────
@@ -168,7 +194,7 @@ export function routeOverlayFromNetwork({ network, mainRoute, ductRoutes = {}, r
       lengthM: ret?.lengthM ?? null,
       destination: 'Return',
       label: labelDetail === LABEL_DETAIL.HIDE ? null
-        : 'RETURN' + (ret?.diameterMm ? '\n' + ret.diameterMm + 'Ø' : ''),
+        : (ret?.diameterMm ? 'RETURN \u00f8' + ret.diameterMm : 'RETURN'),
       auto: returnRoute.auto,
       locked: returnRoute.locked
     });
@@ -247,6 +273,104 @@ export function trunkSpine(footprint, plenum) {
     from: horizontal ? footprint.x : footprint.y,
     to: horizontal ? footprint.x + footprint.w : footprint.y + footprint.h
   };
+}
+
+/**
+ * Split the outlets into TRUNK ARMS radiating from the plenum.
+ *
+ * A single spine with every room projected perpendicular onto it produces a
+ * comb: one long duct with stubs off it. Nobody installs that, and it does not
+ * read as a duct layout. A real ducted system leaves the fan coil in two to
+ * four directions and branches off each run, which is what this produces.
+ *
+ * Arms are the four square directions, because flex runs square through a truss
+ * roof — a diagonal trunk is not a thing. An arm with a single room on it is
+ * folded into the neighbouring arm rather than left as a trunk serving one
+ * bedroom.
+ *
+ * @returns {Array} [{ key, horizontal, sign, axisPos, drops }]
+ */
+export function trunkArms(plenum, drops, opts = {}) {
+  if (!plenum || !drops?.length) return [];
+  const want = opts.mainCount
+    || mainSupplyCount(drops.reduce((sum, d) => sum + (d.airflowLs || 0), 0), drops.length);
+
+  const buckets = { E: [], W: [], S: [], N: [] };
+  for (const d of drops) {
+    const dx = d.target.x - plenum.x;
+    const dy = d.target.y - plenum.y;
+    // Whichever offset is larger decides the direction, so a room that is mostly
+    // to the left goes west even if it is also a little below.
+    if (Math.abs(dx) >= Math.abs(dy)) buckets[dx >= 0 ? 'E' : 'W'].push(d);
+    else buckets[dy >= 0 ? 'S' : 'N'].push(d);
+  }
+
+  const order = ['E', 'W', 'S', 'N'];
+  const flowOf = (k) => buckets[k].reduce((sum, d) => sum + (d.airflowLs || 0), 0);
+  const axisOf = (k) => (k === 'E' || k === 'W');
+
+  // THE NAC SUPPLY PLENUM RULE: the air leaves the fan coil on TWO OR THREE
+  // mains, each serving a group of the house. Not one — a single trunk is not
+  // a plenum, it is a tee — and not four, which is more penetrations than
+  // anybody puts in a fan coil.
+  //
+  // So the four compass buckets are folded down to the number wanted, smallest
+  // first: the rooms on a light direction join whichever kept main is nearest
+  // in the axis that main does not travel along.
+  const live = () => order.filter(k => buckets[k].length);
+  while (live().length > want) {
+    const smallest = live().sort((a, b) => flowOf(a) - flowOf(b))[0];
+    const keep = live().filter(k => k !== smallest);
+    for (const d of buckets[smallest].splice(0)) {
+      const best = keep.reduce((acc, k) => {
+        const dist = axisOf(k) ? Math.abs(d.target.y - plenum.y) : Math.abs(d.target.x - plenum.x);
+        return (acc === null || dist < acc.dist) ? { k, dist } : acc;
+      }, null);
+      buckets[best.k].push(d);
+    }
+  }
+
+  // Fewer live directions than the plenum should have: split the busiest one in
+  // two along its own axis, so the plenum still leaves on the right number of
+  // mains instead of everything hanging off a single run.
+  while (live().length < want && live().length >= 1) {
+    const busiest = live().sort((a, b) => flowOf(b) - flowOf(a))[0];
+    const members = buckets[busiest];
+    if (members.length < 2) break;
+    const horizontal = axisOf(busiest);
+    const across = (d) => horizontal ? d.target.y : d.target.x;
+    const sorted = [...members].sort((a, b) => across(a) - across(b));
+    const half = Math.ceil(sorted.length / 2);
+    // The empty compass bucket on the other axis takes the far half, so the two
+    // mains leave the plenum in genuinely different directions.
+    const spare = order.find(k => !buckets[k].length && axisOf(k) !== horizontal);
+    if (!spare) break;
+    buckets[busiest] = sorted.slice(0, half);
+    buckets[spare] = sorted.slice(half);
+  }
+
+  return order
+    .filter(k => buckets[k].length)
+    .map(k => {
+      const horizontal = axisOf(k);
+      return {
+        key: k,
+        horizontal,
+        sign: (k === 'E' || k === 'S') ? 1 : -1,
+        axisPos: horizontal ? plenum.y : plenum.x,
+        drops: buckets[k].sort((a, b) => {
+          const da = horizontal ? Math.abs(a.target.x - plenum.x) : Math.abs(a.target.y - plenum.y);
+          const db = horizontal ? Math.abs(b.target.x - plenum.x) : Math.abs(b.target.y - plenum.y);
+          return da - db;
+        })
+      };
+    });
+}
+
+/** Where a drop takes off from its arm. */
+function takeoffOnArm(arm, pt) {
+  return arm.horizontal ? { x: pt.x, y: arm.axisPos, along: pt.x }
+                        : { x: arm.axisPos, y: pt.y, along: pt.y };
 }
 
 /** Where a point drops onto the spine — its take-off position. */
@@ -338,8 +462,6 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
                'the house. Place the plenum and re-route for real lengths.' });
   }
 
-  const spine = trunkSpine(footprint, plenum);
-
   // ── Every outlet that has to be reached ───────────────────────────────────
   const drops = [];
   for (const row of (airflow?.rows || [])) {
@@ -383,87 +505,162 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
                message: 'No conditioned room has both airflow and a boundary on the plan.' }]) };
   }
 
-  // ── Take-offs, clustered into junctions ───────────────────────────────────
-  const spineLen = Math.abs(spine.to - spine.from) || 1;
-  const tolerance = spineLen * (settings.duct.junctionClusterFraction ?? 0.06);
-  const takeoffs = drops.map(d => {
-    const proj = projectOntoSpine(spine, d.target);
-    return { ...d, along: proj.along, at: { x: proj.x, y: proj.y } };
-  });
-  const clusters = clusterAlongSpine(takeoffs, spine, tolerance);
-
-  // Junctions in the order the air reaches them, walking out from the plenum.
-  const plenumAlong = spine.horizontal ? plenum.x : plenum.y;
-  clusters.sort((a, b) => Math.abs(a.along - plenumAlong) - Math.abs(b.along - plenumAlong));
-
-  // ── Airflow, summed from the leaves back up ───────────────────────────────
-  // Trunk segment i carries everything from junction i outwards.
-  const junctionFlow = clusters.map(c => c.members.reduce((s, m) => s + (m.airflowLs || 0), 0));
-  const carriedFrom = clusters.map((_, i) =>
-    junctionFlow.slice(i).reduce((s, f) => s + f, 0));
+  // ── Arms, and the junctions along each ────────────────────────────────────
+  // The house is served by two to four trunk runs leaving the plenum in square
+  // directions, not by one spine with stubs off it.
+  const arms = trunkArms(plenum, drops, { minRoomsPerArm: settings.duct.minRoomsPerArm ?? 2 });
+  const armSpan = Math.max(footprint.w, footprint.h) || 1;
+  const tolerance = armSpan * (settings.duct.junctionClusterFraction ?? 0.06);
 
   const segments = [];
   const nodes = [{ id: 'plenum', type: 'plenum', x: plenum.x, y: plenum.y,
                    source: plenumSource, label: 'Supply plenum' }];
 
-  const at = (along) => spine.horizontal
-    ? { x: along, y: spine.axisPos } : { x: spine.axisPos, y: along };
+  let junctionCounter = 0;
 
-  // ── The trunk ─────────────────────────────────────────────────────────────
-  let prevPoint = { x: plenum.x, y: plenum.y };
-  let prevId = null;
-  clusters.forEach((c, i) => {
-    const jPoint = at(c.along);
-    const jId = 'junction_' + (i + 1);
-    nodes.push({ id: jId, type: 'junction', x: jPoint.x, y: jPoint.y,
-                 label: 'J' + (i + 1), serves: c.members.map(m => m.label) });
-
-    segments.push({
-      id: i === 0 ? 'main' : 'trunk_' + i,
-      parentId: prevId,
-      role: i === 0 ? 'main' : 'trunk',
-      destination: i === 0 ? 'Supply plenum → J1' : 'J' + i + ' → J' + (i + 1),
-      airflowLs: carriedFrom[i],
-      points: [prevPoint, jPoint],
-      rigid: i === 0,
-      // A trunk that has just dropped a branch is smaller than the one before
-      // it; ducts.mjs sizes from the airflow and the reducer falls out of that.
-      fittings: i === 0 ? ['supply_plenum'] : []
+  arms.forEach((arm, armIndex) => {
+    // Take-offs on this arm, grouped so two rooms side by side share one Y
+    // piece rather than getting a take-off each 200 mm apart.
+    const takeoffs = arm.drops.map(d => {
+      const t = takeoffOnArm(arm, d.target);
+      return { ...d, along: t.along, at: { x: t.x, y: t.y } };
     });
-    prevPoint = jPoint;
-    prevId = i === 0 ? 'main' : 'trunk_' + i;
-    const feedingTrunkId = prevId;
+    const clusters = [];
+    for (const t of takeoffs) {
+      const last = clusters[clusters.length - 1];
+      if (last && Math.abs(t.along - last.along) <= tolerance) { last.members.push(t); continue; }
+      clusters.push({ along: t.along, members: [t] });
+    }
 
-    // ── Branches off this junction ──────────────────────────────────────────
-    for (const m of c.members) {
-      const fittings = ['takeoff', 'damper_open'];
-      if (m.quantity > 1) fittings.push({ type: 'y_piece', quantity: m.quantity - 1 });
-      // Orthogonal: along the spine to the take-off, then square off to the
-      // room. Real flex does not run diagonally across a ceiling.
-      const elbow = spine.horizontal ? { x: m.at.x, y: m.at.y } : { x: m.at.x, y: m.at.y };
-      const branchPts = [jPoint];
-      if (Math.abs(elbow.x - jPoint.x) > 0.5 || Math.abs(elbow.y - jPoint.y) > 0.5) branchPts.push(elbow);
-      branchPts.push(spine.horizontal ? { x: elbow.x, y: m.target.y } : { x: m.target.x, y: elbow.y });
-      branchPts.push({ x: m.target.x, y: m.target.y });
+    // Airflow, summed from the far end back to the plenum: the run leaving the
+    // plenum carries everything on the arm, and each one after it carries less.
+    const junctionFlow = clusters.map(c => c.members.reduce((sum, m) => sum + (m.airflowLs || 0), 0));
+    const carriedFrom = clusters.map((_, i) => junctionFlow.slice(i).reduce((sum, f) => sum + f, 0));
+
+    const at = (along) => arm.horizontal ? { x: along, y: arm.axisPos }
+                                         : { x: arm.axisPos, y: along };
+
+    let prevPoint = { x: plenum.x, y: plenum.y };
+    let prevId = null;
+
+    clusters.forEach((c, i) => {
+      const jPoint = at(c.along);
+      junctionCounter += 1;
+      const jId = 'junction_' + junctionCounter;
+      nodes.push({ id: jId, type: 'junction', x: jPoint.x, y: jPoint.y,
+                   label: 'J' + junctionCounter, arm: arm.key,
+                   serves: c.members.map(m => m.label) });
+
+      // The first run on each arm leaves the plenum, so it is a 'main'. The
+      // rest of the arm is trunk. Every arm is its own chain — the tree the
+      // pressure calculation walks branches at the plenum, which is what a real
+      // system does.
+      const isFirst = i === 0;
+      const segId = isFirst
+        ? (armIndex === 0 ? 'main' : 'main_' + arm.key.toLowerCase())
+        : 'trunk_' + arm.key.toLowerCase() + '_' + i;
 
       segments.push({
-        id: 'branch_' + m.roomId,
-        // The parent is the TRUNK RUN that feeds this junction, not the
-        // junction node. The segment graph has to be a tree over SEGMENTS —
-        // that is what the index run walks, and pointing at a node instead left
-        // every trunk looking like a dead end with the branches orphaned.
-        parentId: feedingTrunkId,
-        junctionId: jId,
-        role: 'branch',
-        roomId: m.roomId,
-        destination: m.label,
-        airflowLs: m.airflowLs,
-        zone: m.zone,
-        points: dedupePoints(branchPts),
-        fittings
+        id: segId,
+        parentId: prevId,
+        role: isFirst ? 'main' : 'trunk',
+        arm: arm.key,
+        // THE NAC SUPPLY PLENUM RULE: ONE plenum, with two or three mains off
+        // it. The plenum itself is a single fitting and is counted once, on the
+        // first main only — counting it per arm bought three plenums for a
+        // house that has one.
+        plenumOutlet: isFirst,
+        // A main records the group of the house it feeds, because that is what
+        // an installer and the order need to know about it.
+        serves: isFirst ? arm.drops.map(d => d.label) : null,
+        destination: isFirst ? 'Supply plenum \u2192 J' + junctionCounter
+                             : 'J' + (junctionCounter - 1) + ' \u2192 J' + junctionCounter,
+        airflowLs: carriedFrom[i],
+        points: dedupePoints([prevPoint, jPoint]),
+        rigid: isFirst,
+        fittings: (isFirst && armIndex === 0) ? ['supply_plenum'] : []
       });
-      nodes.push({ id: 'outlet_' + m.roomId, type: 'outlet', x: m.target.x, y: m.target.y,
-                   label: m.label, zone: m.zone });
+      prevPoint = jPoint;
+      prevId = segId;
+      const feedingTrunkId = segId;
+
+      // ── The take-off ──────────────────────────────────────────────────────
+      // A BTO serving several rooms runs ONE major branch out to the group
+      // before it splits. Pulling each room individually back to the trunk is
+      // what produced the explosion of branches at the middle of the plan, and
+      // it is not how anybody installs a house: the three minor bedrooms come
+      // off one branch, not three separate take-offs.
+      const minForMajor = settings.duct.majorBranchMinRooms ?? 2;
+      let feedsRooms = feedingTrunkId;       // what the room branches hang off
+      let splitPoint = jPoint;               // where they start from
+
+      // A hub that lands on the trunk itself is not a run — there is nothing to
+      // install between the take-off and the split, and a zero-length segment
+      // has no geometry for the drawing or the BOM.
+      const hubAcrossProbe = c.members.reduce((sum, m) =>
+        sum + (arm.horizontal ? m.target.y : m.target.x), 0) / c.members.length;
+      const hubOffset = Math.abs(hubAcrossProbe - (arm.horizontal ? jPoint.y : jPoint.x));
+
+      if (c.members.length >= minForMajor && hubOffset > 1) {
+        // The group's hub: the middle of the rooms it serves, squared back onto
+        // the arm so the major branch leaves the trunk at a right angle.
+        const hub = arm.horizontal ? { x: jPoint.x, y: hubAcrossProbe }
+                                   : { x: hubAcrossProbe, y: jPoint.y };
+        const groupFlow = c.members.reduce((sum, m) => sum + (m.airflowLs || 0), 0);
+        const btoId = 'bto_' + junctionCounter;
+
+        segments.push({
+          id: btoId,
+          parentId: feedingTrunkId,
+          junctionId: jId,
+          role: 'branch',
+          arm: arm.key,
+          major: true,
+          serves: c.members.map(m => m.label),
+          destination: c.members.map(m => m.label).join(' + '),
+          airflowLs: groupFlow,
+          zone: c.members[0]?.zone || null,
+          points: dedupePoints([jPoint, hub]),
+          fittings: ['takeoff']
+        });
+        nodes.push({ id: 'bto_node_' + junctionCounter, type: 'junction', bto: true,
+                     x: hub.x, y: hub.y, label: 'BTO',
+                     serves: c.members.map(m => m.label) });
+        feedsRooms = btoId;
+        splitPoint = hub;
+      }
+
+      // ── Room branches off the take-off ────────────────────────────────────
+      for (const m of c.members) {
+        const fittings = c.members.length >= minForMajor ? ['y_piece'] : ['takeoff'];
+        // Square off and into the room. Flex does not run diagonally across a
+        // ceiling.
+        const branchPts = [splitPoint];
+        const corner = arm.horizontal ? { x: splitPoint.x, y: m.target.y }
+                                      : { x: m.target.x, y: splitPoint.y };
+        if (Math.abs(corner.x - splitPoint.x) > 0.5 || Math.abs(corner.y - splitPoint.y) > 0.5) {
+          branchPts.push(corner);
+        }
+        branchPts.push({ x: m.target.x, y: m.target.y });
+
+        segments.push({
+          id: 'branch_' + m.roomId,
+          // The parent is the RUN that feeds it — the major branch where there
+          // is one, otherwise the trunk run itself. The segment graph has to be
+          // a tree over SEGMENTS, because that is what the index run walks.
+          parentId: feedsRooms,
+          junctionId: jId,
+          role: 'branch',
+          roomId: m.roomId,
+          arm: arm.key,
+          destination: m.label,
+          airflowLs: m.airflowLs,
+          zone: m.zone,
+          points: dedupePoints(branchPts),
+          fittings
+        });
+        nodes.push({ id: 'outlet_' + m.roomId, type: 'outlet', x: m.target.x, y: m.target.y,
+                     label: m.label, zone: m.zone });
 
       // ── Finals, when a room has more than one outlet ──────────────────────
       if (m.quantity > 1) {
@@ -484,7 +681,8 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
                        x: pt.x, y: pt.y, label: m.label + ' ' + (k + 1), zone: m.zone });
         });
       }
-    }
+      }
+    });
   });
 
   return {
@@ -492,9 +690,22 @@ export function buildDuctTree({ rooms = [], airflow, outlets, layout = {}, zones
     segments,
     nodes,
     footprint,
-    spine,
+    // Kept for the manual routing path and for anything that still asks.
+    spine: trunkSpine(footprint, plenum),
+    arms: arms.map(a => ({ key: a.key, horizontal: a.horizontal,
+                           rooms: a.drops.map(d => d.label) })),
+    // What leaves the fan coil. Two or three, each serving a group of the
+    // house — the thing an installer looks at first.
+    supplyMains: arms.map((a, i) => ({
+      index: i + 1,
+      arm: a.key,
+      segmentId: i === 0 ? 'main' : 'main_' + a.key.toLowerCase(),
+      airflowLs: round(a.drops.reduce((sum, d) => sum + (d.airflowLs || 0), 0), 0),
+      serves: a.drops.map(d => d.label)
+    })),
+    mainCount: arms.length,
     plenum: { ...plenum, source: plenumSource },
-    junctionCount: clusters.length,
+    junctionCount: junctionCounter,
     warnings,
     notice: AUTO_ROUTE_NOTICE
   };
@@ -564,7 +775,7 @@ export function measureTree(tree, calibration, opts = {}) {
  */
 export function routedOverlay({ network, labelDetail = DEFAULT_LABEL_DETAIL,
                                 returnRoute = null, returnDesign = null,
-                                activeId = null } = {}) {
+                                zoneColourByRoomId = {}, activeId = null } = {}) {
   const out = {};
   for (const s of (network?.sections || [])) {
     if (!s.points || s.points.length < 2) continue;
@@ -573,11 +784,28 @@ export function routedOverlay({ network, labelDetail = DEFAULT_LABEL_DETAIL,
       role: s.role,
       sectionId: s.id,
       roomId: s.roomId || null,
+      major: !!s.major,
+      serves: s.serves || null,
       zone: s.zone || null,
       diameterMm: s.diameterMm,
       airflowLs: s.airflowLs,
       lengthM: s.lengthM,
-      colour: roleColour(s.role),
+      // LABEL PRIORITY. A drawing with a size on every one of twenty-five runs
+      // is unreadable; NAC's own sheets carry about ten. The trunk always gets
+      // one — it is the spine. A branch gets one, because that is the size the
+      // installer pulls for the room. A final only gets one when it is a
+      // DIFFERENT size from the branch feeding it: repeating the same number
+      // 300 mm further along the same duct is the clutter, not the information.
+      labelPriority: s.role === 'main' || s.role === 'trunk' ? 3
+        : s.role === 'return' ? 3
+        // A MAJOR branch is the take-off feeding a group of rooms — the size an
+        // installer pulls. The short run from there into one room is not.
+        : s.role === 'branch' && s.major ? 3
+        : s.role === 'branch' ? 1
+        : 1,
+      colour: runColour(s, zoneColourByRoomId),
+      zoneColour: s.roomId ? (zoneColourByRoomId[s.roomId]?.colour || null) : null,
+      zoneName: s.roomId ? (zoneColourByRoomId[s.roomId]?.shortName || null) : null,
       width: lineWidthForDiameter(s.diameterMm),
       label: segmentLabel(s, labelDetail),
       auto: s.auto !== false,
@@ -586,6 +814,19 @@ export function routedOverlay({ network, labelDetail = DEFAULT_LABEL_DETAIL,
       reducerFrom: s.reducerFrom || null,
       reducerTo: s.reducerTo || null
     };
+  }
+
+  // Drop a final's label when it repeats the size of the branch that feeds it,
+  // and drop a trunk segment's when the run either side of it is the same size.
+  const byId = new Map((network?.sections || []).map(x => [x.id, x]));
+  for (const s of (network?.sections || [])) {
+    const entry = out[s.id];
+    if (!entry || !entry.label) continue;
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    if (!parent) continue;
+    if (parent.diameterMm === s.diameterMm) {
+      if (s.role === 'final' || s.role === 'trunk') { entry.label = null; entry.labelSuppressed = 'same size as the run before it'; }
+    }
   }
 
   if (returnRoute?.points) {
@@ -599,7 +840,7 @@ export function routedOverlay({ network, labelDetail = DEFAULT_LABEL_DETAIL,
       colour: roleColour('return'),
       width: lineWidthForDiameter(ret?.diameterMm),
       label: labelDetail === LABEL_DETAIL.HIDE ? null
-        : 'RETURN' + (ret?.diameterMm ? '\n' + ret.diameterMm + 'Ø' : ''),
+        : (ret?.diameterMm ? 'RETURN \u00f8' + ret.diameterMm : 'RETURN'),
       auto: !!returnRoute.auto,
       locked: !!returnRoute.locked
     };
@@ -618,9 +859,20 @@ export function routedMarkers(network, tree) {
   const sections = network?.sections || [];
 
   for (const n of (tree?.nodes || [])) {
-    if (n.type === 'junction') {
-      markers.push({ type: 'junction', x: n.x, y: n.y, label: n.label,
-                     title: 'Take-off / Y piece — serves ' + (n.serves || []).join(', ') });
+    // The NAC topology generator emits its take-offs as nodes of type 'bto';
+    // the older tree called the same thing a junction. Both are the fitting an
+    // installer sets on the main, so both get drawn.
+    if (n.type === 'junction' || n.type === 'bto') {
+      markers.push({ type: n.type === 'bto' || n.bto ? 'bto' : 'junction',
+                     x: n.x, y: n.y, label: n.label,
+                     // A BTO is a fitting an installer sets; a plain junction
+                     // where the trunk meets a branch is just a meeting point.
+                     bto: n.type === 'bto' || !!n.bto,
+                     // The direction of the duct the collar sits on, so the
+                     // drawing can set the take-off across it.
+                     angle: n.angle,
+                     serves: n.serves || [],
+                     title: 'Branch take-off \u2014 serves ' + (n.serves || []).join(', ') });
     }
   }
 
@@ -631,14 +883,28 @@ export function routedMarkers(network, tree) {
                      label: s.reducerFrom + '→' + s.reducerTo,
                      title: 'Reducer ' + s.reducerFrom + ' to ' + s.reducerTo + ' mm' });
     }
-    // A zone damper sits on the branch, before the run splits.
-    if (s.role === 'branch' && s.zone && s.points?.length >= 2) {
-      const a = s.points[0], b = s.points[1];
-      markers.push({ type: 'damper', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
-                     label: s.zone, title: 'Zone damper — ' + s.zone + ' (' + s.destination + ')' });
-    }
+    // NO DAMPER IS PLACED HERE. placeZoneDampers() is the one that decides
+    // where the motors go, and it is the one the BOM counts. Putting a second
+    // damper on every zoned branch from here drew SEVEN dampers on an order
+    // that buys six, and stacked two of them on one branch — a fitting on the
+    // drawing that nobody installs.
   }
-  return markers;
+
+  // Several finals leaving the same take-off point are ONE place on the ceiling
+  // where the installer works, not three. Stacking three identical symbols on
+  // the same pixel is the clutter this drawing is meant to be free of, so they
+  // merge into a single mark that names everything it serves.
+  const merged = [];
+  const seen = new Map();
+  for (const m of markers) {
+    if (m.type !== 'bto' && m.type !== 'junction') { merged.push(m); continue; }
+    const key = m.type + ':' + Math.round(m.x / 6) + ':' + Math.round(m.y / 6);
+    const at = seen.get(key);
+    if (!at) { seen.set(key, m); merged.push(m); continue; }
+    at.serves = [...new Set([...(at.serves || []), ...(m.serves || [])])];
+    at.title = 'Branch take-off \u2014 serves ' + (at.serves || []).join(', ');
+  }
+  return merged;
 }
 
 // ── PART 4 & 16: is this layout any good, and is it safe to trust? ──────────
@@ -744,7 +1010,8 @@ export function routeConfidence({ design, tree, score } = {}) {
  * sized by the return design (from the unit's required return size), never by
  * anything worked out here, and where there are two returns both are routed.
  */
-export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = [] } = {}) {
+export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = [],
+                                    calibration = null } = {}) {
   const unit = (layout.indoorUnit?.x !== undefined) ? layout.indoorUnit
              : (layout.plenum?.x !== undefined ? layout.plenum : null);
   if (!unit) {
@@ -757,6 +1024,29 @@ export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = []
   const count = returnDesign?.returnCount || 1;
   const routes = [];
   const warnings = [];
+
+  // ── TWO RETURNS ARE TWO DUCTS, ALL THE WAY TO THE PLENUM ────────────────
+  //
+  // Nick: "R1 must remain its own ø400 duct from R1 grille to return-plenum
+  // collar 1… They may terminate on the same return plenum but must not merge
+  // before it."
+  //
+  // Squaring both returns onto the unit's own centre line gave them a SHARED
+  // vertical leg — R1 ran (402,782)→(402,596) and R2 ran (402,940)→(402,596),
+  // so one lay exactly on top of the other for the whole approach. That is not
+  // a drawing problem: the model said the two ducts occupied the same metres of
+  // ceiling, and every length measured along that leg was measured twice.
+  //
+  // So each return gets its own LANE — a line parallel to the approach, offset
+  // by the collar pitch on the return plenum — and turns in to the unit only at
+  // the very end, which is where its own collar is. Two ø400 flexes run side by
+  // side in a hallway in exactly this way.
+  const ppm = calibration?.pixelsPerMm || 0;
+  const ductMm = returnDesign?.duct?.diameterMm || 400;
+  // Duct plus a working gap, in plan pixels. With no scale there is nothing to
+  // convert, so the lanes fall back to a fraction of the run and still separate.
+  const lanePitchPx = ppm ? (ductMm + 200) * ppm : 18;
+  const laneOf = (i) => (i - (count - 1) / 2) * lanePitchPx;
 
   for (let i = 0; i < count; i++) {
     const key = i === 0 ? 'returnGrille' : 'returnGrille_' + (i + 1);
@@ -781,10 +1071,33 @@ export function buildReturnRoutes({ layout = {}, returnDesign = null, rooms = []
       continue;
     }
     routes.push({ id: i === 0 ? 'return' : 'return_' + (i + 1),
-                  points: orthogonal({ x: grille.x, y: grille.y }, unit), assumed: false });
+                  lane: round(laneOf(i), 1),
+                  points: count > 1
+                    ? ownLane({ x: grille.x, y: grille.y }, unit, laneOf(i))
+                    : orthogonal({ x: grille.x, y: grille.y }, unit),
+                  assumed: false });
   }
 
   return { generated: routes.length > 0, routes, warnings, notice: AUTO_ROUTE_NOTICE };
+}
+
+/**
+ * The same square route, but on this duct's OWN lane — and it ENDS there.
+ *
+ * Across on the grille's line to the lane, then up the lane to the plenum. The
+ * run stops at the lane rather than turning in to the unit's centre, because
+ * the lane IS this duct's collar on the return plenum: two ø400 inlets 600 mm
+ * apart straddle a plenum face that has to be about 1.2 m wide to take them.
+ *
+ * Turning both in to the centre was the last thing making them share metal —
+ * the two final legs were collinear, one lying on the other for its whole
+ * length. Ending on the lane means the two routes have no point in common at
+ * all, which is the thing being asserted.
+ */
+function ownLane(from, to, offsetPx) {
+  if (!offsetPx) return orthogonal(from, to);
+  const laneX = to.x + offsetPx;
+  return dedupePoints([from, { x: laneX, y: from.y }, { x: laneX, y: to.y }]);
 }
 
 /** Two legs, square — the way duct actually runs. */
@@ -801,22 +1114,122 @@ function orthogonal(from, to) {
  * the drawing rather than left implied. The position stays editable — this is a
  * starting point, like everything else the router produces.
  */
-export function placeZoneDampers(network, { zoneOverrides = {} } = {}) {
+export function placeZoneDampers(network, { zoneOverrides = {}, zones = null } = {}) {
+  // AN ALWAYS-OPEN ZONE HAS NO MOTOR, SO IT GETS NO DAMPER.
+  //
+  // The common zone is what keeps air moving when everything else shuts; there
+  // is nothing to close and the BOM never buys a motor for it. Drawing one put
+  // seven dampers on a plan whose order carries six motors — a fitting on the
+  // drawing that nobody installs, which is the same fault as a fitting in the
+  // design that nobody drew.
+  const alwaysOpen = new Set((zones?.zones || [])
+    .filter(z => z.alwaysOpen).map(z => z.name));
+  // SUPPLY ONLY. A zone damper on the return does not balance a room — it
+  // starves the fan coil — so the return side is dropped here rather than being
+  // relied on to have no zone set on it.
+  const sections = (network?.sections || []).filter(s => !isReturnSection(s));
+  const byId = new Map(sections.map(s => [s.id, s]));
+  const kids = new Map();
+  for (const s of sections) {
+    if (!s.parentId) continue;
+    if (!kids.has(s.parentId)) kids.set(s.parentId, []);
+    kids.get(s.parentId).push(s);
+  }
+
+  // Which zones sit downstream of each run.
+  const zonesBelow = new Map();
+  const walk = (s) => {
+    if (zonesBelow.has(s.id)) return zonesBelow.get(s.id);
+    const set = new Set();
+    if (s.zone) set.add(s.zone);
+    for (const k of (kids.get(s.id) || [])) for (const z of walk(k)) set.add(z);
+    zonesBelow.set(s.id, set);
+    return set;
+  };
+  for (const s of sections) walk(s);
+
+  // ONE damper per zone, on the run that feeds the whole of that zone and
+  // nothing else — the take-off for a grouped zone, the room branch for a zone
+  // of one room. A damper on every branch would mean five motors on a zone that
+  // has one, which is money on the order and a control that does not exist.
   const out = [];
-  for (const s of (network?.sections || [])) {
-    if (s.role !== 'branch' || !s.zone || !s.points || s.points.length < 2) continue;
+  const done = new Set();
+  for (const s of sections) {
+    const below = zonesBelow.get(s.id) || new Set();
+    if (below.size !== 1) continue;
+    const zone = [...below][0];
+    if (done.has(zone) || alwaysOpen.has(zone)) continue;
+    const parent = s.parentId ? byId.get(s.parentId) : null;
+    const parentBelow = parent ? (zonesBelow.get(parent.id) || new Set()) : new Set();
+    // The highest run that is still all one zone: its parent must carry more
+    // than this zone (or there is no parent).
+    if (parent && parentBelow.size === 1) continue;
+    if (!s.points || s.points.length < 2) continue;
+    done.add(zone);
+
     const override = zoneOverrides[s.id];
     if (override?.x !== undefined) {
-      out.push({ id: 'damper_' + s.id, sectionId: s.id, zone: s.zone,
-                 roomId: s.roomId, x: override.x, y: override.y, moved: true });
+      out.push({ id: 'damper_' + s.id, sectionId: s.id, zone, roomId: s.roomId ?? null,
+                 x: override.x, y: override.y, moved: true });
       continue;
     }
-    // Just off the take-off, on the first leg, which is where it is reachable.
-    const a = s.points[0], b = s.points[1];
-    out.push({ id: 'damper_' + s.id, sectionId: s.id, zone: s.zone, roomId: s.roomId,
-               x: a.x + (b.x - a.x) * 0.35, y: a.y + (b.y - a.y) * 0.35, moved: false });
+    // A SHORT WAY INTO THE RUN, not on the collar. A run is a swept polyline of
+    // a dozen samples, so a fraction of the FIRST LEG is three per cent of the
+    // duct: the three bedroom dampers all landed on the same take-off and the
+    // drawing showed one damper with two hidden underneath it. A fraction of
+    // the WHOLE run puts each one in its own branch, which is also where it is
+    // fitted — far enough in to be reachable, before the duct turns away.
+    //
+    // The ANGLE of the leg it lands on travels with it so the drawing can sit
+    // the damper ACROSS the duct — a damper drawn along the duct is a
+    // decoration.
+    const at = pointAlong(s.points, DAMPER_ALONG_RUN);
+    out.push({ id: 'damper_' + s.id, sectionId: s.id, zone, roomId: s.roomId ?? null,
+               x: at.x, y: at.y, angle: at.angle,
+               diameterMm: s.diameterMm ?? null, moved: false });
+  }
+  // Two dampers on two different branches can still land within a few
+  // millimetres of one another where the branches leave the same point. Slide
+  // the later one further along its own run until it is clear — its own run,
+  // so it never ends up drawn on a duct it does not control.
+  const MIN_APART_PX = 22;
+  for (let i = 1; i < out.length; i++) {
+    const sec = byId.get(out[i].sectionId);
+    if (!sec?.points || out[i].moved) continue;
+    for (let tries = 0; tries < 5; tries++) {
+      const clash = out.slice(0, i).some(o =>
+        Math.hypot(o.x - out[i].x, o.y - out[i].y) < MIN_APART_PX);
+      if (!clash) break;
+      const at = pointAlong(sec.points, Math.min(0.85, DAMPER_ALONG_RUN + 0.16 * (tries + 1)));
+      out[i].x = at.x; out[i].y = at.y; out[i].angle = at.angle;
+    }
   }
   return out;
+}
+
+/** How far into the branch a zone damper is fitted, as a fraction of the run. */
+const DAMPER_ALONG_RUN = 0.3;
+
+/** The point, and the direction of travel, a fraction of the way along a run. */
+function pointAlong(pts, fraction) {
+  let total = 0;
+  const segs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    segs.push(d); total += d;
+  }
+  if (!total) return { x: pts[0].x, y: pts[0].y, angle: 0 };
+  let want = total * Math.min(1, Math.max(0, fraction));
+  for (let i = 0; i < segs.length; i++) {
+    if (want <= segs[i] || i === segs.length - 1) {
+      const t = segs[i] ? want / segs[i] : 0;
+      const a = pts[i], b = pts[i + 1];
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+               angle: Math.atan2(b.y - a.y, b.x - a.x) };
+    }
+    want -= segs[i];
+  }
+  return { x: pts[0].x, y: pts[0].y, angle: 0 };
 }
 
 // ── PART 8: EDITING THE ROUTE ───────────────────────────────────────────────
@@ -860,7 +1273,9 @@ export function routeHandles(network, { lockedIds = [] } = {}) {
       const k = key(p);
       const entry = byPos.get(k) || { x: p.x, y: p.y, attach: [] };
       entry.x = p.x; entry.y = p.y;
+      entry.added = entry.added || !!p.added;
       entry.attach.push({ sectionId: s.id, index: i, role: s.role,
+                          added: !!p.added,
                           end: i === 0 || i === s.points.length - 1 });
       byPos.set(k, entry);
     });
@@ -883,6 +1298,8 @@ export function routeHandles(network, { lockedIds = [] } = {}) {
       // A handle is locked if ANY run meeting there is locked — moving it would
       // drag a locked run with it.
       locked: e.attach.some(a => locked.has(a.sectionId)),
+      /** Put here by a person, rather than by the curve sweep. */
+      added: !!e.added,
       shared
     });
   }
@@ -1033,8 +1450,15 @@ export function addRoutePoint(network, sectionId, at, { lockedIds = [] } = {}) {
     const d = distanceToSegment(at, s.points[i - 1], s.points[i]);
     if (d < bestD) { bestD = d; bestLeg = i; }
   }
+  // MARKED AS ADDED BY A PERSON.
+  //
+  // A routed run is a swept curve, so most of its points are tessellation — the
+  // shape of the bend, not decisions anybody made. Only the points someone put
+  // there to get around a real obstacle are worth a handle on the drawing, so
+  // they are flagged here and the Plan tab shows handles for these, the ends and
+  // the junctions, and nothing else.
   const pts = [...s.points.slice(0, bestLeg).map(p => ({ ...p })),
-               { x: round(at.x, 2), y: round(at.y, 2) },
+               { x: round(at.x, 2), y: round(at.y, 2), added: true },
                ...s.points.slice(bestLeg).map(p => ({ ...p }))];
   return { edits: { [sectionId]: pts }, index: bestLeg, blocked: [] };
 }
