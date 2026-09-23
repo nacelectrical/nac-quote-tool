@@ -530,8 +530,16 @@ function stepSend(app, interruptions) {
             'resolved: ' + interruptions.blocking.map(i => i.title).join('; '))
         : null,
       card('The customer’s quote', 'What they see, and nothing else',
+        d.issuedQuote
+          ? h('div', { class: 'note' },
+              'Proposal link issued' +
+              (d.issuedQuote.quoteRevision ? ' (revision ' + d.issuedQuote.quoteRevision + ')' : '') +
+              ', expires ' + new Date(d.issuedQuote.expiresAt).toLocaleDateString('en-AU') + '.')
+          : null,
         h('div', { class: 'btn-row' },
-          button('Open the signing link', () => app.showSignLink(), 'primary small'),
+          button(d.issuedQuote ? 'Open the proposal link' : 'ISSUE THE PROPOSAL',
+            () => app.issueCustomerQuote(), 'primary small'),
+          button('Old signing link', () => app.showSignLink(), 'ghost small'),
           button('Customer PDF', () => app.downloadCustomerReport(), 'small'),
           button('Internal design PDF', () => app.downloadInternalReport(), 'ghost small'),
           button('Update the quote from this design', () => app.updateQuoteFromDesign(), 'ghost small'))),
@@ -551,7 +559,7 @@ function stepSend(app, interruptions) {
           'but read them first.')
       : banner('ok', 'Ready to quote.'),
     ...interruptions.confirm.map(i => interruptionRow(app, i)),
-    card('Create the customer’s quote', 'Builds the quote, the PDF and the signing link',
+    card('Create the customer’s quote', 'Builds the quote, the PDF and the proposal link',
       h('div', { class: 'qsend-price' },
         h('span', {}, 'Customer price'),
         h('strong', {}, money(d.commercials?.sellPriceIncGst))),

@@ -21,7 +21,7 @@ import { drawBtoFabricationDetail } from './ui/symbols.mjs';
  */
 import { invalidateForNewScale } from './engines/scale-invalidation.mjs';
 import { SCALE_SOURCE, VERIFIED_SCALE_SOURCES } from './engines/design-stage.mjs';
-import { currentUserEmail } from './auth.mjs';
+import { currentUserEmail, dbHeaders } from './auth.mjs';
 export const PLAN_VIEW = Object.freeze({
   CLEAN: 'clean',
   OUTLETS: 'outlets',
@@ -727,6 +727,73 @@ export class DesignerApp {
       message: sheet.site || '',
       lines
     });
+  }
+
+  // ── ISSUING THE UPGRADED CUSTOMER QUOTE ──────────────────────────────────
+  //
+  // The presentation had a gate, a content library, a customer page and a PDF,
+  // and nothing in the application ever issued one. SEND QUOTE produced the
+  // old sign.html link and always had. This is the button that was missing.
+  //
+  // The whole thing happens on the server: the design, the content library and
+  // NAC's settings are read there with the service key, the presentation is
+  // built and gated there, and a blocked quote never becomes a token. The
+  // browser posts a design id and gets back a link, or the list of reasons it
+  // did not.
+  async issueCustomerQuote() {
+    const d = this.design;
+    if (!d.id) return toast('Save the design before issuing a quote.', 'bad');
+
+    const options = Array.isArray(d.systemOptions) ? d.systemOptions : [];
+    this.busy = true; this.render();
+    let r, out;
+    try {
+      r = await fetch('/api/quote-issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...dbHeaders() },
+        body: JSON.stringify({
+          designId: d.id,
+          customer: d.customer || {},
+          job: d.job || {},
+          quoteRevision: (d.revisions?.length || 0) + 1,
+          proposalNumber: d.quoteId || d.designId || '',
+          systemOptions: options.length ? options : null,
+          chosenSystemId: d.chosenSystemId || null,
+          baseUrl: location.origin
+        })
+      });
+      out = await r.json().catch(() => ({}));
+    } catch (e) {
+      this.busy = false; this.render();
+      return toast('Could not reach the server to issue the quote.', 'bad');
+    } finally {
+      this.busy = false; this.render();
+    }
+
+    if (r.status === 409 && out.blockers?.length) {
+      // The reasons, not a dead button. Every one names the thing to fix.
+      return alertDialog({
+        title: 'This quote cannot be issued yet',
+        message: out.blockers.length + ' thing(s) stand in the way. Nothing was sent and no '
+               + 'link exists — fix these and press SEND QUOTE again.',
+        lines: out.blockers.map(b => b.message),
+        okLabel: 'Got it'
+      });
+    }
+    if (!r.ok || !out.url) {
+      return toast(out.message || 'The quote could not be issued.', 'bad');
+    }
+
+    d.issuedQuote = { token: out.token, url: out.url, expiresAt: out.expiresAt,
+                      quoteRevision: out.quoteRevision, totalIncGst: out.totalIncGst,
+                      issuedAt: new Date().toISOString() };
+    this.dirty = true;
+    this.update();
+    await linkDialog({
+      title: 'Quote issued' + (out.quoteRevision ? ' — revision ' + out.quoteRevision : ''),
+      message: 'Send this to the customer. It opens their proposal, lets them choose a system '
+             + 'and accept it. It expires ' + new Date(out.expiresAt).toLocaleDateString('en-AU') + '.',
+      url: out.url });
   }
 
   async showSignLink() {
