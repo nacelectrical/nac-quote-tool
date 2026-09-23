@@ -143,6 +143,7 @@ export const ZONE_CONTROLLERS = [
     .map(c => ({
       id: c.id, name: c.name, maxZones: c.maxZones, brandLock: c.brandLock || null,
       cost: c.cost, supplierCode: c.code,
+      accessoryIds: Array.isArray(c.accessoryIds) ? c.accessoryIds : [],
       note: 'MMEM ' + c.code + ' — $' + c.cost.toFixed(2) + ' ex GST (' + MMEM_META.edition + ').'
     }))
 ];

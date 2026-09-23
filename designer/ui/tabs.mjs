@@ -444,6 +444,25 @@ export function renderEquipment(app) {
         { key: 'maxZones', label: 'Max zones', align: 'right' },
         { key: 'note', label: 'Notes' }
       ], d.controllerSelection.compatible),
+      // A controller that takes sensors is bought as a kit plus a separate
+      // sensor line. Nick sets the count per job, so it is asked for here and
+      // the bill of materials follows it.
+      d.zoneAccessory ? card(d.zoneAccessory.accessory.name,
+        'MMEM ' + d.zoneAccessory.accessory.code + ' — $'
+          + Number(d.zoneAccessory.accessory.cost).toFixed(2) + ' ex GST each, '
+          + 'bought separately from the kit. This design has ' + (d.zones?.zoneCount ?? 0)
+          + ' zone(s). Enter 0 if none are going in.',
+        field('How many on this job',
+          input(d.zoneAccessoryCount ?? '',
+            v => app.setDesignField('zoneAccessoryCount', v === '' ? null : Number(v)),
+            { type: 'number', min: '0', step: '1', inputmode: 'numeric',
+              placeholder: 'required' })),
+        d.zoneAccessory.answered
+          ? banner('ok', d.zoneAccessory.quantity + ' \u00d7 ' + d.zoneAccessory.accessory.name
+              + ' \u2014 $' + (d.zoneAccessory.quantity * d.zoneAccessory.accessory.cost).toFixed(2)
+              + ' ex GST on the bill of materials.')
+          : banner('warn', 'Not set. The proposal is blocked until this is answered.'))
+        : null,
       d.controllerSelection.incompatible.length
         ? expandable('Not compatible with this design', () => table([
             { key: 'name', label: 'Controller' }, { key: 'reason', label: 'Why not' }

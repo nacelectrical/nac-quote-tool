@@ -132,6 +132,27 @@ export function buildBillOfMaterials(design, opts = {}) {
     });
   }
 
+  // Per-zone sensors, where the controller takes them. A count of zero is a
+  // real answer and puts no line on the job; a count nobody has given is not
+  // guessed at here — the quote gate asks for it.
+  const acc = design.zoneAccessory;
+  if (acc && acc.accessory && Number(acc.quantity) > 0) {
+    const qty = Number(acc.quantity);
+    const each = acc.accessory.cost ?? null;
+    items.push({
+      key: 'zone_sensor',
+      label: acc.accessory.name,
+      unit: 'each', quantity: qty,
+      unitCost: each,
+      totalCost: each === null ? null : round(each * qty, 2),
+      priceSource: each === null ? null : PRICE_SOURCE.NAC,
+      supplierCode: acc.accessory.code || null,
+      priced: each !== null,
+      sellPrice: null,
+      category: 'equipment'
+    });
+  }
+
   // ── The proposal ductwork allowance ────────────────────────────────────────
   //
   // ONE LINE, and it says on its face that it is an allowance. Not a length of

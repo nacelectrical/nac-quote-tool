@@ -18,7 +18,7 @@ import { sizableRooms, blockedRooms, totalConditionedArea,
 import { calibrationRequirement, deriveCalibrationFromRooms } from './calibration.mjs';
 import { classificationSummary, isConditionedRoom, isExcludedRoom } from './classify.mjs';
 import { roomLoad, systemLoad, describeAssumptions } from './loads.mjs';
-import { selectEquipment, selectZoneController } from './equipment.mjs';
+import { selectEquipment, selectZoneController, zoneAccessoryFor } from './equipment.mjs';
 import { calculateAirflow, applySystemShares } from './airflow.mjs';
 import { designOutlets } from './outlets.mjs';
 import { buildDuctNetwork } from './ducts.mjs';
@@ -48,7 +48,7 @@ import { capabilities, DESIGN_STAGE, ROOM_STATUS_PROVISIONAL, proposalAllowance 
 import { checkDesignAssemblies } from './fitting-assembly.mjs';
 import { checkSupplyGraph, checkPlenum, checkDuctSizes, pressureReadiness,
          supplyMains, PRESSURE_STATUS } from './supply-graph.mjs';
-import { ZONE_CONTROLLERS } from './catalogue.mjs';
+import { ZONE_CONTROLLERS, ZONE_ACCESSORIES } from './catalogue.mjs';
 import { buildOutletRegister, checkOutletConsistency } from './outlet-register.mjs';
 import { nacScheduleData } from './nac-schedule.mjs';
 import { pricingRequirements } from './pricing-mode.mjs';
@@ -627,6 +627,13 @@ export function runPipeline(design, ctx = {}) {
         ...(ctx.controllerPricing?.[d.controllerSelection.recommended.id] || {}) }
     : null;
 
+  // Sensors, for the controllers that take them. AirTouch sensors are a
+  // separate MMEM line and were reaching neither the bill of materials nor the
+  // price, so an AirTouch job was quoted with a kit and no sensors in it.
+  // How many is the estimator's call — see zoneAccessoryFor.
+  d.zoneAccessory = zoneAccessoryFor(d.controller, ctx.zoneAccessories || ZONE_ACCESSORIES,
+                                     d.zoneAccessoryCount);
+
   // ── 8. Return air (PART 19) ───────────────────────────────────────────────
   d.returnDesign = designReturnAir({
     totalAirflowLs: d.airflow.allocatedAirflowLs,
@@ -955,6 +962,8 @@ export function runPipeline(design, ctx = {}) {
     proposalAllowance: d.capabilities.mayRouteDucts ? null
       : (d.capabilities.proposalAllowance?.ok ? d.capabilities.proposalAllowance : null),
     controller: d.controller,
+    // Sensors bought on their own line, in the count the estimator set.
+    zoneAccessory: d.zoneAccessory,
     network: d.network,
     outlets: d.outlets,
     zones: d.zones,

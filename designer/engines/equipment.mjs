@@ -21,6 +21,9 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const E = settings.equipment;
   const designKw = Number(systemLoadRec.designKw);
+  // An estimator naming a series on the job overrides the house default.
+  const preferredSeries = (Array.isArray(opts.preferredSeries) ? opts.preferredSeries
+    : Array.isArray(E.preferredSeries) ? E.preferredSeries : []).filter(Boolean);
 
   const candidates = allModels(catalogue)
     .filter(m => !opts.phase || m.phase.includes(opts.phase))
@@ -111,6 +114,11 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
       if (ratio < E.minCapacityRatio) score -= 45;
       if (ratio > E.maxCapacityRatio) score -= 30;
       if (opts.brandPreference && m.brandId === opts.brandPreference) score += 25;
+      // Nick: "use standard unless specified." Where a brand lists two sets at
+      // the same capacity and phase, the series NAC quote wins. Small on
+      // purpose: it separates two models that are otherwise identical to the
+      // ranking, and can never move the selection to a different size.
+      if (m.series && preferredSeries.includes(m.series)) score += 6;
       // A model with no cost cannot be costed or quoted, so it ranks below one
       // that can — whichever pricing basis is in use.
       if (m.supplierCost !== null) score += 22;
@@ -165,6 +173,39 @@ export function selectEquipment(catalogue, systemLoadRec, opts = {}) {
     recommended: candidates.filter(c => c.inWindow).slice(0, 5),
     allCandidates: candidates,
     systemWarnings
+  };
+}
+
+/**
+ * The per-zone accessories a controller needs, and how many are on this job.
+ *
+ * NAC buy the AirTouch as a kit (MMEM MMAAT5DK) and its temperature sensors as
+ * a separate line (MMAAT5S, $92 ex GST each). Nothing consumed that line, so an
+ * AirTouch job was quoted with the kit and no sensors at all — short by the
+ * price of every sensor that goes in.
+ *
+ * Nick chose the count per job rather than a rule: "I choose the count per
+ * job." So this says WHICH accessory applies and leaves HOW MANY to the
+ * estimator. A count that has not been set stays null — it is not assumed to be
+ * one per zone, and it is not assumed to be none.
+ *
+ * @returns {{accessory, quantity, required, answered}|null}
+ */
+export function zoneAccessoryFor(controller, accessories = [], count = undefined) {
+  const ids = Array.isArray(controller?.accessoryIds) ? controller.accessoryIds : [];
+  if (!ids.length) return null;
+  const accessory = (accessories || []).find(a => ids.includes(a.id)) || null;
+  if (!accessory) return null;
+  // Number(null) is 0, and 0 sensors is a real answer. Absent must stay absent.
+  const quantity = (count === null || count === undefined || count === '')
+    ? null
+    : (Number.isFinite(Number(count)) && Number(count) >= 0 ? Math.round(Number(count)) : null);
+  return {
+    accessory,
+    quantity,
+    /** This controller cannot be costed without an answer. */
+    required: true,
+    answered: quantity !== null
   };
 }
 
