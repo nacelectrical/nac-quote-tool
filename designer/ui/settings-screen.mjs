@@ -72,16 +72,24 @@ function ratesRequiringConfirmation(app) {
             (r.diameterMm ? '\u00f8' + r.diameterMm + ' mm \u00b7 ' : '')
             + 'per ' + r.unit
             + (r.supplierCode ? ' \u00b7 ' + r.supplierCode : '')
-            + (r.placeholder ? ' \u00b7 SHIPPED PLACEHOLDER'
+            + (r.sellPriceStated ? ' \u00b7 NAC FIXED SELL PRICE'
+               : r.placeholder ? ' \u00b7 SHIPPED PLACEHOLDER'
                : r.unpriced ? ' \u00b7 NO PRICE AT ALL' : ''))) },
       { key: 'cur', label: 'Current', align: 'right', width: '90px',
-        render: (r) => r.currentRate === null ? '\u2014' : money(r.currentRate) },
+        render: (r) => r.sellPriceStated ? money(r.sellPrice)
+          : r.currentRate === null ? '\u2014' : money(r.currentRate) },
       ...VERIFICATION_FIELDS.map(f => ({
         key: f.key, label: f.label, width: f.key === 'supplierDesc' ? '180px' : '130px',
         render: (r) => cell(r, f)
       })),
       { key: 'state', label: 'Status', width: '160px', render: (r) => r.verified
           ? badge('VERIFIED', 'ok')
+          // A fixed sell price has no supplier and no cost by design. What it
+          // has is who set it and when, which is what this column says.
+          : r.sellPriceStated
+            ? h('div', {}, badge('SET BY NAC', 'ok'),
+                h('div', { class: 'alw-help' }, 'Sell price, set by ' + r.statedBy
+                  + '. No supplier or cost \u2014 the job fee is not applied to it.'))
           : h('div', { class: 'alw-help' },
               'Needs: ' + (r.missing.length
                 ? r.missing.map(m => m.label.toLowerCase()).join(', ') : 'nothing')) }
