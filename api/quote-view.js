@@ -106,6 +106,22 @@ module.exports = async function handler(req, res) {
     const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
     const content = (contentRow && contentRow.data) || {};
 
+    // ── NAC'S SETTINGS HAVE TO COME WITH IT ─────────────────────────────────
+    //
+    // An ISSUED quote is `issuing`, and the gate checks NAC's commercial terms
+    // when it is. This endpoint never loaded them, so `commercialTermsStatus`
+    // was asked about an empty object every time and answered that every term
+    // was missing — every issued quote would have come back "blocked", with
+    // the terms sitting correctly filled in on the settings screen.
+    let settings = {};
+    try {
+      const sres = await supa('/rest/v1/nac_settings?key=eq.nac_hvac_settings_v1&select=value&limit=1',
+        { key: KEY });
+      const srow = Array.isArray(sres.body) ? sres.body[0] : null;
+      const raw = srow && srow.value;
+      settings = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+    } catch (e) { settings = {}; }
+
     const built = presentationMod.buildPresentation({
       design,
       customer: issue.customer || {},
@@ -120,7 +136,14 @@ module.exports = async function handler(req, res) {
       privacy: issue.privacy || {},
       intro: issue.intro || '',
       heroImage: content.heroImage || null,
-      productImage: issue.productImage || null
+      productImage: issue.productImage || null,
+      settings,
+      // The alternatives this quote was issued with, and the one the customer
+      // is currently looking at. Both belong to the ISSUE, not the design: a
+      // customer switching from the Daikin to the Braemar has not redesigned
+      // anything.
+      systemOptions: issue.systemOptions || null,
+      chosenSystemId: issue.chosenSystemId || null
     });
 
     // A quote that the gate blocks is never published, even if somebody

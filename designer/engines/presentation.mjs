@@ -26,6 +26,8 @@ import { quoteGate } from './quote-gate.mjs';
 import { looksUnfilled, customerStatus } from './customer-data.mjs';
 import { commercialTermsStatus } from './commercial-terms.mjs';
 import { licencePromiseCheck } from './nac-terms.mjs';
+import { systemOptionsStatus, chooseSystemOption, optionsFromDesign }
+  from './system-options.mjs';
 export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
@@ -344,6 +346,21 @@ export function presentationGate(design, opts = {}) {
         });
       }
     }
+  }
+
+  // ── EVERY SYSTEM ON THE PAGE IS ONE THE CUSTOMER COULD ACCEPT ───────────
+  //
+  // A customer choosing between two systems can accept either, so both are
+  // real quotes. An option with no price, or a model nobody can order, is not
+  // one — and it is worse than no choice at all, because it looks like one.
+  for (const f of (opts.systemOptions?.failures || [])) {
+    if (f.severity !== 'CRITICAL') continue;
+    blockers.push({ code: f.code, severity: 'CRITICAL', message: f.message,
+                    optionId: f.optionId });
+  }
+  if (opts.systemOptions && opts.systemOptions.count === 0) {
+    blockers.push({ code: 'NO_SYSTEM_TO_QUOTE', severity: 'CRITICAL',
+      message: 'There is no system on this quote to accept.' });
   }
 
   // ── CLAUSE 17.2 ─────────────────────────────────────────────────────────
@@ -670,7 +687,12 @@ function coverageSection(d) {
 
 function investmentSection(d, ctx) {
   const c = d.commercials || {};
-  const total = n(c.sellPriceIncGst);
+  // ── THE PRICE IS THE PRICE OF THE SYSTEM CHOSEN ─────────────────────────
+  // Where the quote offers alternatives, the base is whichever one the
+  // customer is looking at — not the designed unit's price with the choice
+  // shown beside it as decoration.
+  const chosen = ctx.chosenSystem || null;
+  const total = chosen ? n(chosen.priceIncGst) : n(c.sellPriceIncGst);
   if (total === null) return null;
   const selected = rows(ctx.selectedOptions);
   const optionsTotal = selected.reduce((s, o) => s + (n(o.priceIncGst) ?? 0), 0);
@@ -691,8 +713,15 @@ function investmentSection(d, ctx) {
         + 'or adjusted — we will show you exactly what changed and why before any work '
         + 'starts.'
       : null,
-    subtotalExGst: n(c.sellPriceExGst),
-    gst: n(c.gstAmount),
+    // Derived from the total the customer is actually being shown, the same
+    // way the existing quote tool derives it, so the three figures reconcile
+    // whichever system is chosen.
+    subtotalExGst: chosen
+      ? Math.round((total / (1 + (n(c.gstRate) ?? 0.1))) * 100) / 100
+      : n(c.sellPriceExGst),
+    gst: chosen
+      ? Math.round((total - (total / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100
+      : n(c.gstAmount),
     baseIncGst: total,
     selectedOptions: selected.map(o => ({ id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst) })),
     optionsTotal: optionsTotal || null,
@@ -754,7 +783,9 @@ export function buildPresentation({
   design, customer = {}, job = {}, content = {}, settings = {},
   proposalNumber = '', preparedAt = null, expiresAt = null,
   revision = null, status = 'draft', selectedOptionIds = [],
-  privacy = {}, intro = '', heroImage = null, productImage = null
+  privacy = {}, intro = '', heroImage = null, productImage = null,
+  /** Alternative systems the customer chooses between, and which one. */
+  systemOptions = null, chosenSystemId = null
 } = {}) {
   const d = design || {};
   const trust = normaliseTrust(content.trust || settings.trust);
@@ -784,6 +815,15 @@ export function buildPresentation({
       }]
     };
   }
+
+  // ── ALTERNATIVE SYSTEMS ──────────────────────────────────────────────────
+  // A quote with no options given still has one: the system that was designed.
+  // Expressing it that way means the page has ONE shape whether the customer
+  // is choosing between two systems or looking at the one NAC designed.
+  const givenOptions = Array.isArray(systemOptions) && systemOptions.length
+    ? systemOptions : null;
+  const optionStatus = systemOptionsStatus(givenOptions || optionsFromDesign(d));
+  const chosenSystem = chooseSystemOption(optionStatus.options, chosenSystemId);
 
   const evidence = inclusionEvidence(d, {
     trust, standardInclusions: content.standardInclusions || {}
@@ -838,7 +878,7 @@ export function buildPresentation({
     termsAndConditions: content.termsAndConditions,
     customer, siteAddress: job.siteAddress || customer.address,
     reviews: selectedReviewSources, installations: selectedInstallSources,
-    settings
+    settings, systemOptions: optionStatus
   });
   if (!gate.ok) return { ok: false, blockers: gate.blockers, presentation: null };
 
@@ -846,8 +886,36 @@ export function buildPresentation({
 
   const ctx = {
     customer, job, trust, evidence, privacy, intro, heroImage, productImage,
-    proposalNumber, preparedAt, expiresAt, expired,
-    selectedOptions, paymentTerms: content.paymentTerms || {}, aftercare: content.aftercare || {}
+    proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
+    selectedOptions, aftercare: content.aftercare || {},
+    // ── THE DEPOSIT COMES FROM NAC'S CONFIRMED TERMS ──────────────────────
+    //
+    // It used to come from the content library, which is where the wording
+    // lives. So the page showed the library's 20% while the terms the customer
+    // was accepting — clause 5.1 of NAC's own T&C, and the confirmed setting —
+    // said 50%. One document, two deposits, and the one that binds NAC is
+    // whichever their solicitor reads.
+    //
+    // The numbers come from the confirmed terms; the library keeps the prose.
+    paymentTerms: (() => {
+      const lib = content.paymentTerms || {};
+      const t = settings?.commercial?.terms || {};
+      const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
+      const confirmed = t.confirmed === true;
+      return {
+        ...lib,
+        depositPercent: confirmed && num(t.depositPercent) !== null
+          ? num(t.depositPercent) : num(lib.depositPercent),
+        depositAmount: confirmed && num(t.depositAmount) !== null
+          ? num(t.depositAmount) : num(lib.depositAmount),
+        stages: rows(t.paymentStages).filter(st => trimmed(st?.label)).length
+          ? rows(t.paymentStages).map(st => ({ label: trimmed(st.label), detail: trimmed(st.detail) }))
+          : rows(lib.stages),
+        validity: confirmed && num(t.validityDays) !== null
+          ? num(t.validityDays) + ' days from the date of issue'
+          : trimmed(lib.validity)
+      };
+    })()
   };
 
   const presentation = {
@@ -867,6 +935,21 @@ export function buildPresentation({
     },
     hero: heroSection(d, ctx),
     system: systemSection(d, ctx),
+    // ── THE CHOICE, WHERE THERE IS ONE ───────────────────────────────────
+    // Alternatives, not extras: one of these gets installed and its price is
+    // the price on the page. `offersChoice` is false on a single-system quote,
+    // and the page simply does not draw the chooser.
+    systemChoice: {
+      offersChoice: optionStatus.offersChoice,
+      chosenId: chosenSystem ? chosenSystem.id : null,
+      options: optionStatus.options.map(o => ({
+        id: o.id, label: o.label, brand: o.brand, model: o.model,
+        capacityKw: o.capacityKw, phase: o.phase, note: o.note,
+        recommended: o.recommended,
+        priceIncGst: o.priceIncGst,
+        chosen: !!chosenSystem && o.id === chosenSystem.id
+      }))
+    },
     rationale: rationaleSection(d, ctx),
     inclusions: resolveInclusions(evidence),
     zones: zonesSection(d),

@@ -324,6 +324,40 @@ function trustHtml(p) {
       '<div><dt>' + esc(f.label) + '</dt><dd>' + esc(f.value) + '</dd></div>').join('') + '</dl>'));
 }
 
+/**
+ * ── CHOOSING THE SYSTEM ────────────────────────────────────────────────────
+ *
+ * Alternatives, not extras. One of these gets installed and its price is the
+ * price of the job, which is why they are radios and the upgrades below are
+ * checkboxes — a customer who thinks they are adding a second unit has been
+ * misled by the page.
+ *
+ * Drawn only when there IS a choice. A single-system quote shows the system
+ * where it always did and no chooser at all.
+ */
+function systemChoiceHtml(p) {
+  const sc = p.systemChoice;
+  if (!sc || !sc.offersChoice || !sc.options?.length) return '';
+  return sect('choose', 'Choose your system',
+    '<p class="lede">Two ways to do the same job. Whichever you choose is the price '
+    + 'below — the installation, the ductwork and the workmanship warranty are the '
+    + 'same either way.</p>'
+    + '<ul class="opts syschoice">' + sc.options.map(o =>
+      '<li><label class="opt sys">'
+      + '<input type="radio" name="sys" class="sys-in" value="' + esc(o.id) + '"'
+      + ' data-sys-price="' + esc(String(o.priceIncGst)) + '"'
+      + (o.chosen ? ' checked' : '') + '>'
+      + '<span class="opt-body">'
+        + '<span class="opt-h"><strong>' + esc(o.label) + '</strong>'
+        + '<em>' + esc(moneyRound(o.priceIncGst)) + '</em></span>'
+        + '<span class="opt-d">'
+          + esc([o.capacityKw ? o.capacityKw + ' kW' : '', o.phase].filter(Boolean).join(' · '))
+          + when(!!o.note, ' — ' + esc(o.note))
+        + '</span>'
+        + when(o.recommended === true, '<span class="sys-rec">Our recommendation</span>')
+      + '</span></label></li>').join('') + '</ul>');
+}
+
 function optionsHtml(p) {
   const os = p.options || [];
   if (!os.length) return '';
@@ -333,6 +367,7 @@ function optionsHtml(p) {
     + '<ul class="opts">' + os.map(o =>
       '<li><label class="opt">'
       + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
+      + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
       + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
       + '<span class="opt-body">'
         + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
@@ -460,6 +495,7 @@ function navHtml(p) {
     p.zones ? ['zones', 'Zones'] : null,
     p.installations.length ? ['work', 'Our work'] : null,
     p.reviews.length ? ['reviews', 'Reviews'] : null,
+    p.systemChoice && p.systemChoice.offersChoice ? ['choose', 'Choose'] : null,
     p.investment ? ['investment', 'Investment'] : null
   ].filter(Boolean);
   if (items.length < 3) return '';
@@ -508,6 +544,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + galleryHtml(p)
     + reviewsHtml(p)
     + trustHtml(p)
+    + systemChoiceHtml(p)
     + investmentHtml(p)
     + when(!print, optionsHtml(p))
     + warrantyHtml(p)
@@ -735,6 +772,11 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .opt-h strong{font-size:16.5px;color:var(--ink)}
 .opt-h em{font-style:normal;font-weight:700;color:var(--navy);font-size:16px;white-space:nowrap}
 .opt-d{font-size:14.8px;color:var(--muted);line-height:1.55}
+.sys input{border-radius:50%}
+.sys-rec{align-self:flex-start;font-size:12.5px;font-weight:700;letter-spacing:.4px;
+  text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
+  padding:4px 10px;margin-top:2px}
+.syschoice .opt-h em{font-size:18px}
 
 /* ── investment ─────────────────────────────────────────────────────── */
 .inv-prov{margin-top:12px;padding:12px 14px;border-radius:10px;
@@ -913,14 +955,49 @@ const SCRIPT = `
       document.querySelectorAll('.opt-in[data-group="'+g+'"]').forEach(function(o){
         if(o!==el) o.checked=false; });
     }
+    redrawTotal();
     if(window.NACQuote&&window.NACQuote.onOptionsChanged){
-      window.NACQuote.onOptionsChanged(selectedOptions());
+      window.NACQuote.onOptionsChanged(selectedOptions(),chosenSystem());
     }
   });
   function selectedOptions(){
     return Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
       .map(function(i){return i.value;});
   }
+  function chosenSystem(){
+    var r=document.querySelector('.sys-in:checked');
+    return r?r.value:null;
+  }
+
+  // ── THE PRICE FOLLOWS THE SYSTEM, IMMEDIATELY ─────────────────────────
+  //
+  // A customer switching from the Daikin to the Braemar must see the number
+  // move under their thumb. Waiting on a round trip to find out what the
+  // other one costs is how somebody gives up and rings instead.
+  //
+  // The server remains the authority: this only redraws what is already on
+  // the page, and the figure that gets accepted is the one the server
+  // recalculates when the choice is sent.
+  function money(v){
+    return '$' + Math.round(v).toLocaleString('en-AU');
+  }
+  function redrawTotal(){
+    var sys=document.querySelector('.sys-in:checked');
+    if(!sys) return;
+    var total=Number(sys.getAttribute('data-sys-price'))||0;
+    Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
+      .forEach(function(i){ total += Number(i.getAttribute('data-opt-price'))||0; });
+    Array.prototype.slice.call(document.querySelectorAll('[data-total]'))
+      .forEach(function(e){ e.textContent=money(total); });
+  }
+  document.addEventListener('change',function(e){
+    var el=e.target;
+    if(!el.classList||!el.classList.contains('sys-in'))return;
+    redrawTotal();
+    if(window.NACQuote&&window.NACQuote.onSystemChanged){
+      window.NACQuote.onSystemChanged(el.value);
+    }
+  });
 
   var form=document.getElementById('acceptForm');
   if(form){
@@ -937,7 +1014,7 @@ const SCRIPT = `
       if(btn){btn.disabled=true;btn.textContent='Sending…';}
       if(window.NACQuote&&window.NACQuote.accept){
         window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
-          selectedOptionIds:selectedOptions()});
+          selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
       }
     });
   }
