@@ -115,7 +115,9 @@ export const MMEM_DUCTED = [
  * the AirTouch 5 lines are repriced from MMEM quotation 447-321514-000.
  */
 export const MMEM_ZONE_CONTROLS = [
-  { id: 'at5_daikin',   code: 'MMAAT5DK',     name: 'AirTouch 5 — Daikin kit',              cost: 1100.00, maxZones: 16, brandLock: 'daikin' },
+  { id: 'at5_daikin',   code: 'MMAAT5DK',     name: 'AirTouch 5 — Daikin kit',              cost: 1100.00, maxZones: 16, brandLock: 'daikin',
+    // The sensors are a separate MMEM line and are not in the kit price.
+    accessoryIds: ['at5_sensor'] },
   { id: 'at5_sensor',   code: 'MMAAT5S',      name: 'AirTouch 5 temperature sensor',        cost: 92.00,   perZoneAccessory: true },
   { id: 'dk_z4_230',    code: 'BRC230Z4B9',   name: 'Daikin 4-zone controller (230–240V)',  cost: 475.00,  maxZones: 4,  brandLock: 'daikin' },
   { id: 'dk_z8_230',    code: 'BRC230Z8B9',   name: 'Daikin 8-zone controller (230–240V)',  cost: 629.00,  maxZones: 8,  brandLock: 'daikin' },

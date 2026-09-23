@@ -258,6 +258,26 @@ export function presentationGate(design, opts = {}) {
           + 'Enter its cost before this proposal is issued.'
       });
     }
+
+    // ── THE SENSORS THAT GO WITH IT ────────────────────────────────────────
+    //
+    // An AirTouch is a kit plus a sensor per zone, bought on separate MMEM
+    // lines. The kit was costed and the sensors were not, so an AirTouch job
+    // went out short by every sensor in it.
+    //
+    // Nick: "I choose the count per job." So the count is not assumed either
+    // way — and a proposal does not go out with the question unanswered. Zero
+    // is a perfectly good answer and passes.
+    const acc = design?.zoneAccessory || null;
+    if (acc && acc.required && !acc.answered) {
+      blockers.push({
+        code: 'ZONE_SENSOR_COUNT_NOT_SET',
+        severity: 'CRITICAL',
+        message: trimmed(c.name) + ' takes ' + (acc.accessory?.name || 'sensors')
+          + ' on a separate line and nobody has said how many this job needs. '
+          + 'Set the count on the Zone controller card — enter 0 if none are going in.'
+      });
+    }
   }
 
   // ── IS THERE A REAL CUSTOMER BEHIND THIS? ───────────────────────────────
@@ -453,7 +473,16 @@ export function upgradeCapabilities(design) {
     has_outlets: (n(d.outlets?.totals?.total) ?? 0) > 0,
     has_returns: (n(d.returnDesign?.returnCount) ?? 0) > 0,
     ducted_system: !!d.selectedUnit,
-    single_phase: /1\s*ph/i.test(str(d.selectedUnit?.phase))
+    single_phase: /1\s*ph/i.test(str(d.selectedUnit?.phase)),
+    // ── AN UPGRADE THAT ONLY FITS ONE BRAND ────────────────────────────────
+    //
+    // The AirTouch kit NAC stock is the Daikin one. Offered as a customer
+    // upgrade on a quote where the customer can also choose a Braemar, it
+    // would be an add-on that cannot be installed on the system they picked.
+    // An upgrade may name `daikin_system` (or any brand id) in its requires
+    // list and it is then withheld on every other brand.
+    ...(trimmed(d.selectedUnit?.brandId)
+      ? { [trimmed(d.selectedUnit.brandId) + '_system']: true } : {})
   };
 }
 

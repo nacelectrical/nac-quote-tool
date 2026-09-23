@@ -144,7 +144,21 @@ export const DEFAULT_SETTINGS = {
     maxSingleUnitKw: 20,
     // NAC's house-standard zone controller. Left blank, the designer picks the
     // cheapest costed controller that fits the zone count and the system brand.
-    defaultControllerId: ''
+    defaultControllerId: '',
+    // ── WHICH SERIES NAC QUOTE BY DEFAULT ──────────────────────────────────
+    //
+    // Nick: "use standard unless specified."
+    //
+    // Several brands list two sets at the same capacity and phase — Daikin's
+    // 16 kW single phase is a Premium Inverter at $5,700 and a Standard
+    // Inverter at $4,820, and nothing in the ranking told them apart, so the
+    // dearer one won on catalogue order alone. $880 of cost, decided by a
+    // sort that was never asked the question.
+    //
+    // This names the series NAC quote unless the estimator picks a model
+    // themselves. A brand with no series of this name is unaffected: it is a
+    // tie-breaker, never strong enough to move a size.
+    preferredSeries: ['Standard Inverter']
   },
 
   // ── Airflow (PART 14) ───────────────────────────────────────────────────────
