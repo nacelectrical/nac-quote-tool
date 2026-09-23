@@ -419,7 +419,12 @@ say('the house is not one zone per room', z.count < 11, z.count + ' zones, not 1
 say('the open-plan living area is one zone', z.grouping.grouped >= 3,
   z.grouping.rooms.join(' + '));
 say('the minimum open airflow rule is met', z.meets === true, z.minOpenPct + '% stays open');
-say('the controller in the box is enough', z.controllerCost === 0, z.controller);
+// NAC fit a Siemens zone kit unless the job is on an AirTouch, so the
+// controller is a real line with a real cost. It used to be the manufacturer's
+// boxed controller at $0 — which was cheap because nobody installs it.
+say('the controller is the Siemens kit sized to the zoning',
+  /Siemens/i.test(String(z.controller)) && z.controllerCost > 0,
+  z.controller + ' at $' + z.controllerCost);
 // A constant zone is by definition a zone with NO damper — it is the path the
 // air always has. So it is one motor per CLOSABLE zone, never one per room.
 const closable = z.zones.filter(x => !x.open).length;

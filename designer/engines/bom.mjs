@@ -25,7 +25,16 @@ function line(key, quantity, ctx, extra = {}) {
     priceSource: r.source,
     priceNote: r.note || null,
     supplierCode: r.supplierCode || null,
-    priced: r.cost !== null,
+    // ── A FIXED SELL LINE IS PRICED, AND IT IS NOT A COST ──────────────────
+    // `totalCost` stays null, so it never enters the job cost the fee is
+    // worked out on. `sellTotal` is what the customer is charged, added after
+    // the fee. A line with neither is the only kind that is a genuine hole.
+    fixedSell: r.fixedSell === true,
+    sellPrice: r.fixedSell === true ? r.sell : null,
+    sellTotal: r.fixedSell === true ? round(r.sell * qty, 2) : null,
+    statedBy: r.statedBy || null,
+    noCharge: r.noCharge === true,
+    priced: r.cost !== null || r.fixedSell === true,
     diameterMm: ctx.diameterMm ?? null,
     ...extra
   };
@@ -464,6 +473,9 @@ export function summariseBom(items, equipmentOmitted = null) {
   // does — but it still appears on the bill of materials saying what it is.
   const separateLines = items.filter(i => i.quotedSeparately);
   const unpricedLines = items.filter(i => !i.priced && !i.quotedSeparately);
+  // Lines NAC charge at a fixed price rather than cost plus the fee.
+  const fixedSellLines = items.filter(i => i.fixedSell);
+  const noChargeLines = items.filter(i => i.noCharge);
 
   const warnings = [];
   if (separateLines.length) {
@@ -510,6 +522,22 @@ export function summariseBom(items, equipmentOmitted = null) {
   // confirmed — the number the estimator needs before sending a quote.
   const placeholderCost = round(placeholderLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
 
+  // What the fixed-price lines add to the customer's total. It is stated
+  // separately from the job cost everywhere, because it is not one.
+  const fixedSellTotal = round(fixedSellLines.reduce((s, i) => s + (i.sellTotal || 0), 0), 2);
+  if (fixedSellLines.length) {
+    warnings.push({ code: 'LINES_CHARGED_AT_FIXED_SELL', severity: 'CHECK',
+      message: fixedSellLines.length + ' line(s) are charged at NAC\u2019s fixed price rather '
+        + 'than cost plus the job fee, worth $' + fixedSellTotal.toFixed(2) + ': '
+        + fixedSellLines.map(l => l.label).join(', ')
+        + '. What NAC pay for them is not recorded, so the margin inside them is unknown.' });
+  }
+  if (noChargeLines.length) {
+    warnings.push({ code: 'LINES_NOT_SEPARATELY_CHARGED', severity: 'CHECK',
+      message: noChargeLines.map(l => l.label).join(', ')
+        + ' is on the order so it gets bought, but carries no separate charge.' });
+  }
+
   if (equipmentOmitted?.blocked) {
     warnings.push({ code: 'EQUIPMENT_OMITTED_FROM_BOM', severity: 'CRITICAL',
       message: 'No indoor/outdoor system is on this bill of materials: equipment selection is '
@@ -537,6 +565,14 @@ export function summariseBom(items, equipmentOmitted = null) {
                                                     totalCost: l.totalCost })),
     unpricedCount: unpricedLines.length,
     unpricedLabels: unpricedLines.map(l => l.label),
+    fixedSellTotal,
+    fixedSellCount: fixedSellLines.length,
+    fixedSellLabels: fixedSellLines.map(l => l.label),
+    fixedSellDetail: fixedSellLines.map(l => ({ label: l.label, quantity: l.quantity,
+                                                unit: l.unit, sellPrice: l.sellPrice,
+                                                sellTotal: l.sellTotal, statedBy: l.statedBy })),
+    noChargeCount: noChargeLines.length,
+    noChargeLabels: noChargeLines.map(l => l.label),
     quotedSeparatelyCount: separateLines.length,
     quotedSeparatelyLabels: separateLines.map(l => l.label),
     warnings

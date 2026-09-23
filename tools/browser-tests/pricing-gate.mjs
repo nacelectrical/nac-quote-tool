@@ -75,6 +75,27 @@ async function session({priceTheGaps=false, acceptPrices=true}={}){
   await p.waitForTimeout(1200);
 
   if (priceTheGaps){
+    // ── AND A LINE ON A SHIPPED PLACEHOLDER RATE ──────────────────────────
+    //
+    // This step needs a rate nobody at NAC has confirmed, and the sample used
+    // to supply six of them for free: the feet, the drain kit, the two cables,
+    // the isolator and the sundries all shipped with a guessed price. They do
+    // not any more — NAC set what they charge for those, so the design now has
+    // no placeholder rates at all, which is the right outcome and leaves this
+    // gate with nothing to catch.
+    //
+    // So the condition is created the same way the unpriced one above is: a
+    // few lines lose the supplier attribution that makes their rate real,
+    // which is exactly what a rate carried over from an expired quotation is.
+    await p.evaluate(async ()=>{
+      const m=await import('/designer/engines/materials.mjs');
+      for (const k of ['duct_tape','drain_pipe','drain_elbow','drain_insulation']) {
+        if (m.MATERIAL_CATALOGUE[k]) delete m.MATERIAL_CATALOGUE[k].source;
+      }
+      window.nacDesigner.update();
+    });
+    await p.waitForTimeout(1200);
+
     // What the estimator would do: give the lines with no cost a real cost.
     await ensureAdvanced(p); await p.locator('button.tab',{hasText:'Materials'}).first().click(); await p.waitForTimeout(900);
     // One at a time, as a person would — the app re-renders after each edit.

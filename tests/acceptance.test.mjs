@@ -87,6 +87,19 @@ function moneyForms(value) {
   ])].filter(s => s.replace(/[^0-9]/g, '').length >= 3);
 }
 
+/**
+ * Does this figure actually appear, as a figure?
+ *
+ * A plain substring search finds "95.00" inside "$495.00" and calls a Wi-Fi
+ * upgrade a leaked cost. A number only counts as present when it is not part
+ * of a longer one, so the match must not have a digit, comma or point on
+ * either side of it.
+ */
+function leaks(text, form) {
+  const esc = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(?<![\\d.,])' + esc + '(?![\\d])').test(text);
+}
+
 test('no cost, fee or margin figure appears on any customer surface', () => {
   const c = DEMO.commercials;
   const secret = {
@@ -98,8 +111,7 @@ test('no cost, fee or margin figure appears on any customer surface', () => {
   for (const [name, value] of Object.entries(secret)) {
     for (const form of moneyForms(value)) {
       for (const [where, text] of Object.entries(SURFACES)) {
-        assert.ok(!text.includes(form),
-          name + ' (' + form + ') reached ' + where);
+        assert.ok(!leaks(text, form), name + ' (' + form + ') reached ' + where);
       }
     }
   }
@@ -134,7 +146,7 @@ test('the bill of materials never reaches a customer surface', () => {
   for (const [where, text] of Object.entries(SURFACES)) {
     for (const item of DEMO.bom.items) {
       for (const form of moneyForms(item.unitCost)) {
-        assert.ok(!text.includes(form),
+        assert.ok(!leaks(text, form),
           'the cost of "' + item.label + '" (' + form + ') reached ' + where);
       }
     }
@@ -512,4 +524,89 @@ test('the measured design DOES calculate, so the check is worth something', () =
   assert.ok(Number(APPROVED.pressure?.totalPa ?? APPROVED.pressure?.totalStaticPa ?? 0) > 0
     || APPROVED.pressure?.components?.length > 0,
     'the approved job has no pressure figure at all');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. A SELL PRICE IS NOT A COST
+//
+// Nick priced six sundry lines and said: "these look good as sell price."
+// Everywhere else a material line is what NAC PAY, and the $6,000 fee goes on
+// top. Entering a sell price as a cost charges the margin inside it twice —
+// once in the price NAC set, and again as its share of the fee — on every
+// quote, quietly. So these lines sit OUTSIDE the base the fee is worked out
+// over, and are added after it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('all six fixed-price lines are on the order, priced, and cost nothing', () => {
+  const fixed = APPROVED.bom.items.filter(i => i.fixedSell);
+  assert.equal(fixed.length, 6, fixed.map(f => f.key).join(','));
+  assert.deepEqual(fixed.map(f => f.key).sort(),
+    ['consumables', 'drain_kit', 'interconnect_cable', 'isolator',
+     'outdoor_feet', 'power_cable']);
+  for (const l of fixed) {
+    assert.equal(l.priceSource, 'nac_sell');
+    assert.equal(l.priced, true, l.label + ' reads as a hole in the costing');
+    assert.equal(l.totalCost, null, l.label + ' put a sell price into the job cost');
+    assert.ok(l.sellPrice > 0 && l.sellTotal > 0);
+    assert.equal(l.sellTotal, Math.round(l.sellPrice * l.quantity * 100) / 100);
+  }
+  // The exact figures NAC gave.
+  const at = (k) => fixed.find(f => f.key === k).sellPrice;
+  assert.equal(at('outdoor_feet'), 95);
+  assert.equal(at('drain_kit'), 80);
+  assert.equal(at('interconnect_cable'), 7.20);
+  assert.equal(at('power_cable'), 9.40);
+  assert.equal(at('isolator'), 68);
+  assert.equal(at('consumables'), 145);
+});
+
+test('the job fee is worked out over the cost, never over the sell lines', () => {
+  const c = APPROVED.commercials;
+  assert.equal(c.pricingBasis.feeBaseExGst, c.totalJobCost);
+  assert.equal(c.fixedSellExGst, APPROVED.bom.fixedSellTotal);
+  assert.equal(c.sellPriceExGst,
+    Math.round((c.totalJobCost + c.jobFee + c.fixedSellExGst) * 100) / 100);
+
+  // The counter-check: charging them the other way round costs the customer
+  // the fee's share of them again. That difference is what this is preventing.
+  const ifTreatedAsCost = (c.totalJobCost + c.fixedSellExGst) + c.jobFee;
+  assert.equal(Math.round(ifTreatedAsCost * 100) / 100, c.sellPriceExGst,
+    'on a flat fee the totals coincide — the difference shows on any percentage basis');
+  // What must NOT happen is the sell figure landing in the job cost.
+  assert.ok(!APPROVED.bom.items.some(i => i.fixedSell && i.totalCost !== null));
+  assert.equal(APPROVED.bom.materialsCost,
+    Math.round(APPROVED.bom.items
+      .filter(i => i.category !== 'equipment')
+      .reduce((n, i) => n + (i.totalCost || 0), 0) * 100) / 100);
+});
+
+test('the margin says what it does not know', () => {
+  const c = APPROVED.commercials;
+  assert.ok(c.marginExcludesCostOf, 'the margin is overstated and nothing says so');
+  assert.equal(c.marginExcludesCostOf.fixedSellExGst, c.fixedSellExGst);
+  assert.match(c.marginExcludesCostOf.note, /not recorded/);
+  assert.match(c.marginExcludesCostOf.note, /lower than the figure shown/);
+  assert.equal(c.grossProfit, Math.round((c.jobFee + c.fixedSellExGst) * 100) / 100);
+});
+
+test('the strap is still bought, it is just not charged for', () => {
+  const strap = APPROVED.bom.items.find(i => i.key === 'hanging_kit');
+  assert.ok(strap, 'the duct hanging strap fell off the order');
+  assert.equal(strap.noCharge, true);
+  assert.ok(strap.quantity > 0, 'an installer cannot hang duct with no strap');
+  assert.equal(strap.totalCost, 0);
+  assert.ok(APPROVED.bom.warnings.some(w => w.code === 'LINES_NOT_SEPARATELY_CHARGED'));
+});
+
+test('no fixed-price figure reaches a customer surface either', () => {
+  // A sell price is still NAC's commercial structure. The customer sees one
+  // total, not a line saying the isolator was $68.
+  for (const l of APPROVED.bom.items.filter(i => i.fixedSell)) {
+    for (const form of moneyForms(l.sellTotal)) {
+      for (const [where, text] of Object.entries(SURFACES)) {
+        assert.ok(!leaks(text, form),
+          'the charge for "' + l.label + '" (' + form + ') reached ' + where);
+      }
+    }
+  }
 });

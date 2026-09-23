@@ -571,9 +571,46 @@ test('the BOM is derived from the design, with quantities that trace back', () =
 test('placeholder material rates are declared, never passed off as NAC prices', () => {
   const { o, net, z, ret, dampers } = sampleDesignParts();
   const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
-  assert.ok(bom.placeholderCount > 0);
-  assert.ok(bom.warnings.some(w => w.code === 'MATERIAL_PRICE_PLACEHOLDER'));
-  assert.ok(bom.items.filter(i => i.priceSource === 'default_placeholder').length === bom.placeholderCount);
+  // Whatever the count, the count and the warning agree with the lines.
+  assert.equal(bom.items.filter(i => i.priceSource === 'default_placeholder').length,
+    bom.placeholderCount);
+  assert.equal(bom.placeholderCount > 0,
+    bom.warnings.some(w => w.code === 'MATERIAL_PRICE_PLACEHOLDER'),
+    'the placeholder warning and the placeholder count disagree');
+  // On this design there are none left at all: the six sundries that used to
+  // be shipped guesses are now priced lines, and the last two placeholders in
+  // the catalogue (reducer, joiner) are fittings this design does not use.
+  assert.equal(bom.placeholderCount, 0, bom.placeholderLabels.join(', '));
+});
+
+test('the six sundries NAC priced are sell lines, not shipped placeholders', () => {
+  const { o, net, z, ret, dampers } = sampleDesignParts();
+  const bom = buildBillOfMaterials({ network: net, outlets: o, zones: z, returnDesign: ret, zoneDampers: dampers });
+  // This fixture builds the DUCTWORK side only — no selected unit, so no
+  // isolator, cabling, feet or drain kit. The consumables line is here, and
+  // one is enough to hold the contract; the whole set is checked on the
+  // approved job in tests/acceptance.test.mjs.
+  const fixed = bom.items.filter(i => i.fixedSell);
+  assert.equal(fixed.length, bom.fixedSellCount);
+  assert.ok(fixed.length >= 1, 'no fixed-price line is on the order at all');
+  for (const l of fixed) {
+    assert.equal(l.priceSource, 'nac_sell');
+    assert.equal(l.priced, true, l.label + ' reads as unpriced');
+    assert.equal(l.totalCost, null, l.label + ' put a sell price into the job cost');
+    assert.ok(l.sellTotal > 0);
+    assert.match(l.priceNote, /SELL price, not a cost/);
+  }
+  assert.equal(bom.fixedSellTotal,
+    Math.round(fixed.reduce((n, l) => n + l.sellTotal, 0) * 100) / 100);
+  // None of them is counted in the materials cost the fee is worked out over.
+  assert.ok(bom.warnings.some(w => w.code === 'LINES_CHARGED_AT_FIXED_SELL'));
+
+  // And the hanging strap is still bought, just not charged for on its own.
+  const strap = bom.items.find(i => i.key === 'hanging_kit');
+  assert.ok(strap, 'the duct hanging strap fell off the order');
+  assert.equal(strap.noCharge, true);
+  assert.ok(strap.quantity > 0);
+  assert.equal(strap.totalCost, 0);
 });
 
 test("NAC's own material rates take over from the placeholders", () => {
