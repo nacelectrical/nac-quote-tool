@@ -240,9 +240,15 @@ const after = await p.evaluate(async () => {
   return { blockReason: i.blockReason, blocking: i.blocking.map(x => x.title),
            stage: d.stage, calReq: d.calibrationRequirement?.statusLabel };
 });
+// This step is about the two rooms whose sizes the sheet does not print. It
+// used to match any blocker naming MEALS or STUDY, which now catches the
+// stocked-fitting blocker too — that one lists every room on an overloaded
+// main, and STUDY is one of them. What is being asked here is whether a
+// DIMENSION is still missing, so that is what it asks.
 say('no conditioned room blocks the design any more',
-  !after.blocking.some(t => /MEALS|STUDY|DIMENSIONS/.test(t)),
-  after.blocking.join(' | ') || 'nothing blocking');
+  !after.blocking.some(t => /DIMENSION/i.test(t)
+    || /\b(MEALS|STUDY)\b[^|]*\b(size|measure|measured|dimension)/i.test(t)),
+  after.blocking.filter(t => /DIMENSION|MEALS|STUDY/i.test(t)).join(' | ') || 'nothing blocking');
 
 // ── 6. THE COMPLETE AUTO DESIGN ─────────────────────────────────────────────
 STEP('COMPLETE AUTO DESIGN — every stage, without ADVANCED DESIGN');

@@ -23,6 +23,7 @@ import { round } from './units.mjs';
 import { isConditionedRoom } from './classify.mjs';
 import { selectDiameter } from './ducts.mjs';
 import { finalSizeForAirflow, mainFloorForFinals, ROUTING } from './nac-standard.mjs';
+import { maxOutletsFrom } from './fitting-assembly.mjs';
 
 const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
@@ -116,6 +117,69 @@ export function formInstallerAreas(outletPoints, wantAreas) {
   // Heaviest area first, so Main A is the one an installer runs first.
   return areas.sort((a, b) =>
     b.reduce((n, o) => n + o.airflowLs, 0) - a.reduce((n, o) => n + o.airflowLs, 0));
+}
+
+/**
+ * ── NO MAIN CARRIES MORE OUTLETS THAN ITS FITTINGS REACH ──────────────────
+ *
+ * The areas above are balanced by AIR, which is the right way to size ducts
+ * and the wrong way to count fittings. Five bedrooms are one sleeping area and
+ * a sensible share of the airflow; they are also five outlets on one main, and
+ * nothing NAC stock reaches past three.
+ *
+ * So after the areas are formed by air, they are capped by what can actually
+ * be assembled. An overflowing room moves WHOLE to the nearest area with room
+ * for it — a room is never split across two mains, and a room with two outlets
+ * needs two free slots or it does not move.
+ *
+ * What cannot be placed is returned rather than dropped. A system with more
+ * outlets than its mains can reach is a real condition with real answers
+ * (fewer, larger outlets; a room on spill air), and it is the estimator's call
+ * to make, not this function's.
+ */
+export function capAreasToFittings(areas, maxPerArea) {
+  const cap = Number(maxPerArea) || 0;
+  const out = areas.map(a => [...a]);
+  const moved = [];
+  if (cap <= 0) return { areas: out, moved, overflow: [] };
+
+  const roomsIn = (a) => [...new Set(a.map(o => o.roomId))];
+  let guard = 0;
+  while (guard++ < 60) {
+    const overIdx = out.findIndex(a => a.length > cap);
+    if (overIdx < 0) break;
+    const from = out[overIdx];
+
+    // The room to move is the one nearest another area that can take it, so
+    // the duct does not end up crossing the house to balance a count.
+    let best = null;
+    for (const roomId of roomsIn(from)) {
+      const mine = from.filter(o => o.roomId === roomId);
+      if (from.length - mine.length < 1) continue;     // never empty an area
+      const c = centroid(mine);
+      out.forEach((a, i) => {
+        if (i === overIdx) return;
+        if (a.length + mine.length > cap) return;      // no room for the whole room
+        const d = dist(centroid(a), c);
+        if (!best || d < best.d) best = { d, roomId, mine, to: i };
+      });
+    }
+    if (!best) break;                                   // nowhere left to put one
+
+    out[best.to].push(...best.mine);
+    out[overIdx] = from.filter(o => o.roomId !== best.roomId);
+    moved.push({ roomId: best.roomId, roomLabel: best.mine[0]?.roomLabel || best.roomId,
+                 outletCount: best.mine.length, fromIndex: overIdx, toIndex: best.to });
+  }
+
+  const overflow = [];
+  for (const [i, a] of out.entries()) {
+    if (a.length <= cap) continue;
+    overflow.push({ areaIndex: i, outletCount: a.length, cap,
+                    excess: a.length - cap,
+                    rooms: [...new Set(a.map(o => o.roomLabel || o.roomId))] });
+  }
+  return { areas: out, moved, overflow };
 }
 
 /**
@@ -724,9 +788,48 @@ export function buildAreaTopology({ rooms = [], airflow, outlets, layout = {}, z
       warnings.push({ code: 'OUTLET_ASSIGNED_TO_NEAREST_AREA', severity: 'CHECK',
         message: o.roomLabel + ' was not named in the installer area configuration and was assigned to Main ' + nearest.spec.key + '.' });
     }
+
+    // ── AN APPROVED LAYOUT IS REPORTED ON, NEVER REARRANGED ───────────────
+    //
+    // The area configuration is an installer's decision about which rooms go
+    // on which main, and on the reference jobs it is a decision Nick has
+    // signed off. So when it puts more outlets on a main than the stocked
+    // fittings reach, this says so and stops there. It does not move a room to
+    // a different main to make the arithmetic work — that is a change to an
+    // approved design, and it is the estimator's to make, not the router's.
+    //
+    // The AUTO path below is different: there the router is choosing, so it
+    // chooses something that can be built.
+    const capacity = maxOutletsFrom(mainMm);
+    for (const a of areas) {
+      if (a.members.length <= capacity) continue;
+      warnings.push({ code: 'MORE_OUTLETS_THAN_FITTINGS_REACH', severity: 'CRITICAL',
+        message: 'Main ' + a.spec.key + ' carries ' + a.members.length + ' outlets and a \u00f8'
+          + mainMm + ' main reaches ' + capacity + ' with the fittings NAC stock ('
+          + [...new Set(a.members.map(o => o.roomLabel))].join(', ') + '). Move a room to '
+          + 'another main in the area configuration, use fewer and larger outlets, or put a '
+          + 'room on spill air.' });
+    }
   } else {
-    areas = formInstallerAreas(outletPoints, wantMains)
+    // Balanced by air, then capped by what the stocked fittings reach.
+    const formed = formInstallerAreas(outletPoints, wantMains);
+    const capped = capAreasToFittings(formed, maxOutletsFrom(mainMm));
+    areas = capped.areas
       .map((members, i) => ({ spec: { key: String.fromCharCode(65 + i) }, members }));
+    for (const m of capped.moved) {
+      warnings.push({ code: 'OUTLET_MOVED_TO_FIT_FITTINGS', severity: 'CHECK',
+        message: m.roomLabel + ' moved to Main ' + String.fromCharCode(65 + m.toIndex)
+          + ': a \u00f8' + mainMm + ' main reaches ' + maxOutletsFrom(mainMm)
+          + ' outlets with the fittings NAC stock, and Main '
+          + String.fromCharCode(65 + m.fromIndex) + ' had more.' });
+    }
+    for (const o of capped.overflow) {
+      warnings.push({ code: 'MORE_OUTLETS_THAN_FITTINGS_REACH', severity: 'CRITICAL',
+        message: 'Main ' + String.fromCharCode(65 + o.areaIndex) + ' still carries '
+          + o.outletCount + ' outlets and the stocked fittings reach ' + o.cap + '. The system '
+          + 'has ' + o.excess + ' outlet(s) more than ' + wantMains + ' mains can serve. Use '
+          + 'fewer, larger outlets, or put a room on spill air: ' + o.rooms.join(', ') + '.' });
+    }
   }
 
   const segments = [];

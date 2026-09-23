@@ -92,23 +92,46 @@ test('a three-area house routes to three ø400 mains, one per area', () => {
   }
 });
 
-test('the bedroom wing stages itself into two local two-port fittings', () => {
-  const wing = H.out.autoRoute.distributionDecisions.find(d => d.staged);
-  assert.ok(wing, 'no area staged');
-  assert.equal(wing.outlets, 4);
-  assert.equal(wing.arms.length, 2);
-  assert.ok(wing.arms.every(a => a.outlets === 2 && a.auto));
-  assert.deepEqual(wing.arms.map(a => a.label).sort(),
-    ['BEDROOM 2 / BEDROOM 4', 'MASTER BEDROOM / BEDROOM 3']);
-  assert.match(wing.basis, /above the preferred 3 direct collars/);
+// ── THE WING NO LONGER STAGES, BECAUSE IT NO LONGER HAS TO ────────────────
+//
+// A four-outlet bedroom wing used to split into two local two-port fittings.
+// That was the right answer while a BTO was something fabricated to order: any
+// inlet, any port count. Nick: "use only what ive given" — and nothing NAC
+// stock takes a ø300 or a ø250 inlet, so a local fitting on a branch arm is
+// not a part that can be bought. A ø400 main reaches three outlets.
+//
+// So the router caps each area at three and moves the fourth room, whole, to
+// the nearest area with room for it. The wing has three outlets and stages
+// nothing, and the house comes out 3/3/3 — every main assembled from stocked
+// parts, which the four-outlet version never could be.
+test('no area is given more outlets than its fittings reach', () => {
+  const mains = H.out.network.sections.filter(s => !s.parentId && s.role === 'main');
+  for (const m of mains) {
+    const serves = String(m.serves || '').split(/\s*[+/]\s*/).filter(Boolean);
+    assert.ok(serves.length <= 3, m.mainKey + ' carries ' + serves.length + ' rooms');
+  }
+  assert.equal(H.out.autoRoute.distributionDecisions.filter(d => d.staged).length, 0,
+    'an area staged into local fittings that cannot be bought');
 });
 
-test('five fittings, two intentional distribution ports and no chain', () => {
-  assert.equal(H.out.btos.length, 5);
+test('every main is assembled from parts NAC stock', () => {
+  const asm = H.out.fittingAssembly;
+  assert.equal(asm.ok, true, asm.summary);
+  assert.equal(asm.rows.length, 3);
+  for (const r of asm.rows) {
+    assert.equal(r.buildable, true, r.mainKey + ': ' + r.reason);
+    assert.equal(r.outletCount, 3);
+    assert.ok(r.parts.length, r.mainKey + ' has no parts list');
+    for (const p of r.parts) assert.match(p.code, /^MMA/);
+  }
+});
+
+test('three fittings, one per main, and no chain', () => {
+  assert.equal(H.out.btos.length, 3);
   assert.equal(H.out.btoValidation.ok, true);
   assert.equal(H.out.btoValidation.chained, false);
   assert.equal(H.out.btoValidation.arbitraryChainPorts, 0);
-  assert.equal(H.out.btoValidation.intentionalDistributionPorts, 2);
+  assert.equal(H.out.btoValidation.intentionalDistributionPorts, 0);
   // No local BTO sits on an outlet: every final clears the 2 m rule.
   const minM = H.out.network.minBtoToOutletDuctLengthM ?? 2.0;
   for (const f of H.out.network.sections.filter(s => s.role === 'final')) {

@@ -160,3 +160,91 @@ test('checkDesignAssemblies survives a design with no network', () => {
     assert.equal(r.summary, 'No mains to check.');
   }
 });
+
+// ── THE ROUTER CHOOSES SOMETHING THAT CAN BE BUILT ─────────────────────────
+//
+// Two paths, two different answers, and the difference is who decided.
+//
+//   AUTO      the router is choosing, so it caps each area at what the
+//             fittings reach and moves the overflow room, whole, to the
+//             nearest area with space.
+//   CONFIGURED  an installer said which rooms go on which main, and on the
+//             reference jobs Nick signed that off. It is reported on and
+//             never rearranged: moving a room is a change to an approved
+//             design, and that is the estimator's call.
+
+import { capAreasToFittings } from '../designer/engines/area-router.mjs';
+import { buildThreeAreaHouse } from './fixtures/three-area-house.mjs';
+
+const pts = (roomId, n, x, y) =>
+  Array.from({ length: n }, (_, i) => ({ id: roomId + i, roomId, roomLabel: roomId,
+                                         x, y, airflowLs: 60 }));
+
+test('an overflowing area moves a whole room to the nearest area with space', () => {
+  const areas = [
+    [...pts('A1', 1, 0, 0), ...pts('A2', 1, 10, 0), ...pts('A3', 1, 20, 0), ...pts('A4', 1, 30, 0)],
+    [...pts('B1', 1, 40, 0)]
+  ];
+  const r = capAreasToFittings(areas, 3);
+  assert.equal(r.overflow.length, 0);
+  assert.equal(r.areas[0].length, 3);
+  assert.equal(r.areas[1].length, 2);
+  assert.equal(r.moved.length, 1);
+  assert.equal(r.moved[0].roomId, 'A4', 'the room nearest the other area should move');
+});
+
+test('a room with two outlets moves whole, or not at all', () => {
+  // Area 0 is over by two; area 1 has one slot. The two-outlet room cannot go
+  // — a room is never split across two mains — so the single-outlet one does.
+  const areas = [
+    [...pts('P', 2, 0, 0), ...pts('Q', 1, 5, 0), ...pts('R', 1, 9, 0), ...pts('S', 1, 12, 0)],
+    [...pts('T', 1, 14, 0), ...pts('U', 1, 15, 0)]
+  ];
+  const r = capAreasToFittings(areas, 3);
+  assert.equal(r.moved.length, 1);
+  assert.ok(r.moved[0].roomId !== 'P', 'a two-outlet room was split or force-fitted');
+  assert.equal(r.areas[0].length, 4, 'there was only one slot to move into');
+  assert.equal(r.overflow.length, 1);
+  assert.equal(r.overflow[0].excess, 1);
+});
+
+test('nowhere to move means overflow is reported, never forced', () => {
+  const areas = [
+    [...pts('A', 4, 0, 0)],
+    [...pts('B', 3, 50, 0)]
+  ];
+  const r = capAreasToFittings(areas, 3);
+  assert.equal(r.moved.length, 0);
+  assert.equal(r.areas[0].length, 4, 'an outlet was dropped to make it fit');
+  assert.equal(r.overflow.length, 1);
+  assert.deepEqual(r.overflow[0].rooms, ['A']);
+  assert.equal(r.overflow[0].cap, 3);
+});
+
+test('an area is never emptied to satisfy the cap', () => {
+  const areas = [[...pts('A', 4, 0, 0)], [...pts('B', 1, 1, 0)]];
+  const r = capAreasToFittings(areas, 3);
+  assert.ok(r.areas.every(a => a.length > 0));
+});
+
+test('the auto-routed house comes out buildable, 3/3/3', async () => {
+  const H = await buildThreeAreaHouse();
+  assert.equal(H.out.fittingAssembly.ok, true, H.out.fittingAssembly.summary);
+  assert.deepEqual(H.out.fittingAssembly.rows.map(r => r.outletCount), [3, 3, 3]);
+  // And every main has a real parts list off the stocked catalogue.
+  for (const r of H.out.fittingAssembly.rows) {
+    assert.ok(r.partsCost > 0, r.mainKey + ' has no parts cost');
+  }
+});
+
+test('an approved area layout is reported on, not rearranged', () => {
+  // The Dungannon layout puts five rooms on main C. The router leaves it
+  // exactly as the installer set it and the gate refuses the quote — which is
+  // what "do not alter approved reference designs" and "use only what ive
+  // given" mean together.
+  const c = APPROVED.fittingAssembly.rows.find(r => r.mainKey === 'C');
+  assert.equal(c.outletCount, 5, 'the approved layout was rearranged');
+  assert.equal(c.buildable, false);
+  const gate = quoteGate(APPROVED);
+  assert.ok(gate.blockers.some(b => b.code === QUOTE_BLOCK.FITTINGS_NOT_AVAILABLE));
+});
