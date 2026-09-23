@@ -209,6 +209,52 @@ test('unverified rates on lines the job USES block the quote', () => {
   assert.equal(verified.ok, true, JSON.stringify(verified.needing.map(x => x.id)));
 });
 
+test('a fixed sell price is evidenced by who set it, not by a supplier', () => {
+  // Nick's six fixed-price lines carry a SELL price and no cost, because the
+  // job fee is not applied to them. Demanding a supplier and a NAC cost for
+  // those would leave two boxes that can only be filled by inventing figures.
+  const design = { bom: { items: [
+    { key: 'isolator', label: 'Weatherproof isolator', unit: 'each',
+      unitCost: null, priced: true, priceSource: 'nac_sell',
+      fixedSell: true, sellPrice: 68, statedBy: 'Nick, 2026-09-22' }
+  ] } };
+  const r = usedRateStatus({ design, verifications: {} });
+  assert.equal(r.ok, true, 'a stated sell price was still treated as unevidenced');
+  assert.equal(r.rows[0].sellPriceStated, true);
+  assert.equal(r.rows[0].sellPrice, 68);
+  assert.equal(r.rows[0].statedBy, 'Nick, 2026-09-22');
+  assert.equal(r.rows[0].needsConfirmation, false);
+});
+
+test('a fixed sell price with nobody behind it is not evidence', () => {
+  // The evidence IS the name and the date. Without them it is just a number.
+  for (const missing of [{ statedBy: '' }, { statedBy: '   ' }, { sellPrice: null }]) {
+    const design = { bom: { items: [
+      { key: 'isolator', label: 'Weatherproof isolator', unit: 'each',
+        unitCost: null, priced: true, priceSource: 'nac_sell',
+        fixedSell: true, sellPrice: 68, statedBy: 'Nick, 2026-09-22', ...missing }
+    ] } };
+    const r = usedRateStatus({ design, verifications: {} });
+    assert.equal(r.ok, false, 'accepted a sell price with ' + JSON.stringify(missing));
+    assert.equal(r.rows[0].sellPriceStated, false);
+  }
+});
+
+test('a real cost line is still asked for its supplier', () => {
+  // The exemption is for fixed sell prices only. A unit and a controller are
+  // things NAC buy, and a customer quote still waits on the supplier's quote.
+  const design = { bom: { items: [
+    { key: 'indoor_unit', label: 'Daikin FDYA160AV19 — 16 kW', unit: 'system',
+      unitCost: 5700, priced: true, priceSource: 'nac' },
+    { key: 'zone_controller', label: 'Siemens Home zone control — 6 zone',
+      unit: 'each', unitCost: 295, priced: true, priceSource: 'nac' }
+  ] } };
+  const r = usedRateStatus({ design, verifications: {} });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.needing.map(x => x.id), ['indoor_unit', 'zone_controller']);
+  for (const row of r.needing) assert.equal(row.sellPriceStated, false);
+});
+
 test('rates the job does not use never block it', () => {
   // The catalogue carries every size. Blocking on sizes this house will never
   // see is noise that teaches an estimator to ignore the check.

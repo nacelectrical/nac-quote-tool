@@ -81,6 +81,28 @@ export function usedRateStatus({ design, verifications = {} } = {}) {
     // supplier's own code and their quote edition.
     const supplierQuoted = i.priceSource === 'supplier_list' || i.priceSource === 'SUPPLIER'
       || !!i.supplierCode;
+
+    // ── THE SECOND KIND OF EVIDENCE ──────────────────────────────────────
+    //
+    // A few lines are not costs at all. Mounting feet, the condensate tray,
+    // the cables, the isolator and sundries are charged at a fixed price NAC
+    // set — see FIXED_SELL in materials.mjs — and deliberately carry no cost
+    // and no supplier, because the fee is not applied to them.
+    //
+    // Asking for a supplier and a NAC cost on those is asking for two figures
+    // that do not exist, and the only ways through are to invent them or to
+    // leave the quote blocked. Neither is acceptable.
+    //
+    // So a fixed sell price is evidenced by the other two questions this
+    // module asks: WHO set it and WHEN. The line already carries that, from
+    // the day it was stated. It is evidence of a decision rather than of a
+    // purchase, which is exactly what a sell price is.
+    // Number(null) and Number('') are both 0, so an absent sell price would
+    // otherwise read as a free line that somebody had stood behind.
+    const sellPriceStated = i.fixedSell === true
+      && i.sellPrice !== null && i.sellPrice !== undefined && i.sellPrice !== ''
+      && Number.isFinite(Number(i.sellPrice))
+      && !!trimmed(i.statedBy);
     const placeholder = i.priceSource === 'default_placeholder'
       || i.priceSource === 'PLACEHOLDER';
     const unpriced = !i.priced;
@@ -92,12 +114,18 @@ export function usedRateStatus({ design, verifications = {} } = {}) {
       priceSource: i.priceSource || null,
       supplierCode: i.supplierCode || null,
       placeholder, unpriced, supplierQuoted,
+      /** A fixed sell price, and who stood behind it. */
+      sellPriceStated,
+      sellPrice: sellPriceStated ? Number(i.sellPrice) : null,
+      statedBy: sellPriceStated ? trimmed(i.statedBy) : '',
       verified,
       record: record || null,
       missing: verified ? [] : missingFrom(record),
       /** A line needs confirming when it is a placeholder, unpriced, or an
-       *  entered figure nobody has evidenced. */
-      needsConfirmation: !verified && (placeholder || unpriced || !supplierQuoted)
+       *  entered figure nobody has evidenced. A fixed sell price is evidenced
+       *  by who set it, so it is not asked for a supplier it has never had. */
+      needsConfirmation: !verified && !sellPriceStated
+        && (placeholder || unpriced || !supplierQuoted)
     });
   }
 
