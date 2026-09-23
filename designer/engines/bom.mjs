@@ -281,7 +281,12 @@ export function buildBillOfMaterials(design, opts = {}) {
       unitCost: price.cost,
       totalCost: price.cost === null ? null : round(price.cost * row.quantity, 2),
       priced: price.cost !== null,
+      // An interim rate NAC set is not a rate this application shipped. Keeping
+      // them apart matters: "shipped placeholder rates" is a instruction to go
+      // and set NAC's prices, and on a BTO that is not the job — the job is to
+      // wait for MMEM's list.
       priceSource: price.status === BTO_PRICE_STATUS.VERIFIED ? PRICE_SOURCE.SUPPLIER
+        : price.interim === true ? PRICE_SOURCE.NAC_INTERIM
         : price.status === BTO_PRICE_STATUS.PLACEHOLDER ? PRICE_SOURCE.PLACEHOLDER : null,
       supplierCode: price.sku,
       configKey: row.configKey,
@@ -289,6 +294,8 @@ export function buildBillOfMaterials(design, opts = {}) {
       outletDiametersMm: row.outletDiametersMm,
       btoPrice: price,
       priceStatus: price.status,
+      /** True only for the declared interim rate, never for a typed one. */
+      priceInterim: price.interim === true,
       fabricator: price.supplier,
       quoteRef: price.quoteRef,
       effectiveDate: price.effectiveDate,
@@ -476,6 +483,8 @@ export function summariseBom(items, equipmentOmitted = null) {
   // Lines NAC charge at a fixed price rather than cost plus the fee.
   const fixedSellLines = items.filter(i => i.fixedSell);
   const noChargeLines = items.filter(i => i.noCharge);
+  // Lines on a stopgap rate NAC set while the real one is outstanding.
+  const interimLines = items.filter(i => i.priceSource === PRICE_SOURCE.NAC_INTERIM);
 
   const warnings = [];
   if (separateLines.length) {
@@ -532,6 +541,13 @@ export function summariseBom(items, equipmentOmitted = null) {
         + fixedSellLines.map(l => l.label).join(', ')
         + '. What NAC pay for them is not recorded, so the margin inside them is unknown.' });
   }
+  const interimCost = round(interimLines.reduce((s, i) => s + (i.totalCost || 0), 0), 2);
+  if (interimLines.length) {
+    warnings.push({ code: 'LINES_ON_INTERIM_RATE', severity: 'WARNING',
+      message: interimLines.length + ' line(s) are on an interim rate worth $'
+        + interimCost.toFixed(2) + ': ' + interimLines.map(l => l.label).join(', ')
+        + '. It is a stopgap NAC set, not a supplier\u2019s price for these items.' });
+  }
   if (noChargeLines.length) {
     warnings.push({ code: 'LINES_NOT_SEPARATELY_CHARGED', severity: 'CHECK',
       message: noChargeLines.map(l => l.label).join(', ')
@@ -573,6 +589,9 @@ export function summariseBom(items, equipmentOmitted = null) {
                                                 sellTotal: l.sellTotal, statedBy: l.statedBy })),
     noChargeCount: noChargeLines.length,
     noChargeLabels: noChargeLines.map(l => l.label),
+    interimCount: interimLines.length,
+    interimCost,
+    interimLabels: interimLines.map(l => l.label),
     quotedSeparatelyCount: separateLines.length,
     quotedSeparatelyLabels: separateLines.map(l => l.label),
     warnings

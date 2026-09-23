@@ -42,6 +42,8 @@ export const CONSENT = Object.freeze({
   NONE: 'none'
 });
 
+import { NAC_TERMS_BODY } from './nac-terms.mjs';
+
 export const REVIEW_SOURCES = Object.freeze([
   'google', 'facebook', 'product_review', 'email', 'sms', 'word_of_mouth', 'other'
 ]);
@@ -516,8 +518,34 @@ export const NAC_TRUST = Object.freeze({
   businessName: 'NAC Electrical Air & Refrigeration',
   abn: '97 636 392 982',
   arcAuthorisation: 'AU64234',
-  website: 'nacelectrical.com.au'
+  website: 'nacelectrical.com.au',
+  // From NAC's own Terms and Conditions of Trade v1.0. Every line below is a
+  // commitment the document already makes to the customer, so stating it on
+  // the proposal repeats NAC's position rather than inventing one. The clause
+  // is named so anyone can check it.
+  phone: '0427 101 685',                                    // clause 21
+  email: 'nick@nacelectrical.com.au',                       // clause 21
+  serviceArea: 'Sunshine Coast, Queensland',
+  workmanshipWarranty: '5 years on our installation workmanship from practical '
+    + 'completion. If a workmanship defect shows up in that time we rectify it at our '
+    + 'cost, labour and travel included.',                  // clause 12.1.1
+  manufacturerWarranty: 'The manufacturer\u2019s warranty, passed through to you in '
+    + 'full. We handle a manufacturer warranty claim on your behalf at no charge for '
+    + 'the first 12 months.',                               // clause 12.1.3
+  insuranceStatement: 'Public liability and workers\u2019 compensation insurance, '
+    + 'current. Certificates of currency available on request.'  // clause 17.1
 });
+
+/**
+ * The terms text a content library starts life with.
+ *
+ * NAC's real Terms and Conditions of Trade, so a proposal that goes out before
+ * anybody has opened the content library still shows the customer the terms
+ * they are accepting rather than an empty panel. Anything stored wins.
+ */
+export function seedTermsAndConditions(stored = null) {
+  return trimmed(stored) || NAC_TERMS_BODY;
+}
 
 /**
  * The trust block a content library starts life with: NAC's own facts, plus

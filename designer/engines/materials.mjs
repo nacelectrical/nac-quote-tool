@@ -20,7 +20,8 @@ export const PRICE_SOURCE = {
   NAC: 'nac',                          // a rate NAC has entered
   SUPPLIER: 'supplier_list',           // straight off the MMEM price list
   PLACEHOLDER: 'default_placeholder',  // the shipped starting value
-  NAC_SELL: 'nac_sell'                 // a fixed SELL price NAC charges (see FIXED_SELL)
+  NAC_SELL: 'nac_sell',                // a fixed SELL price NAC charges (see FIXED_SELL)
+  NAC_INTERIM: 'nac_interim'           // a stopgap rate NAC set, pending the real one
 };
 
 /**

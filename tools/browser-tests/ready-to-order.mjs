@@ -90,23 +90,23 @@ const ready = await p.evaluate(() => {
 });
 console.log('     ', JSON.stringify(ready));
 say('the design has a sell price', ready.sell > 0, '$' + ready.sell);
-// EVERY UNPRICED LINE IS A FABRICATED BTO, AND THAT IS THE POINT.
+// EVERY BRANCH TAKE-OFF IS PRICED, AND SAYS HOW.
 //
-// A branch take-off is made to order, and `bto_400_250_250_250` is not the same
-// fitting as `bto_350_250_250_250`. Nick: "do not silently use one generic BTO
-// price; do not substitute the price of another configuration." So until a
-// fabricator's rate is entered against each exact configuration the line has no
-// price — and the CUSTOMER QUOTE is blocked while the internal sheet is not.
-say('the only unpriced lines are fabricated BTO configurations',
-  ready.unpricedKeys.length === 0 ||
-  ready.unpricedKeys.every(k => k === 'bto_fitting'),
+// `bto_400_250_250_250` is still not the same fitting as `bto_350_250_250_250`,
+// and neither borrows the other's price. What changed is where a price comes
+// from when nobody has entered one: a configuration MMEM stock is priced as
+// that part, and one they do not stock carries the interim rate Nick
+// authorised — "just do all bto as 75+ each no matter what until i get the
+// exact descriptions". So there are no unpriced lines left, and the quote is
+// no longer blocked by them.
+say('no line is left with no cost at all',
+  ready.unpricedKeys.length === 0,
   ready.unpricedKeys.join(', ') || 'none');
-say('and each one names the exact configuration it needs a price for',
+say('and each take-off names the exact configuration it is priced on',
   ready.btoConfigs.every(k => /^bto_\d+(_\d+)+$/.test(k)),
   ready.btoConfigs.join(', ') || 'none');
-say('a customer quote is blocked while they are unpriced',
-  ready.btoConfigs.length === 0 ? ready.gateOk === true
-    : ready.gateOk === false && ready.gateCodes.includes('BTO_PRICE_REQUIRED'),
+say('the take-offs no longer block the customer quote',
+  !ready.gateCodes.includes('BTO_PRICE_REQUIRED'),
   ready.gateCodes.join(', ') || 'nothing blocking');
 
 // ── 2. Push it to a quote ───────────────────────────────────────────────────

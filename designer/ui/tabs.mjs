@@ -765,6 +765,10 @@ export function renderMaterials(app) {
         ? [stat('Charged at a set price', money(bom.fixedSellTotal),
             bom.fixedSellCount + ' line(s), added after the job fee')]
         : []),
+      ...(bom.interimCount
+        ? [stat('On an interim rate', money(bom.interimCost),
+            bom.interimCount + ' line(s) awaiting a supplier price', 'warn')]
+        : []),
       stat('On placeholder rates', bom.placeholderCount, bom.placeholderCount ? 'Set NAC rates in Settings' : 'All NAC rates',
         bom.placeholderCount ? 'warn' : '')),
 
@@ -807,6 +811,7 @@ export function renderMaterials(app) {
             : r.totalCost === null ? '—' : money(r.totalCost) },
         { key: 'priceSource', label: 'Price', align: 'center',
           render: (r) => r.priceSource === 'nac_sell' ? badge('sell', 'ok')
+            : r.priceSource === 'nac_interim' ? badge('interim', 'warn')
             : r.noCharge ? badge('included', 'muted')
             : r.priceSource === 'nac' ? badge('NAC', 'ok')
             : r.priceSource === 'supplier_list' ? badge('supplier', 'ok')

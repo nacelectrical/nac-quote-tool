@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { proposalAllowance, ALLOWANCE_FIELDS } from '../designer/engines/design-stage.mjs';
 import { commercialTermsStatus, TERMS_FIELDS } from '../designer/engines/commercial-terms.mjs';
+import { checkTermsAgainstSettings, NAC_TERMS_LABEL, NAC_TERMS_EFFECTIVE }
+  from '../designer/engines/nac-terms.mjs';
 import { usedRateStatus, rateVerified, VERIFICATION_FIELDS }
   from '../designer/engines/material-verification.mjs';
 
@@ -80,23 +82,50 @@ test('the terms that ship are the ones NAC stated', () => {
   assert.equal(t.depositAmount, null, 'a deposit is set one way, not two');
   assert.equal(t.balanceDueEvent, 'completion');
   assert.deepEqual(t.paymentMethods, ['Direct deposit', 'EFT']);
-  // The demonstration figures are gone and must not come back.
+  // The demonstration deposit is gone and must not come back.
   assert.notEqual(t.depositPercent, 20, 'the demonstration 20% deposit is back');
-  assert.notEqual(t.validityDays, 30, 'the demonstration 30-day validity is back');
+  // The demonstration validity was also 30 days. That figure is now NAC's own
+  // — Nick gave it and clause 2.1 of the terms says the same — so the guard
+  // cannot be "not 30". What matters is that it agrees with the document, and
+  // checkTermsAgainstSettings holds that in the test below.
+  assert.equal(t.validityDays, 30);
   // The stages add up to the whole job, and to the deposit that was stated.
   assert.equal(t.paymentStages.reduce((n, p) => n + p.percent, 0), 100);
   assert.equal(t.paymentStages[0].percent, t.depositPercent);
 });
 
-test('what NAC has NOT stated still ships empty', () => {
+test('the settings and the terms document state the same figures', () => {
+  // The customer gets both documents. If the deposit is 30% in one and 50% in
+  // the other, the one they signed is whichever their solicitor reads first.
   const t = DEFAULT_SETTINGS.commercial.terms;
-  assert.equal(t.validityDays, null, 'a validity period was invented');
-  assert.equal(t.termsVersion, '', 'a terms version was invented');
-  assert.equal(t.confirmed, false, 'terms confirmed themselves');
+  assert.equal(t.validityDays, 30);                      // clause 2.1
+  assert.equal(t.termsVersion, NAC_TERMS_LABEL);
+  assert.equal(t.termsEffectiveDate, NAC_TERMS_EFFECTIVE);
+  const check = checkTermsAgainstSettings(DEFAULT_SETTINGS);
+  assert.equal(check.ok, true, check.conflicts.map(c => c.code).join(', '));
+
+  // And it is a real check, not one that always passes.
+  const drifted = checkTermsAgainstSettings({ commercial: { terms: {
+    validityDays: 60, depositPercent: 20, balanceDueEvent: 'handover' } } });
+  assert.deepEqual(drifted.conflicts.map(c => c.code).sort(),
+    ['TERMS_BALANCE_CONFLICT', 'TERMS_DEPOSIT_CONFLICT', 'TERMS_VALIDITY_CONFLICT']);
 });
 
-test('terms that are part-filled still block, and say exactly what is missing', () => {
+test('typing the terms in is still not the same as confirming them', () => {
+  const t = DEFAULT_SETTINGS.commercial.terms;
+  assert.equal(t.confirmed, false, 'terms confirmed themselves');
+  assert.equal(t.confirmedBy, '');
   const s = commercialTermsStatus(DEFAULT_SETTINGS);
+  assert.equal(s.ok, false);
+  assert.equal(s.missing.length, 0, 'something is still missing');
+  assert.ok(s.failures.some(f => f.code === 'TERMS_NOT_CONFIRMED'),
+    'the only thing left is Nick pressing confirm, and nothing says so');
+});
+
+test('a field cleared out is reported missing, by name and to the screen', () => {
+  const gutted = { commercial: { terms: {
+    ...DEFAULT_SETTINGS.commercial.terms, validityDays: null, termsVersion: '' } } };
+  const s = commercialTermsStatus(gutted);
   assert.equal(s.ok, false);
   const keys = s.missing.map(m => m.key);
   for (const k of ['validityDays', 'termsVersion']) {

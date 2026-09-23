@@ -138,10 +138,13 @@ say('the quote is BLOCKED', a.quotes.length===0);
 // 24 V actuator" — and only this expectation was left behind. What the step
 // is actually about is that the estimator is told WHICH lines are unpriced,
 // by name, rather than just that something is missing.
+// The BTOs are no longer in this list, and that is the change rather than a
+// regression: a configuration MMEM stock is priced as the part it is, and one
+// they do not carries the declared interim rate. Neither is a line with no
+// cost. The damper, whose rates this test strips, still is.
 say('the estimator is told which lines',
   /have no cost at all/.test(a.toasts)
-  && /Motorised zone damper ø\d+/i.test(a.toasts)
-  && /Fabricated BTO branch take-off/i.test(a.toasts),
+  && /Motorised zone damper ø\d+/i.test(a.toasts),
   String(a.toasts).slice(0, 160));
 say('no native confirm() was used', a.native.length===0);
 

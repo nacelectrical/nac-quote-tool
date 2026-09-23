@@ -1,7 +1,9 @@
-import NAC from './nac-standard.mjs';
 // NAC AI HVAC DESIGNER — HVAC DESIGN SETTINGS (PART 12)
 // Every engineering assumption the deterministic engines use lives here.
 // Nothing in the engines may hard-code a design constant that belongs in this file.
+
+import NAC from './nac-standard.mjs';
+import { NAC_TERMS_LABEL, NAC_TERMS_EFFECTIVE } from './nac-terms.mjs';
 
 export const DEFAULT_SETTINGS = {
   version: 1,
@@ -413,20 +415,22 @@ export const DEFAULT_SETTINGS = {
       /** The event that makes the balance payable. */
       balanceDueEvent: 'completion',
       /**
-       * How long a quote stands. STILL EMPTY — Nick has not given a figure,
-       * and a validity period decides when a price NAC is bound to expires.
-       * Guessing it is how a quote gets honoured six months after the
-       * equipment price moved.
+       * How long a quote stands. 30 days — Nick's figure, and clause 2.1 of
+       * NAC's own terms says the same: "Our quotations hold for 30 days from
+       * the date of issue." checkTermsAgainstSettings proves they still agree,
+       * because the customer receives both documents.
        */
-      validityDays: null,
+      validityDays: 30,
       /** ['Direct deposit', 'EFT', ...] */
       paymentMethods: ['Direct deposit', 'EFT'],
       /**
-       * Which version of NAC's terms this quote was issued under. STILL EMPTY
-       * — this is the label on the document a customer is agreeing to, and
-       * only NAC can say which one that is.
+       * Which version of NAC's terms this quote was issued under. Taken from
+       * the document itself rather than typed here twice, so raising the
+       * version in nac-terms.mjs is the only place it has to change.
        */
-      termsVersion: '',
+      termsVersion: NAC_TERMS_LABEL,
+      /** The date that version took effect, as the document states it. */
+      termsEffectiveDate: NAC_TERMS_EFFECTIVE,
       /** Set by Nick when the above is right. Nothing publishes until it is. */
       confirmed: false,
       confirmedBy: '',

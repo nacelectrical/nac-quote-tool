@@ -15,6 +15,8 @@
 // exact thing to fix and where to fix it; none of them is a general "pricing
 // incomplete" that leaves somebody hunting.
 
+import { unstockedConfigurations } from './mmem-fittings.mjs';
+
 export const QUOTE_BLOCK = Object.freeze({
   BTO_PRICE_REQUIRED: 'BTO_PRICE_REQUIRED',
   DAMPER_PRICE_REQUIRED: 'DAMPER_PRICE_REQUIRED',
@@ -33,7 +35,11 @@ export const QUOTE_BLOCK = Object.freeze({
   DUCT_SIZE_INCONSISTENT: 'DUCT_SIZE_INCONSISTENT',
   PRESSURE_NOT_CALCULATED: 'PRESSURE_NOT_CALCULATED',
   CAPACITY_BELOW_LOAD: 'CAPACITY_BELOW_LOAD',
-  OUTLET_SCHEDULE_DISAGREEMENT: 'OUTLET_SCHEDULE_DISAGREEMENT'
+  OUTLET_SCHEDULE_DISAGREEMENT: 'OUTLET_SCHEDULE_DISAGREEMENT',
+  /** A warning, not a blocker — the authorised interim BTO rate. */
+  BTO_PRICE_INTERIM: 'BTO_PRICE_INTERIM',
+  /** A warning — the design asks for a fitting MMEM do not stock. */
+  BTO_NOT_STOCKED: 'BTO_NOT_STOCKED'
 });
 
 /**
@@ -44,6 +50,12 @@ export const QUOTE_BLOCK = Object.freeze({
  */
 export function quoteGate(design) {
   const blockers = [];
+  /**
+   * Things the estimator must SEE but that do not stop a quote. Kept apart
+   * from blockers so "does this quote" and "what should you know" never get
+   * confused for one another.
+   */
+  const warnings = [];
   const bom = design?.bom || null;
 
   // ── Every BTO priced on its OWN configuration ──────────────────────────
@@ -61,15 +73,62 @@ export function quoteGate(design) {
       fittings: btoUnpriced.flatMap(i => i.fittings || [])
     });
   }
-  const btoPlaceholder = btoLines.filter(i => i.priceStatus === 'PLACEHOLDER');
-  if (btoPlaceholder.length) {
+  // ── AN UNCONFIRMED BTO RATE ─────────────────────────────────────────────
+  //
+  // A rate somebody typed against a configuration without attaching the
+  // fabricator's quote still blocks: it looks like a real price and nobody can
+  // say where it came from.
+  //
+  // The DECLARED INTERIM RATE is different, and only because Nick said so:
+  // "just do all bto as 75+ each no matter what until i get the exact
+  // descriptions." It is a stopgap he has authorised while MMEM items 65-105
+  // are outstanding, so it does not stop a quote — but it is never silent. It
+  // stays a placeholder rate, so the estimator still meets it in the
+  // unconfirmed-prices dialog, and it is reported here as a WARNING that names
+  // every configuration riding on it.
+  const btoTyped = btoLines.filter(i => i.priceStatus === 'PLACEHOLDER' && !i.priceInterim);
+  if (btoTyped.length) {
     blockers.push({
       code: QUOTE_BLOCK.BTO_PRICE_REQUIRED,
       severity: 'CRITICAL',
-      message: btoPlaceholder.length + ' BTO configuration(s) carry an unconfirmed price: ' +
-        btoPlaceholder.map(i => i.configKey).join(', ') + '. Attach the fabricator’s quote ' +
+      message: btoTyped.length + ' BTO configuration(s) carry an unconfirmed price: ' +
+        btoTyped.map(i => i.configKey).join(', ') + '. Attach the fabricator’s quote ' +
         'reference and mark the rate verified before quoting.',
-      configKeys: btoPlaceholder.map(i => i.configKey)
+      configKeys: btoTyped.map(i => i.configKey)
+    });
+  }
+  // ── FITTINGS MMEM DO NOT MAKE ───────────────────────────────────────────
+  //
+  // Nick: "only use these in design also." Until the router is constrained to
+  // the catalogue, it keeps asking for combinations MMEM do not stock, and
+  // every one of those is a fitting somebody has to get fabricated or bodge on
+  // site. Naming them is the first half of that job.
+  const unstocked = unstockedConfigurations(btoLines.map(i => i.configKey));
+  if (unstocked.length) {
+    warnings.push({
+      code: QUOTE_BLOCK.BTO_NOT_STOCKED,
+      severity: 'WARNING',
+      message: unstocked.length + ' of ' + btoLines.length + ' branch take-off(s) are not a '
+        + 'stocked MMEM part: ' + unstocked.map(u => '\u00f8' + u.inletMm + ' \u2192 '
+            + u.outletsMm.map(d => '\u00f8' + d).join(' + ')).join('; ')
+        + '. They have to be fabricated, or the design changed to a part MMEM make.',
+      configKeys: unstocked.map(u => u.configKey),
+      alternatives: unstocked.flatMap(u => u.sameInlet)
+    });
+  }
+
+  const btoInterim = btoLines.filter(i => i.priceInterim);
+  if (btoInterim.length) {
+    warnings.push({
+      code: QUOTE_BLOCK.BTO_PRICE_INTERIM,
+      severity: 'WARNING',
+      message: btoInterim.length + ' BTO configuration(s) are on the declared interim rate of $' +
+        Number(btoInterim[0].unitCost || 0).toFixed(2) + ' each, worth $' +
+        btoInterim.reduce((n, i) => n + Number(i.totalCost || 0), 0).toFixed(2) + ': ' +
+        btoInterim.map(i => i.configKey).join(', ') + '. It is not a fabricator’s quote for ' +
+        'any of them. Replace it configuration by configuration as MMEM items 65\u2013105 ' +
+        'arrive.',
+      configKeys: btoInterim.map(i => i.configKey)
     });
   }
 
@@ -210,9 +269,11 @@ export function quoteGate(design) {
   return {
     ok: blockers.length === 0,
     blockers,
+    warnings,
     /** One line for a button's tooltip or a banner. */
     summary: blockers.length === 0
       ? 'Pricing is complete — this design can be quoted.'
+        + (warnings.length ? ' ' + warnings.length + ' price(s) still to confirm.' : '')
       : blockers.length + ' issue(s) block a customer quote. The internal design sheet ' +
         'can still be produced.'
   };
@@ -220,15 +281,27 @@ export function quoteGate(design) {
 
 /** The gate as design warnings, so it appears wherever warnings appear. */
 export function quoteGateWarnings(gate) {
-  return (gate?.blockers || []).map(b => ({
-    code: b.code,
-    severity: 'CRITICAL',
-    area: 'pricing',
-    message: b.message,
-    // The internal sheet is NOT blocked by these — only the customer quote.
-    blocksCustomerQuote: true,
-    blocksFinalApproval: false
-  }));
+  return [
+    ...(gate?.blockers || []).map(b => ({
+      code: b.code,
+      severity: 'CRITICAL',
+      area: 'pricing',
+      message: b.message,
+      // The internal sheet is NOT blocked by these — only the customer quote.
+      blocksCustomerQuote: true,
+      blocksFinalApproval: false
+    })),
+    // Carried at their own severity, and they block nothing. A warning that
+    // shows up as CRITICAL is a warning nobody trusts the next time.
+    ...(gate?.warnings || []).map(w => ({
+      code: w.code,
+      severity: w.severity || 'WARNING',
+      area: 'pricing',
+      message: w.message,
+      blocksCustomerQuote: false,
+      blocksFinalApproval: false
+    }))
+  ];
 }
 
 export default { quoteGate, quoteGateWarnings, QUOTE_BLOCK };

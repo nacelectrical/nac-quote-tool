@@ -12,7 +12,8 @@ import { runPipeline } from '../designer/engines/pipeline.mjs';
 import { buildCatalogue } from '../designer/engines/catalogue.mjs';
 import { btoConfigKey, btoGroupKey, btoBomLines, btoSpec, labelBtos,
          isReturnSection } from '../designer/engines/bto.mjs';
-import { resolveBtoPrice, BTO_PRICE_STATUS } from '../designer/engines/bto-pricing.mjs';
+import { resolveBtoPrice, BTO_PRICE_STATUS, BTO_INTERIM_RATE, priceIsQuotable }
+  from '../designer/engines/bto-pricing.mjs';
 import { buildZoneDampers, damperBomLines, validateZoneDampers,
          DAMPER_DIAMETERS_MM } from '../designer/engines/zone-dampers.mjs';
 import { quoteGate, QUOTE_BLOCK } from '../designer/engines/quote-gate.mjs';
@@ -186,29 +187,70 @@ test('a derived body is never described as verified', () => {
 
 // ══ BTO PRICING ════════════════════════════════════════════════════════════
 
-test('a missing exact configuration price is PRICE REQUIRED', () => {
-  for (const line of btoLines) {
-    assert.equal(line.priceStatus, BTO_PRICE_STATUS.REQUIRED, line.configKey);
-    assert.equal(line.totalCost, null);
-    assert.equal(line.priced, false);
+// ── THE INTERIM RATE ───────────────────────────────────────────────────────
+//
+// Nick: "just do all bto as 75+ each no matter what until i get the exact
+// descriptions." The BTOs are MMEM items 65-105 and that list has not arrived,
+// so one declared stopgap covers every configuration rather than leaving every
+// job blocked on a fitting list nobody has.
+//
+// It is never dressed up as a fabricator's price: PLACEHOLDER, never VERIFIED,
+// and it says what it is.
+test('a configuration with no entered rate takes the declared interim rate', () => {
+  // …unless MMEM stock it. One of this job's five IS a catalogue part (a ø350
+  // inlet with two ø250 outlets is a DY14) and is priced as the part it is;
+  // the rest are combinations MMEM do not make.
+  const onInterim = btoLines.filter(l => !l.supplierCode);
+  assert.equal(onInterim.length, btoLines.length - 1,
+    'the stocked configuration was not recognised');
+  for (const line of onInterim) {
+    assert.equal(line.priceStatus, BTO_PRICE_STATUS.PLACEHOLDER, line.configKey);
+    assert.equal(line.unitCost, BTO_INTERIM_RATE);
+    assert.equal(line.priceInterim, true);
+    assert.equal(line.priced, true);
+    assert.equal(line.priceSource, 'nac_interim',
+      'an interim rate NAC set is not a rate this application shipped');
+    assert.match(line.btoPrice.note, /Interim rate/);
+    assert.match(line.btoPrice.note, /65/, 'it does not say what it is waiting for');
+    assert.equal(line.btoPrice.verified, false);
   }
 });
 
+test('the interim rate is never quotable as a real price', () => {
+  const r = resolveBtoPrice('bto_400_350_350', {});
+  assert.equal(r.cost, BTO_INTERIM_RATE);
+  assert.equal(priceIsQuotable(r), false,
+    'a stopgap passed as a price good enough for a customer');
+});
+
 test('one configuration is never priced off another', () => {
+  // The thing that must never happen is still forbidden: a ø350 three-port
+  // does not inherit what a fabricator quoted for the ø400. It falls to the
+  // declared interim rate, which is a different thing — every configuration
+  // carries the same stated stopgap rather than borrowing one real price.
   const rates = { bto_400_250_250_250: { cost: 142, verified: true, quoteRef: 'Q-1' } };
   assert.equal(resolveBtoPrice('bto_400_250_250_250', { rates }).cost, 142);
   const other = resolveBtoPrice('bto_350_250_250_250', { rates });
-  assert.equal(other.cost, null, 'a ø350 three-port borrowed the ø400 three-port price');
-  assert.equal(other.status, BTO_PRICE_STATUS.REQUIRED);
+  assert.notEqual(other.cost, 142, 'a ø350 three-port borrowed the ø400 three-port price');
+  assert.equal(other.cost, BTO_INTERIM_RATE);
+  assert.equal(other.status, BTO_PRICE_STATUS.PLACEHOLDER);
+  assert.equal(other.verified, false);
+
+  // And with the interim rate switched off, the original behaviour is intact.
+  const bare = resolveBtoPrice('bto_350_250_250_250', { rates, interimRate: null });
+  assert.equal(bare.cost, null);
+  assert.equal(bare.status, BTO_PRICE_STATUS.REQUIRED);
 });
 
-test('there is no generic BTO rate left to fall back on', () => {
+test('a real rate retires the interim one, configuration by configuration', () => {
   const entered = { ...source, btoRates: { bto_400_250_250_250: { cost: 142, verified: true } } };
   const priced = rerun(entered);
   const a = priced.bom.items.find(i => i.configKey === 'bto_400_250_250_250');
   const c = priced.bom.items.find(i => i.configKey === 'bto_400_350_350');
   assert.equal(a.unitCost, 142, 'the entered rate is used');
-  assert.equal(c.unitCost, null, 'and the others stay unpriced');
+  assert.equal(a.priceInterim, false, 'a real rate is still flagged as interim');
+  assert.equal(c.unitCost, BTO_INTERIM_RATE, 'the others stay on the stopgap');
+  assert.equal(c.priceInterim, true);
 });
 
 test('a fabricator quote reference makes a price verified', () => {
@@ -220,12 +262,37 @@ test('a fabricator quote reference makes a price verified', () => {
   assert.equal(r.supplier, 'Metal Masters');
 });
 
-test('a missing BTO price blocks the customer quote', () => {
+test('the interim rate warns rather than blocks, and names every fitting on it', () => {
   const gate = quoteGate(job);
-  assert.equal(gate.ok, false);
-  assert.ok(gate.blockers.some(b => b.code === QUOTE_BLOCK.BTO_PRICE_REQUIRED));
-  // …and the internal sheet is explicitly NOT blocked by it.
+  assert.ok(!gate.blockers.some(b => b.code === QUOTE_BLOCK.BTO_PRICE_REQUIRED),
+    'the authorised interim rate is still blocking a quote');
+  const w = gate.warnings.find(x => x.code === QUOTE_BLOCK.BTO_PRICE_INTERIM);
+  assert.ok(w, 'the interim rate passed without anybody being told');
+  assert.equal(w.severity, 'WARNING');
+  assert.match(w.message, /interim rate of \$75\.00/);
+  assert.match(w.message, /not a fabricator/i);
+  assert.equal(w.configKeys.length, btoLines.filter(l => !l.supplierCode).length,
+    'not every fitting on the interim rate was named');
+  // And the one MMEM DO stock is not on it.
+  assert.ok(!w.configKeys.includes('bto_350_250_250'));
+
+  // The design asking for fittings MMEM do not make is its own warning.
+  const ns = gate.warnings.find(x => x.code === QUOTE_BLOCK.BTO_NOT_STOCKED);
+  assert.ok(ns, 'nothing says the router designed fittings nobody stocks');
+  assert.match(ns.message, /not a stocked MMEM part/);
+  assert.ok(ns.alternatives.length, 'it does not say what IS available');
+  // …and the internal sheet is still produced, as it always was.
   assert.ok(job.schedules.bto.length, 'the internal schedule is still produced');
+});
+
+test('a rate somebody typed without a quote reference still blocks', () => {
+  // The interim rate is authorised. A hand-typed one with no fabricator behind
+  // it is not, and it looks far more like a real price than the stopgap does.
+  const typed = rerun({ ...source, btoRates: { bto_400_350_350: 168 } });
+  const gate = quoteGate(typed);
+  const b = gate.blockers.find(x => x.code === QUOTE_BLOCK.BTO_PRICE_REQUIRED);
+  assert.ok(b, 'an unconfirmed typed rate walked through');
+  assert.deepEqual(b.configKeys, ['bto_400_350_350']);
 });
 
 // ══ MOTORISED ZONE DAMPERS ═════════════════════════════════════════════════

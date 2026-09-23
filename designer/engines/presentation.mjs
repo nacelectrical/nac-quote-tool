@@ -25,6 +25,7 @@
 import { quoteGate } from './quote-gate.mjs';
 import { looksUnfilled, customerStatus } from './customer-data.mjs';
 import { commercialTermsStatus } from './commercial-terms.mjs';
+import { licencePromiseCheck } from './nac-terms.mjs';
 export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
@@ -345,7 +346,20 @@ export function presentationGate(design, opts = {}) {
     }
   }
 
-  return { ok: blockers.length === 0, blockers, summary: gate.summary ?? null };
+  // ── CLAUSE 17.2 ─────────────────────────────────────────────────────────
+  //
+  // NAC's terms tell the customer that licence numbers appear on quotations
+  // and invoices. Nick has asked to leave the electrical contractor licence
+  // out for now, so this does not block — but a document promising something
+  // the quotation does not carry should never be a thing nobody mentioned.
+  const notes = [];
+  const promise = licencePromiseCheck(opts.trust || {});
+  if (issuing && !promise.ok) {
+    notes.push({ code: 'LICENCE_PROMISED_BY_TERMS', severity: 'CHECK',
+                 message: promise.note, missing: promise.missing });
+  }
+
+  return { ok: blockers.length === 0, blockers, notes, summary: gate.summary ?? null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
