@@ -30,11 +30,22 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top));
   background:linear-gradient(135deg,#0c0c24,#16103a);border-bottom:2px solid rgba(245,194,0,.16);
   position:sticky;top:0;z-index:60}
-.brand{display:flex;align-items:center;gap:12px;min-width:0}
-.brand img{height:36px;border-radius:6px;background:#fff;padding:3px 6px}
-.brand h1{margin:0;font-size:14px;font-weight:800;letter-spacing:.6px;color:var(--yellow);white-space:nowrap}
+/* BOTH HALVES HAVE TO BE ABLE TO SHRINK.
+   The title was nowrap with nothing to clip it, so .brand could never be
+   narrower than the words "NAC AI HVAC DESIGNER"; the actions wrap, so
+   .head-actions could never be narrower than its widest button. Two flex
+   children that both refuse to shrink do not wrap — they overlap, and the
+   title printed across the buttons at iPad landscape and at phone width.
+   The title now truncates instead of pushing, which is what the sub-line
+   beneath it has always done. */
+.brand{display:flex;align-items:center;gap:12px;min-width:0;flex:1 1 auto}
+.brand>div{min-width:0}
+.brand img{height:36px;border-radius:6px;background:#fff;padding:3px 6px;flex:0 0 auto}
+.brand h1{margin:0;font-size:14px;font-weight:800;letter-spacing:.6px;color:var(--yellow);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .brand .sub{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;
+  flex:0 1 auto;min-width:0}
 
 /* ── Steps ────────────────────────────────────────────────────────────── */
 .steps{display:flex;gap:2px;overflow-x:auto;background:#0a0a20;border-bottom:1px solid var(--line);
@@ -320,6 +331,40 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
   .qreview-plan .plan-host,.qplan-placeholder{min-height:min(62vh,520px)}
   .qcards{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   .qactions{flex-direction:column;align-items:stretch}
+}
+
+/* ── Phone ────────────────────────────────────────────────────────────────
+   The header's two halves cannot sit side by side at phone width. The title
+   is nowrap so .brand will not shrink, and the eight action buttons wrap onto
+   three rows so .head-actions will not either — between them they were wider
+   than the screen, and the two flex children overlapped: "NAC AI HVAC
+   DESIGNER" printed straight across the middle of the Design Assistant
+   button, on the live tool, on Nick's phone.
+
+   Stacked, each half gets the full width and neither has to shrink. The
+   actions become one sideways-scrolling row, the way the step strip below
+   them already works, so the header costs a thumb's height rather than half
+   the screen. Save comes first in that row, because it is the one that must
+   never be scrolled out of reach. */
+@media (max-width:620px){
+  .app-head{flex-direction:column;align-items:stretch;gap:8px;
+    padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top))}
+  .brand{gap:9px}
+  .brand img{height:30px}
+  .brand h1{font-size:12.5px;white-space:normal;line-height:1.25}
+  .brand .sub{display:block;font-size:10.5px}
+
+  .head-actions{flex-wrap:nowrap;justify-content:flex-start;gap:6px;
+    overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+    /* Room for the scrollbar-free edge fade to read as "there is more". */
+    padding:2px 12px 4px;margin:0 -12px;
+    -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 22px),transparent);
+    mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 22px),transparent)}
+  .head-actions::-webkit-scrollbar{display:none}
+  .head-actions>*{flex:0 0 auto}
+  /* The badge is a status, not an action: it belongs beside the name. */
+  .head-actions .badge{order:-2}
+  .head-actions .btn:not(.ghost){order:-1}
 }
 
 /* Quick mode working screens: tools on the left, the plan beside them. The
