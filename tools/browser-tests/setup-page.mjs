@@ -209,6 +209,58 @@ console.log('\n[D] db-selftest.html still works from the shared module');
   await ctx.close();
 }
 
+// ── THE STORAGE FOR THE UPGRADED QUOTE ────────────────────────────────────
+//
+// Two tables the production SQL does not create. This page cannot create them
+// either — Supabase has no way to run DDL from a browser session — so the most
+// it can do is make it one copy, one paste, one Run, and then say plainly
+// whether it worked.
+console.log('\n[quote storage — the card that hands you the SQL]');
+{
+  const ctx = await b.newContext({ viewport: { width: 390, height: 844 },
+    isMobile: true, hasTouch: true });
+  await signInContext(ctx);
+  // The catch-all goes on FIRST: Playwright matches the most recently added
+  // route before the earlier ones.
+  await ctx.route('**/rest/v1/**', r => r.fulfill({ status: 200,
+    contentType: 'application/json', body: '[]' }));
+  await ctx.route('**/rest/v1/nac_quote_issues*', r => r.fulfill({ status: 404,
+    contentType: 'application/json', body: '{"message":"relation does not exist"}' }));
+
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on('pageerror', e => errs.push(e.message.slice(0, 140)));
+  await p.goto('http://127.0.0.1:8777/setup.html', { waitUntil: 'load' });
+  await p.waitForTimeout(1500);
+
+  const sql = await p.locator('#sqlText').inputValue().catch(() => '');
+  say('the SQL is on the page, read from the files themselves',
+    sql.length > 2000 && /create table if not exists public\.nac_quote_issues/i.test(sql),
+    sql.length + ' chars');
+  say('and it includes the media buckets', /storage\.buckets/i.test(sql));
+
+  await p.locator('#checkStore').click();
+  await p.waitForTimeout(900);
+  const missing = await p.locator('#storeResult').innerText();
+  say('a missing table is named, not hinted at',
+    /nac_quote_issues/.test(missing) && /Not there yet/i.test(missing), missing.slice(0, 80));
+
+  await p.locator('#copySql').click();
+  await p.waitForTimeout(400);
+  say('the copy button says what to do next',
+    /paste it into Supabase/i.test(await p.locator('#copySql').innerText()));
+
+  // …and when both exist, it says so rather than staying silent.
+  await ctx.unroute('**/rest/v1/nac_quote_issues*');
+  await p.locator('#checkStore').click();
+  await p.waitForTimeout(900);
+  const present = await p.locator('#storeResult').innerText();
+  say('and once the tables exist it says the quote can be issued',
+    /can be issued/i.test(present), present.slice(0, 70));
+  say('no page errors', errs.length === 0, errs.join(' | ') || 'clean');
+  await ctx.close();
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 await b.close();
 process.exit(fail ? 1 : 0);

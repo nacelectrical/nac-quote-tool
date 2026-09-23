@@ -99,6 +99,32 @@
     </div>
   </div>
 
+  <!-- ── QUOTE STORAGE ──────────────────────────────────────────────────────
+       The upgraded customer proposal needs two tables that the original
+       production SQL does not create. Nothing on this page can create them —
+       Supabase has no way to run DDL from a browser session — so the next best
+       thing is to make it one copy, one paste, one Run. The SQL is fetched
+       from the repository rather than pasted in here twice, so this page can
+       never drift from the file it is telling you to run. -->
+  <div class="card" id="quoteStoreCard">
+    <h2>Storage for the upgraded quote</h2>
+    <p class="note">
+      The proposal link — the one where a customer chooses their system and accepts —
+      is stored in <b>nac_quote_issues</b>, and the reviews, photos and trust copy live in
+      <b>nac_presentation_content</b>. Neither is created by the production SQL above.
+      Copy this, paste it into the Supabase SQL editor, press Run. It is safe to run twice.
+    </p>
+    <div class="btn-row">
+      <button id="copySql" class="primary">Copy the quote storage SQL</button>
+      <a class="btn" id="openSupabase" href="https://supabase.com/dashboard" target="_blank"
+         rel="noopener noreferrer">Open the Supabase SQL editor</a>
+      <button id="checkStore">Check whether it worked</button>
+    </div>
+    <div id="storeResult" class="note"></div>
+    <details><summary class="note">Show the SQL</summary>
+      <textarea id="sqlText" readonly>Loading…</textarea></details>
+  </div>
+
   <div class="card" id="plan"><h2>Progress</h2><div id="steps"></div></div>
   <div class="verdict" id="verdict"></div>
   <div id="out"></div>
@@ -120,8 +146,65 @@ const stepsEl = document.getElementById('steps');
 const lines = [];
 let failures = 0, warnings = 0, passes = 0;
 
+// ── The quote-storage card ────────────────────────────────────────────────
+//
+// The SQL is read from the files themselves. A copy pasted into this page
+// would be a second source that nobody updates when the schema changes, and
+// somebody would run last month's migration believing it was this month's.
+const QUOTE_SQL_FILES = ['/designer/quote-presentation-schema.sql',
+                         '/designer/quote-media-buckets.sql'];
+const QUOTE_TABLES = ['nac_quote_issues', 'nac_presentation_content'];
+
+let quoteSql = null;
+async function loadQuoteSql() {
+  if (quoteSql) return quoteSql;
+  const parts = [];
+  for (const f of QUOTE_SQL_FILES) {
+    const r = await fetch(f);
+    if (!r.ok) throw new Error('could not read ' + f);
+    parts.push('-- ' + f + '\n' + (await r.text()));
+  }
+  quoteSql = parts.join('\n\n');
+  return quoteSql;
+}
+
+const sqlBox = document.getElementById('sqlText');
+const storeResult = document.getElementById('storeResult');
+loadQuoteSql().then(t => { sqlBox.value = t; })
+  .catch(e => { sqlBox.value = 'Could not load the SQL: ' + e.message; });
+
+document.getElementById('copySql').addEventListener('click', async () => {
+  const btn = document.getElementById('copySql');
+  try {
+    const text = await loadQuoteSql();
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { sqlBox.select(); document.execCommand('copy'); }
+    btn.textContent = 'Copied — now paste it into Supabase';
+    setTimeout(() => { btn.textContent = 'Copy the quote storage SQL'; }, 4000);
+  } catch (e) {
+    storeResult.textContent = 'Could not read the SQL: ' + e.message;
+  }
+});
+
+document.getElementById('checkStore').addEventListener('click', async () => {
+  storeResult.textContent = 'Checking…';
+  const missing = [];
+  for (const t of QUOTE_TABLES) {
+    const r = await get(t + '?select=*&limit=1');
+    // RLS with no policy answers 200 with an empty array to a signed-in user,
+    // which is the intended state: the table EXISTS and gives nothing away.
+    // Only a 404 means it was never created.
+    if (!r.ok && r.status === 404) missing.push(t);
+  }
+  storeResult.textContent = missing.length
+    ? 'Not there yet — missing: ' + missing.join(', ') + '. Copy the SQL above and run it in '
+      + 'the Supabase SQL editor.'
+    : 'Both tables exist. The upgraded quote can be issued.';
+});
+
 const STEPS = [
   ['sql',      'Security policies and the new tables', 'Checks designer/production-setup.sql has been applied'],
+  ['quotestore','Storage for the upgraded quote',       'nac_quote_issues and nac_presentation_content'],
   ['db',       'Live database round trip',             'Create, read back, edit, list and delete — real rows'],
   ['customer', 'The customer’s own signing page',      'Must still work with no account'],
   ['crm',      'Customers and jobs migration',         'Dry run first; nothing is written until you say so'],
@@ -173,6 +256,33 @@ const SUPA = 'https://icnznjhwybryizbdqrgx.supabase.co';
 const get = (path, headers) => fetch(SUPA + '/rest/v1/' + path, { headers: headers || dbHeaders() })
   .then(async r => ({ ok: r.ok, status: r.status, json: await r.json().catch(() => null) }))
   .catch(e => ({ ok: false, status: 0, json: null, error: e.message }));
+
+// ── Storage for the upgraded quote ────────────────────────────────────────
+//
+// Two tables the original production SQL does not create. Without them the
+// proposal link has nowhere to be stored and ISSUE THE PROPOSAL cannot do
+// anything, so this is reported in its own right rather than buried.
+async function checkQuoteStorage() {
+  addGroup('Storage for the upgraded quote');
+  let ok = true;
+  for (const t of QUOTE_TABLES) {
+    const r = await get(t + '?select=*&limit=1');
+    // RLS enabled with NO policy answers 200 and an empty array — the table
+    // exists and gives nothing away, which is the intent. A 404 is the only
+    // answer that means it was never created.
+    if (r.ok || r.status !== 404) {
+      addRow('PASS', t + ' exists', null, null);
+    } else {
+      ok = false;
+      addRow('FAIL', t + ' does not exist',
+        'The upgraded customer quote cannot be issued until this table exists. Copy the SQL '
+        + 'from the card at the top of this page into the Supabase SQL editor and press Run.',
+        null);
+    }
+  }
+  setStep('quotestore', ok ? 'ok' : 'bad',
+    ok ? 'The upgraded quote can be issued' : 'Run the quote storage SQL');
+}
 
 // ── 1. Has the SQL been applied? ──────────────────────────────────────────
 async function checkSql() {
@@ -359,6 +469,9 @@ document.getElementById('run').addEventListener('click', async () => {
   try {
     setStep('sql', 'run');
     await checkSql();
+
+    setStep('quotestore', 'run');
+    await checkQuoteStorage();
 
     setStep('db', 'run');
     const dbBefore = failures;
