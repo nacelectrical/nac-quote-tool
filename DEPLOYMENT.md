@@ -305,6 +305,39 @@ key is in Vercel.
 
 ---
 
+# PART 5 — WHY NOTHING DEPLOYED BETWEEN 15 AND 23 SEPTEMBER
+
+Vercel turns every file in `/api` into its own Serverless Function, and this
+project's plan allows twelve in one deployment. The quote and presentation work
+took `/api` from 11 files to 15, so from commit `bcf8eda` onwards **every build
+failed** and the live site kept serving the code from 15 September. The GitHub
+integration was never disconnected — it fired every time and the build is what
+failed. `/api/quote-issue` answering 404 in production was the symptom.
+
+The fix, in this commit:
+
+* The five quote and presentation handlers, and the two selftests, moved to
+  `/server`, where Vercel does not count them as functions.
+* `api/quote.js` and `api/selftest.js` dispatch to them.
+* `vercel.json` rewrites the seven original URLs to those two dispatchers, so
+  `/api/quote-view`, `/api/quote-issue` and the rest answer exactly as before.
+  A rewrite keeps the method, the body and the query string.
+* `/api` now holds 11 function files.
+
+`tests/api-function-budget.test.mjs` fails the build if the count goes over
+twelve again, if a rewrite points at a handler that does not exist, or if any
+`/api/` URL in the shipped HTML has nothing to answer it.
+
+**Adding an endpoint from here on:** do not add a file to `/api`. Put the
+handler in `/server`, add a line to the `ROUTES` table in `api/quote.js`, and
+add a rewrite to `vercel.json`. The budget test checks all three agree.
+
+If a deployment ever fails again, the build log says why:
+`https://vercel.com/nacelectricals-projects/nac-quote-tool` → the failed
+deployment → **Build Logs**.
+
+---
+
 # ORDER
 
 1. Part 1 — apply both migrations.

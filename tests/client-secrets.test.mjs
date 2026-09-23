@@ -18,11 +18,11 @@ import { join, extname } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
-/** Every file the browser can download. api/ runs on the server and is not one. */
+/** Every file the browser can download. api/ and server/ run on the server. */
 function servedFiles(dir = ROOT, out = []) {
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules' || name === '.git' || name === 'tests' ||
-        name === 'tools' || name === 'api') continue;
+        name === 'tools' || name === 'api' || name === 'server') continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) { servedFiles(p, out); continue; }
     if (['.html', '.js', '.mjs', '.jsx', '.json', '.css'].includes(extname(name))) out.push(p);
@@ -79,7 +79,7 @@ test('nac-quote-tool-v2.jsx declares its database client exactly once', () => {
 });
 
 test('/api/server-key-selftest returns no part of the key, not even its length', () => {
-  const src = readFileSync(join(ROOT, 'api/server-key-selftest.js'), 'utf8');
+  const src = readFileSync(join(ROOT, 'server/server-key-selftest.js'), 'utf8');
   for (const leak of [/KEY\.length/, /KEY\.slice/, /KEY\.substr/, /KEY\.charAt/,
                       /\bkey:\s*KEY\b/, /console\.log\([^)]*KEY/]) {
     assert.ok(!leak.test(src), 'server-key-selftest leaks key material: ' + leak);
@@ -90,12 +90,16 @@ test('/api/server-key-selftest returns no part of the key, not even its length',
 });
 
 test('no api handler puts the server key in a response body', () => {
-  for (const name of readdirSync(join(ROOT, 'api'))) {
-    if (!name.endsWith('.js')) continue;
-    const src = readFileSync(join(ROOT, 'api', name), 'utf8');
-    assert.ok(!/res\.(json|send|end)\([^)]*process\.env\.SUPABASE_KEY/.test(src),
-      name + ' returns SUPABASE_KEY to the browser');
-    assert.ok(!/console\.(log|error|warn)\([^)]*process\.env\.SUPABASE_KEY/.test(src),
-      name + ' prints SUPABASE_KEY to the log');
+  // server/ holds the handlers that /api/quote.js and /api/selftest.js dispatch
+  // to. They run with the same credential and are held to the same rule.
+  for (const dir of ['api', 'server']) {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      if (!name.endsWith('.js')) continue;
+      const src = readFileSync(join(ROOT, dir, name), 'utf8');
+      assert.ok(!/res\.(json|send|end)\([^)]*process\.env\.SUPABASE_KEY/.test(src),
+        dir + '/' + name + ' returns SUPABASE_KEY to the browser');
+      assert.ok(!/console\.(log|error|warn)\([^)]*process\.env\.SUPABASE_KEY/.test(src),
+        dir + '/' + name + ' prints SUPABASE_KEY to the log');
+    }
   }
 });
