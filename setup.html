@@ -14,9 +14,12 @@
   .sub{color:var(--ink-2);font-size:13.5px;margin:0 0 22px;max-width:68ch}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:0 0 14px}
   .card h2{font-size:11.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink-2);margin:0 0 12px}
-  button{min-height:52px;padding:0 22px;border-radius:9px;border:1px solid var(--line);
+  button,a.btn{min-height:52px;padding:0 22px;border-radius:9px;border:1px solid var(--line);
          background:#1c1c3a;color:var(--ink);font:700 15px inherit;font-family:inherit;cursor:pointer}
-  button.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
+  /* The Supabase link sits in a row of buttons and has to read as one, not as
+     a bare blue link somebody has to notice. */
+  a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+  button.primary,a.btn.primary{background:var(--yellow);border-color:var(--yellow);color:#0c0c24}
   button[disabled]{opacity:.5;cursor:default}
   .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .step{border-left:3px solid var(--line);padding:10px 0 10px 14px;margin:0 0 4px}
@@ -85,20 +88,6 @@
     would do before writing anything.
   </p>
 
-  <div class="card">
-    <h2>Before you press it</h2>
-    <p class="note">
-      Run <b>designer/production-setup.sql</b> in the Supabase SQL editor first. That is the one
-      thing this page cannot do for you — Supabase has no way to run SQL from a browser session.
-      If you have not run it, press the button anyway: the results will tell you precisely what
-      is missing.
-    </p>
-    <div class="btn-row">
-      <button id="run" class="primary">RUN THE WHOLE SETUP CHECK</button>
-      <button id="copy" disabled>Copy the report</button>
-    </div>
-  </div>
-
   <!-- ── QUOTE STORAGE ──────────────────────────────────────────────────────
        The upgraded customer proposal needs two tables that the original
        production SQL does not create. Nothing on this page can create them —
@@ -123,6 +112,20 @@
     <div id="storeResult" class="note"></div>
     <details><summary class="note">Show the SQL</summary>
       <textarea id="sqlText" readonly>Loading…</textarea></details>
+  </div>
+
+  <div class="card">
+    <h2>Before you press it</h2>
+    <p class="note">
+      Run <b>designer/production-setup.sql</b> in the Supabase SQL editor first. That is the one
+      thing this page cannot do for you — Supabase has no way to run SQL from a browser session.
+      If you have not run it, press the button anyway: the results will tell you precisely what
+      is missing.
+    </p>
+    <div class="btn-row">
+      <button id="run" class="primary">RUN THE WHOLE SETUP CHECK</button>
+      <button id="copy" disabled>Copy the report</button>
+    </div>
   </div>
 
   <div class="card" id="plan"><h2>Progress</h2><div id="steps"></div></div>
