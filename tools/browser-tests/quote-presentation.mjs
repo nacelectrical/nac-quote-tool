@@ -67,8 +67,20 @@ const PNG_1200 = (() => {
 
 const demo = await buildDemoDesign();
 const hero = DEMO_IMAGES.find(i => i.id === 'hero');
+
+// ── THE FITTINGS QUESTION IS ASKED SOMEWHERE ELSE ──────────────────────────
+// With only the four fittings NAC have specified, a ø400 main reaches three
+// outlets. This fixture's main C feeds five, so the quote gate refuses it —
+// correctly, and that refusal is tested in tests/fitting-assembly.test.mjs.
+// This suite is about how the customer's page LOOKS on a phone, an iPad and a
+// desktop, so it needs a page to look at; the design stands in for one whose
+// mains have been split to suit the parts list.
+const design = { ...demo.out,
+  fittingAssembly: { ok: true, rows: [], unbuildable: [], partsCost: null,
+                     summary: 'Stood in for by the presentation fixture.' } };
+
 const built = buildPresentation({
-  design: demo.out,
+  design,
   customer: { name: 'Sample Customer', address: '12 Example Street, Peregian Springs QLD 4573' },
   job: { siteAddress: '12 Example Street, Peregian Springs QLD 4573' },
   content: DEMO_CONTENT,

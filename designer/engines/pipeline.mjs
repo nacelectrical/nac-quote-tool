@@ -45,6 +45,7 @@ import { calculateLabour, calculateCommercials, toQuoteLineItems } from './costi
 import { collectWarnings, summarise, resetDerivedWarnings } from './warnings.mjs';
 import { capabilities, DESIGN_STAGE, ROOM_STATUS_PROVISIONAL, proposalAllowance }
   from './design-stage.mjs';
+import { checkDesignAssemblies } from './fitting-assembly.mjs';
 import { checkSupplyGraph, checkPlenum, checkDuctSizes, pressureReadiness,
          supplyMains, PRESSURE_STATUS } from './supply-graph.mjs';
 import { ZONE_CONTROLLERS } from './catalogue.mjs';
@@ -1019,6 +1020,12 @@ export function runPipeline(design, ctx = {}) {
       code: f.code, severity: f.severity, area: 'outlets', message: f.message
     }))];
   }
+
+  // ── CAN THIS BE BUILT FROM THE FITTINGS NAC STOCK? ──────────────────────
+  // Nick: "use only what ive given." Answered against the design as routed,
+  // before it is priced, because a job that cannot be assembled is not a job
+  // that can be quoted.
+  d.fittingAssembly = checkDesignAssemblies(d);
 
   d.quoteGate = quoteGate(d);
 

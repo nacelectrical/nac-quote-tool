@@ -39,7 +39,11 @@ export const QUOTE_BLOCK = Object.freeze({
   /** A warning, not a blocker — the authorised interim BTO rate. */
   BTO_PRICE_INTERIM: 'BTO_PRICE_INTERIM',
   /** A warning — the design asks for a fitting MMEM do not stock. */
-  BTO_NOT_STOCKED: 'BTO_NOT_STOCKED'
+  BTO_NOT_STOCKED: 'BTO_NOT_STOCKED',
+  /** A blocker — no assembly of stocked fittings reaches a main's outlets. */
+  FITTINGS_NOT_AVAILABLE: 'FITTINGS_NOT_AVAILABLE',
+  /** A check — a stocked fitting's leg is bigger than the calculated neck. */
+  FITTING_LEG_UPSIZED: 'FITTING_LEG_UPSIZED'
 });
 
 /**
@@ -97,6 +101,40 @@ export function quoteGate(design) {
       configKeys: btoTyped.map(i => i.configKey)
     });
   }
+  // ── A DESIGN THAT CANNOT BE ASSEMBLED CANNOT BE QUOTED ──────────────────
+  //
+  // Nick: "use only what ive given." If a main has to feed more outlets than
+  // any combination of the stocked fittings reaches, there is no parts list
+  // for it — and a price for a job nobody can build is the worst number this
+  // application could produce. The internal sheet is still made, as always.
+  const asm = design?.fittingAssembly;
+  for (const r of (asm?.unbuildable || [])) {
+    blockers.push({
+      code: QUOTE_BLOCK.FITTINGS_NOT_AVAILABLE,
+      severity: 'CRITICAL',
+      message: 'Main ' + (r.mainKey || r.mainId) + ' (\u00f8' + r.inletMm + ' feeding '
+        + r.outletCount + ' outlets) cannot be built from the fittings NAC stock. ' + r.reason,
+      mainId: r.mainId,
+      outletCount: r.outletCount
+    });
+  }
+  // Where it IS buildable but a leg came out bigger than the calculation asked
+  // for, the rooms affected are named. It is a real change to the design, made
+  // to suit a part, and it belongs on the schedule rather than in somebody's
+  // memory.
+  const upsized = (asm?.rows || []).flatMap(r => r.upsized.map(u => ({ main: r.mainKey || r.mainId, ...u })));
+  if (upsized.length) {
+    warnings.push({
+      code: QUOTE_BLOCK.FITTING_LEG_UPSIZED,
+      severity: 'CHECK',
+      message: upsized.length + ' outlet(s) are fed by a leg larger than the calculated neck, '
+        + 'because that is the size the stocked fitting makes: '
+        + upsized.map(u => 'main ' + u.main + ' \u00f8' + u.upsizedFromMm + ' \u2192 \u00f8'
+            + u.legMm).join('; ') + '. Expect more air at those outlets than the calculation '
+        + 'allocates until the system is balanced.'
+    });
+  }
+
   // ── FITTINGS MMEM DO NOT MAKE ───────────────────────────────────────────
   //
   // Nick: "only use these in design also." Until the router is constrained to

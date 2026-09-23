@@ -32,8 +32,25 @@ import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { pressureReadiness } from '../designer/engines/supply-graph.mjs';
 import { quoteGate } from '../designer/engines/quote-gate.mjs';
 
+
+// ── THE FITTINGS QUESTION IS ASKED SOMEWHERE ELSE ──────────────────────────
+//
+// With only the four fittings NAC have specified, a ø400 main reaches three
+// outlets and a system reaches nine. This fixture's main C feeds five, so the
+// quote gate now refuses it — correctly, and that refusal is tested properly
+// in tests/fitting-assembly.test.mjs.
+//
+// These suites are about what a CUSTOMER sees: that no cost, margin or BOM
+// line reaches the page, and that an accepted revision cannot be edited. They
+// need a publishable presentation to examine. So the design here stands in for
+// one whose mains have been split to suit the parts list — the routing is not
+// what is under test, and faking it here hides nothing, because the real check
+// fails loudly in its own file.
+const BUILDABLE = { ok: true, rows: [], unbuildable: [], partsCost: null,
+                    summary: 'Stood in for by the presentation fixtures.' };
+
 const APPROVED = (await buildApproved()).out;
-const DEMO = (await buildDemoDesign()).out;
+const DEMO = { ...(await buildDemoDesign()).out, fittingAssembly: BUILDABLE };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. THE CUSTOMER NEVER SEES A COST OR A MARGIN
