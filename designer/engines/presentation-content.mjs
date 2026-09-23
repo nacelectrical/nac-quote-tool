@@ -603,6 +603,20 @@ export function normaliseUpgrade(input = {}) {
     title: trimmed(input.title),
     description: trimmed(input.description),
     priceIncGst: num(input.priceIncGst),
+    // ── UPGRADES YOU BUY MORE THAN ONE OF ──────────────────────────────────
+    //
+    // A smart controller is one thing or nothing. A temperature sensor is one
+    // per room the customer wants sensed, and how many is their call, not
+    // ours. So an upgrade may carry a UNIT price instead of a flat one, and
+    // the page asks for a count.
+    //
+    // Absent stays absent: an upgrade with no unit price is the flat kind it
+    // has always been, and Number(null) being 0 must not turn it into a free
+    // one somebody can order a hundred of.
+    unitPriceIncGst: num(input.unitPriceIncGst),
+    unitLabel: trimmed(input.unitLabel) || 'each',
+    maxQuantity: num(input.maxQuantity),
+    defaultQuantity: num(input.defaultQuantity) ?? 0,
     // What must be true of the design for this upgrade to be offerable. Each
     // entry is a key the presentation builder evaluates against the real job.
     requires: list(input.requires).map(trimmed).filter(Boolean),
@@ -624,8 +638,14 @@ export function resolveUpgrades(library = [], capabilities = {}) {
   const offerable = [], withheld = [];
   for (const u of library.map(normaliseUpgrade).sort((a, b) => a.sortOrder - b.sortOrder)) {
     if (!u.enabled || !u.title) continue;
-    if (u.priceIncGst === null) {
+    // Priced either way — a flat price, or a price per unit.
+    if (u.priceIncGst === null && u.unitPriceIncGst === null) {
       withheld.push({ ...u, reason: 'No price configured.' });
+      continue;
+    }
+    // A counted upgrade with no ceiling is an order form, not a quote.
+    if (u.unitPriceIncGst !== null && (u.maxQuantity === null || u.maxQuantity < 1)) {
+      withheld.push({ ...u, reason: 'Priced per unit but no maximum quantity is set.' });
       continue;
     }
     const missing = u.requires.filter(r => capabilities[r] !== true);

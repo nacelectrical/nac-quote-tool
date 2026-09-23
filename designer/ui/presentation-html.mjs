@@ -354,6 +354,9 @@ function systemChoiceHtml(p) {
           + esc([o.capacityKw ? o.capacityKw + ' kW' : '', o.phase].filter(Boolean).join(' · '))
           + when(!!o.note, ' — ' + esc(o.note))
         + '</span>'
+        + when(o.warrantyYears > 0,
+            '<span class="sys-warr">' + esc(String(o.warrantyYears))
+            + '-year manufacturer warranty</span>')
         + when(o.recommended === true, '<span class="sys-rec">Our recommendation</span>')
       + '</span></label></li>').join('') + '</ul>');
 }
@@ -364,16 +367,47 @@ function optionsHtml(p) {
   return sect('options', 'Optional upgrades',
     '<p class="lede">Entirely optional. Selecting one prepares a revised proposal for you '
     + 'to review — nothing changes until you accept it.</p>'
-    + '<ul class="opts">' + os.map(o =>
-      '<li><label class="opt">'
-      + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
-      + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
-      + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
-      + '<span class="opt-body">'
-        + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
-        + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
-        + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
-      + '</span></label></li>').join('') + '</ul>');
+    + '<ul class="opts">' + os.map(o => {
+      // ── BOUGHT BY THE UNIT ────────────────────────────────────────────
+      // A sensor is one per room the customer wants sensed. A spinner is the
+      // honest control for that; a tick box would make them ring up to ask
+      // for a second one. The price beside it is what ONE costs, and the
+      // running line underneath says what the chosen number comes to.
+      const counted = o.unitPriceIncGst !== null && o.unitPriceIncGst !== undefined
+                      && o.maxQuantity > 0;
+      if (counted) {
+        const qty = o.quantity || 0;
+        const sysAttr = o.forSystemIds
+          ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
+        return '<li class="opt-li"' + sysAttr + '><div class="opt opt-qty">'
+          + '<span class="opt-body">'
+            + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
+            + '<em>' + esc(money(o.unitPriceIncGst)) + ' ' + esc(o.unitLabel || 'each') + '</em></span>'
+            + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
+            + '<span class="opt-qrow">'
+              + '<label for="q-' + esc(o.id) + '">How many</label>'
+              + '<input type="number" id="q-' + esc(o.id) + '" class="opt-q"'
+              + ' value="' + esc(String(qty)) + '" min="0" max="' + esc(String(o.maxQuantity)) + '"'
+              + ' step="1" inputmode="numeric"'
+              + ' data-opt-id="' + esc(o.id) + '"'
+              + ' data-opt-unit="' + esc(String(o.unitPriceIncGst)) + '">'
+              + '<span class="opt-qsum" data-qsum="' + esc(o.id) + '">'
+              + esc(qty > 0 ? money(o.unitPriceIncGst * qty) : '\u2014') + '</span>'
+            + '</span>'
+          + '</span></div></li>';
+      }
+      const sysAttr2 = o.forSystemIds
+        ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
+      return '<li class="opt-li"' + sysAttr2 + '><label class="opt">'
+        + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
+        + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
+        + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
+        + '<span class="opt-body">'
+          + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
+          + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
+          + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
+        + '</span></label></li>';
+    }).join('') + '</ul>');
 }
 
 function investmentHtml(p) {
@@ -676,6 +710,16 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   border-left:3px solid var(--line)}
 .prose p{max-width:66ch}
 
+.sys-warr{display:inline-block;margin-top:5px;font-size:13px;font-weight:700;
+  color:var(--ok);background:rgba(30,122,70,.08);border:1px solid rgba(30,122,70,.22);
+  border-radius:99px;padding:2px 10px}
+.opt-qty{cursor:default}
+.opt-qrow{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.opt-qrow label{font-size:14.5px;color:var(--muted);font-weight:600}
+.opt-q{width:84px;font:inherit;font-size:16px;font-weight:700;color:var(--ink);
+  padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.opt-q:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.opt-qsum{font-size:15.5px;font-weight:700;color:var(--navy)}
 .imgbox{position:relative;overflow:hidden;background:var(--soft);border-radius:12px}
 .imgbox img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 
@@ -961,8 +1005,13 @@ const SCRIPT = `
     }
   });
   function selectedOptions(){
-    return Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
+    var out=Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
       .map(function(i){return i.value;});
+    Array.prototype.slice.call(document.querySelectorAll('.opt-q')).forEach(function(q){
+      var n=Math.max(0,Math.floor(Number(q.value)||0));
+      if(n>0) out.push({id:q.getAttribute('data-opt-id'),quantity:n});
+    });
+    return out;
   }
   function chosenSystem(){
     var r=document.querySelector('.sys-in:checked');
@@ -981,15 +1030,63 @@ const SCRIPT = `
   function money(v){
     return '$' + Math.round(v).toLocaleString('en-AU');
   }
+  // ── AN UPGRADE THAT DOES NOT FIT IS NOT ON THE PAGE ───────────────────
+  //
+  // Not shown greyed out: gone, and its selection cleared, so it cannot sit
+  // in the total against a system it cannot be installed on. The server
+  // withholds it too — this is the same rule, applied where the customer is
+  // actually adding things up.
+  function applySystemFilter(sysId){
+    Array.prototype.slice.call(document.querySelectorAll('.opt-li')).forEach(function(li){
+      var list=li.getAttribute('data-opt-systems');
+      var fits = !list || !sysId || list.split(' ').indexOf(sysId)>=0;
+      li.hidden = !fits;
+      if(fits) return;
+      Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){c.checked=false;});
+      Array.prototype.slice.call(li.querySelectorAll('.opt-q')).forEach(function(q){
+        q.value='0';
+        var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
+        if(sum) sum.textContent='\u2014';
+      });
+    });
+    var sec=document.getElementById('options');
+    if(sec){
+      var any=Array.prototype.slice.call(sec.querySelectorAll('.opt-li'))
+        .some(function(li){return !li.hidden;});
+      sec.hidden=!any;
+    }
+  }
+
   function redrawTotal(){
     var sys=document.querySelector('.sys-in:checked');
     if(!sys) return;
+    applySystemFilter(sys.value);
     var total=Number(sys.getAttribute('data-sys-price'))||0;
     Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
       .forEach(function(i){ total += Number(i.getAttribute('data-opt-price'))||0; });
+    // Counted upgrades: clamp to the maximum offered, then add unit x count.
+    Array.prototype.slice.call(document.querySelectorAll('.opt-q')).forEach(function(q){
+      var max=Number(q.getAttribute('max'))||0;
+      var n=Math.max(0,Math.min(max,Math.floor(Number(q.value)||0)));
+      if(String(n)!==q.value) q.value=String(n);
+      var line=n*(Number(q.getAttribute('data-opt-unit'))||0);
+      total+=line;
+      var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
+      if(sum) sum.textContent = n>0 ? money(line) : '\u2014';
+    });
     Array.prototype.slice.call(document.querySelectorAll('[data-total]'))
       .forEach(function(e){ e.textContent=money(total); });
   }
+  // A spinner reports on input as well as change, so the figure moves as the
+  // customer holds the arrow down rather than when they let go.
+  document.addEventListener('input',function(e){
+    var el=e.target;
+    if(!el.classList||!el.classList.contains('opt-q'))return;
+    redrawTotal();
+    if(window.NACQuote&&window.NACQuote.onOptionsChanged){
+      window.NACQuote.onOptionsChanged(selectedOptions(),chosenSystem());
+    }
+  });
   document.addEventListener('change',function(e){
     var el=e.target;
     if(!el.classList||!el.classList.contains('sys-in'))return;

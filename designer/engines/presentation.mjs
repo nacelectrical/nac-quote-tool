@@ -752,7 +752,11 @@ function investmentSection(d, ctx) {
       ? Math.round((total - (total / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100
       : n(c.gstAmount),
     baseIncGst: total,
-    selectedOptions: selected.map(o => ({ id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst) })),
+    selectedOptions: selected.map(o => ({
+      id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst),
+      quantity: n(o.quantity) ?? 1,
+      unitPriceIncGst: n(o.unitPriceIncGst), unitLabel: trimmed(o.unitLabel) || null
+    })),
     optionsTotal: optionsTotal || null,
     totalIncGst: grand,
     deposit: depositPct !== null ? {
@@ -861,16 +865,34 @@ export function buildPresentation({
   const { offerable, withheld } = resolveUpgrades(content.upgrades || [], caps);
   // Exclusive groups are settled HERE, not in the page. The browser enforces
   // them for the customer's benefit; this enforces them for the price's.
-  const wanted = rows(selectedOptionIds);
+  // A selection is either an id, or an id with a count for the upgrades that
+  // are bought by the unit.
+  const wanted = new Map();
+  for (const w of rows(selectedOptionIds)) {
+    if (typeof w === 'string') wanted.set(w, null);
+    else if (w && trimmed(w.id)) wanted.set(trimmed(w.id), n(w.quantity));
+  }
   const seenGroups = new Set();
   const selectedOptions = [];
   for (const o of offerable) {
-    if (!wanted.includes(o.id)) continue;
+    if (!wanted.has(o.id)) continue;
     if (o.group) {
       if (seenGroups.has(o.group)) continue;   // first in the group wins
       seenGroups.add(o.group);
     }
-    selectedOptions.push(o);
+    // ── THE COUNT IS CLAMPED HERE, NOT IN THE BROWSER ─────────────────────
+    // The page offers a spinner with a maximum on it; the price is settled
+    // server-side, so a request asking for two hundred sensors gets the
+    // maximum NAC offered and not two hundred.
+    if (o.unitPriceIncGst !== null) {
+      const asked = wanted.get(o.id) ?? o.defaultQuantity;
+      const qty = Math.max(0, Math.min(o.maxQuantity, Math.round(n(asked) ?? 0)));
+      if (qty < 1) continue;                   // none chosen is not an option
+      selectedOptions.push({ ...o, quantity: qty,
+                             priceIncGst: Math.round(o.unitPriceIncGst * qty * 100) / 100 });
+      continue;
+    }
+    selectedOptions.push({ ...o, quantity: 1 });
   }
 
   const imagesById = {};
@@ -975,6 +997,7 @@ export function buildPresentation({
         id: o.id, label: o.label, brand: o.brand, model: o.model,
         capacityKw: o.capacityKw, phase: o.phase, note: o.note,
         recommended: o.recommended,
+        warrantyYears: o.warrantyYears,
         priceIncGst: o.priceIncGst,
         chosen: !!chosenSystem && o.id === chosenSystem.id
       }))
@@ -987,11 +1010,36 @@ export function buildPresentation({
     reviews,
     trust: { points: trust.points, facts: trustFacts(trust) },
     investment: investmentSection(d, ctx),
-    options: offerable.map(o => ({
-      id: o.id, title: o.title, description: o.description,
-      priceIncGst: o.priceIncGst, group: o.group,
-      selected: selectedOptions.some(s => s.id === o.id)
-    })),
+    options: offerable.map(o => {
+      const picked = selectedOptions.find(s => s.id === o.id) || null;
+      // ── AN UPGRADE BELONGS TO THE SYSTEMS IT FITS ─────────────────────
+      //
+      // The quote offers a Daikin and a Braemar, and the AirTouch kit NAC
+      // stock is the Daikin one. Offering it against both would let a
+      // customer tick an add-on that cannot go on the system they chose, and
+      // carry its price into their total — which is what happened.
+      //
+      // So every upgrade that names a brand says WHICH of the systems on this
+      // page it fits, and the page drops it when another one is chosen.
+      const brandLocks = rows(o.requires)
+        .map(r => /^(.+)_system$/.exec(trimmed(r)))
+        .filter(Boolean).map(m => m[1]);
+      const forSystemIds = optionStatus.options.length
+        ? optionStatus.options
+            .filter(so => !brandLocks.length || brandLocks.includes(trimmed(so.brandId)))
+            .map(so => so.id)
+        : null;
+      return {
+        id: o.id, title: o.title, description: o.description,
+        forSystemIds,
+        priceIncGst: o.priceIncGst, group: o.group,
+        // Counted upgrades carry what one costs and how many may be had.
+        unitPriceIncGst: o.unitPriceIncGst, unitLabel: o.unitLabel,
+        maxQuantity: o.maxQuantity, defaultQuantity: o.defaultQuantity,
+        quantity: picked ? picked.quantity : 0,
+        selected: !!picked
+      };
+    }),
     warranty: warrantySection(ctx),
     acceptance: {
       canAccept: status !== 'accepted' && status !== 'declined' && status !== 'revoked' && !expired,
