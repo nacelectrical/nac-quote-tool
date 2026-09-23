@@ -22,7 +22,7 @@ globalThis.fetch = async (url, opts = {}) => {
   return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
 
-const handler = (await import('../api/server-key-selftest.js')).default;
+const handler = (await import('../server/server-key-selftest.js')).default;
 after(() => { globalThis.fetch = realFetch; });
 
 function makeRes() {
