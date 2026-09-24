@@ -61,7 +61,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const share = await import('../designer/engines/presentation-share.mjs');
-    const pres = await import('../designer/engines/presentation.mjs');
+    const offerMod = await import('../designer/engines/issued-offer.mjs');
 
     const found = await supa('/rest/v1/nac_quote_issues?token=eq.'
       + encodeURIComponent(token) + '&select=data&limit=1', { key: KEY });
@@ -69,43 +69,62 @@ module.exports = async function handler(req, res) {
     if (!row || !row.data) return res.status(404).json({ error: 'not_found' });
     const issue = row.data;
 
-    const selected = Array.isArray(body.selectedOptionIds)
-      ? body.selectedOptionIds.map(x => clean(x, 64)).filter(Boolean).slice(0, 20) : [];
+    // What the page says the customer wants. Ids, or ids with a quantity for
+    // the upgrades bought by the unit. Nothing here is trusted as a PRICE —
+    // every figure comes from the frozen offer below.
+    const asked = Array.isArray(body.selectedOptionIds) ? body.selectedOptionIds.slice(0, 20) : [];
+    const selection = asked.map(x => (x && typeof x === 'object')
+      ? { id: clean(x.id, 64), quantity: Number(x.quantity) }
+      : { id: clean(x, 64), quantity: null }).filter(o => o.id);
+    const selected = selection.map(o => o.id);
+    const chosenSystemId = body.chosenSystemId !== undefined
+      ? clean(body.chosenSystemId, 64) : undefined;
+
+    // ── THE OFFER IS THE AUTHORITY ─────────────────────────────────────────
+    //
+    // This endpoint used to reload the design and the content library and
+    // rebuild the presentation to get the accepted total — so the figure NAC
+    // would be held to was whatever the live data said at the moment the
+    // customer pressed the button, not what they were shown. It also rebuilt
+    // WITHOUT the settings and WITHOUT the system choice, so the total it
+    // recorded was the designed unit's price under no commercial terms.
+    //
+    // The price now comes from the copy frozen at issue, which is the same
+    // copy the page was rendered from.
+    if (!offerMod.isOffer(issue.offer)) {
+      return res.status(409).json({ state: 'no_issued_copy',
+        message: 'This quote was issued before quotes were stored as a fixed copy. '
+          + 'Issue a new revision.' });
+    }
+    const priced = offerMod.priceSelection(issue.offer, {
+      chosenSystemId: chosenSystemId !== undefined
+        ? chosenSystemId : (issue.chosenSystemId || null),
+      selectedOptions: selection.length ? selection
+        : (issue.selectedOptions || issue.selectedOptionIds || [])
+    });
+    if (!priced.ok) {
+      return res.status(409).json({ state: 'blocked', message: priced.message || null });
+    }
 
     let result;
     if (action === 'options') {
-      result = share.changeOptions(issue, selected);
+      result = share.changeOptions(issue, priced.selectedOptionIds,
+        { selectedOptions: priced.lines, chosenSystemId: priced.chosenSystemId });
     } else if (action === 'decline') {
       result = share.declinePresentation(issue, { reason: clean(body.reason, 500) });
     } else {
-      // Rebuild the presentation to get the AUTHORITATIVE total for this
-      // revision and this option selection. Never trust the number the page
-      // was showing — the page is on the other side of the wire.
-      const designRes = await supa('/rest/v1/nac_designs?id=eq.'
-        + encodeURIComponent(issue.designId || '') + '&select=data&limit=1', { key: KEY });
-      const designRow = Array.isArray(designRes.body) ? designRes.body[0] : null;
-      const design = designRow && (designRow.data?.design || designRow.data);
-      if (!design) return res.status(404).json({ error: 'design_not_found' });
-
-      const contentRes = await supa(
-        '/rest/v1/nac_presentation_content?key=eq.library&select=data&limit=1', { key: KEY });
-      const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
-      const content = (contentRow && contentRow.data) || {};
-
-      const built = pres.buildPresentation({
-        design, customer: issue.customer || {}, job: issue.job || {}, content,
-        revision: issue.quoteRevision, status: issue.status,
-        selectedOptionIds: selected.length ? selected : (issue.selectedOptionIds || []),
-        expiresAt: issue.expiresAt
-      });
-      if (!built.ok) return res.status(409).json({ state: 'blocked' });
-
       result = share.acceptPresentation(issue, {
         customerName: clean(body.customerName, 120),
         acknowledgedTerms: body.acknowledgedTerms === true,
         signature: body.signature ? clean(body.signature, 200000) : null,
-        totalIncGst: built.presentation.investment.totalIncGst,
-        selectedOptionIds: selected.length ? selected : (issue.selectedOptionIds || [])
+        // The authoritative total: the frozen base for the system they chose,
+        // plus the frozen price of each upgrade they ticked. Never the number
+        // the page was showing — the page is on the other side of the wire.
+        totalIncGst: priced.totalIncGst,
+        selectedOptionIds: priced.selectedOptionIds,
+        selectedOptions: priced.lines,
+        chosenSystemId: priced.chosenSystemId,
+        offerFrozenAt: issue.offer.frozenAt
       });
     }
 
@@ -127,7 +146,10 @@ module.exports = async function handler(req, res) {
       status: next.status,
       // Echo back only what the page needs to update itself.
       acceptedTotal: next.acceptance ? next.acceptance.totalIncGst : null,
-      selectedOptionIds: next.selectedOptionIds || []
+      selectedOptionIds: next.selectedOptionIds || [],
+      chosenSystemId: next.chosenSystemId || null,
+      totalIncGst: priced.totalIncGst,
+      deposit: priced.deposit
     });
   } catch (e) {
     return res.status(502).json({ error: 'upstream_unavailable' });

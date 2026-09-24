@@ -182,7 +182,8 @@ export function recordView(issue, now = null) {
  */
 export function acceptPresentation(issue, {
   customerName, acknowledgedTerms, signature = null, totalIncGst,
-  selectedOptionIds = null, now = null
+  selectedOptionIds = null, selectedOptions = null, chosenSystemId = undefined,
+  offerFrozenAt = null, now = null
 } = {}) {
   const access = resolveAccess(issue, now);
   if (!access.ok) return { ok: false, reason: access.reason, message: access.message, issue };
@@ -211,6 +212,8 @@ export function acceptPresentation(issue, {
     status: ISSUE_STATUS.ACCEPTED,
     respondedAt: at,
     selectedOptionIds: options,
+    ...(Array.isArray(selectedOptions) ? { selectedOptions: selectedOptions.map(o => ({ ...o })) } : {}),
+    ...(chosenSystemId !== undefined ? { chosenSystemId: trimmed(chosenSystemId) || null } : {}),
     acceptance: {
       customerName: trimmed(customerName),
       acknowledgedTerms: true,
@@ -218,9 +221,21 @@ export function acceptPresentation(issue, {
       acceptedAt: at,
       quoteRevision: issue.quoteRevision,
       totalIncGst: Number(totalIncGst),
-      selectedOptionIds: [...options]
+      selectedOptionIds: [...options],
+      /** The exact lines accepted, with their quantities and unit prices. */
+      selectedOptions: Array.isArray(selectedOptions) ? selectedOptions.map(o => ({ ...o })) : null,
+      /** Which system was accepted, where the quote offered a choice. */
+      chosenSystemId: chosenSystemId !== undefined
+        ? (trimmed(chosenSystemId) || null) : (issue.chosenSystemId || null),
+      /**
+       * WHICH FROZEN COPY THIS PRICE CAME FROM. If the stored offer ever fails
+       * to match this stamp, the acceptance and the document have parted
+       * company and the record says so rather than quietly disagreeing.
+       */
+      offerFrozenAt: trimmed(offerFrozenAt) || (issue.offer && issue.offer.frozenAt) || null
     }
-  }, 'accepted', trimmed(customerName) + ' accepted revision ' + issue.quoteRevision);
+  }, 'accepted', trimmed(customerName) + ' accepted revision ' + issue.quoteRevision
+     + ' at $' + Number(totalIncGst).toFixed(2));
   // Object.freeze is shallow, so freezing the issue left `acceptance.totalIncGst`
   // writable — the accepted PRICE was the one field still open to being changed.
   return { ok: true, issue: deepFreeze(accepted) };
@@ -278,7 +293,17 @@ export function supersede(previous, next) {
  * than silently changing an accepted quote." On an unanswered issue the choice
  * is just a pending selection; once accepted, it can only be a new revision.
  */
-export function changeOptions(issue, selectedOptionIds = []) {
+/**
+ * The customer changed what they are buying.
+ *
+ * `selectedOptions` carries the QUANTITIES as well as the ids, because an
+ * upgrade bought by the unit — a temperature sensor per room — is not answered
+ * by a list of ids. `chosenSystemId` is which of the alternatives they are
+ * looking at. Both belong to the issue, and both are priced against the frozen
+ * offer, never against a live price list.
+ */
+export function changeOptions(issue, selectedOptionIds = [],
+                              { selectedOptions = null, chosenSystemId = undefined } = {}) {
   if (!issue) return { ok: false, reason: 'not_found', issue };
   if (issue.status === ISSUE_STATUS.ACCEPTED) {
     return { ok: false, reason: 'requires_new_revision',
@@ -289,9 +314,12 @@ export function changeOptions(issue, selectedOptionIds = []) {
   if (!access.ok || access.expired) {
     return { ok: false, reason: access.reason || 'expired', message: access.message, issue };
   }
-  return { ok: true, issue: appendAudit({
-    ...issue, selectedOptionIds: [...selectedOptionIds]
-  }, 'options_changed', selectedOptionIds.join(', ') || 'none') };
+  const next = { ...issue, selectedOptionIds: [...selectedOptionIds] };
+  if (Array.isArray(selectedOptions)) next.selectedOptions = selectedOptions.map(o => ({ ...o }));
+  if (chosenSystemId !== undefined) next.chosenSystemId = trimmed(chosenSystemId) || null;
+  const detail = (selectedOptionIds.join(', ') || 'none')
+    + (chosenSystemId !== undefined ? ' · system ' + (trimmed(chosenSystemId) || 'default') : '');
+  return { ok: true, issue: appendAudit(next, 'options_changed', detail) };
 }
 
 /** The customer-facing URL. Path-based so the token never lands in a referrer query. */

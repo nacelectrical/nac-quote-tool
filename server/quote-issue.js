@@ -74,6 +74,8 @@ async function signedInStaff(req) {
   }
 }
 
+const { DESIGN_SELECT, parseDesign, designUpdatedAt } = require('./design-row.js');
+
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
 
 module.exports = async function handler(req, res) {
@@ -97,25 +99,35 @@ module.exports = async function handler(req, res) {
   if (!designId) return res.status(400).json({ error: 'design_required' });
 
   try {
-    const [share, presentationMod] = await Promise.all([
+    const [share, presentationMod, offerMod] = await Promise.all([
       import('../designer/engines/presentation-share.mjs'),
-      import('../designer/engines/presentation.mjs')
+      import('../designer/engines/presentation.mjs'),
+      import('../designer/engines/issued-offer.mjs')
     ]);
 
     // ── Everything the presentation is built from, server-side ─────────────
     const [designRes, contentRes, settingsRes] = await Promise.all([
-      supa('/rest/v1/nac_designs?id=eq.' + encodeURIComponent(designId) + '&select=data&limit=1',
-        { key: KEY }),
-      supa('/rest/v1/nac_presentation_content?key=eq.library&select=data&limit=1', { key: KEY }),
-      supa('/rest/v1/nac_settings?key=eq.' + SETTINGS_KEY + '&select=value&limit=1', { key: KEY })
+      // ── THE COLUMN IS `design`, AND IT IS TEXT ──────────────────────────
+      //
+      // nac_designs (designer/schema.sql) has `design text not null` holding
+      // the DuctDesign as a JSON STRING, which is what store.mjs saveDesign
+      // writes. This endpoint asked for a column called `data`, which exists
+      // in neither schema.sql nor production-setup.sql — so against the real
+      // database every attempt to issue a quote failed, and no quote has ever
+      // been issued from the live site.
+      supa('/rest/v1/nac_designs?id=eq.' + encodeURIComponent(designId)
+        + '&select=' + DESIGN_SELECT + '&limit=1', { key: KEY }),
+      supa('/rest/v1/nac_presentation_content?key=eq.library&select=data,updated_at&limit=1', { key: KEY }),
+      supa('/rest/v1/nac_settings?key=eq.' + SETTINGS_KEY + '&select=value,updated_at&limit=1', { key: KEY })
     ]);
 
     const designRow = Array.isArray(designRes.body) ? designRes.body[0] : null;
-    const design = designRow && (designRow.data?.design || designRow.data);
+    const design = parseDesign(designRow);
     if (!design) return res.status(404).json({ error: 'design_not_found' });
 
     const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
     const content = (contentRow && contentRow.data) || {};
+    const settingsRow0 = Array.isArray(settingsRes.body) ? settingsRes.body[0] : null;
 
     let settings = {};
     try {
@@ -168,16 +180,81 @@ module.exports = async function handler(req, res) {
         message: 'The proposal did not pass its own audit and was not issued.' });
     }
 
+    // ── FREEZE THE OFFER ───────────────────────────────────────────────────
+    //
+    // The customer may choose between the systems on the page, so the document
+    // is built once for EACH of them, here, while the design and the prices
+    // are the ones this quote is being issued on. From this point nothing
+    // downstream reads the design, the content library or the settings again.
+    //
+    // Every alternative goes through the same gate and the same audit as the
+    // one on screen. An option that would fail either is not something a
+    // customer should be able to select their way into.
+    const presentations = {};
+    if (systemOptions && systemOptions.length) {
+      for (const opt of systemOptions) {
+        const id = str(opt && opt.id).trim();
+        if (!id) continue;
+        const alt = (id === str(body.chosenSystemId).trim()) ? built : presentationMod.buildPresentation({
+          design, customer, job, content, settings,
+          proposalNumber: str(body.proposalNumber),
+          preparedAt: issuedAt, expiresAt,
+          revision: quoteRevision,
+          status: 'issued',
+          selectedOptionIds: body.selectedOptionIds || [],
+          privacy: body.privacy || {},
+          intro: str(body.intro),
+          heroImage: content.heroImage || null,
+          systemOptions,
+          chosenSystemId: id
+        });
+        if (!alt.ok) {
+          return res.status(409).json({
+            error: 'blocked',
+            message: 'This quote cannot be issued: the "' + (opt.label || id)
+              + '" option does not pass the publish gate.',
+            blockers: (alt.blockers || []).map(b => ({ code: b.code, message: b.message }))
+          });
+        }
+        if (!presentationMod.auditPresentation(alt.presentation).ok) {
+          return res.status(409).json({ error: 'audit_failed',
+            message: 'The "' + (opt.label || id) + '" option did not pass its own audit.' });
+        }
+        presentations[id] = alt.presentation;
+      }
+    }
+    if (!Object.keys(presentations).length) {
+      presentations[offerMod.SINGLE_SYSTEM] = built.presentation;
+    }
+
+    const frozen = offerMod.freezeOffer({
+      presentations,
+      defaultSystemId: str(body.chosenSystemId).trim() || offerMod.SINGLE_SYSTEM,
+      gstRate: Number(design.commercials && design.commercials.gstRate) || 0.1,
+      issuedAt,
+      source: {
+        designId,
+        designUpdatedAt: designUpdatedAt(designRow),
+        contentUpdatedAt: contentRow && (contentRow.updated_at || null),
+        settingsUpdatedAt: settingsRow0 && (settingsRow0.updated_at || null),
+        termsVersion: settings.commercial && settings.commercial.terms
+          && settings.commercial.terms.termsVersion || null
+      }
+    });
+    if (!frozen.ok) {
+      return res.status(500).json({ error: 'offer_not_frozen', message: frozen.message });
+    }
+
     const issue = share.issuePresentation({
       designId, quoteRevision, validDays, issuedBy,
       selectedOptionIds: body.selectedOptionIds || [],
       supersedes: str(body.supersedes) || null,
       now: issuedAt
     });
-    // What the issue has to remember beyond the token: who it is for, and what
-    // was on offer. The design is loaded fresh on every view, so the quote
-    // follows the job — but the CHOICE the customer was given does not change
-    // because somebody edited a design afterwards.
+    // What the issue remembers: who it is for, and THE OFFER ITSELF. The
+    // frozen documents travel with the issue, so a later edit to the design or
+    // to the content library cannot reach a quote that has already gone out.
+    // Changing what a customer was offered means issuing a new revision.
     const record = {
       ...issue,
       customer, job,
@@ -185,7 +262,8 @@ module.exports = async function handler(req, res) {
       intro: str(body.intro),
       privacy: body.privacy || {},
       systemOptions,
-      chosenSystemId: str(body.chosenSystemId) || null,
+      chosenSystemId: str(body.chosenSystemId).trim() || frozen.offer.defaultSystemId,
+      offer: frozen.offer,
       totalIncGst: built.presentation.investment?.totalIncGst ?? null
     };
 

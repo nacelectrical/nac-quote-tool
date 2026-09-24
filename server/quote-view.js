@@ -68,9 +68,10 @@ module.exports = async function handler(req, res) {
   if (!KEY) return res.status(500).json({ error: 'server_not_configured' });
 
   try {
-    const [share, presentationMod] = await Promise.all([
+    const [share, presentationMod, offerMod] = await Promise.all([
       import('../designer/engines/presentation-share.mjs'),
-      import('../designer/engines/presentation.mjs')
+      import('../designer/engines/presentation.mjs'),
+      import('../designer/engines/issued-offer.mjs')
     ]);
 
     const found = await supa('/rest/v1/nac_quote_issues?token=eq.'
@@ -95,67 +96,47 @@ module.exports = async function handler(req, res) {
     await supa('/rest/v1/nac_quote_issues?token=eq.' + encodeURIComponent(token),
       { method: 'PATCH', key: KEY, body: { data: issue, updated_at: new Date().toISOString() } });
 
-    const designRes = await supa('/rest/v1/nac_designs?id=eq.'
-      + encodeURIComponent(issue.designId || '') + '&select=data&limit=1', { key: KEY });
-    const designRow = Array.isArray(designRes.body) ? designRes.body[0] : null;
-    const design = designRow && (designRow.data?.design || designRow.data);
-    if (!design) return res.status(404).json({ error: 'design_not_found' });
-
-    const contentRes = await supa('/rest/v1/nac_presentation_content?key=eq.library&select=data&limit=1',
-      { key: KEY });
-    const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
-    const content = (contentRow && contentRow.data) || {};
-
-    // ── NAC'S SETTINGS HAVE TO COME WITH IT ─────────────────────────────────
+    // ── THE CUSTOMER SEES WHAT THEY WERE SENT ──────────────────────────────
     //
-    // An ISSUED quote is `issuing`, and the gate checks NAC's commercial terms
-    // when it is. This endpoint never loaded them, so `commercialTermsStatus`
-    // was asked about an empty object every time and answered that every term
-    // was missing — every issued quote would have come back "blocked", with
-    // the terms sitting correctly filled in on the settings screen.
-    let settings = {};
-    try {
-      const sres = await supa('/rest/v1/nac_settings?key=eq.nac_hvac_settings_v1&select=value&limit=1',
-        { key: KEY });
-      const srow = Array.isArray(sres.body) ? sres.body[0] : null;
-      const raw = srow && srow.value;
-      settings = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
-    } catch (e) { settings = {}; }
+    // This endpoint used to load the DESIGN, the CONTENT LIBRARY and NAC's
+    // SETTINGS and rebuild the page from them on every open. That made an
+    // issued quote a live document: correcting a room size or repricing a unit
+    // silently changed a proposal somebody already had in their inbox, under
+    // the same link, the same proposal number and the same revision.
+    //
+    // An issued quote is served from the copy frozen when it was issued.
+    // Nothing below reads the design, the content library or the settings.
+    // Correcting an issued quote means issuing a new revision, which
+    // supersedes this one and gives the customer a new link.
+    if (!offerMod.isOffer(issue.offer)) {
+      // Issued before the offer was frozen. It cannot be rendered honestly —
+      // rebuilding it now would show today's numbers under that day's date.
+      return res.status(409).json({
+        state: 'no_issued_copy',
+        message: 'This quote was issued before quotes were stored as a fixed copy, '
+          + 'so it cannot be reopened. Issue a new revision.'
+      });
+    }
 
-    const built = presentationMod.buildPresentation({
-      design,
-      customer: issue.customer || {},
-      job: issue.job || {},
-      content,
-      proposalNumber: issue.proposalNumber || '',
-      preparedAt: issue.issuedAt,
-      expiresAt: issue.expiresAt,
-      revision: issue.quoteRevision,
-      status: issue.status,
-      selectedOptionIds: issue.selectedOptionIds || [],
-      privacy: issue.privacy || {},
-      intro: issue.intro || '',
-      heroImage: content.heroImage || null,
-      productImage: issue.productImage || null,
-      settings,
-      // The alternatives this quote was issued with, and the one the customer
-      // is currently looking at. Both belong to the ISSUE, not the design: a
-      // customer switching from the Daikin to the Braemar has not redesigned
-      // anything.
-      systemOptions: issue.systemOptions || null,
-      chosenSystemId: issue.chosenSystemId || null
+    const view = offerMod.offerPresentation(issue.offer, {
+      chosenSystemId: issue.chosenSystemId || null,
+      selectedOptions: issue.selectedOptions || issue.selectedOptionIds || [],
+      // Whether this quote can still be accepted is a fact about the ISSUE and
+      // is applied over the frozen document. Without it an accepted proposal
+      // went on offering the Accept button, because the copy was built before
+      // anybody had answered it.
+      issue,
+      expired: access.expired === true
     });
+    if (!view.ok) return res.status(409).json({ state: 'blocked', message: view.message || null });
 
-    // A quote that the gate blocks is never published, even if somebody
-    // managed to issue a link for it.
-    if (!built.ok) return res.status(409).json({ state: 'blocked' });
-
-    // Last line of defence: the structural audit runs on the way out, and a
-    // leak fails the request rather than reaching the customer.
-    const audit = presentationMod.auditPresentation(built.presentation);
+    // Last line of defence: the structural audit still runs on the way out. It
+    // passed at issue; this catches a frozen copy that has been tampered with
+    // in storage rather than one that was built wrong.
+    const audit = presentationMod.auditPresentation(view.presentation);
     if (!audit.ok) return res.status(500).json({ error: 'presentation_audit_failed' });
 
-    const out = { ...built.presentation };
+    const out = { ...view.presentation };
     delete out._internal;          // estimator-side notes are not customer data
     return res.status(200).json({ state: 'ok', presentation: out });
   } catch (e) {

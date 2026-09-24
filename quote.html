@@ -96,8 +96,17 @@
         if (!window.confirm('Decline this proposal? You can still contact us afterwards.')) return;
         respond('decline', {}, function () { location.reload(); });
       },
-      onOptionsChanged: function (ids) {
-        respond('options', { selectedOptionIds: ids }, function () { location.reload(); });
+      // The customer's choices go to the server, which prices them against the
+      // copy this quote was ISSUED with and sends the page back. The totals on
+      // screen move immediately for the customer's benefit; the server's answer
+      // is the one that counts.
+      onOptionsChanged: function (ids, systemId) {
+        respond('options', { selectedOptionIds: ids, chosenSystemId: systemId || null },
+          function () { location.reload(); });
+      },
+      onSystemChanged: function (systemId) {
+        respond('options', { selectedOptionIds: null, chosenSystemId: systemId || null },
+          function () { location.reload(); });
       },
       // Only reached when NAC has no phone or email in the content library; the
       // renderer emits a real tel:/mailto: link whenever it has one. Sending the
@@ -119,8 +128,15 @@
 
   function respond(action, payload, done) {
     var body = { token: token, action: action };
+    // The renderer speaks of `name` and `systemId`; the endpoint of
+    // `customerName` and `chosenSystemId`. Renaming here rather than in either
+    // of them keeps the page and the API each readable on their own terms —
+    // and a systemId that never made the crossing is why switching system used
+    // to change the price on screen and not on the record.
+    var RENAME = { name: 'customerName', systemId: 'chosenSystemId' };
     for (var k in payload) if (Object.prototype.hasOwnProperty.call(payload, k)) {
-      body[k === 'name' ? 'customerName' : k] = payload[k];
+      if (payload[k] === null && k === 'selectedOptionIds') continue;
+      body[RENAME[k] || k] = payload[k];
     }
     fetch('/api/quote-respond', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
