@@ -164,6 +164,19 @@ const el = (tag, props = {}, kids = []) => {
   return n;
 };
 const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9);
+/**
+ * A number typed into a field, or null when it was cleared.
+ *
+ * Number('') is 0. On a price field that turns "no flat price, it is sold by
+ * the unit" into "it is free", which is the same bug class that let an
+ * AirTouch job go out with no sensors costed. Blank stays blank.
+ */
+const numOrNull = (x) => {
+  const t = String(x ?? '').trim();
+  if (t === '') return null;
+  const v = Number(t);
+  return Number.isFinite(v) ? v : null;
+};
 
 function setStatus(msg, kind = '') {
   const s = $('#status'); s.textContent = msg; s.className = 'status ' + kind;
@@ -782,26 +795,87 @@ function drawUpgrades() {
       ]),
       el('div', { class: 'grid2' }, [
         field('Title', u.title, x => u.title = x),
-        field('Price including GST', u.priceIncGst, x => u.priceIncGst = Number(x), { type: 'number' })
+        field('Flat price including GST', u.priceIncGst,
+          x => u.priceIncGst = numOrNull(x), { type: 'number' })
       ]),
       field('Description', u.description, x => u.description = x, { rows: 2 }),
+      // ── UPGRADES YOU BUY MORE THAN ONE OF ────────────────────────────────
+      //
+      // A smart controller is one thing or nothing. A room temperature sensor
+      // is one per room the customer wants sensed, and how many is their call.
+      // Those four fields were in the engine and had no screen, so a per-unit
+      // upgrade could not be set up at all. Blank means "not this kind" —
+      // Number('') is 0, and a $0 upgrade somebody can order twelve of is not
+      // a quote.
+      el('div', { class: 'grid2' }, [
+        field('Or price per unit including GST', u.unitPriceIncGst,
+          x => u.unitPriceIncGst = numOrNull(x), { type: 'number',
+          hint: 'Leave blank for a flat-price upgrade. Set it and the customer picks a quantity.' }),
+        field('Unit label', u.unitLabel, x => u.unitLabel = x,
+          { hint: 'e.g. each, per room.' }),
+        field('Maximum quantity', u.maxQuantity, x => u.maxQuantity = numOrNull(x),
+          { type: 'number', hint: 'Required for a per-unit upgrade — the ceiling the page enforces.' }),
+        field('Default quantity', u.defaultQuantity, x => u.defaultQuantity = numOrNull(x) ?? 0,
+          { type: 'number' })
+      ]),
       tagsField('Requires (design capabilities)', u.requires, x => u.requires = x),
       field('Exclusive group (optional)', u.group, x => u.group = x,
         { hint: 'Options sharing a group are mutually exclusive.' }),
       el('div', { class: 'tools' }, [toggle('Offered', u.enabled, x => u.enabled = x)]),
       el('div', { class: 'note', text: 'Capabilities available: has_zoning, zone_headroom, '
-        + 'has_controller, has_outlets, has_returns, ducted_system, single_phase. An upgrade whose '
-        + 'requirements a design does not meet is never shown to that customer.' })
+        + 'has_controller, has_outlets, has_returns, ducted_system, outdoor_unit, single_phase, '
+        + 'and the brand the customer picked — daikin_system, braemar_system. An upgrade whose '
+        + 'requirements a design does not meet is never shown to that customer, so a Daikin-only '
+        + 'add-on cannot end up in a Braemar total.' })
     ]));
   });
   panel('upgrades', 'Optional upgrades',
     'Each upgrade needs a price and a list of what the design must support. An incompatible '
   + 'upgrade is not shown greyed out — it is not shown at all, so a customer cannot select it.',
-    [list, el('button', { class: 'btn primary', text: '+ Add upgrade', onclick: () => {
-      C.upgrades.push(normaliseUpgrade({ id: uid('up'), enabled: true,
-        sortOrder: C.upgrades.length }));
-      markDirty(); drawAll();
-    } })]);
+    [list,
+     el('button', { class: 'btn primary', text: '+ Add upgrade', onclick: () => {
+       C.upgrades.push(normaliseUpgrade({ id: uid('up'), enabled: true,
+         sortOrder: C.upgrades.length }));
+       markDirty(); drawAll();
+     } }),
+     el('button', { class: 'btn', text: 'Import NAC upgrades', onclick: importNacUpgrades })]);
+}
+
+/**
+ * Load the upgrades NAC already sell, from designer/content/nac-upgrades.json.
+ *
+ * The prices in that file are Nick's own words — "make it so airtouch is 1350
+ * and each temp sensor is 100 each", then "oh make it $110 then". Nothing in
+ * it was priced by this program. An upgrade already in the library is left
+ * alone, so this never overwrites a price that was changed here.
+ */
+async function importNacUpgrades() {
+  setStatus('Reading the NAC upgrades file…');
+  let doc;
+  try {
+    const r = await fetch('/designer/content/nac-upgrades.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    doc = await r.json();
+  } catch (e) {
+    setStatus('Could not read designer/content/nac-upgrades.json — nothing was imported.', 'err');
+    return;
+  }
+  const incoming = Array.isArray(doc && doc.upgrades) ? doc.upgrades : [];
+  const have = new Set(C.upgrades.map(u => u.id).filter(Boolean));
+  let added = 0;
+  for (const raw of incoming) {
+    if (!raw || !raw.id || have.has(raw.id)) continue;
+    C.upgrades.push(normaliseUpgrade({ ...raw, sortOrder: C.upgrades.length }));
+    have.add(raw.id);
+    added++;
+  }
+  if (!added) {
+    setStatus('Every NAC upgrade is already in the library — nothing was changed.', 'ok');
+    return;
+  }
+  markDirty(); drawAll();
+  setStatus(added + ' upgrade' + (added === 1 ? '' : 's') + ' imported. Check the prices, '
+    + 'then Save library.', 'ok');
 }
 
 function drawPayment() {
