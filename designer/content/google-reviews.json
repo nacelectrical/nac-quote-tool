@@ -1,0 +1,234 @@
+{
+  "_source": "NAC's Google Business Profile. Each one is verbatim from the 'New Google Review' notification sent to nick@nacelectrical.com.au, so the wording, the spelling and the reviewer's name are the customer's own and have not been tidied. Twelve notifications were found; this is all twelve.",
+  "_permission": "Every one of these is already published by its author on Google, which is PERMISSION.PUBLIC_SOURCE in designer/engines/presentation-content.mjs. That is what makes them showable; it is not a substitute for NAC's own approval, which is the `approved` flag.",
+  "_ratingsPending": "THE STAR RATINGS ARE NOT IN THE NOTIFICATION EMAILS — the star row is an image with no alt text, so there is nothing to read. They are null here rather than guessed. reviewPublishable() refuses a review without a rating of 1 to 5, so none of these can appear on a quote until the real figures are entered from the Google Business Profile dashboard.",
+  "_dates": "The notifications carry the month and year only (for example 'Th Aug, 2026'), so that is what is recorded. No day has been invented.",
+  "_suburbs": "The notifications do not name the customer's suburb, so none is recorded. publicSuburb() prints nothing for a blank one.",
+  "_howToUse": "Open /quote-presentation.html, sign in, Reviews, then 'Import Google reviews'. Each one arrives Withheld. Fill the star rating and tick 'Approved for marketing' and it becomes publishable.",
+  "reviews": [
+    {
+      "id": "gmb-trench",
+      "displayName": "Christopher Trench",
+      "surnameApproved": true,
+      "text": "They replaced an ageing ducted system plus two split units. The crew clearly knew what they were doing and managed some unforeseen issues with the house’s setup without fuss. The end result is fully functional, well‑installed systems. I recommend them",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-09",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "replacement",
+        "split"
+      ],
+      "addedBy": "fetched from the Google review notification of 24 September 2026"
+    },
+    {
+      "id": "gmb-judge",
+      "displayName": "Cheryl Judge",
+      "surnameApproved": true,
+      "text": "Very happy with the service, from quote to completed work, very professional. A great company to do business with.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "service"
+      ],
+      "addedBy": "fetched from the Google review notification of 29 August 2026"
+    },
+    {
+      "id": "gmb-tuffery",
+      "displayName": "Rose Tuffery",
+      "surnameApproved": true,
+      "text": "We had Nick and the team install a new Daikin ducted system in our house. Very easy process from start to finish and couldn’t recommend enough!",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "daikin",
+        "new install"
+      ],
+      "addedBy": "fetched from the Google review notification of 20 August 2026"
+    },
+    {
+      "id": "gmb-passingham",
+      "displayName": "Karen Passingham",
+      "surnameApproved": true,
+      "text": "Nick was great. Very professional, on time and really knew what he was talking about. We had ducted airconditioning in just two areas of our home and it's perfect. Reaching areas our wall unit never quite reached.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "zoning",
+        "new install"
+      ],
+      "addedBy": "fetched from the Google review notification of 20 August 2026"
+    },
+    {
+      "id": "gmb-hall",
+      "displayName": "Trish and Steve Hall",
+      "surnameApproved": true,
+      "text": "Nick was great from start to finish, replacing our ducted aircon unit. Would definitely recommend him.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "replacement"
+      ],
+      "addedBy": "fetched from the Google review notification of 18 August 2026"
+    },
+    {
+      "id": "gmb-murray",
+      "displayName": "Paul Murray",
+      "surnameApproved": true,
+      "text": "Nick installed a new ducted system compressor and ceiling cassette for us ( he assessed the existing duct was all ok) the guys did a great job, good communication removed and disposed of our old unit, installed a new return air grill and filter and a new Daikin control panel and WiFi module as part of the job",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "daikin",
+        "replacement",
+        "return air",
+        "cassette"
+      ],
+      "addedBy": "fetched from the Google review notification of 18 August 2026"
+    },
+    {
+      "id": "gmb-marshall",
+      "displayName": "Rikki Marshall",
+      "surnameApproved": true,
+      "text": "I’ve Had Nick and the team out twice now for our main home and now granny flat for a ducted system In both.Nick is knowledgeable, professional and and all round great guy. I would definitely recommend him to anyone wanting any Air conditioning or electrical work. Thanks again guys!",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2026-08",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "ducted",
+        "repeat customer",
+        "granny flat"
+      ],
+      "addedBy": "fetched from the Google review notification of 17 August 2026"
+    },
+    {
+      "id": "gmb-jim",
+      "displayName": "Jim",
+      "surnameApproved": true,
+      "text": "Nick installed two aircons, had great advise and service and competitive price.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "split",
+        "price"
+      ],
+      "addedBy": "fetched from the Google review notification of 21 October 2025"
+    },
+    {
+      "id": "gmb-heath",
+      "displayName": "Michelle Heath",
+      "surnameApproved": true,
+      "text": "Nick did a great job at fixing the problem.Turned up on time and when he said he would, was very professional and easy to talk to.Would highly recommend to anyone 👌",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "service",
+        "repair"
+      ],
+      "addedBy": "fetched from the Google review notification of 17 October 2025"
+    },
+    {
+      "id": "gmb-mccallum",
+      "displayName": "Graeme McCallum",
+      "surnameApproved": true,
+      "text": "Nick was a pleasure to deal with.Timely and professional, offering several options to suit our needs.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "quote",
+        "options"
+      ],
+      "addedBy": "fetched from the Google review notification of 16 October 2025"
+    },
+    {
+      "id": "gmb-hedges",
+      "displayName": "Roselina Hedges",
+      "surnameApproved": true,
+      "text": "Highly recommend! Nick was great from quote to install he just got in and quietly got the job done. He seems to have taken into account things that I wouldn’t have even thought of like the placement of our systems. And the cost was very reasonable.",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "quote to install",
+        "placement",
+        "price"
+      ],
+      "addedBy": "fetched from the Google review notification of 16 October 2025"
+    },
+    {
+      "id": "gmb-jen",
+      "displayName": "jen",
+      "surnameApproved": true,
+      "text": "Really great service, short wait time to come and take a look at our aircon and was abke to fix it straight away, will be recommending to anybody who needs electrical air and refrigeration services..also really great at getting back to you quickly, thx so mucb",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "service",
+        "repair",
+        "response time"
+      ],
+      "addedBy": "fetched from the Google review notification of 16 October 2025"
+    }
+  ]
+}

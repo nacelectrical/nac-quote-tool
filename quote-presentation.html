@@ -407,11 +407,70 @@ function drawReviews() {
   panel('reviews', 'Reviews',
     'Enter reviews exactly as the customer wrote them. Never reword, shorten or improve one. '
   + 'A review is only shown when it is approved AND a permission or public source is recorded.',
-    [list, el('button', { class: 'btn primary', text: '+ Add review', onclick: () => {
-      C.reviews.push(normaliseReview({ id: uid('rev'), rating: 5,
-        addedAt: new Date().toISOString() }));
-      markDirty(); drawAll();
-    } })]);
+    [list,
+     el('button', { class: 'btn primary', text: '+ Add review', onclick: () => {
+       C.reviews.push(normaliseReview({ id: uid('rev'), rating: 5,
+         addedAt: new Date().toISOString() }));
+       markDirty(); drawAll();
+     } }),
+     el('button', { class: 'btn', text: 'Import Google reviews', onclick: importGoogleReviews })]);
+}
+
+/**
+ * Bring NAC's own Google reviews in from designer/content/google-reviews.json.
+ *
+ * That file was transcribed from the "New Google Review" notifications in
+ * nick@nacelectrical.com.au, verbatim, so the words and the names are the
+ * customers' own. Two things it deliberately does NOT carry:
+ *
+ *   • a star rating — the notification renders the stars as an image with no
+ *     alt text, so there is nothing to read and nothing is guessed. Each one
+ *     arrives Withheld with "Star rating must be 1 to 5" against it, and only
+ *     becomes publishable once the real figure is entered from the Google
+ *     Business Profile dashboard;
+ *   • `approved` — being public on Google is a permission, not NAC's decision
+ *     to put it on a quote. That tick stays NAC's.
+ *
+ * A review already in the library is left exactly as it is. This never
+ * overwrites an edit, and never silently re-adds one that was deleted in the
+ * same sitting.
+ */
+async function importGoogleReviews() {
+  setStatus('Reading the Google reviews file…');
+  let doc;
+  try {
+    const r = await fetch('/designer/content/google-reviews.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    doc = await r.json();
+  } catch (e) {
+    setStatus('Could not read designer/content/google-reviews.json — nothing was imported.', 'err');
+    return;
+  }
+  const incoming = Array.isArray(doc && doc.reviews) ? doc.reviews : [];
+  if (!incoming.length) {
+    setStatus('That file holds no reviews — nothing was imported.', 'err');
+    return;
+  }
+  const have = new Set(C.reviews.map(r => r.id).filter(Boolean));
+  let added = 0;
+  for (const raw of incoming) {
+    if (!raw || !raw.id || have.has(raw.id)) continue;
+    // normaliseReview is the only way a review enters the library, here as
+    // everywhere else, so the same rules apply to an import as to typing it in.
+    C.reviews.push(normaliseReview({ ...raw, approved: false,
+      addedAt: new Date().toISOString() }));
+    have.add(raw.id);
+    added++;
+  }
+  if (!added) {
+    setStatus('All ' + incoming.length + ' Google reviews are already in the library.', 'ok');
+    return;
+  }
+  markDirty(); drawAll();
+  const unrated = C.reviews.filter(r => !reviewPublishable(r).ok).length;
+  setStatus(added + ' Google review' + (added === 1 ? '' : 's') + ' imported, word for word. '
+    + unrated + ' cannot be published yet — enter the star rating from your Google Business '
+    + 'Profile and tick Approved, then Save library.', 'ok');
 }
 
 function drawInstalls() {
