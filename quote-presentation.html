@@ -116,6 +116,20 @@ import { LIMITS, legacyAssets, librarySizeReport, isDataUriRef }
   from '/designer/engines/media-store.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
+import { requireSignIn, currentSession } from '/designer/auth.mjs';
+
+// ── NAC ONLY ───────────────────────────────────────────────────────────────
+//
+// This screen holds the reviews, the trust copy, the payment terms and the
+// terms and conditions that print on every customer quote. It had no sign-in
+// gate, and the two endpoints behind it had no check either — so the whole
+// library was readable, and rewritable, by anyone who knew the URL.
+await requireSignIn({ pageName: 'the quote content library' });
+
+/** Every call to the content endpoints carries the signed-in session. */
+function staffHeaders(extra = {}) {
+  return { ...extra, Authorization: 'Bearer ' + (currentSession()?.access_token || '') };
+}
 
 const SECTIONS = [
   ['branding',     'Branding'],
@@ -173,7 +187,7 @@ function showTab(id) {
 async function load() {
   setStatus('Loading…');
   try {
-    const r = await fetch('/api/presentation-content');
+    const r = await fetch('/api/presentation-content', { headers: staffHeaders() });
     const j = await r.json();
     C = normalise(j.content || {});
   } catch {
@@ -207,7 +221,7 @@ $('#save').addEventListener('click', async () => {
   $('#save').disabled = true; setStatus('Saving…');
   try {
     const r = await fetch('/api/presentation-content', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: staffHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ content: C })
     });
     if (!r.ok) throw new Error();
@@ -526,7 +540,7 @@ function storageNotice() {
 async function checkStorage() {
   try {
     const r = await fetch('/api/presentation-media', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: staffHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ action: 'status' }) });
     storageState = await r.json();
   } catch { storageState = { configured: false, keyVariable: null, buckets: {} }; }
@@ -596,7 +610,7 @@ async function uploadOne(file, opts = {}) {
 
     setStatus('Uploading ' + file.name + '…');
     const r = await fetch('/api/presentation-media', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: staffHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ action: 'upload', derivatives, original })
     });
     const j = await r.json().catch(() => null);
@@ -627,7 +641,7 @@ async function deleteAsset(i) {
   if (asset && !(asset.derivatives || []).some(d => isDataUriRef(d.ref))) {
     try {
       await fetch('/api/presentation-media', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: staffHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ action: 'delete', asset })
       });
     } catch { /* the record goes either way; an orphan object is recoverable */ }

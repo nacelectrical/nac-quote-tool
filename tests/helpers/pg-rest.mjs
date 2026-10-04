@@ -32,6 +32,19 @@ import { tmpdir } from 'node:os';
 
 const PSQL = '/usr/lib/postgresql/16/bin/psql';
 const ENV = { ...process.env, PGHOST: '/var/run/nacpg', PGPORT: '5433', PGUSER: 'postgres' };
+const ROOT = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+
+// The container is restarted between sessions and the server does not come back
+// with it, so the suite brings its own database up rather than failing with a
+// socket error that looks like a broken test.
+let ensured = false;
+function ensureServer() {
+  if (ensured) return;
+  ensured = true;
+  try {
+    execFileSync(ROOT + '/tools/test-db.sh', ['up'], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (e) { /* the suites skip on their own when psql is missing */ }
+}
 
 // A design is hundreds of kilobytes of JSON, which is past what an argument
 // list will carry — psql is fed from a file, not from -c.
@@ -40,6 +53,7 @@ let seq = 0;
 
 /** Run SQL, return stdout. Throws with Postgres's own message on error. */
 export function sql(text, db = 'nacquote') {
+  ensureServer();
   const file = join(SCRATCH, 'q' + (seq++) + '.sql');
   writeFileSync(file, text + '\n');
   try {

@@ -67,10 +67,23 @@ function transport(key) {
   };
 }
 
+import { requireStaff } from './staff-auth.js';
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
+
+  // ── STAFF ONLY ─────────────────────────────────────────────────────────
+  //
+  // This writes to NAC's storage buckets with the service-role key and had no
+  // check on the caller: anyone could upload into them, and anyone could
+  // delete a customer's photograph out of them. `status` is included — it
+  // reports which key variable the deployment is configured with, which is
+  // nobody else's business.
+  const staff = await requireStaff(req, res, 'the quote image store');
+  if (!staff) return;
 
   const KEY = serviceKey();
   const action = (req.body && req.body.action) || 'upload';
