@@ -444,6 +444,10 @@ function drawReviews() {
  *   • `approved` — being public on Google is a permission, not NAC's decision
  *     to put it on a quote. That tick stays NAC's.
  *
+ * It reads the file's `reviews` list only. Nine of the twelve name Nick
+ * personally and he asked for those to be left out, so they sit in that file's
+ * `withheldByNac` list and this never loads them.
+ *
  * A review already in the library is left exactly as it is. This never
  * overwrites an edit, and never silently re-adds one that was deleted in the
  * same sitting.

@@ -4,6 +4,8 @@
   "_ratingsPending": "THE STAR RATINGS ARE NOT IN THE NOTIFICATION EMAILS — the star row is an image with no alt text, so there is nothing to read. They are null here rather than guessed. reviewPublishable() refuses a review without a rating of 1 to 5, so none of these can appear on a quote until the real figures are entered from the Google Business Profile dashboard.",
   "_dates": "The notifications carry the month and year only (for example 'Th Aug, 2026'), so that is what is recorded. No day has been invented.",
   "_suburbs": "The notifications do not name the customer's suburb, so none is recorded. publicSuburb() prints nothing for a blank one.",
+  "_namedReviews": "Nick: \"Can you leave out reviews with my name in it?\" Nine of the twelve name him personally, so they are in `withheldByNac` below, not in `reviews`. The import on /quote-presentation.html reads `reviews` only, so a review that names him cannot reach the library and cannot reach a quote. They are kept here rather than deleted because they are genuine reviews that are still public on Google — if Nick changes his mind, move the entry back into `reviews`.",
+  "_count": "That leaves THREE quotable reviews, which is exactly the minimum selectReviews() will show. Withhold one more and the Reviews section does not go thin, it disappears — three reads as a track record, two reads as all that could be found.",
   "_howToUse": "Open /quote-presentation.html, sign in, Reviews, then 'Import Google reviews'. Each one arrives Withheld. Fill the star rating and tick 'Approved for marketing' and it becomes publishable.",
   "reviews": [
     {
@@ -43,6 +45,27 @@
       "addedBy": "fetched from the Google review notification of 29 August 2026"
     },
     {
+      "id": "gmb-jen",
+      "displayName": "jen",
+      "surnameApproved": true,
+      "text": "Really great service, short wait time to come and take a look at our aircon and was abke to fix it straight away, will be recommending to anybody who needs electrical air and refrigeration services..also really great at getting back to you quickly, thx so mucb",
+      "rating": null,
+      "source": "google",
+      "suburb": "",
+      "reviewDate": "2025-10",
+      "permissionStatus": "public_source",
+      "approved": false,
+      "featured": false,
+      "tags": [
+        "service",
+        "repair",
+        "response time"
+      ],
+      "addedBy": "fetched from the Google review notification of 16 October 2025"
+    }
+  ],
+  "withheldByNac": [
+    {
       "id": "gmb-tuffery",
       "displayName": "Rose Tuffery",
       "surnameApproved": true,
@@ -59,7 +82,8 @@
         "daikin",
         "new install"
       ],
-      "addedBy": "fetched from the Google review notification of 20 August 2026"
+      "addedBy": "fetched from the Google review notification of 20 August 2026",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-passingham",
@@ -78,7 +102,8 @@
         "zoning",
         "new install"
       ],
-      "addedBy": "fetched from the Google review notification of 20 August 2026"
+      "addedBy": "fetched from the Google review notification of 20 August 2026",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-hall",
@@ -96,7 +121,8 @@
         "ducted",
         "replacement"
       ],
-      "addedBy": "fetched from the Google review notification of 18 August 2026"
+      "addedBy": "fetched from the Google review notification of 18 August 2026",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-murray",
@@ -117,7 +143,8 @@
         "return air",
         "cassette"
       ],
-      "addedBy": "fetched from the Google review notification of 18 August 2026"
+      "addedBy": "fetched from the Google review notification of 18 August 2026",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-marshall",
@@ -136,7 +163,8 @@
         "repeat customer",
         "granny flat"
       ],
-      "addedBy": "fetched from the Google review notification of 17 August 2026"
+      "addedBy": "fetched from the Google review notification of 17 August 2026",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-jim",
@@ -154,7 +182,8 @@
         "split",
         "price"
       ],
-      "addedBy": "fetched from the Google review notification of 21 October 2025"
+      "addedBy": "fetched from the Google review notification of 21 October 2025",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-heath",
@@ -172,7 +201,8 @@
         "service",
         "repair"
       ],
-      "addedBy": "fetched from the Google review notification of 17 October 2025"
+      "addedBy": "fetched from the Google review notification of 17 October 2025",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-mccallum",
@@ -190,7 +220,8 @@
         "quote",
         "options"
       ],
-      "addedBy": "fetched from the Google review notification of 16 October 2025"
+      "addedBy": "fetched from the Google review notification of 16 October 2025",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     },
     {
       "id": "gmb-hedges",
@@ -209,26 +240,8 @@
         "placement",
         "price"
       ],
-      "addedBy": "fetched from the Google review notification of 16 October 2025"
-    },
-    {
-      "id": "gmb-jen",
-      "displayName": "jen",
-      "surnameApproved": true,
-      "text": "Really great service, short wait time to come and take a look at our aircon and was abke to fix it straight away, will be recommending to anybody who needs electrical air and refrigeration services..also really great at getting back to you quickly, thx so mucb",
-      "rating": null,
-      "source": "google",
-      "suburb": "",
-      "reviewDate": "2025-10",
-      "permissionStatus": "public_source",
-      "approved": false,
-      "featured": false,
-      "tags": [
-        "service",
-        "repair",
-        "response time"
-      ],
-      "addedBy": "fetched from the Google review notification of 16 October 2025"
+      "addedBy": "fetched from the Google review notification of 16 October 2025",
+      "withheldReason": "Names Nick personally. Nick asked for these to be left out of customer quotes."
     }
   ]
 }
