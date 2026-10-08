@@ -454,7 +454,12 @@ test('static pressure is estimated over the index run and compared with unit ESP
 test('without ESP on file the check is declared NOT COMPLETED, never passed', () => {
   const a = calculateAirflow(LOAD);
   const o = designOutlets(ROOMS, a.rows);
-  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  // Every run on the index path carries a measured length. Without them the
+  // engine refuses to complete the check AT ALL, which is the point of
+  // tests/pressure-evidence.test.mjs — these three are about the ESP rule, so
+  // they must not be standing on unmeasured duct themselves.
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 },
+    routesByRoomId: Object.fromEntries(a.rows.map((r, i) => [r.roomId, { lengthMm: 6000 + i * 800 }])) });
   const p = estimateStaticPressure({ network: net, outlets: o, selectedUnit: { model: 'X', availableStaticPa: null } });
   assert.equal(p.unitAvailableStaticPa, null);
   assert.equal(p.remainingMarginPa, null);
@@ -472,7 +477,12 @@ test('without ESP on file the check is declared NOT COMPLETED, never passed', ()
 test('a not-completed static check blocks approval until it is acknowledged', () => {
   const a = calculateAirflow(LOAD);
   const o = designOutlets(ROOMS, a.rows);
-  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  // Every run on the index path carries a measured length. Without them the
+  // engine refuses to complete the check AT ALL, which is the point of
+  // tests/pressure-evidence.test.mjs — these three are about the ESP rule, so
+  // they must not be standing on unmeasured duct themselves.
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 },
+    routesByRoomId: Object.fromEntries(a.rows.map((r, i) => [r.roomId, { lengthMm: 6000 + i * 800 }])) });
   const pressure = estimateStaticPressure({ network: net, outlets: o,
     selectedUnit: { model: 'X', availableStaticPa: null } });
 
@@ -491,7 +501,12 @@ test('a not-completed static check blocks approval until it is acknowledged', ()
 test('with ESP on file the check completes and says which way it went', () => {
   const a = calculateAirflow(LOAD);
   const o = designOutlets(ROOMS, a.rows);
-  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 } });
+  // Every run on the index path carries a measured length. Without them the
+  // engine refuses to complete the check AT ALL, which is the point of
+  // tests/pressure-evidence.test.mjs — these three are about the ESP rule, so
+  // they must not be standing on unmeasured duct themselves.
+  const net = buildDuctNetwork({ airflow: a, outlets: o, mainRoute: { lengthMm: 4000 },
+    routesByRoomId: Object.fromEntries(a.rows.map((r, i) => [r.roomId, { lengthMm: 6000 + i * 800 }])) });
   const ok = estimateStaticPressure({ network: net, outlets: o,
     selectedUnit: { model: 'Y', availableStaticPa: 250 } });
   assert.equal(ok.checkCompleted, true);

@@ -893,7 +893,12 @@ export function runPipeline(design, ctx = {}) {
   d.pressure = d.pressureReadiness.ok
     ? Object.assign(estimateStaticPressure({
         network: d.network, returnDesign: d.returnDesign, outlets: d.outlets,
-        selectedUnit: d.selectedUnit, zoneAnalysis: d.zones
+        selectedUnit: d.selectedUnit, zoneAnalysis: d.zones,
+        // Metres measured on a plan scaled off a drawn car are not metres.
+        // The engine asks scaleTrust() where this number came from, and a
+        // scale with no acceptable origin stops the check from completing
+        // rather than letting it report a pass over fabricated lengths.
+        calibration: d.calibration || null
       }, { settings }), {
         // Which of the metres in that figure were measured and which were the
         // standard allowance. A number the estimator cannot trace is a number

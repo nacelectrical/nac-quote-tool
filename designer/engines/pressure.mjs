@@ -6,9 +6,90 @@
 import { DEFAULT_SETTINGS } from './settings.mjs';
 import { round } from './units.mjs';
 import { indexRun } from './ducts.mjs';
+import { scaleTrust } from './calibration.mjs';
 
 /** Shown wherever a static result would otherwise be read as a pass. */
 export const STATIC_NOT_COMPLETED = 'STATIC PRESSURE CHECK NOT COMPLETED — MANUFACTURER DATA REQUIRED';
+
+/** The check did not happen because there are no real metres behind it. */
+export const STATIC_NO_LENGTHS =
+  'STATIC PRESSURE CHECK NOT COMPLETED — DUCT LENGTHS HAVE NOT BEEN MEASURED';
+
+/** The check did not happen because the metres cannot be trusted. */
+export const STATIC_SCALE_UNRELIABLE =
+  'STATIC PRESSURE CHECK NOT COMPLETED — THE PLAN SCALE IS NOT RELIABLE';
+
+/**
+ * Is there anything real behind the metres in this estimate?
+ *
+ * The review found a design that totalled its index run, compared it against
+ * the unit's available static, and reported "Static pressure check passed" —
+ * with every duct length zero. The sum was not low. There was nothing in it
+ * but the fixed component allowances: an outlet, a damper, a grille and a
+ * filter. No duct at all.
+ *
+ * The pipeline does gate this (supply-graph.pressureReadiness), but the gate
+ * lived outside the engine, so every other caller — a report, a surface added
+ * later, a test — could still be told the check passed. It belongs here, where
+ * the verdict is actually made.
+ *
+ * Two separate questions, because they fail for different reasons and the
+ * estimator fixes them in different places:
+ *
+ *   ARE THERE METRES?    A run with no measured length contributes nothing.
+ *   ARE THEY REAL?       Metres measured off a plan scaled from a drawn car
+ *                        are a confident-looking number with nothing behind
+ *                        it. They are not zero, so a length check cannot see
+ *                        them; only the scale's origin can.
+ */
+function lengthEvidence(run, calibration) {
+  if (!run || !Array.isArray(run.path) || !run.path.length) {
+    return { ok: false, code: 'STATIC_PRESSURE_NO_INDEX_RUN', label: STATIC_NO_LENGTHS,
+             measuredSegments: 0, unmeasuredSegments: 0, runLengthM: 0, unmeasured: [],
+             reason: 'No index run has been identified, so there is no path to add up.' };
+  }
+
+  const unmeasured = run.path.filter(s =>
+    s.lengthM === null || s.lengthM === undefined || !(Number(s.lengthM) > 0));
+  const runLengthM = round(run.path.reduce((t, s) => t + (Number(s.lengthM) || 0), 0), 2);
+
+  if (unmeasured.length) {
+    const which = unmeasured.map(s => s.destination || s.id).join(', ');
+    return {
+      ok: false, code: 'STATIC_PRESSURE_LENGTH_NOT_MEASURED', label: STATIC_NO_LENGTHS,
+      measuredSegments: run.path.length - unmeasured.length,
+      unmeasuredSegments: unmeasured.length,
+      runLengthM, unmeasured: unmeasured.map(s => s.id),
+      reason: unmeasured.length + ' of ' + run.path.length + ' runs on the index path have no '
+        + 'measured length (' + which + '). A pressure drop over no duct is not a low pressure '
+        + 'drop. Measure the routes on a calibrated plan, or enter the lengths by hand.'
+    };
+  }
+
+  // The metres exist. Do they mean anything? Only asked when a calibration is
+  // actually on the design: lengths typed in by hand do not depend on a scale,
+  // and refusing them because no plan was calibrated would block the manual
+  // fallback the estimator is entitled to.
+  if (calibration) {
+    const trust = scaleTrust(calibration);
+    if (!trust.trusted) {
+      return {
+        ok: false, code: 'STATIC_PRESSURE_SCALE_NOT_RELIABLE', label: STATIC_SCALE_UNRELIABLE,
+        measuredSegments: run.path.length, unmeasuredSegments: 0, runLengthM, unmeasured: [],
+        scaleConfidence: trust.confidence,
+        reason: 'These lengths were measured on a plan whose scale cannot be relied on. '
+          + trust.reason + ' Until the scale is confirmed, ' + runLengthM + ' m of index run is '
+          + 'a number without a measurement behind it.'
+      };
+    }
+    return { ok: true, code: null, label: null, measuredSegments: run.path.length,
+             unmeasuredSegments: 0, runLengthM, unmeasured: [],
+             scaleConfidence: trust.confidence, reason: null };
+  }
+
+  return { ok: true, code: null, label: null, measuredSegments: run.path.length,
+           unmeasuredSegments: 0, runLengthM, unmeasured: [], scaleConfidence: null, reason: null };
+}
 
 export const PRESSURE_DISCLAIMER =
   'DESIGN ESTIMATE — COMMISSIONING VERIFICATION REQUIRED';
@@ -17,7 +98,8 @@ export const PRESSURE_DISCLAIMER =
  * Estimate the index-run pressure requirement and compare it with the selected
  * unit's available external static pressure.
  */
-export function estimateStaticPressure({ network, returnDesign, outlets, selectedUnit, zoneAnalysis }, opts = {}) {
+export function estimateStaticPressure({ network, returnDesign, outlets, selectedUnit,
+                                         zoneAnalysis, calibration = null }, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
   const C = settings.pressure.componentPa;
 
@@ -104,7 +186,19 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
         'Enter it from the manufacturer data sheet in HVAC Design Settings → Equipment specifications.' });
   }
 
-  const checkCompleted = availablePa !== null && availablePa !== undefined;
+  // ── NOTHING BEHIND THE METRES IS ALSO "NOT COMPLETED" ──────────────────
+  const evidence = lengthEvidence(run, calibration);
+  if (!evidence.ok) {
+    warnings.push({ code: evidence.code, severity: 'CRITICAL',
+      message: evidence.label + '. ' + evidence.reason });
+  }
+
+  const hasUnitStatic = availablePa !== null && availablePa !== undefined;
+  const checkCompleted = hasUnitStatic && evidence.ok;
+
+  // Which failure the estimator is looking at decides where they go to fix it,
+  // so the label names the missing input rather than saying "not completed".
+  const notCompletedLabel = !evidence.ok ? evidence.label : STATIC_NOT_COMPLETED;
 
   return {
     disclaimer: PRESSURE_DISCLAIMER,
@@ -114,11 +208,17 @@ export function estimateStaticPressure({ network, returnDesign, outlets, selecte
     unitAvailableStaticPa: availablePa,
     remainingMarginPa: marginPa,
     remainingMarginPct: marginPct,
+    /**
+     * What the metres in `estimatedRequirementPa` are made of: how many runs
+     * on the index path were measured, how long the path is, and how far the
+     * plan scale those metres came from can be relied on.
+     */
+    lengthEvidence: evidence,
     // Three states, never two. `checkCompleted: false` is NOT a pass.
     checkCompleted,
     status: !checkCompleted ? 'not_completed'
       : (marginPa !== null && marginPa < 0) ? 'fail' : 'pass',
-    statusLabel: !checkCompleted ? STATIC_NOT_COMPLETED
+    statusLabel: !checkCompleted ? notCompletedLabel
       : (marginPa !== null && marginPa < 0)
         ? 'STATIC PRESSURE CHECK FAILED — the estimate exceeds the unit'
         : 'Static pressure check passed',

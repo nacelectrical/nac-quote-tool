@@ -257,3 +257,107 @@ export function deriveCalibrationFromRooms(rooms, { imageWidthPx = null, imageHe
     }
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IS THIS SCALE GOOD ENOUGH TO MEASURE DUCT ON?
+//
+// The review found a Kauri design whose scale had been taken off a car drawn
+// on the plan. A car is not a dimension — it is an illustrator's block, drawn
+// at whatever size looked right, on a sheet that may since have been
+// screenshotted and resized. Every duct length on that job, every pressure
+// figure derived from those lengths and every metre of flex on the order were
+// built on it.
+//
+// Nick: "never assume an uploaded screenshot retains original A3/A4 scale."
+//
+// So a scale is not a number, it is a number PLUS where it came from. There
+// are exactly two origins this trusts:
+//
+//   measured                        — the estimator clicked two points and
+//                                     typed the distance printed between them.
+//   derived_from_dimensioned_rooms  — two or more rooms carry both the
+//                                     architect's printed size and a drawn
+//                                     boundary, and they agree with each other.
+//
+// Everything else — a printed scale label, an object scaled by eye, a px/mm
+// number restored from an old save with no origin on it — is UNTRUSTED. It is
+// not deleted and it is not overridden; it simply does not authorise a
+// measured length or a pressure verdict. The estimator calibrates, or enters
+// the length by hand, or confirms the measurement on site.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How much a scale may be relied on. Ordered worst to best. */
+export const SCALE_CONFIDENCE = Object.freeze({
+  NONE: 'none',             // no usable px/mm at all
+  UNTRUSTED: 'untrusted',   // a number with no acceptable origin
+  MODERATE: 'moderate',     // acceptable origin, but the readings spread
+  HIGH: 'high'              // acceptable origin, readings agree
+});
+
+/** The origins that can authorise a measurement off the image. */
+export const TRUSTED_SCALE_SOURCES = Object.freeze(['measured', 'derived_from_dimensioned_rooms']);
+
+/** Above this spread between room readings the derived scale is only moderate. */
+export const DERIVED_SPREAD_MODERATE_PCT = 5;
+
+/**
+ * Assess a calibration.
+ *
+ * @returns {{trusted:boolean, confidence:string, source:string|null,
+ *            pixelsPerMm:number|null, evidence:string[], reason:string}}
+ */
+export function scaleTrust(calibration) {
+  const c = calibration || null;
+  const ppm = c && Number(c.pixelsPerMm);
+  if (!c || !Number.isFinite(ppm) || !(ppm > 0)) {
+    return { trusted: false, confidence: SCALE_CONFIDENCE.NONE, source: null,
+             pixelsPerMm: null, evidence: [],
+             reason: 'The plan has not been calibrated, so nothing can be measured off it.' };
+  }
+
+  const source = c.source ? String(c.source) : null;
+  if (!source || !TRUSTED_SCALE_SOURCES.includes(source)) {
+    return {
+      trusted: false, confidence: SCALE_CONFIDENCE.UNTRUSTED, source,
+      pixelsPerMm: ppm, evidence: [],
+      reason: source
+        ? 'This scale came from "' + source + '", which is not a plan dimension. Calibrate '
+          + 'against a distance printed on the drawing, or confirm the measurement on site.'
+        : 'This scale carries no record of where it came from, so it cannot be relied on. '
+          + 'Calibrate against a distance printed on the drawing.'
+    };
+  }
+
+  if (source === 'measured') {
+    const dist = Number(c.calibrationDistanceMm);
+    const evidence = Number.isFinite(dist) && dist > 0
+      ? ['Two points on the plan against a stated ' + round(mmToM(dist), 3) + ' m.']
+      : [];
+    if (!evidence.length) {
+      return { trusted: false, confidence: SCALE_CONFIDENCE.UNTRUSTED, source, pixelsPerMm: ppm,
+               evidence: [],
+               reason: 'This calibration records no distance, so there is nothing behind the '
+                     + 'number. Calibrate again against a dimension printed on the drawing.' };
+    }
+    return { trusted: true, confidence: SCALE_CONFIDENCE.HIGH, source, pixelsPerMm: ppm, evidence,
+             reason: 'Calibrated against a dimension printed on the drawing.' };
+  }
+
+  // derived_from_dimensioned_rooms
+  const spread = Number(c.agreementSpreadPct);
+  const evidence = Array.isArray(c.derivedFrom) ? c.derivedFrom.slice() : [];
+  if (!evidence.length) {
+    return { trusted: false, confidence: SCALE_CONFIDENCE.UNTRUSTED, source, pixelsPerMm: ppm,
+             evidence: [],
+             reason: 'A derived scale with no readings behind it cannot be checked. Calibrate '
+                   + 'against a dimension printed on the drawing.' };
+  }
+  const moderate = !Number.isFinite(spread) || spread > DERIVED_SPREAD_MODERATE_PCT;
+  return {
+    trusted: true,
+    confidence: moderate ? SCALE_CONFIDENCE.MODERATE : SCALE_CONFIDENCE.HIGH,
+    source, pixelsPerMm: ppm, evidence,
+    reason: 'Derived from ' + evidence.length + ' dimensioned rooms'
+      + (Number.isFinite(spread) ? ', agreeing to ' + round(spread, 1) + '%' : '') + '.'
+  };
+}
