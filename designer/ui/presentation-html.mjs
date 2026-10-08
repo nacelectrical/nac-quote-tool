@@ -492,6 +492,26 @@ function acceptHtml(p) {
     + when(!!a.terms, '<details class="terms"><summary>Terms and conditions</summary>'
         + '<div class="terms-body">' + esc(a.terms).replace(/\n{2,}/g, '</p><p>')
           .replace(/\n/g, '<br>').replace(/^/, '<p>').replace(/$/, '</p>') + '</div></details>')
+    // ── SIGN IT ────────────────────────────────────────────────────────────
+    //
+    // A typed name is a claim; a signature is the thing a customer recognises
+    // as agreeing. acceptPresentation() has taken a `signature` since it was
+    // written and nothing ever collected one, so every acceptance on file has
+    // a null where the signature goes.
+    //
+    // Drawn on a canvas with pointer events, so a finger on an iPad, a stylus
+    // and a mouse all work from one code path. It is NOT required: a customer
+    // on a device that will not draw must still be able to accept, and the
+    // record says which way it was signed.
+    + '<div class="fld sig-fld">'
+      + '<label for="acc-sig">Your signature</label>'
+      + '<div class="sigwrap"><canvas id="acc-sig" class="sigpad" '
+        + 'aria-label="Sign with your finger, stylus or mouse"></canvas>'
+        + '<span class="sighint" id="acc-sig-hint">Sign here</span></div>'
+      + '<div class="sigbar"><button type="button" class="btn ghost small" id="acc-sig-clear">'
+        + 'Clear signature</button>'
+        + '<span class="note" id="acc-sig-state">Optional — your typed name is enough.</span></div>'
+    + '</div>'
     + '<label class="chk"><input type="checkbox" id="acc-terms" required>'
       + '<span>I have read and accept the proposal and terms above.</span></label>'
     + when(!!a.depositInstructions, '<p class="note">' + esc(a.depositInstructions) + '</p>')
@@ -845,6 +865,21 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .inv-dep{margin-top:18px;font-size:16px}
 .stages{margin:18px 0 0 20px;display:grid;gap:7px;font-size:15.5px}
 
+/* ── signature ──────────────────────────────────────────────────────── */
+.sig-fld{margin-bottom:18px}
+.sigwrap{position:relative;border:2px dashed var(--line);border-radius:12px;background:#FCFCFE;
+  overflow:hidden}
+.sigwrap.signed{border-style:solid;border-color:var(--gold);background:#fff}
+/* A signature needs room for a hand. 150px is about the height of a real
+   signature box on paper, and touch-action:none stops an iPad scrolling the
+   page out from under the finger that is drawing. */
+.sigpad{display:block;width:100%;height:150px;touch-action:none;cursor:crosshair}
+.sighint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+  color:var(--muted);font-size:15px;pointer-events:none}
+.sigwrap.signed .sighint{display:none}
+.sigbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin-top:8px}
+.btn.small{padding:8px 14px;font-size:14px;min-height:40px}
+
 /* ── acceptance ─────────────────────────────────────────────────────── */
 .accept{max-width:620px;margin-inline:auto;background:#fff;border:1px solid var(--line);
   border-radius:16px;padding:28px 26px 30px;box-shadow:var(--shadow)}
@@ -1096,6 +1131,86 @@ const SCRIPT = `
     }
   });
 
+  /* ── THE SIGNATURE PAD ───────────────────────────────────────────────
+     One pointer path for a finger on an iPad, a stylus and a mouse. The
+     canvas is sized to its own box times the device pixel ratio, so the line
+     is sharp on a retina screen instead of a soft double-width smear, and it
+     is re-sized on rotate — which otherwise clears the drawing, so what was
+     signed is redrawn from the recorded strokes rather than lost. */
+  var sigPad=(function(){
+    var cv=document.getElementById('acc-sig');
+    if(!cv||!cv.getContext) return null;
+    var wrap=cv.parentNode, hint=document.getElementById('acc-sig-hint');
+    var state=document.getElementById('acc-sig-state');
+    var ctx=cv.getContext('2d'), strokes=[], cur=null, drawing=false;
+
+    function paint(){
+      var r=Math.max(1,window.devicePixelRatio||1);
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,cv.width,cv.height);
+      ctx.scale(r,r);
+      ctx.lineWidth=2.2; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#121C2E';
+      for(var i=0;i<strokes.length;i++){
+        var st=strokes[i]; if(st.length<1) continue;
+        ctx.beginPath(); ctx.moveTo(st[0].x,st[0].y);
+        if(st.length===1) ctx.lineTo(st[0].x+0.1,st[0].y+0.1);
+        else for(var j=1;j<st.length;j++) ctx.lineTo(st[j].x,st[j].y);
+        ctx.stroke();
+      }
+    }
+    function resize(){
+      var r=Math.max(1,window.devicePixelRatio||1);
+      var w=cv.clientWidth||600, h=cv.clientHeight||150;
+      cv.width=Math.round(w*r); cv.height=Math.round(h*r);
+      paint();
+    }
+    function at(e){
+      var b=cv.getBoundingClientRect();
+      return {x:e.clientX-b.left, y:e.clientY-b.top};
+    }
+    function mark(){
+      var any=strokes.some(function(s){return s.length>0;});
+      wrap.classList.toggle('signed',any);
+      if(state) state.textContent=any
+        ? 'Signed. Press Clear signature to sign again.'
+        : 'Optional — your typed name is enough.';
+      if(hint) hint.hidden=any;
+    }
+    function down(e){
+      if(e.button!==undefined&&e.button!==0) return;
+      drawing=true; cur=[at(e)]; strokes.push(cur);
+      if(cv.setPointerCapture&&e.pointerId!==undefined){
+        try{cv.setPointerCapture(e.pointerId);}catch(_){}
+      }
+      e.preventDefault(); paint(); mark();
+    }
+    function move(e){ if(!drawing||!cur) return; cur.push(at(e)); e.preventDefault(); paint(); }
+    function up(){ drawing=false; cur=null; mark(); }
+
+    cv.addEventListener('pointerdown',down);
+    cv.addEventListener('pointermove',move);
+    cv.addEventListener('pointerup',up);
+    cv.addEventListener('pointercancel',up);
+    cv.addEventListener('pointerleave',function(){ if(drawing) up(); });
+    window.addEventListener('resize',resize);
+    resize();
+
+    var clr=document.getElementById('acc-sig-clear');
+    if(clr) clr.addEventListener('click',function(){ strokes=[]; paint(); mark(); });
+
+    return {
+      empty:function(){ return !strokes.some(function(s){return s.length>0;}); },
+      /* A PNG data URI, which is what the acceptance record stores and what
+         gets attached to the ServiceM8 job. Capped: a signature is a few
+         kilobytes of ink, and anything past 200 kB is not a signature. */
+      dataUrl:function(){
+        if(this.empty()) return null;
+        try{ var d=cv.toDataURL('image/png');
+             return (d&&d.length<=200000)?d:null; }catch(_){ return null; }
+      }
+    };
+  })();
+
   var form=document.getElementById('acceptForm');
   if(form){
     form.addEventListener('submit',function(e){
@@ -1111,6 +1226,7 @@ const SCRIPT = `
       if(btn){btn.disabled=true;btn.textContent='Sending…';}
       if(window.NACQuote&&window.NACQuote.accept){
         window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
+          signature:sigPad?sigPad.dataUrl():null,
           selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
       }
     });

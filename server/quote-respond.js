@@ -75,6 +75,41 @@ function isSameAcceptance(existing, asked) {
   return a === b;
 }
 
+/**
+ * Turn an accepted quote into a ServiceM8 job.
+ *
+ * The presentation used is the FROZEN one for the system the customer chose,
+ * so the job's line items are the lines they actually accepted — not whatever
+ * the design says today.
+ */
+async function createServiceM8Job(issue, offer, supabaseKey, token) {
+  const sm8Key = process.env.SERVICEM8_API_KEY;
+  if (!sm8Key) {
+    return { ok: false, reason: 'no_api_key', at: new Date().toISOString(),
+      message: 'SERVICEM8_API_KEY is not set on this deployment, so no job was created. '
+        + 'The acceptance is recorded and the job can be created from the portal once the '
+        + 'key is in place.' };
+  }
+  const [mapper, sender, offerMod] = await Promise.all([
+    import('../designer/engines/servicem8-job.mjs'),
+    Promise.resolve(require('./servicem8-job.js')),
+    import('../designer/engines/issued-offer.mjs')
+  ]);
+  const view = offerMod.offerPresentation(offer, {
+    chosenSystemId: issue.chosenSystemId || null,
+    selectedOptions: issue.selectedOptions || issue.selectedOptionIds || []
+  });
+  const plan = mapper.buildJobPlan(issue, view.ok ? view.presentation : null);
+  if (!plan.ok) {
+    return { ok: false, reason: 'not_ready', at: new Date().toISOString(),
+      blockers: plan.blockers,
+      message: 'The accepted quote is missing something a job needs: ' + plan.blockers.join(' ') };
+  }
+  const out = await sender.createJob(plan, { key: sm8Key });
+  return { ...out, at: new Date().toISOString(), warnings: plan.warnings,
+           summary: plan.summary, idempotencyKey: plan.idempotencyKey };
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -284,6 +319,28 @@ module.exports = async function handler(req, res) {
     if (wrote.status >= 300) {
       return res.status(502).json({ error: 'store_failed',
         message: 'Your answer could not be saved. Nothing was changed.' });
+    }
+
+    // ── AND INTO SERVICEM8, WITHOUT ANYBODY TYPING IT AGAIN ────────────────
+    //
+    // Nick: "so it's set up without having to do anything manually."
+    //
+    // This runs AFTER the acceptance is safely written, and it can never take
+    // it back. If ServiceM8 is down or refuses something, the customer has
+    // still accepted and still sees a thank-you; the failure is recorded on
+    // the issue for the portal, where NAC can see it and retry. A booking
+    // system being unavailable is not the customer's problem to solve.
+    if (action === 'accept' && next.status === 'accepted' && !next.servicem8) {
+      const sm8 = await createServiceM8Job(next, issue.offer, KEY, token)
+        .catch(() => ({ ok: false, reason: 'threw',
+                        message: 'The job could not be created in ServiceM8.' }));
+      if (sm8) {
+        await supa('/rest/v1/nac_quote_issues?token=eq.' + encodeURIComponent(token), {
+          method: 'PATCH', key: KEY,
+          body: { data: { ...next, servicem8: sm8 }, updated_at: new Date().toISOString() }
+        }).catch(() => null);
+        next.servicem8 = sm8;
+      }
     }
 
     return res.status(200).json({

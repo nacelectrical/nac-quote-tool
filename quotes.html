@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<!--
+  NAC — QUOTES
+
+  Nick: "Also need to have the spot for our quotes to be saved in the portal."
+
+  They were always being saved. nac_quote_issues has held every issued quote
+  since quotes could be issued at all. What there was no way to do was LOOK at
+  them: who had been sent one, who had opened it, who had accepted, at what
+  price, and whether the ServiceM8 job came through.
+
+  NAC staff only. Every row is a customer's name, their address and the price
+  they were quoted, and the link itself is a bearer credential — so this page
+  is behind the same sign-in as the rest of the internal screens, and the
+  endpoint behind it refuses anyone who is not signed in.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quotes — NAC</title>
+<style>
+:root{
+  --navy:#16204A;--navy-2:#202C61;--ink:#161A27;--body:#3D4458;--muted:#6B7285;
+  --gold:#F5C200;--gold-d:#C79C00;--line:#E4E7EF;--soft:#F6F8FC;--ok:#1E7A46;--bad:#B3261E;
+  --warn:#9A6B00;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--body);background:var(--soft);line-height:1.55;font-size:15px}
+header{background:linear-gradient(160deg,var(--navy),var(--navy-2));color:#fff;padding:18px 20px}
+header .in{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{font-size:19px;color:var(--gold)}
+header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 80px;display:grid;gap:16px}
+.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.stat b{display:block;font-size:26px;color:var(--ink);line-height:1.15}
+.stat span{font-size:13px;color:var(--muted)}
+.stat.alert{border-color:var(--warn);background:#FFFBF0}
+.stat.alert b{color:var(--warn)}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;
+  padding:10px 15px;cursor:pointer;min-height:44px;text-decoration:none;display:inline-flex;
+  align-items:center;gap:7px}
+.btn.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.btn.primary{background:var(--gold);border-color:var(--gold-d);font-weight:700}
+.note{font-size:13.5px;color:var(--muted)}
+.q{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px 18px;display:grid;
+  gap:10px}
+.q.accepted{border-left:4px solid var(--ok)}
+.q.declined,.q.revoked{border-left:4px solid var(--bad)}
+.q.superseded{opacity:.72}
+.qh{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
+.qh strong{font-size:17px;color:var(--ink)}
+.qh .addr{color:var(--muted);font-size:14px;flex:1;min-width:160px}
+.pill{font-size:12px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;
+  padding:4px 9px;border-radius:999px;background:var(--soft);color:var(--muted);white-space:nowrap}
+.pill.ok{background:#E7F4EC;color:var(--ok)}
+.pill.no{background:#FBECEB;color:var(--bad)}
+.pill.warn{background:#FFF4D9;color:var(--warn)}
+/* Label ABOVE value, not beside it. Side by side, a long value — "8 Oct 2026
+   by nick@nacelectrical.com.au" — wraps across the gap and runs into the next
+   column's label, so two facts read as one. */
+.facts{display:grid;gap:2px 22px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  font-size:14px}
+.facts div{display:flex;flex-direction:column;gap:1px;border-bottom:1px solid var(--line);
+  padding:8px 0;min-width:0}
+.facts dt{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.3px}
+.facts dd{font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+.qa{display:flex;flex-wrap:wrap;gap:8px}
+.link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--muted);
+  overflow-wrap:anywhere}
+.empty{background:#fff;border:1px dashed var(--line);border-radius:13px;padding:40px 22px;
+  text-align:center;color:var(--muted)}
+.err{background:#FBECEB;border:1px solid #F3C9C6;color:var(--bad);border-radius:11px;padding:14px 16px}
+@media(max-width:600px){.facts{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="in">
+  <h1>NAC — Quotes</h1>
+  <span class="sub" id="who">Every proposal that has been issued.</span>
+  <a class="btn" href="/designer.html">Designer</a>
+  <a class="btn" href="/quote-presentation.html">Content library</a>
+</div></header>
+
+<div class="wrap">
+  <div class="cards" id="stats"></div>
+  <div class="bar" id="filters"></div>
+  <div id="list"><p class="note">Loading…</p></div>
+</div>
+
+<script type="module">
+import { requireSignIn, currentSession } from '/designer/auth.mjs';
+
+// Customer names, addresses and prices. Same gate as every other NAC screen.
+await requireSignIn({ pageName: 'the quote list' });
+
+function staffHeaders(extra = {}) {
+  const s = currentSession();
+  return { ...extra, ...(s && s.access_token
+    ? { Authorization: 'Bearer ' + s.access_token } : {}) };
+}
+
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, kids = []) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k === 'html') n.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) n.setAttribute(k, v);
+  }
+  for (const c of [].concat(kids)) if (c) n.appendChild(c);
+  return n;
+};
+
+const money = (v) => v === null || v === undefined
+  ? '—' : '$' + Number(v).toLocaleString('en-AU', { minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2 });
+const when = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleDateString('en-AU',
+    { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+let FILTER = 'all';
+let DATA = null;
+
+function fact(label, value) {
+  return el('div', {}, [el('dt', { text: label }), el('dd', { text: value })]);
+}
+
+function card(q) {
+  const base = location.origin;
+  const url = base + '/quote.html#' + q.token;
+
+  // Said plainly, because "accepted" and "in the calendar" are different facts
+  // and the gap between them is the one somebody has to chase.
+  let sm8;
+  if (q.status !== 'accepted') sm8 = null;
+  else if (q.servicem8 && q.servicem8.ok) {
+    sm8 = el('span', { class: 'pill ok',
+      text: 'ServiceM8 ' + (q.servicem8.jobId ? '#' + q.servicem8.jobId : 'job created') });
+  } else {
+    sm8 = el('span', { class: 'pill warn', text: 'Not in ServiceM8' });
+  }
+
+  const head = el('div', { class: 'qh' }, [
+    el('strong', { text: q.customerName || 'Unnamed customer' }),
+    el('span', { class: 'addr', text: q.siteAddress || 'No site address recorded' }),
+    el('span', { class: 'pill ' + (q.status === 'accepted' ? 'ok'
+      : (q.status === 'declined' || q.status === 'revoked') ? 'no' : ''), text: q.status }),
+    sm8
+  ]);
+
+  const facts = el('div', { class: 'facts' }, [
+    fact('Proposal', (q.proposalNumber || '—') + '  ·  rev ' + q.revision),
+    fact('Issued', when(q.issuedAt) + (q.issuedBy ? ' by ' + q.issuedBy : '')),
+    fact('Opened', q.viewCount ? q.viewCount + '× — last ' + when(q.lastViewedAt) : 'Never opened'),
+    fact('Expires', when(q.expiresAt)),
+    fact('Quoted', money(q.quotedTotalIncGst)),
+    fact(q.status === 'accepted' ? 'Accepted' : 'Accepted total',
+      q.acceptedTotalIncGst !== null
+        ? money(q.acceptedTotalIncGst) + ' — ' + (q.acceptedBy || 'unnamed')
+          + (q.signed ? ' (signed)' : ' (typed name only)')
+        : '—'),
+    fact('GST', q.gstRate === null ? '—' : (q.gstRate * 100).toFixed(0) + '%'),
+    fact('Accepted on', when(q.acceptedAt))
+  ]);
+
+  const notes = [];
+  if (!q.hasIssuedCopy) {
+    notes.push(el('p', { class: 'note',
+      text: 'Issued before quotes were stored as a fixed copy, so this link cannot be '
+          + 'reopened. Issue a new revision.' }));
+  }
+  if (q.supersededBy) {
+    notes.push(el('p', { class: 'note', text: 'Replaced by a later revision.' }));
+  }
+  if (q.status === 'accepted' && q.servicem8 && !q.servicem8.ok) {
+    notes.push(el('p', { class: 'note',
+      text: 'ServiceM8: ' + (q.servicem8.message || q.servicem8.reason)
+          + ' The acceptance is recorded either way.' }));
+  }
+  if (q.status === 'accepted' && !q.servicem8) {
+    notes.push(el('p', { class: 'note',
+      text: 'No ServiceM8 attempt is recorded against this acceptance — it was accepted '
+          + 'before jobs were created automatically.' }));
+  }
+
+  return el('div', { class: 'q ' + q.status }, [
+    head, facts, ...notes,
+    el('div', { class: 'qa' }, [
+      el('a', { class: 'btn', href: url, target: '_blank', rel: 'noopener',
+                text: 'Open the customer page' }),
+      el('button', { class: 'btn', text: 'Copy link', onclick: async (e) => {
+        try { await navigator.clipboard.writeText(url); e.target.textContent = 'Copied'; }
+        catch (_) { e.target.textContent = 'Could not copy'; }
+        setTimeout(() => { e.target.textContent = 'Copy link'; }, 1600);
+      } })
+    ]),
+    el('p', { class: 'link', text: url })
+  ]);
+}
+
+function draw() {
+  const stats = $('#stats'); stats.innerHTML = '';
+  const c = DATA.counts;
+  const tiles = [
+    ['Issued', c.issued, ''], ['Accepted', c.accepted, ''],
+    ['Accepted value', money(DATA.acceptedValueIncGst), ''],
+    ['Not in ServiceM8', c.notInServiceM8, c.notInServiceM8 > 0 ? 'alert' : '']
+  ];
+  for (const [label, value, cls] of tiles) {
+    stats.appendChild(el('div', { class: 'stat ' + cls }, [
+      el('b', { text: String(value) }), el('span', { text: label })]));
+  }
+
+  const f = $('#filters'); f.innerHTML = '';
+  for (const [key, label] of [['all', 'All'], ['issued', 'Issued'], ['viewed', 'Opened'],
+                              ['accepted', 'Accepted'], ['declined', 'Declined'],
+                              ['superseded', 'Superseded']]) {
+    f.appendChild(el('button', { class: 'btn' + (FILTER === key ? ' on' : ''), text: label,
+      onclick: () => { FILTER = key; draw(); } }));
+  }
+  f.appendChild(el('button', { class: 'btn', text: 'Refresh', onclick: load }));
+
+  const list = $('#list'); list.innerHTML = '';
+  const rows = FILTER === 'all' ? DATA.quotes : DATA.quotes.filter(q => q.status === FILTER);
+  if (!rows.length) {
+    list.appendChild(el('div', { class: 'empty', text: DATA.quotes.length
+      ? 'No quotes with that status.'
+      : 'No quotes have been issued yet. Issue one from the designer and it appears here.' }));
+    return;
+  }
+  for (const q of rows) list.appendChild(card(q));
+}
+
+async function load() {
+  const list = $('#list');
+  list.innerHTML = '';
+  list.appendChild(el('p', { class: 'note', text: 'Loading…' }));
+  try {
+    const r = await fetch('/api/quote-list?limit=200', { headers: staffHeaders() });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.ok) {
+      list.innerHTML = '';
+      list.appendChild(el('div', { class: 'err',
+        text: (j && (j.message || j.error)) || 'The quote list could not be loaded.' }));
+      return;
+    }
+    DATA = j;
+    draw();
+  } catch (e) {
+    list.innerHTML = '';
+    list.appendChild(el('div', { class: 'err',
+      text: 'Could not reach the server. Check your connection and try again.' }));
+  }
+}
+
+const s = currentSession();
+if (s && s.user && s.user.email) $('#who').textContent = 'Signed in as ' + s.user.email;
+load();
+</script>
+</body>
+</html>

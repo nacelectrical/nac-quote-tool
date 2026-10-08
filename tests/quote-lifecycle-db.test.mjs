@@ -123,11 +123,17 @@ async function setup() {
 
   // Supabase's AUTH endpoint is not the database. It is the one thing stood in
   // for here, and only so the issue endpoint sees a signed-in estimator.
-  globalThis.fetch = async (url) => {
-    if (String(url).includes('/auth/v1/user')) {
+  // It answers for ONE token. A stub that says yes to anything would let a
+  // sign-in gate pass its own test while refusing nobody.
+  globalThis.fetch = async (url, opts) => {
+    const auth = (opts && opts.headers && opts.headers.Authorization) || '';
+    if (!String(url).includes('/auth/v1/user')) {
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
+    if (auth === 'Bearer test-staff-token') {
       return { ok: true, json: async () => ({ id: 'u1', email: 'nick@nacelectrical.com.au' }) };
     }
-    return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: false, status: 401, json: async () => ({}) };
   };
 
   const built = await buildDemoDesign();
@@ -759,4 +765,138 @@ test('a screen holding a stale price cannot issue it',
               proposalNumber: 'NAC-TEST-ALT', quoteRevision: 1, validDays: 30,
               systemOptions: otherPrice, chosenSystemId: 'sys-a' } });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PORTAL
+//
+// Nick: "Also need to have the spot for our quotes to be saved in the portal."
+// They were always saved. There was no way to look at them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('the portal lists what was issued, opened, accepted and signed',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const { systemOptions, sell } = await setup();
+    const issueHandler = (await import('../server/quote-issue.js')).default;
+    const viewHandler = (await import('../server/quote-view.js')).default;
+    const respondHandler = (await import('../server/quote-respond.js')).default;
+    const listHandler = (await import('../server/quote-list.js')).default;
+
+    // Three quotes in three different states.
+    const mk = (rev, pn) => call(issueHandler, { method: 'POST', headers: STAFF,
+      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+              proposalNumber: pn, quoteRevision: rev, validDays: 30,
+              systemOptions, chosenSystemId: 'sys-a' } });
+
+    const a = await mk(1, 'NAC-P-1');                 // issued, never opened
+    const b = await mk(1, 'NAC-P-2');                 // opened and accepted, signed
+    const c = await mk(1, 'NAC-P-3');                 // declined
+    await call(viewHandler, { method: 'GET', query: { token: b.body.token } });
+    await call(respondHandler, { method: 'POST',
+      body: { token: b.body.token, action: 'accept', customerName: 'Sarah Whitlock',
+              acknowledgedTerms: true, signature: 'data:image/png;base64,iVBORw0KGgo=' } });
+    await call(viewHandler, { method: 'GET', query: { token: c.body.token } });
+    await call(respondHandler, { method: 'POST',
+      body: { token: c.body.token, action: 'decline', reason: 'Going with someone else' } });
+
+    // ── A STRANGER SEES NOTHING ──────────────────────────────────────────
+    // Every row is a customer's name, their address and their price, and the
+    // token IS the link.
+    for (const headers of [{}, { Authorization: 'Bearer ' }, { Authorization: 'Bearer nope' }]) {
+      const refused = await call(listHandler, { method: 'GET', headers });
+      assert.equal(refused.status, 401);
+      assert.equal(refused.body.error, 'sign_in_required');
+      const text = JSON.stringify(refused.body);
+      assert.ok(!/Whitlock/.test(text), 'a customer name leaked in the refusal');
+      assert.ok(!/Boronia/.test(text), 'an address leaked in the refusal');
+    }
+
+    // ── NAC SEES THE LOT ─────────────────────────────────────────────────
+    const listed = await call(listHandler, { method: 'GET', headers: STAFF, query: {} });
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    assert.equal(listed.body.quotes.length, 3);
+    assert.equal(listed.body.counts.accepted, 1);
+    assert.equal(listed.body.counts.declined, 1);
+    assert.equal(listed.body.counts.issued, 1);
+    assert.equal(listed.body.acceptedValueIncGst, sell);
+
+    const byPn = Object.fromEntries(listed.body.quotes.map(q => [q.proposalNumber, q]));
+
+    const never = byPn['NAC-P-1'];
+    assert.equal(never.status, 'issued');
+    assert.equal(never.viewCount, 0);
+    assert.equal(never.acceptedTotalIncGst, null);
+    assert.equal(never.customerName, 'Sarah Whitlock');
+    assert.equal(never.siteAddress, CUSTOMER.address);
+    assert.equal(never.hasIssuedCopy, true);
+    assert.equal(never.gstRate, 0.1);
+
+    const signed = byPn['NAC-P-2'];
+    assert.equal(signed.status, 'accepted');
+    assert.equal(signed.acceptedTotalIncGst, sell);
+    assert.equal(signed.acceptedBy, 'Sarah Whitlock');
+    assert.equal(signed.signed, true, 'the signature did not reach the record');
+    assert.equal(signed.viewCount, 1);
+    assert.ok(signed.acceptedAt);
+
+    assert.equal(byPn['NAC-P-3'].status, 'declined');
+
+    // ── THE GAP WORTH CHASING ────────────────────────────────────────────
+    // Accepted, but no job in ServiceM8 — because no key is set here. The
+    // portal counts it rather than letting an accepted job sit unbooked.
+    assert.equal(signed.servicem8.ok, false);
+    assert.equal(signed.servicem8.reason, 'no_api_key');
+    assert.equal(listed.body.counts.notInServiceM8, 1);
+
+    // ── NOTHING INTERNAL COMES OUT ───────────────────────────────────────
+    // The frozen offer is the whole proposal for every system; a list of
+    // forty would be tens of megabytes, and none of it belongs in a list.
+    const raw = JSON.stringify(listed.body);
+    assert.ok(!/"presentations"/.test(raw), 'the frozen presentations came out in the list');
+    assert.ok(!/sellPriceExGst|totalJobCost|margin|bom/i.test(raw),
+      'internal costing reached the quote list');
+    // The signature is a record, not a thing to ship in a listing.
+    assert.ok(!/iVBORw0KGgo/.test(raw), 'the signature image came out in the list');
+
+    // Filtering works.
+    const onlyAccepted = await call(listHandler,
+      { method: 'GET', headers: STAFF, query: { status: 'accepted' } });
+    assert.equal(onlyAccepted.body.quotes.length, 1);
+    assert.equal(onlyAccepted.body.quotes[0].proposalNumber, 'NAC-P-2');
+  });
+
+test('an accepted quote carries the signature and tries to book the job',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const { systemOptions } = await setup();
+    const issueHandler = (await import('../server/quote-issue.js')).default;
+    const viewHandler = (await import('../server/quote-view.js')).default;
+    const respondHandler = (await import('../server/quote-respond.js')).default;
+
+    const v = await call(issueHandler, { method: 'POST', headers: STAFF,
+      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+              proposalNumber: 'NAC-SIGN-1', quoteRevision: 1, validDays: 30,
+              systemOptions, chosenSystemId: 'sys-a' } });
+    const token = v.body.token;
+    await call(viewHandler, { method: 'GET', query: { token } });
+
+    const SIG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const accepted = await call(respondHandler, { method: 'POST',
+      body: { token, action: 'accept', customerName: 'Sarah Whitlock',
+              acknowledgedTerms: true, signature: SIG } });
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+
+    const rec = row("select data from public.nac_quote_issues where token = '" + token + "'").data;
+    // The signature is ON the acceptance, byte for byte.
+    assert.equal(rec.acceptance.signature, SIG);
+    assert.equal(rec.acceptance.acknowledgedTerms, true);
+
+    // And the ServiceM8 attempt is recorded either way — a booking system
+    // being unavailable is never allowed to undo an acceptance.
+    assert.ok(rec.servicem8, 'no record that a job was attempted');
+    assert.equal(rec.servicem8.ok, false);
+    assert.equal(rec.servicem8.reason, 'no_api_key');
+    assert.match(rec.servicem8.message, /SERVICEM8_API_KEY/);
+    assert.equal(rec.status, 'accepted', 'the acceptance survived the failed booking');
   });

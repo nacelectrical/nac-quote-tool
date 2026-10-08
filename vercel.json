@@ -6,6 +6,7 @@
     { "source": "/api/quote-respond", "destination": "/api/quote?nac_fn=quote-respond" },
     { "source": "/api/presentation-content", "destination": "/api/quote?nac_fn=presentation-content" },
     { "source": "/api/presentation-media", "destination": "/api/quote?nac_fn=presentation-media" },
+    { "source": "/api/quote-list", "destination": "/api/quote?nac_fn=quote-list" },
     { "source": "/api/server-key-selftest", "destination": "/api/selftest?nac_fn=server-key" },
     { "source": "/api/servicem8-selftest", "destination": "/api/selftest?nac_fn=servicem8" }
   ],

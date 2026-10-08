@@ -29,7 +29,8 @@ const ROUTES = {
   'quote-issue': () => import('../server/quote-issue.js'),
   'quote-respond': () => import('../server/quote-respond.js'),
   'presentation-content': () => import('../server/presentation-content.js'),
-  'presentation-media': () => import('../server/presentation-media.js')
+  'presentation-media': () => import('../server/presentation-media.js'),
+  'quote-list': () => import('../server/quote-list.js')
 };
 
 function requestedName(req) {
