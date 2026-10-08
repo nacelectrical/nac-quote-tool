@@ -93,8 +93,16 @@ module.exports = async function handler(req, res) {
     // Record the view before rendering, so a page that fails to render still
     // shows in the audit trail as having been opened.
     issue = share.recordView(issue);
+    // ── THE COLUMN AND THE JSON ARE ONE FACT, NOT TWO ──────────────────────
+    //
+    // This wrote `data` and left the `status` COLUMN alone, so a viewed quote
+    // read 'viewed' inside the record and 'issued' in the column it is
+    // indexed and filtered by. Anything that trusts the column — a listing, a
+    // report, and now the conditional write that stops two acceptances landing
+    // at once — was looking at a status the record had moved on from.
     await supa('/rest/v1/nac_quote_issues?token=eq.' + encodeURIComponent(token),
-      { method: 'PATCH', key: KEY, body: { data: issue, updated_at: new Date().toISOString() } });
+      { method: 'PATCH', key: KEY,
+        body: { data: issue, status: issue.status, updated_at: new Date().toISOString() } });
 
     // ── THE CUSTOMER SEES WHAT THEY WERE SENT ──────────────────────────────
     //
@@ -138,7 +146,23 @@ module.exports = async function handler(req, res) {
 
     const out = { ...view.presentation };
     delete out._internal;          // estimator-side notes are not customer data
-    return res.status(200).json({ state: 'ok', presentation: out });
+    return res.status(200).json({
+      state: 'ok',
+      presentation: out,
+      /**
+       * WHICH DOCUMENT THIS PAGE IS. The customer's page sends these back when
+       * it answers, so a tab left open across a new revision is told to reload
+       * instead of having its answer recorded against an offer that has been
+       * replaced. None of it is secret — it is the stamp on the copy they were
+       * already sent.
+       */
+      offer: {
+        quoteRevision: issue.quoteRevision,
+        frozenAt: issue.offer.frozenAt,
+        gstRate: issue.offer.gstRate,
+        expiresAt: issue.expiresAt || null
+      }
+    });
   } catch (e) {
     return res.status(502).json({ error: 'upstream_unavailable' });
   }

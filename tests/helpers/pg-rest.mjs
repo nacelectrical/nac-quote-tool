@@ -158,6 +158,22 @@ function handle(req, body, done) {
         return col + ' = ' + q(v);
       }).join(', ');
       if (!sets) return done(400, { message: 'nothing to update' });
+
+      // ── A CONDITIONAL UPDATE HAS TO BE CONDITIONAL HERE TOO ──────────────
+      //
+      // quote-respond.js makes its write conditional on the status it read, so
+      // two simultaneous acceptances cannot both land. The whole point is that
+      // the LOSER is told it changed nothing — which PostgREST reports by
+      // returning an empty array under `Prefer: return=representation`. A shim
+      // that always answered 204 would make the race look won by both, and the
+      // guard would be tested by nothing.
+      const prefer = String(req.headers.prefer || '');
+      if (/return=representation/.test(prefer)) {
+        // UPDATE is not allowed in a FROM subquery — it has to be a CTE.
+        const out = sql('with upd as (update public.' + table + ' set ' + sets + whereSql
+          + ' returning *) select coalesce(json_agg(upd), \'[]\'::json) from upd');
+        return done(200, JSON.parse(out.trim() || '[]'));
+      }
       sql('update public.' + table + ' set ' + sets + whereSql);
       return done(204, null);
     }

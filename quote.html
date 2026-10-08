@@ -126,8 +126,38 @@
     else window.alert(msg);
   }
 
+  // The stamp on the copy this page was built from. Sent back with every
+  // answer so the server can tell a current page from a tab left open across a
+  // new revision, and a displayed total from a stale one.
+  var offerStamp = null;
+
+  /** What to say when the server refuses an answer. */
+  function refusal(b) {
+    if (!b || !b.state) return null;
+    if (b.state === 'revision_mismatch' || b.state === 'offer_mismatch'
+        || b.state === 'total_mismatch') {
+      return b.message || 'This page is out of date. Please reload before answering.';
+    }
+    if (b.state === 'already_answered') {
+      return b.message || 'This proposal has already been answered.';
+    }
+    return null;
+  }
+
   function respond(action, payload, done) {
     var body = { token: token, action: action };
+    if (offerStamp) {
+      body.quoteRevision = offerStamp.quoteRevision;
+      body.offerFrozenAt = offerStamp.frozenAt;
+    }
+    if (offerStamp && offerStamp.shownTotalIncGst !== null
+        && offerStamp.shownTotalIncGst !== undefined) {
+      // What this page is SHOWING. The server computes the real figure from
+      // the frozen offer either way; this is here so the two can be compared
+      // and a disagreement refused, rather than the customer accepting one
+      // number while another goes on the record.
+      body.expectedTotalIncGst = offerStamp.shownTotalIncGst;
+    }
     // The renderer speaks of `name` and `systemId`; the endpoint of
     // `customerName` and `chosenSystemId`. Renaming here rather than in either
     // of them keeps the page and the API each readable on their own terms —
@@ -142,7 +172,14 @@
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }).then(function (r) { return r.json().catch(function () { return null; }); })
-      .then(done)
+      .then(function (b) {
+        var msg = refusal(b);
+        // A stale page is told to reload rather than left insisting. An
+        // identical answer replayed on a bad connection comes back ok with
+        // repeat: true, and is not an error at all.
+        if (msg) { fail(msg); return; }
+        done(b);
+      })
       .catch(function () {
         fail('We could not reach our server. Please check your connection and try again.');
       });
@@ -180,6 +217,12 @@
       }
       // The renderer runs in the page so the markup is built from the view
       // model here, not shipped as a pre-rendered blob from the database.
+      offerStamp = b.offer || null;
+      if (offerStamp) {
+        offerStamp.shownTotalIncGst =
+          (b.presentation.investment && b.presentation.investment.totalIncGst != null)
+            ? b.presentation.investment.totalIncGst : null;
+      }
       import('/designer/ui/presentation-html.mjs')
         // wire() first: document.write() runs the new document's inline script
         // immediately, and that script expects window.NACQuote to already exist.

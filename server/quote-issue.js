@@ -78,6 +78,27 @@ const { DESIGN_SELECT, parseDesign, designUpdatedAt } = require('./design-row.js
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
 
+/**
+ * The GST rate this offer is frozen at.
+ *
+ * It comes from the costing that produced the price (design.commercials), and
+ * falls back to the commercial settings — the same figure the settings screen
+ * writes. Only when neither carries a number at all is the statutory 10% used,
+ * and that is a default, not an assumption about NAC's registration.
+ *
+ * Read with a null check rather than `||`, because a configured 0 is a real
+ * answer and `Number(0) || 0.1` turns it into ten per cent.
+ */
+function gstRateOf(design, settings) {
+  for (const v of [design && design.commercials && design.commercials.gstRate,
+                   settings && settings.commercial && settings.commercial.gstRate]) {
+    if (v === null || v === undefined || v === '') continue;
+    const x = Number(v);
+    if (Number.isFinite(x) && x >= 0 && x < 1) return x;
+  }
+  return 0.1;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -142,6 +163,43 @@ module.exports = async function handler(req, res) {
     const validDays = Number(body.validDays) || 30;
     const systemOptions = Array.isArray(body.systemOptions) && body.systemOptions.length
       ? body.systemOptions : null;
+
+    // ── THE PRICE ON THE SCREEN MUST BE THE PRICE IN THE SAVED DESIGN ──────
+    //
+    // buildPresentation takes the system options from the REQUEST when it is
+    // given any, and falls back to the design only when it is not. So the
+    // figure a customer is quoted for the designed unit comes off the
+    // estimator's screen, and the saved design is never consulted. A screen
+    // left open while the design was recosted — in another tab, on the iPad,
+    // by somebody else — issues the old number, and nothing notices.
+    //
+    // The alternatives are a different matter: a Braemar is meant to cost
+    // something other than the Daikin that was designed, and its price is the
+    // estimator's to set. Only the option that IS the designed unit has a
+    // figure the design can check, so only that one is reconciled.
+    //
+    // This refuses rather than silently preferring one number over the other.
+    // Either figure could be the right one, and the application does not get
+    // to decide which; the estimator reloads and issues again.
+    const designedSell = Number(design.commercials && design.commercials.sellPriceIncGst);
+    const designedModel = str(design.selectedUnit && design.selectedUnit.model).trim().toLowerCase();
+    if (systemOptions && Number.isFinite(designedSell) && designedModel) {
+      for (const opt of systemOptions) {
+        if (str(opt && opt.model).trim().toLowerCase() !== designedModel) continue;
+        const asked = Number(opt.priceIncGst);
+        if (!Number.isFinite(asked)) continue;
+        if (Math.round(asked * 100) !== Math.round(designedSell * 100)) {
+          return res.status(409).json({
+            error: 'price_mismatch',
+            message: 'This screen is offering ' + (opt.model || 'the designed system') + ' at $'
+              + asked.toFixed(2) + ', and the saved design prices it at $' + designedSell.toFixed(2)
+              + '. Reload the job and issue again so the customer is quoted the current figure.',
+            screenPriceIncGst: Math.round(asked * 100) / 100,
+            designPriceIncGst: Math.round(designedSell * 100) / 100
+          });
+        }
+      }
+    }
 
     // ── THE GATE RUNS BEFORE ANYTHING IS WRITTEN ───────────────────────────
     // Built as it will be SENT, not as a draft, so every check that only bites
@@ -230,7 +288,12 @@ module.exports = async function handler(req, res) {
     const frozen = offerMod.freezeOffer({
       presentations,
       defaultSystemId: str(body.chosenSystemId).trim() || offerMod.SINGLE_SYSTEM,
-      gstRate: Number(design.commercials && design.commercials.gstRate) || 0.1,
+      // ── A CONFIGURED 0% IS NOT 10% ────────────────────────────────────
+      // `Number(x) || 0.1` reads a legitimately configured zero rate as
+      // falsy and silently replaces it with ten per cent. The rate on the
+      // offer is the rate the costing actually used; it is only defaulted
+      // when there is genuinely nothing on file.
+      gstRate: gstRateOf(design, settings),
       issuedAt,
       source: {
         designId,
@@ -294,6 +357,53 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // ── THE PREVIOUS REVISION IS CLOSED, NOT OVERWRITTEN ───────────────────
+    //
+    // supersede() has been in presentation-share.mjs since revisions were
+    // designed, and NOTHING CALLED IT. `supersedes` was recorded on the new
+    // issue and the old link went on serving its own offer as though it were
+    // current — two live links to the same job at two different prices, and
+    // either could be accepted.
+    //
+    // The old issue is marked and pointed forward. Its offer, its totals, its
+    // acceptance and its audit trail are left exactly as they were: an
+    // archived revision is evidence of what was offered, and a customer who
+    // follows an old link is sent to the current one rather than shown an
+    // error.
+    //
+    // An ACCEPTED issue is never relabelled — supersede() keeps its status, so
+    // a signed acceptance survives a later revision being issued.
+    let superseded = null;
+    const prevToken = str(body.supersedes).trim();
+    if (prevToken) {
+      const prevRes = await supa('/rest/v1/nac_quote_issues?token=eq.'
+        + encodeURIComponent(prevToken) + '&select=data&limit=1', { key: KEY });
+      const prevRow = Array.isArray(prevRes.body) ? prevRes.body[0] : null;
+      if (prevRow && prevRow.data) {
+        const { previous } = share.supersede(prevRow.data, record);
+        const patched = await supa('/rest/v1/nac_quote_issues?token=eq.'
+          + encodeURIComponent(prevToken), {
+            method: 'PATCH', key: KEY,
+            body: { data: previous, status: previous.status,
+                    updated_at: new Date().toISOString() }
+          });
+        superseded = {
+          token: prevToken,
+          status: previous.status,
+          // Said plainly, because "superseded" and "still accepted" are
+          // different outcomes and NAC needs to know which one happened.
+          note: previous.status === 'accepted'
+            ? 'The previous revision had already been accepted and keeps that status. '
+              + 'Its acceptance record is unchanged.'
+            : 'The previous link now points customers at this revision.',
+          ok: patched.status < 300
+        };
+      } else {
+        superseded = { token: prevToken, status: null, ok: false,
+          note: 'The previous revision could not be found, so nothing was superseded.' };
+      }
+    }
+
     const base = str(body.baseUrl).replace(/\/+$/, '') || 'https://nac-quote-tool.vercel.app';
     return res.status(200).json({
       ok: true,
@@ -301,7 +411,9 @@ module.exports = async function handler(req, res) {
       url: base + '/quote.html#' + record.token,
       expiresAt: record.expiresAt,
       quoteRevision,
-      totalIncGst: record.totalIncGst
+      gstRate: frozen.offer.gstRate,
+      totalIncGst: record.totalIncGst,
+      superseded
     });
   } catch (e) {
     return res.status(502).json({ error: 'upstream_unavailable' });
