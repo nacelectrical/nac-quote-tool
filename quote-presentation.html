@@ -278,10 +278,11 @@ function selectField(label, value, options, onChange) {
   s.addEventListener('change', () => { onChange(s.value); markDirty(); drawAll(); });
   return el('label', { class: 'f' }, [el('span', { text: label }), s]);
 }
-function tagsField(label, tags, onChange) {
+function tagsField(label, tags, onChange, hint) {
   return field(label, (tags || []).join(', '),
     v => onChange(v.split(',').map(t => t.trim()).filter(Boolean)),
-    { hint: 'Comma separated. Used to match content to a job — e.g. ducted, daikin, new build.' });
+    { hint: hint || 'Comma separated. Used to match content to a job — e.g. ducted, daikin, '
+                  + 'new build.' });
 }
 
 // ── panels ──────────────────────────────────────────────────────────────────
@@ -564,6 +565,29 @@ function drawImages() {
         field('Focal point Y (0–1)', a.focalPoint.y, x => a.focalPoint.y = Number(x),
           { type: 'number' })
       ]),
+      // ── WHAT IS IN THE PHOTOGRAPH ─────────────────────────────────────
+      //
+      // A proposal showing a customer a picture of a different machine from
+      // the one they are buying is worse than showing none, so the
+      // presentation only ever uses an equipment photo that NAMES the model
+      // on the quote. Without these two fields there was no way to say, and
+      // the system card has always rendered the branded placeholder.
+      el('div', { class: 'grid2' }, [
+        selectField('What this photograph is', a.role || 'installation', [
+          ['installation', 'Finished work — the gallery'],
+          ['equipment', 'A unit, controller or sensor — the system card'],
+          ['hero', 'A wide cover photograph'],
+          ['logo', 'A logo']
+        ], x => { a.role = x; markDirty(); drawAll(); }),
+        field('Brand shown (optional)', a.equipmentBrand, x => a.equipmentBrand = x)
+      ]),
+      a.role === 'equipment'
+        ? tagsField('Model(s) this photograph shows — exactly as on the quote',
+            a.equipmentModels, x => a.equipmentModels = x,
+            'Comma separated, e.g. FDYAN160AV1, RZA160C2V1. Matching is on the MODEL '
+            + 'only — a brand match would put a wall split beside a ducted quote. A '
+            + 'photograph naming no model is never offered as a photograph of one.')
+        : null,
       tagsField('Tags', a.tags, x => a.tags = x),
       el('div', { class: 'tools' }, [toggle('Approved for marketing', a.approved, x => a.approved = x)]),
       el('div', { class: 'note', text: 'Sizes stored: '

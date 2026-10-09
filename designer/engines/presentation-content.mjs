@@ -303,8 +303,60 @@ export function normaliseImageAsset(input = {}) {
     } : null,
     derivatives,
     exifStripped: bool(input.exifStripped),
-    gpsRemoved: bool(input.gpsRemoved)
+    gpsRemoved: bool(input.gpsRemoved),
+    // ── WHAT IS IN THE PHOTOGRAPH ──────────────────────────────────────────
+    //
+    // A proposal that shows a customer a picture of a different machine from
+    // the one they are buying is worse than showing no picture. The library
+    // had no way to say which unit an image depicts, so the only honest thing
+    // the presentation could do was show none.
+    //
+    // `role` is what the picture is FOR; `equipmentModels` is the models it
+    // actually shows. Both are NAC's to set, and an image that names no model
+    // is never offered as a photograph of one.
+    role: ROLES.includes(trimmed(input.role)) ? trimmed(input.role) : 'installation',
+    equipmentModels: list(input.equipmentModels).map(trimmed).filter(Boolean),
+    equipmentBrand: trimmed(input.equipmentBrand) || null
   };
+}
+
+/** What a photograph is for. */
+export const IMAGE_ROLES = Object.freeze({
+  HERO: 'hero',                 // the cover
+  EQUIPMENT: 'equipment',       // a unit, a controller, a sensor
+  INSTALLATION: 'installation', // finished work
+  LOGO: 'logo'
+});
+const ROLES = Object.values(IMAGE_ROLES);
+
+/** Compare model strings the way a parts list does: case and spacing are noise. */
+const modelKey = (v) => trimmed(v).toUpperCase().replace(/[\s\-_/]+/g, '');
+
+/**
+ * The approved photographs of the equipment on THIS quote.
+ *
+ * Matching is on the model, and only on the model. A brand match is not
+ * enough: "a Daikin" is four hundred different machines, and a customer
+ * buying an FDYAN160 shown a picture of a wall split has been misled by
+ * their own quote.
+ *
+ * Returns [] when nothing matches, which is the correct answer — the section
+ * is then not rendered, rather than rendered empty.
+ */
+export function equipmentImagesFor(images = [], unit = {}, { max = 3 } = {}) {
+  const wanted = [unit.model, unit.indoorModel, unit.outdoorModel, unit.modelName]
+    .map(modelKey).filter(Boolean);
+  if (!wanted.length) return [];
+  const out = [];
+  for (const raw of list(images)) {
+    const a = normaliseImageAsset(raw);
+    if (a.role !== IMAGE_ROLES.EQUIPMENT) continue;
+    if (!imagePublishable(a).ok) continue;
+    if (!a.equipmentModels.some(m => wanted.includes(modelKey(m)))) continue;
+    out.push(a);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /** The largest derivative — what a customer page loads at full width. */

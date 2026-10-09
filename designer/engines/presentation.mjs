@@ -31,6 +31,7 @@ import { systemOptionsStatus, chooseSystemOption, optionsFromDesign }
 export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
+  equipmentImagesFor, publicImageRef, publicImageSrcset,
   resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts
 } from './presentation-content.mjs';
 
@@ -935,8 +936,30 @@ export function buildPresentation({
 
   const expired = !!expiresAt && Date.parse(expiresAt) < Date.now();
 
+  // ── A PHOTOGRAPH OF THE MACHINE THEY ARE ACTUALLY BUYING ───────────────
+  //
+  // `productImage` has been a hook on this function since it was written and
+  // nothing ever supplied one, so the system card has always rendered the
+  // branded placeholder. The content library can now say which models an
+  // image shows, and this picks one that names THIS model.
+  //
+  // Nick: "Never use an incorrect generic product image merely because it
+  // looks similar." Matching is on the model and only on the model — a brand
+  // match would put a wall split next to a ducted quote. No match stays null,
+  // and the clean branded card is rendered instead of somebody else's unit.
+  const equipmentShot = productImage || (() => {
+    const matched = equipmentImagesFor(content.images || [], d.selectedUnit || {}, { max: 1 });
+    if (!matched.length) return null;
+    const a = matched[0];
+    const big = publicImageRef(a);
+    return big ? { src: big, alt: trimmed(a.alt) || 'The unit quoted for this home',
+                   srcset: publicImageSrcset(a),
+                   focalPoint: a.focalPoint } : null;
+  })();
+
   const ctx = {
-    customer, job, trust, evidence, privacy, intro, heroImage, productImage,
+    customer, job, trust, evidence, privacy, intro, heroImage,
+    productImage: equipmentShot,
     proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
     selectedOptions, aftercare: content.aftercare || {},
     // ── THE DEPOSIT COMES FROM NAC'S CONFIRMED TERMS ──────────────────────

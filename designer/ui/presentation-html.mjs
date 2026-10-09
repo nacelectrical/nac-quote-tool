@@ -878,7 +878,10 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   color:var(--muted);font-size:15px;pointer-events:none}
 .sigwrap.signed .sighint{display:none}
 .sigbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin-top:8px}
-.btn.small{padding:8px 14px;font-size:14px;min-height:40px}
+/* 44, like every other control on this page. 40 was a number I typed; 44 is
+   the one the page's own acceptance test enforces, and the Clear-signature
+   button came out at 43. */
+.btn.small{padding:10px 14px;font-size:14px;min-height:44px}
 
 /* ── acceptance ─────────────────────────────────────────────────────── */
 .accept{max-width:620px;margin-inline:auto;background:#fff;border:1px solid var(--line);
