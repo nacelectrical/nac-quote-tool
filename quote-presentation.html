@@ -610,10 +610,81 @@ function drawImages() {
     [storageNotice(), list,
      uploadButton('+ Upload images', async (asset) => { C.images.push(asset); },
        { multiple: true }),
+     el('button', { class: 'btn', text: 'Import NAC\u2019s photographs',
+                    onclick: importNacPhotos }),
      el('div', { class: 'tools' }, [
        el('button', { class: 'btn', text: 'Move inline images into storage',
          onclick: migrateLegacy })
      ])]);
+}
+
+/**
+ * Bring in the photographs Nick supplied, through the SAME path as an upload.
+ *
+ * designer/content/nac-photos.json holds what was supplied and, just as
+ * importantly, what is not known about it. They go through makeDerivatives()
+ * exactly as a file picked off a phone does, because the canvas re-encode is
+ * what strips the metadata — importing them any other way would put the one
+ * copy of an image into the library that had never been through it.
+ *
+ * THE MODELS ARE LEFT BLANK. The compliance plates are not legible in any of
+ * these photographs, and equipmentImagesFor() matches on the model and only
+ * on the model. A guess would put the wrong machine beside a customer's quote.
+ */
+async function importNacPhotos() {
+  setStatus('Reading NAC\u2019s photographs…');
+  let doc;
+  try {
+    const r = await fetch('/designer/content/nac-photos.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    doc = await r.json();
+  } catch (e) {
+    setStatus('Could not read designer/content/nac-photos.json — nothing was imported.', 'err');
+    return;
+  }
+  const incoming = Array.isArray(doc && doc.photos) ? doc.photos : [];
+  if (!incoming.length) { setStatus('That file lists no photographs.', 'err'); return; }
+
+  // An alt text already in the library means this one is in. Images get a
+  // generated id on upload, so the alt is the only stable handle on them.
+  const have = new Set(C.images.map(i => String(i.alt || '').trim()).filter(Boolean));
+  let added = 0, failed = 0;
+  for (let i = 0; i < incoming.length; i++) {
+    const spec = incoming[i];
+    if (!spec || !spec.file || have.has(String(spec.alt || '').trim())) continue;
+    setStatus('Processing ' + (i + 1) + ' of ' + incoming.length + ' — '
+      + spec.file.split('/').pop() + '…');
+    try {
+      const res = await fetch('/designer/content/' + spec.file, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const file = new File([blob], spec.file.split('/').pop(), { type: blob.type || 'image/jpeg' });
+      const asset = await uploadOne(file, {});
+      if (!asset) { failed++; continue; }
+      asset.alt = spec.alt || asset.alt;
+      asset.role = spec.role || 'installation';
+      asset.equipmentBrand = spec.equipmentBrand || null;
+      // Blank, deliberately. See the comment above.
+      asset.equipmentModels = [];
+      asset.tags = Array.isArray(spec.tags) ? spec.tags.slice() : [];
+      // Approval stays NAC's, as it does for anything else in here.
+      asset.approved = false;
+      C.images.push(asset);
+      have.add(String(asset.alt).trim());
+      added++;
+    } catch (e) { failed++; }
+  }
+  if (!added) {
+    setStatus(failed
+      ? 'None of the photographs could be processed.'
+      : 'NAC\u2019s photographs are already in the library.', failed ? 'err' : 'ok');
+    return;
+  }
+  markDirty(); drawAll();
+  setStatus(added + ' photograph' + (added === 1 ? '' : 's') + ' imported and re-encoded'
+    + (failed ? ', ' + failed + ' could not be processed' : '')
+    + '. Each one needs the MODEL it shows entered before it can appear beside a '
+    + 'system, and Approved ticked. Then Save library.', 'ok');
 }
 
 /** Whether storage is actually reachable, checked before anyone uploads. */
