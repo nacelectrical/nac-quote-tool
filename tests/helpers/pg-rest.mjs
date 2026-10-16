@@ -34,6 +34,26 @@ const PSQL = '/usr/lib/postgresql/16/bin/psql';
 const ENV = { ...process.env, PGHOST: '/var/run/nacpg', PGPORT: '5433', PGUSER: 'postgres' };
 const ROOT = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
 
+// ── ONE DATABASE PER TEST FILE ─────────────────────────────────────────────
+//
+// `node --test tests/*.test.mjs` runs each FILE in its own process, in
+// parallel, and every database suite used to share the single `nacquote`
+// database. They each truncate it on setup and then insert their own
+// `nac_presentation_content` row under the key 'library' — so one suite
+// truncated while another was mid-insert, or both inserted and the second got
+// a duplicate key.
+//
+// That showed up as a suite failing on a schema every other suite could see
+// perfectly well, which reads like a product defect and is not one. It was
+// never flaky in the sense of random: it is a collision, and it happens
+// whenever those files run together.
+//
+// `nacquote` is now a TEMPLATE nobody connects to, and each process clones it.
+// A clone is a file copy inside PostgreSQL and costs a fraction of a second,
+// which is cheaper than two suites reading each other's rows.
+const TEMPLATE = 'nacquote';
+const DB = 'nacquote_t' + process.pid;
+
 // The container is restarted between sessions and the server does not come back
 // with it, so the suite brings its own database up rather than failing with a
 // socket error that looks like a broken test.
@@ -44,6 +64,79 @@ function ensureServer() {
   try {
     execFileSync(ROOT + '/tools/test-db.sh', ['up'], { encoding: 'utf8', stdio: 'pipe' });
   } catch (e) { /* the suites skip on their own when psql is missing */ }
+  waitForSchema();
+  cloneDatabase();
+}
+
+/** Run one statement against a named database, swallowing failure. */
+function admin(text, db = 'postgres') {
+  try {
+    execFileSync(PSQL, ['-d', db, '-tAX', '-c', text],
+      { env: ENV, encoding: 'utf8', stdio: 'pipe' });
+    return true;
+  } catch (e) { return false; }
+}
+
+function cloneDatabase() {
+  // Another process may be cloning the same template at the same moment;
+  // PostgreSQL serialises that for us and the loser simply retries.
+  for (let i = 0; i < 40; i++) {
+    if (admin('create database "' + DB + '" template "' + TEMPLATE + '"')) return;
+    const until = Date.now() + 200;
+    while (Date.now() < until) { /* wait */ }
+  }
+}
+
+// The clone is this process's, and it goes when the process does. Without
+// this, a day of test runs leaves a few hundred databases behind.
+let dropped = false;
+function dropDatabase() {
+  if (dropped) return;
+  dropped = true;
+  admin('drop database if exists "' + DB + '" with (force)');
+}
+process.on('exit', dropDatabase);
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { dropDatabase(); process.exit(1); });
+}
+
+// ── `up` RETURNING IS NOT THE SAME AS READY ────────────────────────────────
+//
+// `node --test tests/*.test.mjs` runs each FILE in its own process, and every
+// database suite calls `up` as it starts. The flag above stops the repeats
+// within one file and can do nothing about five processes arriving together:
+// one of them creates the database and loads the schema, and the others get a
+// pg_ctl that says "another server might be running", return successfully, and
+// start querying a database whose tables are still being created.
+//
+// That surfaced once as a single suite failing on a schema every other suite
+// could see perfectly well — which reads like a product defect and is not one.
+//
+// The obvious fix is a lock around the script. It does not work: pg_ctl
+// daemonises postgres, the server INHERITS the open lock file descriptor, and
+// the lock is then held for as long as the database runs — so every later
+// arrival blocks until it is killed. Waiting for the thing we actually care
+// about is both simpler and correct.
+function waitForSchema({ tries = 60, waitMs = 250 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const out = execFileSync(PSQL,
+        ['-d', TEMPLATE, '-tAX', '-c',
+         "select count(*) from information_schema.tables "
+         + "where table_schema='public' and table_name in "
+         + "('nac_designs','nac_quote_issues','nac_presentation_content','nac_settings')"],
+        { env: ENV, encoding: 'utf8', stdio: 'pipe' });
+      if (parseInt(String(out).trim(), 10) === 4) return;
+    } catch (e) { /* still starting, or still loading */ }
+    // A busy wait, deliberately: this runs once per test process, at startup,
+    // and pulling in a sleep helper to save a quarter of a second of CPU in a
+    // test harness is not a trade worth making.
+    const until = Date.now() + waitMs;
+    while (Date.now() < until) { /* wait */ }
+  }
+  // Fall through rather than throw. The suites already skip with a reason when
+  // the database is not there, and a thrown error here would turn a missing
+  // PostgreSQL into a wall of failures instead of a wall of skips.
 }
 
 // A design is hundreds of kilobytes of JSON, which is past what an argument
@@ -52,7 +145,7 @@ const SCRATCH = mkdtempSync(join(tmpdir(), 'nac-pgrest-'));
 let seq = 0;
 
 /** Run SQL, return stdout. Throws with Postgres's own message on error. */
-export function sql(text, db = 'nacquote') {
+export function sql(text, db = DB) {
   ensureServer();
   const file = join(SCRATCH, 'q' + (seq++) + '.sql');
   writeFileSync(file, text + '\n');
@@ -67,7 +160,7 @@ export function sql(text, db = 'nacquote') {
 }
 
 /** One row as an object, or null. */
-export function row(text, db = 'nacquote') {
+export function row(text, db = DB) {
   const out = sql('select coalesce(json_agg(t), \'[]\') from (' + text + ') t', db).trim();
   const list = JSON.parse(out || '[]');
   return list[0] || null;
