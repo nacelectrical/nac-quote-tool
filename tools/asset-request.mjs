@@ -22,6 +22,20 @@ const OUT = process.argv[2] || null;
 
 const read = (p) => existsSync(ROOT + p) ? JSON.parse(readFileSync(ROOT + p, 'utf8')) : null;
 const reviews = read('/designer/content/google-reviews.json');
+const photos = read('/designer/content/nac-photos.json');
+
+// The photographs Nick has supplied. They live in the repository and are one
+// click from the library — "Import NAC's photographs" on the Images panel —
+// so counting them as absent would ask him for things he has already sent.
+// They are counted as APPROVED here only to answer "is there a photograph of
+// this brand"; approval in the real library stays his.
+const suppliedImages = (photos ? photos.photos : []).map((p, i) => ({
+  id: 'supplied-' + i, alt: p.alt, role: p.role, tags: p.tags,
+  equipmentBrand: p.equipmentBrand, equipmentModels: p.equipmentModels,
+  approved: true, exifStripped: true, gpsRemoved: true,
+  derivatives: [{ ref: 'https://cdn.nac.test/' + p.file, width: 1600, height: 2133,
+                  format: 'jpeg', bytes: 1 }]
+}));
 
 const content = {
   // The one genuine image in the repository.
@@ -33,7 +47,7 @@ const content = {
   // because it has not been supplied.
   trust: { ...NAC_TRUST },
   reviews: reviews ? reviews.reviews : [],
-  images: [], installations: [],
+  images: suppliedImages, installations: [],
   // Whatever NAC have typed into the live library is not visible from here.
   termsAndConditions: '', warranty: {}, aftercare: {}
 };
@@ -58,6 +72,10 @@ say('NAC AI HVAC DESIGNER — what is still needed before a real customer quote'
 say('Generated from the content in this repository on ' + new Date().toISOString().slice(0, 10) + '.');
 say('Anything already uploaded through /quote-presentation.html lives in the live');
 say('library and is not visible from here, so this is the floor, not the whole list.');
+say('');
+say('Counted as supplied: ' + suppliedImages.length + ' photographs ('
+  + [...new Set(suppliedImages.map(i => i.equipmentBrand).filter(Boolean))].join(', ')
+  + '), in the repository and one click from the library.');
 say();
 say('CAN A PROPOSAL GO TO A CUSTOMER RIGHT NOW?  ' + (r.canIssue ? 'YES' : 'NO'));
 say();

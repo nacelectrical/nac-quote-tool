@@ -106,14 +106,26 @@ export function assetRequest(content = {}, job = {}) {
       + 'address goes out.'));
   }
   if (installShots.length < 6) {
+    // A photograph is tagged for ONE job. The equipment shots sit beside the
+    // system card; the gallery wants finished work tied to a suburb and a
+    // consent. Saying so stops this reading as "send more photographs" to
+    // somebody who has just sent nine.
+    const haveEquip = equipShots.length;
     needs.push(item(NEED.OPTIONAL, 'installation-photos',
-      (6 - installShots.length) + ' more installation photograph'
-        + (6 - installShots.length === 1 ? '' : 's'),
+      (6 - installShots.length) + ' installation photograph'
+        + (6 - installShots.length === 1 ? '' : 's') + ' for the gallery',
       'Outlets in a ceiling, a tidy outdoor unit on its base, a return air grille, '
-      + 'a controller on a wall. Landscape, at least 800 px wide.',
+      + 'a controller on a wall. Landscape, at least 800 px wide.'
+      + (haveEquip
+          ? ' NOTE: the ' + haveEquip + ' photograph' + (haveEquip === 1 ? '' : 's')
+            + ' already supplied are tagged "equipment" and appear beside the system '
+            + 'card, not in the gallery. The same photograph can be uploaded again '
+            + 'with the role set to "installation" if it should do both.'
+          : ''),
       'Recent NAC installations', 6 - installShots.length,
-      'Role "installation", attached to the job it came from. Uploads are '
-      + 're-encoded, which is what strips the EXIF and GPS off the copy customers get.'));
+      'Role "installation", attached to the job it came from, which is where the '
+      + 'suburb and the consent are recorded. Uploads are re-encoded, which is what '
+      + 'strips the EXIF and GPS off the copy customers get.'));
   }
 
   // ── REVIEWS ────────────────────────────────────────────────────────────

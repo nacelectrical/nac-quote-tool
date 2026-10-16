@@ -2,8 +2,9 @@
 // NAC'S OWN PHOTOGRAPHS
 //
 // Nick supplied seven on 15 October 2026 — four outdoor units, two AirTouch
-// consoles and a Fujitsu wall controller. Unlike everything in tests/fixtures,
-// these are real.
+// consoles and a Fujitsu wall controller — and two Braemar outdoor units on
+// the 16th, after a Braemar quote had been rendering the plain branded card
+// for want of one. Unlike everything in tests/fixtures, these are real.
 //
 // TWO THINGS THIS FILE EXISTS TO HOLD.
 //
@@ -33,7 +34,7 @@ const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DOC = JSON.parse(readFileSync(ROOT + '/designer/content/nac-photos.json', 'utf8'));
 
 test('every photograph in the manifest is actually in the repository', () => {
-  assert.equal(DOC.photos.length, 7);
+  assert.equal(DOC.photos.length, 9);
   for (const p of DOC.photos) {
     const full = ROOT + '/designer/content/' + p.file;
     assert.ok(existsSync(full), p.file + ' is listed and not present');
@@ -61,9 +62,11 @@ test('not one model number was guessed, and the brands are off the badge', () =>
   // is honest where matching on an unreadable model would not be.
   assert.match(DOC._models, /not legible/i);
   assert.match(DOC._models, /brand/i);
-  // No Braemar arrived, and the file says so rather than leaving a gap for
-  // somebody to fill with the nearest Daikin.
-  assert.match(DOC._brands, /NO BRAEMAR/i);
+  // Every brand a system is quoted under is named, and the note says which
+  // photograph of a brand leads — the close shot, not the plant deck.
+  for (const brand of ['Fujitsu', 'Daikin', 'Braemar']) {
+    assert.match(DOC._brands, new RegExp(brand));
+  }
 });
 
 /** The manifest as the library would hold it, approved. */
@@ -96,17 +99,45 @@ test('a Daikin quote gets a Daikin, and a Fujitsu quote gets a Fujitsu', () => {
   for (const a of fujitsu) assert.ok(!/daikin|airtouch/.test(a.id));
 });
 
-test('a Braemar quote gets nothing, because no Braemar photograph arrived', () => {
-  // Nick asked for "this Braemar next to Braemar". There is no Braemar among
-  // the seven — they are Fujitsu, Daikin and AirTouch. Rather than tag a
-  // Daikin as a Braemar to satisfy the instruction, a Braemar quote shows no
-  // photograph until a Braemar one is supplied.
-  const brands = new Set(DOC.photos.map(p => p.equipmentBrand));
-  assert.ok(!brands.has('Braemar'), 'a Braemar photograph is now on file — '
-    + 'this test is the reminder that one was missing, and can go');
-  assert.deepEqual(
-    equipmentImagesFor(assets(), { brandName: 'Braemar', model: 'KDHV160D1S' }), [],
-    'a Braemar quote was shown somebody else\'s unit');
+test('a Braemar quote gets a Braemar, now that one has arrived', () => {
+  // This test used to assert the opposite and say so: "a Braemar photograph is
+  // now on file — this test is the reminder that one was missing, and can go."
+  // Nick sent two on 16 October 2026. A Braemar quote had been rendering the
+  // plain branded card rather than being shown a Daikin, which was the right
+  // answer while it lasted.
+  const got = equipmentImagesFor(assets(), { brandName: 'Braemar', model: 'KDHV160D1S' });
+  assert.ok(got.length >= 1, 'a Braemar quote still gets no Braemar photograph');
+  for (const a of got) assert.match(a.id, /braemar/);
+  // The CLOSE shot first. A customer reading "your recommended system" wants
+  // the machine; the wide one is the plant deck it stands on.
+  assert.match(got[0].id, /close/,
+    'the wide shot was offered as the picture of the system');
+
+  // And no other brand borrows it.
+  for (const brand of ['Daikin', 'Fujitsu']) {
+    for (const a of equipmentImagesFor(assets(), { brandName: brand })) {
+      assert.ok(!/braemar/.test(a.id), brand + ' was shown a Braemar');
+    }
+  }
+});
+
+test('every brand NAC quotes has a photograph of its own', () => {
+  const lib = assets();
+  const brands = [...new Set(DOC.photos.map(p => p.equipmentBrand))];
+  assert.deepEqual(brands.sort(), ['AirTouch', 'Braemar', 'Daikin', 'Fujitsu']);
+
+  // The three a system is quoted under. AirTouch is a controller brand and
+  // never appears as "your recommended system", which is why it is not here.
+  for (const brand of ['Daikin', 'Fujitsu', 'Braemar']) {
+    const got = equipmentImagesFor(lib, { brandName: brand });
+    assert.ok(got.length >= 1, brand + ' has no photograph on file');
+    for (const a of got) {
+      assert.equal(a.equipmentBrand, brand, brand + ' was shown a ' + a.equipmentBrand);
+    }
+  }
+
+  // A brand NAC does not stock gets none, rather than the nearest thing.
+  assert.deepEqual(equipmentImagesFor(lib, { brandName: 'Mitsubishi' }), []);
 });
 
 test('an exact model, once recorded, still wins over the brand', () => {

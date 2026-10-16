@@ -63,6 +63,32 @@
       ]
     },
     {
+      "file": "photos/braemar-outdoor-close.jpg",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit installed against a painted brick wall",
+      "seen": "Braemar, by SEELEY INTERNATIONAL. Single-fan outdoor unit on mounting feet against white-painted brickwork, isolator on the wall, conduit and insulated pipework dressed down behind it. The unit fills the frame.",
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
+      "file": "photos/braemar-outdoor-wide.jpg",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit on a plant deck, with the conduit run to the wall isolator",
+      "seen": "The same kind of Braemar unit from further back: the full conduit run up to the isolator and the plant deck it stands on. More of the installation, less of the machine.",
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
       "file": "photos/airtouch-console-4-zone.jpg",
       "role": "equipment",
       "alt": "An AirTouch wall console showing four zones and the set temperature",
@@ -104,6 +130,6 @@
       ]
     }
   ],
-  "_brands": "Fujitsu x2, Daikin x3, AirTouch x2. THERE IS NO BRAEMAR PHOTOGRAPH among the seven, so a Braemar quote shows none — a Daikin tagged as a Braemar to fill the space would be the exact harm the matching rules exist to prevent.",
+  "_brands": "Fujitsu x2, Daikin x3, Braemar x2, AirTouch x2. The Braemar pair arrived 16 October 2026, after a Braemar quote had been rendering the plain branded card for want of one. The close shot is listed first, so it is the one that reaches the system card: a customer looking at 'your recommended system' wants the machine, not the plant deck.",
   "_controllers": "The two AirTouch consoles and the Fujitsu wall controller are tagged 'controller'. A controller is part of the system but it is not a picture OF the system, so where a brand offers both, the unit goes on the card first."
 }
