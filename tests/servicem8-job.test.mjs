@@ -32,7 +32,9 @@ import assert from 'node:assert/strict';
 import { buildJobPlan, jobReadiness, jobMaterials, jobDescription, splitName, JOB_STATUS }
   from '../designer/engines/servicem8-job.mjs';
 import { createRequire } from 'node:module';
+import { readFileSync, readdirSync } from 'node:fs';
 const require = createRequire(import.meta.url);
+const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const { createJob, dataUriBytes } = require('../server/servicem8-job.js');
 
 const SIGNATURE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
@@ -291,4 +293,127 @@ test('a data URI becomes the bytes ServiceM8 is sent', () => {
   assert.equal(b[0], 0x89); assert.equal(b.toString('ascii', 1, 4), 'PNG');
   assert.equal(dataUriBytes('not a data uri'), null);
   assert.equal(dataUriBytes(null), null);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE WRITE PATH, CHECKED ON PURPOSE
+//
+// /api/servicem8-selftest is READ ONLY. A key with read access passes every
+// check in it and still creates nothing when a customer accepts, which is the
+// entire point of the integration. /api/servicem8-testjob creates one real job
+// through the SAME mapping and the SAME sending code a real acceptance uses —
+// a test that exercised different code would prove nothing about the code it
+// stands in for.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const testJob = require('../server/servicem8-testjob.js');
+
+function callHandler(handler, { method = 'POST', headers = {}, body = null } = {}) {
+  return new Promise((resolve) => {
+    const res = { statusCode: 200,
+      setHeader() { return this; }, status(c) { this.statusCode = c; return this; },
+      json(o) { resolve({ status: this.statusCode, body: o }); return this; },
+      send(o) { return this.json(o); }, end(o) { return this.json(o ?? null); } };
+    Promise.resolve(handler({ method, headers, body, query: {} }, res))
+      .catch(e => resolve({ status: 500, body: { error: String(e && e.message) } }));
+  });
+}
+
+/** Supabase's auth endpoint stood in for; one token is NAC. */
+function staffAuth() {
+  globalThis.fetch = async (url, opts) => {
+    const auth = (opts && opts.headers && opts.headers.Authorization) || '';
+    if (!String(url).includes('/auth/v1/user')) {
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
+    return auth === 'Bearer real-staff-token'
+      ? { ok: true, json: async () => ({ id: 'u1', email: 'nick@nacelectrical.com.au' }) }
+      : { ok: false, status: 401, json: async () => ({}) };
+  };
+}
+const STAFF = { Authorization: 'Bearer real-staff-token' };
+
+test('a stranger cannot make NAC create a job in their own ServiceM8', async () => {
+  staffAuth();
+  process.env.SERVICEM8_API_KEY = 'test-key';
+  for (const headers of [{}, { Authorization: 'Bearer ' }, { Authorization: 'Bearer nope' }]) {
+    const r = await callHandler(testJob, { headers });
+    assert.equal(r.status, 401, 'a job was created without a sign-in');
+    assert.equal(r.body.error, 'sign_in_required');
+  }
+  delete process.env.SERVICEM8_API_KEY;
+});
+
+test('it is never automatic — nothing in the application calls it', () => {
+  // The press of the button IS the consent. This writes to a live business
+  // system, and a thing that writes to one on somebody's behalf without being
+  // asked is not a test, it is a surprise.
+  const roots = ['server', 'designer/engines', 'designer/ui', 'api'];
+  for (const dir of roots) {
+    for (const f of readdirSync(ROOT + '/' + dir)) {
+      if (!/\.(mjs|js)$/.test(f)) continue;
+      if (f === 'servicem8-testjob.js') continue;
+      const src = readFileSync(ROOT + '/' + dir + '/' + f, 'utf8');
+      // The dispatcher is allowed to ROUTE to it; nothing may invoke it.
+      const calls = /servicem8-testjob[^\n]*\)\s*\(/.test(src)
+        || /require\(['"]\.\/servicem8-testjob/.test(src) && !/ROUTES/.test(src);
+      assert.ok(!calls, dir + '/' + f + ' calls the ServiceM8 write test');
+    }
+  }
+});
+
+test('with no key it creates nothing and says where the key goes', async () => {
+  staffAuth();
+  delete process.env.SERVICEM8_API_KEY;
+  const r = await callHandler(testJob, { headers: STAFF });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, false);
+  assert.equal(r.body.reason, 'no_api_key');
+  assert.match(r.body.message, /SERVICEM8_API_KEY/);
+  assert.match(r.body.message, /Vercel/);
+  // The one thing people get wrong: a variable added after a deploy does not
+  // reach the running functions until the next one.
+  assert.match(r.body.message, /redeploy/i);
+});
+
+test('the test job is unmistakable, and is a Quote rather than won work', () => {
+  // It is built through buildJobPlan, the same function a real acceptance
+  // uses, so what is asserted here is what ServiceM8 would actually receive.
+  const src = readFileSync(ROOT + '/server/servicem8-testjob.js', 'utf8');
+  assert.match(src, /ZZ TEST/, 'the test client is not obviously a test');
+  assert.match(src, /safe to delete/i);
+  // Quote, not Work Order: a test must never appear as won work on a board.
+  assert.match(src, /JOB_STATUS\.QUOTE/);
+  assert.ok(!/JOB_STATUS\.WORK_ORDER/.test(src));
+  // And the description says what it is in its first line, where somebody
+  // opening the job will actually read it.
+  assert.match(src, /THIS IS A TEST JOB CREATED BY THE NAC QUOTE TOOL/);
+});
+
+test('a successful test says what it made, so it can be removed', async () => {
+  staffAuth();
+  process.env.SERVICEM8_API_KEY = 'test-key';
+  const fake = fakeServiceM8();
+  // The handler builds its own plan and calls the real createJob, which uses
+  // globalThis.fetch — point that at the fake for the ServiceM8 host only.
+  const auth = globalThis.fetch;
+  globalThis.fetch = async (url, opts) =>
+    String(url).includes('servicem8.com') ? fake.fetchImpl(url, opts) : auth(url, opts);
+
+  const r = await callHandler(testJob, { headers: STAFF });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.ok, true, JSON.stringify(r.body));
+  assert.equal(r.body.jobId, '1482');
+  assert.match(r.body.cleanup, /DELETE IT/);
+  assert.match(r.body.cleanup, /1482/);
+  assert.match(r.body.cleanup, /ZZ TEST/);
+
+  // It really posted a client, a contact and a job, in that order.
+  const posts = fake.calls.filter(c => c.method === 'POST').map(c => c.path);
+  assert.deepEqual(posts.slice(0, 3), ['company.json', 'companycontact.json', 'job.json']);
+  const job = fake.calls.find(c => c.path === 'job.json').body;
+  assert.equal(job.status, 'Quote');
+  assert.match(job.job_description, /SAFE TO DELETE/);
+
+  delete process.env.SERVICEM8_API_KEY;
 });

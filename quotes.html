@@ -88,6 +88,8 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1}
 <div class="wrap">
   <div class="cards" id="stats"></div>
   <div class="bar" id="filters"></div>
+  <div class="bar" id="sm8"></div>
+  <div id="sm8Result"></div>
   <div id="list"><p class="note">Loading…</p></div>
 </div>
 
@@ -220,6 +222,19 @@ function draw() {
       el('b', { text: String(value) }), el('span', { text: label })]));
   }
 
+  // ── THE WRITE PATH, CHECKED ON PURPOSE ─────────────────────────────────
+  // The selftest is read-only: it proves the key is accepted and jobs can be
+  // READ. A read-only key passes all of it and still creates nothing when a
+  // customer accepts. This is the only way to know, and it is a button rather
+  // than anything automatic because it writes to the live ServiceM8 account.
+  const sm8 = $('#sm8'); sm8.innerHTML = '';
+  sm8.appendChild(el('button', { class: 'btn', text: 'Test ServiceM8 — create one job',
+    onclick: testServiceM8 }));
+  sm8.appendChild(el('span', { class: 'note',
+    text: 'Creates one job named "ZZ TEST — NAC Quote Tool", through the same code a real '
+        + 'acceptance uses. It is a Quote, not a Work Order, so it never looks like won '
+        + 'work — delete it afterwards.' }));
+
   const f = $('#filters'); f.innerHTML = '';
   for (const [key, label] of [['all', 'All'], ['issued', 'Issued'], ['viewed', 'Opened'],
                               ['accepted', 'Accepted'], ['declined', 'Declined'],
@@ -238,6 +253,38 @@ function draw() {
     return;
   }
   for (const q of rows) list.appendChild(card(q));
+}
+
+async function testServiceM8() {
+  const box = $('#sm8Result');
+  box.innerHTML = '';
+  box.appendChild(el('p', { class: 'note', text: 'Asking ServiceM8 to create a job…' }));
+  try {
+    const r = await fetch('/api/servicem8-testjob', { method: 'POST', headers: staffHeaders() });
+    const j = await r.json().catch(() => null);
+    box.innerHTML = '';
+    if (!j) {
+      box.appendChild(el('div', { class: 'err', text: 'No answer from the server.' }));
+      return;
+    }
+    if (j.ok) {
+      box.appendChild(el('div', { class: 'q accepted' }, [
+        el('div', { class: 'qh' }, [
+          el('strong', { text: 'ServiceM8 write path works' }),
+          el('span', { class: 'pill ok', text: j.jobId ? 'job #' + j.jobId : 'job created' })
+        ]),
+        el('p', { class: 'note', text: j.message }),
+        el('p', { class: 'note', text: j.cleanup })
+      ]));
+    } else {
+      box.appendChild(el('div', { class: 'err',
+        text: (j.message || j.reason || 'The job could not be created.')
+            + (j.note ? '  ' + j.note : '') }));
+    }
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(el('div', { class: 'err', text: 'Could not reach the server.' }));
+  }
 }
 
 async function load() {
