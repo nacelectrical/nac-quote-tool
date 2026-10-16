@@ -52,7 +52,9 @@ export const DRAFT_BLOCK = Object.freeze({
   OPTION_INCOMPATIBLE: 'DRAFT_OPTION_INCOMPATIBLE',
   SENSOR_COUNT_NOT_SET: 'DRAFT_SENSOR_COUNT_NOT_SET',
   ZONE_COUNT_MISMATCH: 'DRAFT_ZONE_COUNT_MISMATCH',
-  OUTLET_COUNT_MISMATCH: 'DRAFT_OUTLET_COUNT_MISMATCH'
+  OUTLET_COUNT_MISMATCH: 'DRAFT_OUTLET_COUNT_MISMATCH',
+  CONTROLLER_TOO_SMALL: 'DRAFT_CONTROLLER_TOO_SMALL',
+  NO_CONTROLLER: 'DRAFT_NO_CONTROLLER'
 });
 
 export function createQuoteDraft(seed = {}) {
@@ -110,7 +112,23 @@ export function normaliseQuoteDraft(input = {}) {
     chosenSystemId: trimmed(d.chosenSystemId)
       || (systems.find(s => s.recommended) || systems[0] || {}).id || null,
 
+    /**
+     * THE ZONE CONTROL.
+     *
+     * `id` is the catalogue entry when one was chosen — a Siemens kit, an
+     * AirTouch, a manufacturer's own box — and the name and zone capacity come
+     * with it. A controller typed by hand carries a name and no id, which is
+     * the manual way through and is still quotable.
+     *
+     * NO COST LIVES HERE. The kit's supplier cost is NAC's business and the
+     * draft is the thing that becomes a customer's page; what a customer may
+     * be told is the part, how many zones it handles, and whether it is in the
+     * price. `draftToQuoteSource()` carries exactly that and nothing else.
+     */
     controller: {
+      id: trimmed(d.controller?.id),
+      /** True while this kit is the house rule's default rather than a choice. */
+      auto: bool(d.controller?.auto),
       name: trimmed(d.controller?.name),
       zoneCount: n(d.controller?.zoneCount),
       note: trimmed(d.controller?.note)
@@ -261,6 +279,27 @@ export function quoteDraftGate(draft, { upgrades = [] } = {}) {
     block(DRAFT_BLOCK.OUTLET_COUNT_MISMATCH,
       'The scope records ' + d.scope.outletCount + ' outlet(s), but the rooms add up to '
       + roomOutlets + '.');
+  }
+
+  // ── A CONTROLLER THAT CANNOT COVER THE JOB ─────────────────────────────
+  //
+  // Nick: "Siemens is used if not AirTouch." The kits come in 4, 6 and 8 zone
+  // and they are sized to the job — a 4-zone kit on a 6-zone house is short by
+  // two zones, and the quote would go out naming a part that cannot do what
+  // the rest of the page promises.
+  if (trimmed(d.controller.name) && d.controller.zoneCount !== null
+      && d.scope.zoneCount !== null && d.controller.zoneCount < d.scope.zoneCount) {
+    block(DRAFT_BLOCK.CONTROLLER_TOO_SMALL,
+      trimmed(d.controller.name) + ' handles ' + d.controller.zoneCount
+      + ' zone(s) and this quote is for ' + d.scope.zoneCount
+      + '. Choose a kit that covers the job.');
+  }
+
+  // A zoned job with no controller named is a zoned job nobody has specified.
+  if ((d.scope.zoneCount ?? 0) > 1 && !trimmed(d.controller.name)) {
+    block(DRAFT_BLOCK.NO_CONTROLLER,
+      'This is a ' + d.scope.zoneCount + '-zone system and no zone control has been '
+      + 'chosen. A zoned proposal has to name the controller being installed.');
   }
 
   // ── INCOMPATIBLE OPTIONS ───────────────────────────────────────────────

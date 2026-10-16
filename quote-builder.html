@@ -189,13 +189,8 @@ dialog iframe{width:100%;height:min(78vh,900px);border:0;display:block;backgroun
     </section>
 
     <section class="card">
-      <h2>Zone control</h2>
-      <div class="grid">
-        <div class="f"><label for="ctrl">Controller</label>
-          <input id="ctrl" placeholder="AirTouch 5"></div>
-        <div class="f"><label for="ctrlz">Zones it handles</label>
-          <input id="ctrlz" type="number" min="0" step="1"></div>
-      </div>
+      <h2>Zone control <small>sized to the zones below</small></h2>
+      <div id="ctrlBox"></div>
     </section>
 
     <section class="card">
@@ -275,6 +270,8 @@ import {
   draftSelectedOptions, chosenSystem
 } from '/designer/engines/quote-draft.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
+import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
+import { selectZoneController } from '/designer/engines/equipment.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { seedTermsAndConditions, seedTrust } from '/designer/engines/presentation-content.mjs';
 import { saveDesign, loadDesign, getJson, SETTINGS_KEYS } from '/designer/engines/store.mjs';
@@ -432,6 +429,164 @@ function drawRooms() {
   });
 }
 
+/**
+ * THE ZONE CONTROL.
+ *
+ * Nick, 17 October 2026: "Need to include Siemens zone option for zoning, and
+ * amount of zones to be chosen."
+ *
+ * The Siemens kits have been on file all along — MMASEM4ZTPKIT, 6ZTPKIT and
+ * 8ZTPKIT, with NAC's own MMEM costs — together with the house rule that says
+ * which one goes in: "Siemens is used if not AirTouch", sized to the job. None
+ * of it reached this screen, which had a free-text box. You could type
+ * "Siemens" and nothing picked the right kit or checked it had enough zones.
+ *
+ * So the list is the real catalogue, filtered to the system being quoted — a
+ * Daikin-only controller cannot land on a Braemar — and the DEFAULT follows
+ * the zone count. Six zones offers the 6-zone kit; change it to eight and the
+ * 8-zone kit is offered instead.
+ *
+ * It is a default, not a decision: the estimator picks whatever they like, and
+ * "Something else" takes a name typed by hand, because a part that is not on
+ * the list yet must never be a reason a job cannot be quoted.
+ *
+ * WHAT A CUSTOMER SEES is the part, how many zones it handles, and nothing
+ * else. The supplier cost is on this screen because it is NAC's screen;
+ * draftToQuoteSource() carries the name and the zone capacity only.
+ */
+let drawingController = false;
+/** Set when the kit was resized under the estimator, so the card can say so. */
+let resized = '';
+function drawController() {
+  // apply() redraws, and the house-rule default calls apply(). One hop is
+  // intended; a second would be a loop.
+  if (drawingController) return;
+  drawingController = true;
+  try { drawControllerInner(); } finally { drawingController = false; }
+}
+function drawControllerInner() {
+  const host = $('#ctrlBox');
+  host.textContent = '';
+  const zones = draft.scope.zoneCount ?? 0;
+  const sys = chosenSystem(draft);
+  const brandId = (sys && sys.brandId) || '';
+  // `preferId` makes selectZoneController() echo back the kit it is given, so
+  // it is only passed for a kit the ESTIMATOR chose. Passing the house rule's
+  // own last answer made the recommendation agree with itself forever, and the
+  // default stopped tracking the zone count.
+  const pick = selectZoneController(ZONE_CONTROLLERS, {
+    brandId,
+    zoneCount: zones || null,
+    preferId: (draft.controller.id && draft.controller.auto !== true)
+      ? draft.controller.id : undefined
+  });
+
+  // Everything that fits, plus anything that does not — shown, and refused.
+  const fits = pick.compatible;
+  const tooSmall = (pick.incompatible || []).filter(c => !c.brandLock || c.brandLock === brandId);
+
+  const sel = el('select', { id: 'ctrlSel' });
+  sel.appendChild(el('option', { value: '', text: zones > 1
+    ? '\u2014 choose the zone control \u2014' : '\u2014 none \u2014' }));
+  for (const c of fits) {
+    sel.appendChild(el('option', { value: c.id,
+      text: c.name + '  \u2014 up to ' + c.maxZones + ' zones'
+        + (c.includedInSystem ? '  (supplied with the system)' : '') }));
+  }
+  for (const c of tooSmall) {
+    sel.appendChild(el('option', { value: c.id, disabled: 'disabled',
+      text: c.name + '  \u2014 only ' + c.maxZones + ' zones, too small for this job' }));
+  }
+  sel.appendChild(el('option', { value: '__other', text: 'Something else \u2014 type a name' }));
+
+  const current = draft.controller.id
+    || (draft.controller.name ? '__other' : (pick.recommended ? pick.recommended.id : ''));
+  sel.value = [...sel.options].some(o => o.value === current) ? current : '';
+
+  // `auto` records WHO chose this kit. The house rule's answer is a default
+  // and keeps tracking the job as the zone count moves; a kit the estimator
+  // picked is theirs and is left alone.
+  const apply = (id, auto = false) => {
+    if (id === '__other') {
+      draft.controller.id = ''; draft.controller.auto = false;
+      mark(); drawController(); return;
+    }
+    const c = ZONE_CONTROLLERS.find(x => x.id === id) || null;
+    draft.controller.id = c ? c.id : '';
+    draft.controller.name = c ? c.name : '';
+    draft.controller.zoneCount = c ? c.maxZones : null;
+    draft.controller.auto = auto === true;
+    mark(); drawController();
+  };
+  sel.addEventListener('change', () => apply(sel.value, false));
+
+  // Nothing chosen yet on a zoned job: take the house rule's answer, so the
+  // common case needs no clicks at all.
+  // ── WHEN THE DEFAULT APPLIES ──────────────────────────────────────────
+  //
+  // Two cases, and only two. Nothing chosen yet on a zoned job: take the house
+  // rule, so the common job needs no clicks at all. And a kit that NO LONGER
+  // COVERS the job — the estimator picked the 6-zone kit at six zones and then
+  // the job went to eight — because leaving an impossible part selected is
+  // not respecting their choice, it is holding a quote that cannot be issued.
+  //
+  // A deliberate choice that still fits is never overridden.
+  const held = ZONE_CONTROLLERS.find(x => x.id === draft.controller.id) || null;
+  const outgrown = held && zones > 0 && (held.maxZones ?? 99) < zones;
+  const untouched = !draft.controller.name && !draft.controller.id;
+  // A default still tracking the job: the zones moved, so the kit moves with
+  // them — both up AND down, because an 8-zone kit on a 4-zone house is $70 of
+  // capacity nobody asked for.
+  const stale = held && draft.controller.auto === true
+    && pick.recommended && pick.recommended.id !== held.id;
+  if (zones > 1 && pick.recommended && (untouched || outgrown || stale)) {
+    if (outgrown) {
+      resized = held.name + ' covers ' + held.maxZones + ' zones and this job is now '
+        + zones + ', so it has been resized to ' + pick.recommended.name + '.';
+    }
+    drawingController = false;      // let the redraw inside apply() through
+    apply(pick.recommended.id, true);
+    drawingController = true;
+    return;
+  }
+
+  host.appendChild(el('div', { class: 'grid' }, [
+    field('Zone control', sel),
+    field('Zones it handles',
+      input(draft.controller.zoneCount, { type: 'number', min: '0', step: '1',
+        disabled: draft.controller.id ? 'disabled' : null },
+        v => { draft.controller.zoneCount = numOrNull(v); }),
+      draft.controller.id ? 'Set by the kit above.' : 'For a controller typed by hand.')
+  ]));
+
+  if (!draft.controller.id) {
+    host.appendChild(field('Controller name',
+      input(draft.controller.name, { placeholder: 'Name the part being installed' },
+        v => { draft.controller.name = v; })));
+  }
+
+  const notes = [];
+  if (resized) { notes.push(['warn', resized]); resized = ''; }
+  if (pick.basis === 'nac_house_rule' && draft.controller.id === pick.recommended.id) {
+    notes.push(['ok', pick.houseRuleNote]);
+  }
+  if (zones > 1 && !pick.houseRuleApplies) {
+    notes.push(['warn', 'No Siemens kit covers ' + zones + ' zones \u2014 the largest is 8. '
+      + 'Choose the control for this job yourself.']);
+  }
+  const chosen = ZONE_CONTROLLERS.find(x => x.id === draft.controller.id);
+  if (chosen && chosen.cost !== null && chosen.cost !== undefined) {
+    notes.push(['ok', 'NAC cost $' + Number(chosen.cost).toFixed(2) + ' ex GST'
+      + (chosen.supplierCode ? ' (' + chosen.supplierCode + ')' : '')
+      + ' \u2014 internal only, and inside the job price you entered. '
+      + 'The customer page names the part and the zones, never the cost.']);
+  }
+  for (const [kind, text] of notes) {
+    host.appendChild(el('div', { class: 'chk ' + kind },
+      [el('b', { text: kind === 'ok' ? '\u2713' : '!' }), el('span', { text })]));
+  }
+}
+
 function drawUpgrades() {
   const host = $('#ups');
   host.textContent = '';
@@ -572,8 +727,6 @@ function draw() {
   $('#pnum').value = draft.proposalNumber || '';
   $('#valid').value = draft.validDays ?? 30;
   $('#istest').checked = draft.testQuote === true;
-  $('#ctrl').value = draft.controller.name || '';
-  $('#ctrlz').value = draft.controller.zoneCount ?? '';
   $('#outlets').value = draft.scope.outletCount ?? '';
   $('#returns').value = draft.scope.returnCount ?? '';
   $('#zones').value = draft.scope.zoneCount ?? '';
@@ -581,7 +734,7 @@ function draw() {
   $('#incl').value = draft.inclusions.join('\n');
   $('#excl').value = draft.exclusions.join('\n');
   $('#intro').value = draft.intro || '';
-  drawSystems(); drawRooms(); drawUpgrades(); drawTotal(); drawChecks();
+  drawSystems(); drawRooms(); drawController(); drawUpgrades(); drawTotal(); drawChecks();
 }
 
 /**
@@ -611,11 +764,14 @@ bind('#cphone', v => { draft.customer.phone = v; });
 bind('#caddr', v => { draft.siteAddress = v; draft.customer.address = v; });
 bind('#pnum', v => { draft.proposalNumber = v; });
 bind('#valid', v => { draft.validDays = numOrNull(v) ?? 30; });
-bind('#ctrl', v => { draft.controller.name = v; });
-bind('#ctrlz', v => { draft.controller.zoneCount = numOrNull(v); });
 bind('#outlets', v => { draft.scope.outletCount = numOrNull(v); });
 bind('#returns', v => { draft.scope.returnCount = numOrNull(v); });
-bind('#zones', v => { draft.scope.zoneCount = numOrNull(v); drawUpgrades(); });
+bind('#zones', v => {
+  draft.scope.zoneCount = numOrNull(v);
+  // The controller follows the zone count: NAC's house rule sizes the Siemens
+  // kit to the job, so changing the zones changes which kit is offered.
+  drawController(); drawUpgrades();
+});
 bind('#summary', v => { draft.scope.summary = v; });
 bind('#intro', v => { draft.intro = v; });
 bind('#incl', v => { draft.inclusions = v.split('\n').map(s => s.trim()).filter(Boolean); });

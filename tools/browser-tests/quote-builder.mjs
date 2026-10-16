@@ -125,8 +125,6 @@ await fill('#cphone', '0455 123 456');
 await fill('#caddr', '12 Boronia Street, Buderim QLD 4556');
 await fill('#pnum', 'NAC-TEST-0001');
 await page.check('#istest');
-await fill('#ctrl', 'AirTouch 5');
-await fill('#ctrlz', '8');
 await fill('#outlets', '10');
 await fill('#returns', '2');
 await fill('#zones', '6');
@@ -172,6 +170,96 @@ await step('the typed inclusions and exclusions land in the draft', async () => 
   const exc = await page.inputValue('#excl');
   if (!/Removal of all installation waste/.test(inc)) throw new Error('no inclusions');
   if (!/Asbestos/.test(exc)) throw new Error('no exclusions');
+});
+
+// ── ZONE CONTROL ───────────────────────────────────────────────────────────
+//
+// Nick: "Need to include Siemens zone option for zoning, and amount of zones
+// to be chosen." The kits have been on file all along with NAC's own MMEM
+// costs, together with the house rule: Siemens unless the job is on an
+// AirTouch, sized to the job.
+await step('the zone control follows the zone count, per NAC\u2019s house rule', async () => {
+  const chosen = await page.inputValue('#ctrlSel');
+  if (chosen !== 'siemens_z6') {
+    throw new Error('6 zones offered ' + chosen + ', expected the Siemens 6-zone kit');
+  }
+  const note = await page.textContent('#ctrlBox');
+  if (!/Siemens/i.test(note)) throw new Error('the house rule was not explained');
+});
+
+await step('a kit outgrown by the job is resized, and the change is announced', async () => {
+  await fill('#zones', '8');
+  await page.waitForTimeout(250);
+  const eight = await page.inputValue('#ctrlSel');
+  if (eight !== 'siemens_z8') throw new Error('8 zones offered ' + eight);
+  await fill('#zones', '4');
+  await page.waitForTimeout(250);
+  const four = await page.inputValue('#ctrlSel');
+  if (four !== 'siemens_z4') throw new Error('4 zones offered ' + four);
+  // Five zones take the next kit up, not the one that is two short.
+  await fill('#zones', '5');
+  await page.waitForTimeout(250);
+  const five = await page.inputValue('#ctrlSel');
+  if (five !== 'siemens_z6') throw new Error('5 zones offered ' + five);
+  await fill('#zones', '6');
+  await page.waitForTimeout(250);
+});
+
+await step('a kit the estimator picked is not resized under them', async () => {
+  // Deliberately take the 8-zone kit on a 6-zone job. That is allowed — it is
+  // their call — and the app must not quietly put it back to the 6.
+  await page.selectOption('#ctrlSel', 'siemens_z8');
+  await page.waitForTimeout(250);
+  await fill('#zones', '4');
+  await page.waitForTimeout(250);
+  const kept = await page.inputValue('#ctrlSel');
+  if (kept !== 'siemens_z8') throw new Error('a deliberate choice was overridden: ' + kept);
+  // But one that no longer COVERS the job is resized, because an impossible
+  // part is not a choice worth respecting.
+  await fill('#zones', '6');
+  await page.waitForTimeout(250);
+  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await page.waitForTimeout(250);
+  await fill('#zones', '8');
+  await page.waitForTimeout(300);
+  const grown = await page.inputValue('#ctrlSel');
+  if (grown !== 'siemens_z8') throw new Error('an outgrown kit was kept: ' + grown);
+  const said = await page.textContent('#ctrlBox');
+  if (!/resized/i.test(said)) throw new Error('the resize was silent');
+  await fill('#zones', '6');
+  await page.waitForTimeout(250);
+  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await page.waitForTimeout(250);
+});
+
+await step('a kit too small for the job is offered but cannot be picked', async () => {
+  const opts = await page.$$eval('#ctrlSel option',
+    ns => ns.map(n => ({ v: n.value, d: n.disabled, t: n.textContent })));
+  const small = opts.find(o => o.v === 'siemens_z4');
+  if (!small) throw new Error('the 4-zone kit is not listed at all on a 6-zone job');
+  if (!small.d) throw new Error('a 4-zone kit was selectable on a 6-zone job');
+  if (!/too small/i.test(small.t)) throw new Error('it does not say why: ' + small.t);
+});
+
+await step('the AirTouch kit is on the list for a Daikin', async () => {
+  const opts = await page.$$eval('#ctrlSel option', ns => ns.map(n => n.value));
+  if (!opts.includes('at5_daikin')) throw new Error('no AirTouch kit: ' + opts.join(','));
+});
+
+await step('a controller can still be typed by hand', async () => {
+  await page.selectOption('#ctrlSel', '__other');
+  await page.waitForTimeout(250);
+  const n = await page.locator('#ctrlBox input[placeholder*="Name the part"]').count();
+  if (!n) throw new Error('no free-text fallback appeared');
+  // Put the Siemens kit back for the rest of the run.
+  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await page.waitForTimeout(250);
+});
+
+await step('the kit\u2019s cost is shown to the estimator', async () => {
+  // $295.00 is the Siemens 6-zone kit's MMEM cost. It belongs on this screen.
+  const internal = await page.textContent('#ctrlBox');
+  if (!/295/.test(internal)) throw new Error('the cost is not shown: ' + internal.slice(0, 120));
 });
 
 // ── upgrades ───────────────────────────────────────────────────────────────
@@ -312,7 +400,7 @@ await step('reopening a saved quote brings all of it back', async () => {
     pnum: await page.inputValue('#pnum'),
     outlets: await page.inputValue('#outlets'),
     zones: await page.inputValue('#zones'),
-    ctrl: await page.inputValue('#ctrl'),
+    ctrl: await page.inputValue('#ctrlSel'),
     incl: await page.inputValue('#incl'),
     excl: await page.inputValue('#excl'),
     test: await page.isChecked('#istest'),
@@ -323,7 +411,7 @@ await step('reopening a saved quote brings all of it back', async () => {
   const want = {
     name: before.customer.name, addr: before.siteAddress,
     pnum: before.proposalNumber, outlets: String(before.scope.outletCount),
-    zones: String(before.scope.zoneCount), ctrl: before.controller.name,
+    zones: String(before.scope.zoneCount), ctrl: before.controller.id,
     incl: before.inclusions.join('\n'), excl: before.exclusions.join('\n'),
     test: before.testQuote === true,
     systems: before.systems.length, rooms: before.scope.conditionedRooms.length,

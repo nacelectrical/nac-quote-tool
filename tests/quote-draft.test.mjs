@@ -658,3 +658,88 @@ test('looking at the other system does not throw away what was ticked', () => {
   assert.match(h, /data-was-checked/, 'the selection is not put aside');
   assert.match(h, /data-was-value/, 'the count is not put aside');
 });
+
+// ── 16. THE ZONE CONTROL ───────────────────────────────────────────────────
+
+test('a kit that cannot cover the zones stops the quote', () => {
+  // Nick: "Siemens is used if not AirTouch." The kits are 4, 6 and 8 zone and
+  // they are sized to the job — a 4-zone kit on a 6-zone house goes out naming
+  // a part that cannot do what the rest of the page promises.
+  const d = quoteOnlyDraft({
+    controller: { id: 'siemens_z4', name: 'Siemens Home zone control — 4 zone',
+                  zoneCount: 4 } });
+  const g = gateOf(d);
+  assert.ok(codes(g.blockers).includes(DRAFT_BLOCK.CONTROLLER_TOO_SMALL),
+    JSON.stringify(codes(g.blockers)));
+  assert.match(g.blockers.find(b => b.code === DRAFT_BLOCK.CONTROLLER_TOO_SMALL).message,
+    /handles 4 zone\(s\) and this quote is for 6/);
+});
+
+test('a kit that covers the zones passes', () => {
+  const d = quoteOnlyDraft({
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6 } });
+  assert.ok(!codes(gateOf(d).blockers).includes(DRAFT_BLOCK.CONTROLLER_TOO_SMALL));
+});
+
+test('a zoned quote with no controller named does not go out', () => {
+  const d = quoteOnlyDraft({ controller: {} });
+  assert.ok(codes(gateOf(d).blockers).includes(DRAFT_BLOCK.NO_CONTROLLER));
+});
+
+test('an unzoned quote needs no controller', () => {
+  const d = quoteOnlyDraft({
+    controller: {},
+    scope: { outletCount: 4, returnCount: 1, zoneCount: 1, conditionedRooms: [] },
+    selectedUpgradeIds: [], sensorCount: 0, upgradeQuantities: {} });
+  const g = gateOf(d);
+  assert.ok(!codes(g.blockers).includes(DRAFT_BLOCK.NO_CONTROLLER));
+  assert.equal(g.ok, true, JSON.stringify(codes(g.blockers)));
+});
+
+test('the Siemens kits are on file with their MMEM codes and costs', async () => {
+  const { ZONE_CONTROLLERS } = await import('../designer/engines/catalogue.mjs');
+  const kits = ZONE_CONTROLLERS.filter(c => /^siemens_/.test(c.id));
+  assert.equal(kits.length, 3, 'the 4, 6 and 8 zone kits');
+  assert.deepEqual(kits.map(k => k.maxZones).sort((a, b) => a - b), [4, 6, 8]);
+  for (const k of kits) {
+    assert.ok(k.cost > 0, k.id + ' has no cost on file');
+    assert.match(k.supplierCode, /^MMASEM\dZTPKIT$/);
+    // Fits any brand: it is a zone kit, not a manufacturer's own controller.
+    assert.equal(k.brandLock, null);
+  }
+});
+
+test('the controller cost never leaves for the customer page', async () => {
+  // $295.00 is the Siemens 6-zone kit's MMEM cost, and it is inside the job
+  // price the estimator typed. A customer may be told the part and how many
+  // zones it handles — never what NAC paid for it.
+  const d = quoteOnlyDraft({
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, cost: 295 } });
+  const src = draftToQuoteSource(d, { upgrades: UPGRADES });
+  assert.deepEqual(Object.keys(src.controller).sort(), ['maxZones', 'name']);
+  const built = build(d).presentation;
+  const blob = JSON.stringify(built) + renderPresentationHtml(built, { token: 'T' });
+  assert.ok(!/\b295\b/.test(blob.replace(/data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+/g, '')),
+    'the supplier cost reached the customer page');
+  // And the part itself is named, because the customer is buying it.
+  assert.equal(built.zones.controller, 'Siemens Home zone control — 6 zone');
+  assert.equal(built.zones.controllerMaxZones, 6);
+});
+
+test('the house rule sizes the kit to the job, and says it did', async () => {
+  const { ZONE_CONTROLLERS } = await import('../designer/engines/catalogue.mjs');
+  const { selectZoneController } = await import('../designer/engines/equipment.mjs');
+  const at = (zoneCount) => selectZoneController(ZONE_CONTROLLERS,
+    { brandId: 'daikin', zoneCount });
+  assert.equal(at(4).recommended.id, 'siemens_z4');
+  assert.equal(at(5).recommended.id, 'siemens_z6', 'five zones take the next kit up');
+  assert.equal(at(6).recommended.id, 'siemens_z6');
+  assert.equal(at(8).recommended.id, 'siemens_z8');
+  assert.equal(at(6).basis, 'nac_house_rule');
+  assert.match(at(6).houseRuleNote, /Siemens/);
+  // Past the largest kit the rule cannot apply, and says so rather than
+  // picking something that does not fit.
+  assert.equal(at(12).houseRuleApplies, false);
+});
