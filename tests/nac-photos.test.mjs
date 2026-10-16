@@ -45,36 +45,75 @@ test('every photograph in the manifest is actually in the repository', () => {
   }
 });
 
-test('not one model number was guessed', () => {
+test('not one model number was guessed, and the brands are off the badge', () => {
   for (const p of DOC.photos) {
     assert.ok(Array.isArray(p.equipmentModels), p.file);
     assert.equal(p.equipmentModels.length, 0,
       p.file + ' carries a model that nobody could read off the plate');
+    // The brand IS legible in every one of these — it is the badge on the
+    // front — which is why matching on it is honest where matching on an
+    // unreadable model would not be.
+    assert.ok(p.equipmentBrand, p.file + ' records no brand');
+    assert.ok(p.seen.toLowerCase().includes(p.equipmentBrand.toLowerCase()),
+      p.file + ' claims ' + p.equipmentBrand + ' but that is not in what was seen');
   }
-  // And the file says why, so the next person does not helpfully fill them in
-  // from the brand.
+  // And the file says why the models are absent, and why matching on the brand
+  // is honest where matching on an unreadable model would not be.
   assert.match(DOC._models, /not legible/i);
-  assert.match(DOC._models, /matches on the model/i);
+  assert.match(DOC._models, /brand/i);
+  // No Braemar arrived, and the file says so rather than leaving a gap for
+  // somebody to fill with the nearest Daikin.
+  assert.match(DOC._brands, /NO BRAEMAR/i);
 });
 
-test('a photograph with no model is never offered as a photograph of one', () => {
-  const assets = DOC.photos.map(p => normaliseImageAsset({
-    id: p.file, alt: p.alt, role: p.role, equipmentBrand: p.equipmentBrand,
-    equipmentModels: p.equipmentModels, approved: true,
-    exifStripped: true, gpsRemoved: true,
-    derivatives: [{ ref: 'https://cdn.example/' + p.file, width: 1600, height: 2133,
-                    format: 'jpeg', bytes: 400000 }]
-  }));
-  // Four of these ARE Daikin outdoor units. A Daikin quote still gets none of
-  // them, because none says WHICH Daikin.
-  assert.deepEqual(equipmentImagesFor(assets, { model: 'FDYAN160AV1', brandName: 'Daikin' }), []);
-  assert.deepEqual(equipmentImagesFor(assets, { model: 'RZA160C2V1', brandName: 'Daikin' }), []);
+/** The manifest as the library would hold it, approved. */
+const assets = () => DOC.photos.map(p => normaliseImageAsset({
+  id: p.file, alt: p.alt, role: p.role, equipmentBrand: p.equipmentBrand,
+  equipmentModels: p.equipmentModels, tags: p.tags, approved: true,
+  exifStripped: true, gpsRemoved: true,
+  derivatives: [{ ref: 'https://cdn.example/' + p.file, width: 1600, height: 2133,
+                  format: 'jpeg', bytes: 400000 }]
+}));
 
-  // Once Nick records the model on one, that one appears — and only that one.
-  const tagged = assets.map(a => a.id === 'photos/daikin-r32-outdoor-twin-fan.jpg'
+test('a Daikin quote gets a Daikin, and a Fujitsu quote gets a Fujitsu', () => {
+  // Nick, 16 October 2026: "Just use brands. Put one of the Daikin ones next
+  // to a Daikin, Fujitsu next to Fujitsu."
+  const lib = assets();
+
+  const daikin = equipmentImagesFor(lib, { brandName: 'Daikin', model: 'FDYAN160AV1' });
+  assert.ok(daikin.length >= 1, 'a Daikin quote got no Daikin photograph');
+  for (const a of daikin) assert.match(a.id, /daikin/);
+
+  const fujitsu = equipmentImagesFor(lib, { brandName: 'Fujitsu', model: 'ARTG54LHTA' });
+  assert.ok(fujitsu.length >= 1, 'a Fujitsu quote got no Fujitsu photograph');
+  for (const a of fujitsu) assert.match(a.id, /fujitsu/);
+  // The outdoor unit before the wall controller.
+  assert.match(fujitsu[0].id, /outdoor/,
+    'the wall controller was offered as the picture of the system');
+
+  // No brand ever borrows another's photograph.
+  for (const a of daikin) assert.ok(!/fujitsu|airtouch/.test(a.id));
+  for (const a of fujitsu) assert.ok(!/daikin|airtouch/.test(a.id));
+});
+
+test('a Braemar quote gets nothing, because no Braemar photograph arrived', () => {
+  // Nick asked for "this Braemar next to Braemar". There is no Braemar among
+  // the seven — they are Fujitsu, Daikin and AirTouch. Rather than tag a
+  // Daikin as a Braemar to satisfy the instruction, a Braemar quote shows no
+  // photograph until a Braemar one is supplied.
+  const brands = new Set(DOC.photos.map(p => p.equipmentBrand));
+  assert.ok(!brands.has('Braemar'), 'a Braemar photograph is now on file — '
+    + 'this test is the reminder that one was missing, and can go');
+  assert.deepEqual(
+    equipmentImagesFor(assets(), { brandName: 'Braemar', model: 'KDHV160D1S' }), [],
+    'a Braemar quote was shown somebody else\'s unit');
+});
+
+test('an exact model, once recorded, still wins over the brand', () => {
+  const tagged = assets().map(a => a.id === 'photos/daikin-r32-outdoor-twin-fan.jpg'
     ? { ...a, equipmentModels: ['RZA160C2V1'] } : a);
-  const got = equipmentImagesFor(tagged, { model: 'RZA160C2V1' });
-  assert.equal(got.length, 1);
+  const got = equipmentImagesFor(tagged, { brandName: 'Daikin', model: 'RZA160C2V1' });
+  assert.equal(got.length, 1, 'the brand fallback ran even though a model matched');
   assert.equal(got[0].id, 'photos/daikin-r32-outdoor-twin-fan.jpg');
 });
 

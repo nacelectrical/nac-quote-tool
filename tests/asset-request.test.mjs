@@ -25,6 +25,7 @@ import { equipmentImagesFor, normaliseImageAsset, IMAGE_ROLES, EMPTY_TRUST, NAC_
 
 const image = (id, role, models, extra = {}) => normaliseImageAsset({
   id, alt: id, role, equipmentModels: models, approved: true,
+  equipmentBrand: 'Daikin',
   exifStripped: true, gpsRemoved: true,
   derivatives: [{ ref: 'https://cdn.example/' + id + '.jpg', width: 800, height: 600,
                   format: 'jpeg', bytes: 90000 }],
@@ -35,21 +36,69 @@ const DAIKIN = { model: 'FDYAN160AV1', outdoorModel: 'RZA160C2V1', brandName: 'D
 
 // ── THE PHOTOGRAPH HAS TO BE OF THE RIGHT MACHINE ───────────────────────────
 
-test('an equipment photo is matched on the model, never on the brand', () => {
+test('an exact model match still wins over the brand', () => {
   const lib = [
     image('indoor', IMAGE_ROLES.EQUIPMENT, ['FDYAN160AV1']),
     image('outdoor', IMAGE_ROLES.EQUIPMENT, ['RZA160C2V1']),
-    // Same brand, completely different machine.
     image('wall-split', IMAGE_ROLES.EQUIPMENT, ['FTXM35R']),
     image('ceiling', IMAGE_ROLES.INSTALLATION, ['FDYAN160AV1'])
   ];
+  // Where models are recorded they decide, and the FTXM35R is not on this
+  // quote however much Daikin is.
   const got = equipmentImagesFor(lib, DAIKIN).map(i => i.id);
   assert.deepEqual(got, ['indoor', 'outdoor']);
 
-  // A Braemar quote gets nothing rather than the Daikin that looks similar.
-  assert.deepEqual(equipmentImagesFor(lib, { model: 'KDHV160D1S' }), []);
-  // And a quote with no unit on it gets nothing at all.
+  // An installation-role photo is still never offered as equipment.
+  assert.ok(!got.includes('ceiling'));
+
+  // A quote naming no unit at all gets nothing.
   assert.deepEqual(equipmentImagesFor(lib, {}), []);
+});
+
+test('with no model recorded, the brand decides — which is what Nick asked for', () => {
+  // Nick, 16 October 2026: "Just use brands. Put one of the Daikin ones next
+  // to a Daikin, Fujitsu next to Fujitsu."
+  //
+  // This file used to assert the opposite, on the reasoning that "a Daikin" is
+  // four hundred different machines. That reasoning was about a library that
+  // might contain anything; NAC's contains NAC's own photographs of NAC's own
+  // ducted work, and what goes into it is his call.
+  const lib = [
+    image('daikin-outdoor', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: 'Daikin',
+      tags: ['daikin', 'outdoor', 'ducted'] }),
+    image('daikin-vrv', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: 'Daikin',
+      tags: ['daikin', 'outdoor'] }),
+    image('fujitsu-outdoor', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: 'Fujitsu',
+      tags: ['fujitsu', 'outdoor', 'ducted'] }),
+    image('fujitsu-controller', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: 'Fujitsu',
+      tags: ['fujitsu', 'controller'] }),
+    image('airtouch', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: 'AirTouch',
+      tags: ['airtouch', 'controller'] })
+  ];
+
+  const daikin = equipmentImagesFor(lib, { brandName: 'Daikin', model: 'FDYAN160AV1' })
+    .map(i => i.id);
+  assert.deepEqual(daikin, ['daikin-outdoor', 'daikin-vrv']);
+
+  // The UNIT comes before the controller: a controller is part of the system
+  // but it is not a picture of it.
+  const fujitsu = equipmentImagesFor(lib, { brandName: 'Fujitsu', model: 'ARTG54LHTA' })
+    .map(i => i.id);
+  assert.deepEqual(fujitsu, ['fujitsu-outdoor', 'fujitsu-controller']);
+
+  // A brand with no photograph gets none, rather than somebody else's unit.
+  assert.deepEqual(equipmentImagesFor(lib, { brandName: 'Braemar',
+                                             model: 'KDHV160D1S' }), []);
+
+  // Case and spacing are noise; identity is not.
+  assert.equal(equipmentImagesFor(lib, { brandName: ' daikin ' }).length, 2);
+  assert.equal(equipmentImagesFor(lib, { brand: 'DAIKIN' }).length, 2);
+
+  // Nothing is matched on nothing.
+  const anonymous = [image('mystery', IMAGE_ROLES.EQUIPMENT, [], { equipmentBrand: '' })];
+  assert.deepEqual(equipmentImagesFor(anonymous, { brandName: 'Daikin' }), []);
+  assert.deepEqual(equipmentImagesFor(lib, { model: 'FDYAN160AV1' }), [],
+    'a quote with no brand matched a photograph on nothing');
 });
 
 test('model matching ignores case and punctuation but not identity', () => {
@@ -100,15 +149,30 @@ test('an empty library cannot issue, and says exactly why', () => {
   }
 });
 
-test('the equipment request names the models, not "a photo of the unit"', () => {
+test('the equipment request asks for the BRAND, which is what matching needs', () => {
+  // It used to ask for a photograph of FDYAN160AV1 and RZA160C2V1, which sent
+  // Nick looking for a compliance plate when a photograph of the machine would
+  // do. Matching falls back to the brand, so the brand is what is missing.
   const r = assetRequest({}, { unit: DAIKIN });
   const eq = r.optional.find(x => x.id.startsWith('equipment:'));
   assert.ok(eq, 'no equipment photograph was asked for');
-  assert.match(eq.what, /FDYAN160AV1/);
-  assert.match(eq.what, /RZA160C2V1/);
-  assert.match(eq.association, /FDYAN160AV1/);
-  // And it says what happens meanwhile, rather than leaving a hole.
-  assert.match(eq.why, /hidden|misled/i);
+  assert.match(eq.what, /Daikin/);
+  assert.match(eq.association, /Brand shown/);
+  assert.match(eq.association, /model is optional/i);
+  // And it says what the page does meanwhile, rather than leaving a hole.
+  assert.match(eq.why, /branded panel|hidden/i);
+
+  // A library with a Daikin photograph in it is not asked for one.
+  const have = { images: [image('d', IMAGE_ROLES.EQUIPMENT, [],
+    { equipmentBrand: 'Daikin', tags: ['daikin', 'outdoor'] })] };
+  assert.ok(!assetRequest(have, { unit: DAIKIN }).needs.some(x => x.id.startsWith('equipment:')),
+    'asked for a photograph of a brand already on file');
+
+  // But a Braemar quote against that same library still is.
+  const braemar = assetRequest(have, { unit: { brandName: 'Braemar', model: 'KDHV160D1S' } });
+  const ask = braemar.optional.find(x => x.id.startsWith('equipment:'));
+  assert.ok(ask, 'a Braemar quote with no Braemar photograph asked for nothing');
+  assert.match(ask.what, /Braemar/);
 });
 
 test('an unrated review is asked for as a RATING, not as another review', () => {

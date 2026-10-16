@@ -65,18 +65,24 @@ export function assetRequest(content = {}, job = {}) {
   // ── EQUIPMENT ──────────────────────────────────────────────────────────
   const unit = job.unit || null;
   const equipShots = byRole(IMAGE_ROLES.EQUIPMENT);
-  if (unit && trimmed(unit.model)) {
+  const unitBrand = trimmed(unit && (unit.brandName ?? unit.brand ?? unit.brandId));
+  if (unit && (trimmed(unit.model) || unitBrand)) {
     const matched = equipmentImagesFor(images, unit);
     if (!matched.length) {
-      const models = [unit.model, unit.outdoorModel].map(trimmed).filter(Boolean);
-      needs.push(item(NEED.OPTIONAL, 'equipment:' + models.join('+'),
-        'A photograph of ' + models.join(' and '),
-        'A customer shown a picture of a different machine from the one they are '
-        + 'buying has been misled by their own quote, so the section stays hidden '
-        + 'until a photograph is tagged with this model.',
-        'Your recommended system — beside the specification table', models.length,
-        'Upload at /quote-presentation.html → Images, set Role to "equipment", and '
-        + 'enter the model: ' + models.join(', ')));
+      // Matching is on the brand where no photograph names the model, so what
+      // is missing is a photograph of THIS BRAND — not of this exact model.
+      // Asking for the model would send Nick looking for a compliance plate
+      // when a photograph of the machine would do.
+      const label = unitBrand || [unit.model, unit.outdoorModel].map(trimmed)
+        .filter(Boolean).join(' and ');
+      needs.push(item(NEED.OPTIONAL, 'equipment:' + (unitBrand || trimmed(unit.model)),
+        'A photograph of a ' + label + ' unit',
+        'There is no approved ' + label + ' photograph in the library, so the system '
+        + 'card renders the plain branded panel rather than somebody else\'s machine.',
+        'Your recommended system — beside the specification table', 1,
+        'Upload at /quote-presentation.html → Images, set Role to "equipment" and '
+        + 'Brand shown to "' + label + '". The model is optional — it only makes the '
+        + 'match sharper.'));
     }
   } else if (!equipShots.length) {
     needs.push(item(NEED.OPTIONAL, 'equipment', 'Photographs of the units NAC fits',

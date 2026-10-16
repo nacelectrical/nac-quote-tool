@@ -332,31 +332,62 @@ const ROLES = Object.values(IMAGE_ROLES);
 /** Compare model strings the way a parts list does: case and spacing are noise. */
 const modelKey = (v) => trimmed(v).toUpperCase().replace(/[\s\-_/]+/g, '');
 
+/** Brands compare the same way: case and spacing are noise. */
+const brandKey = (v) => trimmed(v).toUpperCase().replace(/[\s\-_/.]+/g, '');
+
+/**
+ * A controller is part of the system, but it is not a picture OF the system.
+ * Where a brand offers both, the unit goes on the card and the controller
+ * waits behind it.
+ */
+function isController(asset) {
+  return list(asset.tags).some(t => /controller|console|thermostat/i.test(trimmed(t)));
+}
+
 /**
  * The approved photographs of the equipment on THIS quote.
  *
- * Matching is on the model, and only on the model. A brand match is not
- * enough: "a Daikin" is four hundred different machines, and a customer
- * buying an FDYAN160 shown a picture of a wall split has been misled by
- * their own quote.
+ * ── HOW A PHOTOGRAPH IS MATCHED, AND WHOSE CALL THAT IS ────────────────────
+ *
+ * It was the MODEL and only the model, on the reasoning that "a Daikin" is
+ * four hundred different machines and a customer buying an FDYAN160 shown a
+ * wall split has been misled by their own quote.
+ *
+ * Nick, 16 October 2026: "Just use brands. Put one of the Daikin ones next to
+ * a Daikin, Fujitsu next to Fujitsu."
+ *
+ * That is his call to make and the reasoning behind it holds: NAC's library
+ * is NAC's own photographs of NAC's own work, and what is in it is ducted
+ * outdoor units. The wall-split problem was never about brand matching in the
+ * abstract — it was about a library that might contain anything. This one
+ * does not, and he is the person who decides what goes into it.
+ *
+ * So: the MODEL still wins when one is recorded, because an exact match is
+ * strictly better than a brand one and costs nothing. Only when no photograph
+ * names the model does it fall back to the brand. Nothing is matched on
+ * nothing: a photograph with neither a model nor a brand is never offered.
  *
  * Returns [] when nothing matches, which is the correct answer — the section
  * is then not rendered, rather than rendered empty.
  */
 export function equipmentImagesFor(images = [], unit = {}, { max = 3 } = {}) {
-  const wanted = [unit.model, unit.indoorModel, unit.outdoorModel, unit.modelName]
+  const wantedModels = [unit.model, unit.indoorModel, unit.outdoorModel, unit.modelName]
     .map(modelKey).filter(Boolean);
-  if (!wanted.length) return [];
-  const out = [];
-  for (const raw of list(images)) {
-    const a = normaliseImageAsset(raw);
-    if (a.role !== IMAGE_ROLES.EQUIPMENT) continue;
-    if (!imagePublishable(a).ok) continue;
-    if (!a.equipmentModels.some(m => wanted.includes(modelKey(m)))) continue;
-    out.push(a);
-    if (out.length >= max) break;
-  }
-  return out;
+  const wantedBrand = brandKey(unit.brandName ?? unit.brand ?? unit.brandId);
+
+  const usable = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const byModel = wantedModels.length
+    ? usable.filter(a => a.equipmentModels.some(m => wantedModels.includes(modelKey(m))))
+    : [];
+  if (byModel.length) return byModel.slice(0, max);
+
+  if (!wantedBrand) return [];
+  const byBrand = usable.filter(a => brandKey(a.equipmentBrand) === wantedBrand);
+  // The unit first, then anything else that brand offers.
+  byBrand.sort((a, b) => (isController(a) ? 1 : 0) - (isController(b) ? 1 : 0));
+  return byBrand.slice(0, max);
 }
 
 /** The largest derivative — what a customer page loads at full width. */
