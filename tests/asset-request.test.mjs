@@ -130,9 +130,19 @@ test('an empty library cannot issue, and says exactly why', () => {
   assert.equal(r.canIssue, false);
 
   const ids = r.essential.map(x => x.id);
-  for (const must of ['logo', 'warranty', 'licence:electrical', 'licence:arc']) {
+  for (const must of ['logo', 'warranty', 'licence:arc']) {
     assert.ok(ids.includes(must), 'nothing asked for ' + must);
   }
+  // The ELECTRICAL licence is outstanding, not blocking. Nick, 16 October
+  // 2026: "Leave licence number out for now until I have it." The publish gate
+  // already treats it that way — a CHECK, not a blocker — so listing it as
+  // essential made this list stricter than the system it describes.
+  assert.ok(!ids.includes('licence:electrical'),
+    'the electrical licence is blocking again');
+  const outstanding = r.optional.find(x => x.id === 'licence:electrical');
+  assert.ok(outstanding, 'the electrical licence stopped being mentioned at all');
+  // Still said, and said with the reason: NAC's own terms promise it.
+  assert.match(outstanding.why, /17\.2/);
   // THE TERMS ARE NOT ON THAT LIST, and that is correct: an empty library is
   // still seeded with NAC's own Terms and Conditions of Trade, so a proposal
   // issued before anybody opens the library still shows the customer what they
@@ -260,6 +270,8 @@ test('the request list reads the field names the library actually has', () => {
   const askedFor = arcOnly.needs.filter(x => x.id.startsWith('licence:')).map(x => x.id);
   assert.deepEqual(askedFor, ['licence:electrical'],
     'with the ARC authorisation on file, only the electrical licence is outstanding');
+  // And it does not stop a quote going out.
+  assert.ok(!arcOnly.essential.some(x => x.id.startsWith('licence:')));
   assert.equal(arcOnly.have.arcAuthorisation, 'AU64234');
   assert.equal(arcOnly.have.electricalLicence, false);
 });
@@ -277,6 +289,9 @@ test('NAC\'s seeded credentials carry the ARC authorisation Nick confirmed', () 
   const r = assetRequest({ trust: { ...NAC_TRUST } }, {});
   assert.ok(!r.needs.some(x => x.id === 'licence:arc'));
   assert.ok(r.needs.some(x => x.id === 'licence:electrical'));
+  // Blank, and left out of the customer page rather than filled with
+  // something that looks like a licence.
+  assert.ok(!r.essential.some(x => x.id === 'licence:electrical'));
 });
 
 test('the warranty wording is read off the trust record, where it lives', () => {

@@ -659,7 +659,26 @@ export function normaliseTrust(input = {}) {
   };
 }
 
-/** Only the fields that were actually filled in, as label/value pairs. */
+/**
+ * Only the fields that were actually filled in, as label/value pairs.
+ *
+ * ── CREDENTIALS, NOT WARRANTIES ─────────────────────────────────────────────
+ *
+ * This used to add the workmanship and manufacturer warranties too, and the
+ * proposal has a WARRANTY AND AFTERCARE section that renders both from the
+ * same two fields. So a customer scrolling the page read the identical two
+ * paragraphs twice, a few hundred pixels apart, under different headings —
+ * which does not read as thorough, it reads as padding.
+ *
+ * "Why choose NAC" answers who NAC is: the ABN, the licences, where they work,
+ * that they are insured. What is covered and for how long is its own section
+ * and belongs there.
+ *
+ * A blank field is omitted rather than shown empty. That is how the electrical
+ * contractor licence stays off the page until there is one to print — Nick,
+ * 16 October 2026: "Leave licence number out for now until I have it" — with
+ * no gap and no placeholder standing in for a licence.
+ */
 export function trustFacts(trust) {
   const t = normaliseTrust(trust);
   const out = [];
@@ -668,8 +687,6 @@ export function trustFacts(trust) {
   add('Electrical contractor licence', t.electricalLicence);
   add('ARC refrigeration authorisation', t.arcAuthorisation);
   add('Service area', t.serviceArea);
-  add('Workmanship warranty', t.workmanshipWarranty);
-  add('Manufacturer warranty', t.manufacturerWarranty);
   add('Insurance', t.insuranceStatement);
   if (t.memberships.length) add('Memberships', t.memberships.join(', '));
   return out;

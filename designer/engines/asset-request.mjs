@@ -227,11 +227,28 @@ export function assetRequest(content = {}, job = {}) {
   // one item cannot say that one of them has arrived.
   const t = c.trust || {};
   if (!trimmed(t.electricalLicence)) {
-    needs.push(item(NEED.ESSENTIAL, 'licence:electrical',
-      'NAC\'s electrical contractor licence number',
-      'It prints in the trust panel on every proposal. It is never invented — a '
-      + 'wrong licence number on a quote is a serious thing to put in writing, and a '
-      + 'plausible-looking default is a fabricated licence.',
+    // ── OUTSTANDING, NOT BLOCKING ────────────────────────────────────────
+    //
+    // Nick, 16 October 2026: "Leave licence number out for now until I have
+    // it." The publish gate already treats it that way — presentation.mjs
+    // raises LICENCE_PROMISED_BY_TERMS as a CHECK and lets the quote go — so
+    // listing it as ESSENTIAL made this list stricter than the system it is
+    // supposed to describe, which is its own kind of wrong.
+    //
+    // It is still SAID, and said with the reason, because clause 17.2 of
+    // NAC's own terms tells the customer that licence numbers appear on
+    // quotations and invoices. A document promising something the quotation
+    // does not carry is worth one line on a list, whatever the list's level.
+    //
+    // A blank field is omitted from the customer page, so nothing shows a
+    // gap or a placeholder in the meantime.
+    needs.push(item(NEED.OPTIONAL, 'licence:electrical',
+      'NAC\'s electrical contractor licence number — when you have it',
+      'Clause 17.2 of NAC\'s terms tells the customer that licence numbers appear '
+      + 'on quotations and invoices, and this one carries the ARC authorisation but '
+      + 'not the electrical licence. The trust panel simply leaves the line out '
+      + 'until it is there; it is never filled with a plausible-looking default, '
+      + 'because that would be a fabricated licence.',
       'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
   }
   if (!trimmed(t.arcAuthorisation)) {
