@@ -25,7 +25,7 @@ import {
   QUOTE_DRAFT_SCHEMA, DRAFT_BLOCK, createQuoteDraft, normaliseQuoteDraft,
   chosenSystem, quoteDraftGate, draftToQuoteSource, draftSelectedOptions
 } from '../designer/engines/quote-draft.mjs';
-import { buildPresentation, presentationGate } from '../designer/engines/presentation.mjs';
+import { buildPresentation, presentationGate, money } from '../designer/engines/presentation.mjs';
 import { quoteGate } from '../designer/engines/quote-gate.mjs';
 import { quoteOnlyDraft, quoteOnlyContent, UPGRADES, SETTINGS } from './fixtures/quote-only.mjs';
 
@@ -493,4 +493,89 @@ test('without the test-quote flag the placeholder name blocks', () => {
   const built = build(quoteOnlyDraft(), { testQuote: false });
   assert.equal(built.ok, false);
   assert.ok(codes(built.blockers).includes('CUSTOMER_DATA_NOT_REAL'));
+});
+
+// ── 13. THE CUSTOMER PAGE ITSELF ───────────────────────────────────────────
+
+import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
+
+const html = () => renderPresentationHtml(build().presentation, { token: 'TESTTOKEN' });
+
+test('the cover names the customer and the property', () => {
+  const h = html();
+  assert.match(h, /class="cover/);
+  assert.ok(h.includes('Prepared for'), 'the cover does not say who it is for');
+  assert.ok(h.includes('12 Boronia Street, Buderim QLD 4556'),
+    'the cover does not say which house');
+});
+
+test('the cover carries the GST-inclusive total', () => {
+  assert.ok(html().includes('$17,817'), 'the headline figure is not on the cover');
+});
+
+test('the test banner is the first thing on the page', () => {
+  const h = html();
+  const banner = h.indexOf('test-banner');
+  const cover = h.indexOf('class="cover');
+  assert.ok(banner > -1, 'no test banner');
+  assert.ok(banner < cover, 'the banner comes after the cover');
+});
+
+test('the exclusions are on the customer page', () => {
+  const h = html();
+  assert.ok(h.includes('Not included'), 'no exclusions heading');
+  assert.ok(h.includes('Asbestos handling of any kind'), 'an exclusion is missing');
+  assert.ok(h.includes('Switchboard or circuit upgrades'), 'an exclusion is missing');
+});
+
+test('the inclusions are not printed twice', () => {
+  const h = html();
+  // The evidence cards and the typed list both describe the same job. Showing
+  // both put "Removal of installation waste" on the page in two places.
+  const hits = (h.match(/Removal of all installation waste/g) || []).length;
+  assert.equal(hits, 1, 'the typed inclusions appear ' + hits + ' times');
+  assert.ok(!h.includes('What is included'), 'the evidence card grid is also drawn');
+});
+
+test('the investment column adds up to the total beside it', () => {
+  const inv = build().presentation.investment;
+  const column = (inv.baseIncGst || 0)
+    + (inv.selectedOptions || []).reduce((s, o) => s + o.priceIncGst, 0);
+  assert.equal(Math.round(column * 100) / 100, inv.totalIncGst);
+  const h = html();
+  assert.ok(h.includes('Total excluding GST'), 'the GST split is not shown');
+  assert.ok(h.includes(money(inv.totalGst)), 'the GST shown is not the total’s GST');
+});
+
+test('the customer can accept, decline or ask a question', () => {
+  const h = html();
+  assert.ok(h.includes('Accept proposal'));
+  assert.ok(h.includes('Decline proposal'));
+  assert.ok(h.includes('Ask a question'));
+});
+
+test('a counted upgrade is a spinner the customer can actually see', () => {
+  const h = html();
+  assert.match(h, /class="opt-q"[^>]*value="4"/);
+  // The 22px tick-box rule must not be shrinking it any more.
+  assert.ok(!/\.opt input\{width:22px/.test(h), 'the quantity spinner is sized as a tick box');
+});
+
+test('an empty column is not printed as a row of dashes', () => {
+  // The outlet TYPE is settled at detailed design, so a quote has none.
+  const h = html();
+  assert.ok(!h.includes('>Outlet type<'), 'an empty outlet-type column was printed');
+});
+
+test('nothing on the page is a broken image or a placeholder box', () => {
+  // Base64 image data is not prose. A megabyte of it contains "todo", "tbc"
+  // and "xxx" by arithmetic, and searching the raw page for those words found
+  // them inside a photograph of an outdoor unit.
+  const h = html().replace(/data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+/g, 'data:…');
+  assert.ok(!/src="(|#|about:blank)"/.test(h), 'an image with no source');
+  // `placeholder="Full name"` on the acceptance form is the HTML attribute
+  // and is exactly what belongs there, so the check is for placeholder
+  // CONTENT, not for the word.
+  assert.ok(!/lorem ipsum|TODO|FIXME|TBC|XXX|\[insert/i.test(h));
+  assert.ok(!/Sample Customer|example\.com|example\.invalid|0400 000 000/i.test(h));
 });

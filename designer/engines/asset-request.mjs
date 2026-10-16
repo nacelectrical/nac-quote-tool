@@ -129,27 +129,57 @@ export function assetRequest(content = {}, job = {}) {
   }
 
   // ── REVIEWS ────────────────────────────────────────────────────────────
+  //
+  // A review used to need a star rating to publish, and NAC's twelve real
+  // Google reviews all arrived without one, so the request here was for the
+  // RATINGS rather than for more reviews. The words are the review and an
+  // unrated one now publishes with no stars drawn, so the shortfall is no
+  // longer about ratings — it is about APPROVAL, which is a person's act and
+  // the one thing nobody but Nick can do.
+  //
+  // So the ask names the actual obstacle: reviews sitting on file waiting to
+  // be ticked is a different job from going and collecting more.
   const reviews = list(c.reviews);
   const publishable = reviews.filter(r => reviewPublishable(r).ok);
+  const onlyUnapproved = reviews.filter(r => {
+    const why = reviewPublishable(r).reasons;
+    return why.length === 1 && /Not approved/i.test(why[0]);
+  });
   if (publishable.length < 3) {
-    const unrated = reviews.filter(r =>
-      reviewPublishable(r).reasons.some(x => /Star rating/.test(x)));
+    const short = 3 - publishable.length;
+    const waiting = Math.min(onlyUnapproved.length, short);
     needs.push(item(NEED.OPTIONAL, 'reviews',
-      unrated.length
-        ? 'The star ratings for ' + unrated.length + ' review'
-          + (unrated.length === 1 ? '' : 's') + ' already on file'
-        : (3 - publishable.length) + ' more approved review'
-          + (3 - publishable.length === 1 ? '' : 's'),
-      unrated.length
-        ? 'Google\'s notification emails render the stars as an image with no alt '
-          + 'text, so the rating is not in them and has not been guessed. Until the '
-          + 'real figures are entered these cannot be published.'
+      waiting
+        ? 'Approval for ' + onlyUnapproved.length + ' review'
+          + (onlyUnapproved.length === 1 ? '' : 's') + ' already on file'
+        : short + ' more approved review' + (short === 1 ? '' : 's'),
+      waiting
+        ? 'They are genuine and everything else about them checks out \u2014 they are '
+          + 'waiting on you to tick Approved. Nothing goes on a customer\u2019s page '
+          + 'until you have.'
         : 'Below three the section is hidden rather than shown thin.',
-      'What our customers say', Math.max(1, 3 - publishable.length),
-      unrated.length
-        ? 'Read them off the Google Business Profile dashboard and enter them at '
-          + '/quote-presentation.html → Reviews, then tick Approved.'
-        : 'Import at /quote-presentation.html → Reviews → Import Google reviews.'));
+      'What our customers say', Math.max(1, short),
+      waiting
+        ? 'Open /quote-presentation.html \u2192 Reviews and tick Approved on the ones '
+          + 'you are happy to publish.'
+        : 'Import at /quote-presentation.html \u2192 Reviews \u2192 Import Google reviews.'));
+  }
+
+  // ── THE STARS, IF NAC EVER WANTS THEM ──────────────────────────────────
+  // Not a blocker and never guessed. Google's notification emails render the
+  // stars as an image with no alt text, so the figure is not in them; a review
+  // with none publishes and the page simply draws no stars beside it.
+  const unrated = publishable.filter(r => r.rating === null || r.rating === undefined);
+  if (unrated.length) {
+    needs.push(item(NEED.OPTIONAL, 'review-ratings',
+      'The star ratings for ' + unrated.length + ' published review'
+        + (unrated.length === 1 ? '' : 's'),
+      'The reviews publish without them and no stars are drawn. Entering the real '
+      + 'figures adds the stars; nothing is guessed, so nothing is shown until they '
+      + 'are entered.',
+      'What our customers say', unrated.length,
+      'Read them off the Google Business Profile dashboard and enter them at '
+      + '/quote-presentation.html \u2192 Reviews.'));
   }
 
   // ── WORDS NAC IS BOUND BY ──────────────────────────────────────────────

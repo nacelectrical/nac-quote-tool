@@ -59,9 +59,12 @@ test('no rating was invented, and no review was approved on NAC\'s behalf', () =
 test('nothing in the shipped file can reach a customer quote', () => {
   for (const r of ALL) {
     const v = reviewPublishable(normaliseReview(r));
-    assert.equal(v.ok, false, r.id + ' is publishable with no rating and no approval');
-    assert.ok(v.reasons.some(x => /Star rating must be 1 to 5/.test(x)), r.id);
-    assert.ok(v.reasons.some(x => /Not approved/.test(x)), r.id);
+    // An unrated review publishes with no stars drawn \u2014 the words are the
+    // review, and a rating nobody read is not invented to satisfy a rule. So
+    // the one thing still standing between these and a customer's page is
+    // NAC's own approval, which is a person's act and nothing else's.
+    assert.equal(v.ok, false, r.id + ' is publishable without NAC approving it');
+    assert.deepEqual(v.reasons, ['Not approved for marketing use.'], r.id);
   }
   // And the selector agrees: a quote built today shows no reviews rather than
   // showing them unrated.

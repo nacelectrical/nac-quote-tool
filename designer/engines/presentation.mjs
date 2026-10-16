@@ -25,7 +25,7 @@
 import { quoteGate } from './quote-gate.mjs';
 import { looksUnfilled, customerStatus } from './customer-data.mjs';
 import { commercialTermsStatus } from './commercial-terms.mjs';
-import { licencePromiseCheck } from './nac-terms.mjs';
+import { licencePromiseCheck, termsPlaceholders } from './nac-terms.mjs';
 import { systemOptionsStatus, chooseSystemOption, optionsFromDesign }
   from './system-options.mjs';
 export { looksUnfilled };
@@ -406,6 +406,27 @@ export function presentationGate(design, opts = {}) {
         });
       }
     }
+    // ── NO UNFILLED BRACKET REACHES A DOCUMENT SOMEBODY SIGNS ───────────
+    //
+    // The terms template carried "[insert street address]" and three "[insert
+    // number]"s in clause 21, and they went out on the proposal — in the very
+    // terms the customer is asked to accept. The contact block is templated
+    // now and resolves from the trust settings, so this is the check that it
+    // actually did: any bracket or unresolved token left in the body stops the
+    // proposal.
+    const left = termsPlaceholders(opts.termsAndConditions);
+    if (left.length) {
+      blockers.push({
+        code: 'PLACEHOLDER_IN_TERMS',
+        severity: 'CRITICAL',
+        message: 'The terms and conditions still contain ' + left.slice(0, 3).join(', ')
+          + (left.length > 3 ? ' and ' + (left.length - 3) + ' more' : '')
+          + '. A customer is asked to sign these, and an unfilled bracket on a signed '
+          + 'document is worse than a missing line. Fill the value in the business '
+          + 'settings, or take the line out of the terms.',
+        placeholders: left
+      });
+    }
     for (const w of [t.workmanshipWarranty, t.manufacturerWarranty]) {
       if (looksUnfilled(w)) {
         blockers.push({
@@ -543,6 +564,10 @@ export function upgradeCapabilities(design) {
 function heroSection(d, ctx) {
   const c = ctx.customer || {};
   const privacy = ctx.privacy || {};
+  // On a TEST QUOTE the customer's name is supposed to read as a test, and the
+  // page is banner-labelled as one. Blanking it there would leave the cover
+  // unable to show who the proposal is for, which is the thing being tested.
+  const testQuote = ctx.testQuote === true;
   // ── A NAME, OR NO NAME. NEVER HALF A PLACEHOLDER ───────────────────────
   //
   // Nick: "no customer first name: use neutral wording". Never "Hi ,".
@@ -553,16 +578,30 @@ function heroSection(d, ctx) {
   // name: the proposal opens with a plain "Hello" rather than inventing a
   // person out of a placeholder.
   const name = trimmed(c.name);
-  const first = (name && !looksUnfilled(name) && !/^not\b/i.test(name))
-    ? (name.split(/\s+/)[0] || '') : '';
-  const greeting = first ? 'Hello ' + first : 'Hello';
-  const site = privacy.showFullAddress
-    ? trimmed(ctx.job?.siteAddress || c.address)
-    : suburbOf(ctx.job?.siteAddress || c.address);
+  const real = !!name && (testQuote || (!looksUnfilled(name) && !/^not\b/i.test(name)));
+  const first = real ? (name.split(/\s+/)[0] || '') : '';
+  const greeting = (first && !testQuote) ? 'Hello ' + first : 'Hello';
+  const fullAddress = trimmed(ctx.job?.siteAddress || c.address);
+  const site = privacy.showFullAddress ? fullAddress : suburbOf(fullAddress);
+
+  // ── THE COVER NAMES THE HOUSE THE QUOTE IS FOR ───────────────────────────
+  // Nick: "a strong cover section with the genuine NAC logo, approved
+  // photography, the client name and the property address."
+  //
+  // The SUBURB is the privacy-safe form used in the body of the page and in
+  // anything that might be shown as an example of NAC's work. The cover is a
+  // different case: this document was prepared for one household and goes to
+  // nobody else, and a proposal that does not say which house it prices is the
+  // one that gets confused with the neighbour's. So the cover carries the
+  // address the estimator entered — on the cover only, and never on a page
+  // built as a past-work example.
+  const coverAddress = fullAddress;
   return {
+    /** The full property address, for the cover. */
+    siteAddress: coverAddress,
     greeting,
     // Same rule: a placeholder is not a name anywhere on the page.
-    customerName: first ? name : '',
+    customerName: real ? name : '',
     title: 'Your Ducted Air Conditioning Proposal',
     site,
     proposalNumber: trimmed(ctx.proposalNumber),
@@ -1064,6 +1103,7 @@ export function buildPresentation({
 
   const ctx = {
     customer, job, trust, evidence, privacy, intro, heroImage,
+    testQuote: testQuote === true,
     productImage: equipmentShot,
     proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
     selectedOptions, aftercare: content.aftercare || {},

@@ -269,7 +269,7 @@ These are excluded unless the quotation itemises them. If the job turns out to n
 
 21 CONTACT
 
-Business NAC Electrical Air & Refrigeration Business address [insert street address] Phone 0427 101 685 Email nick@nacelectrical.com.au Electrical contractor licence [insert number] QBCC licence [insert number] ARCtick authorisation [insert number] ACCEPTANCE I have read and accept these Terms and Conditions of Trade, and I accept the quotation they relate to. Name (printed) Signature Date Quotation / job reference Site address NAC Electrical Air & Refrigeration · ABN 97 636 392 982 · Sunshine Coast, Queensland · 0427 101 685 Terms and Conditions of Trade v1.0, effective 23 September 2026. All quotations are subject to site inspection.`;
+Business NAC Electrical Air & Refrigeration{{businessAddress}} Phone 0427 101 685 Email nick@nacelectrical.com.au{{electricalLicence}}{{qbccLicence}}{{arcAuthorisation}} ACCEPTANCE I have read and accept these Terms and Conditions of Trade, and I accept the quotation they relate to. Name (printed) Signature Date Quotation / job reference Site address NAC Electrical Air & Refrigeration · ABN 97 636 392 982 · Sunshine Coast, Queensland · 0427 101 685 Terms and Conditions of Trade v1.0, effective 23 September 2026. All quotations are subject to site inspection.`;
 
 /**
  * The commercial figures the document commits NAC to.
@@ -349,5 +349,65 @@ export function licencePromiseCheck(trust = {}) {
 
 export default {
   NAC_TERMS_VERSION, NAC_TERMS_EFFECTIVE, NAC_TERMS_TITLE, NAC_TERMS_LABEL,
-  NAC_TERMS_BODY, TERMS_COMMITMENTS, checkTermsAgainstSettings, licencePromiseCheck
+  NAC_TERMS_BODY, TERMS_COMMITMENTS, checkTermsAgainstSettings, licencePromiseCheck,
+  resolveTermsContact, termsContactGaps, termsPlaceholders
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CONTACT BLOCK
+//
+// Clause 21 of these terms names the business, its address and its licences,
+// and the template carried "[insert street address]" and three "[insert
+// number]"s — which went out on the proposal, in the terms the customer signs.
+// An unfilled bracket on a document somebody is asked to sign is worse than a
+// missing line: it says NAC did not read their own terms.
+//
+// So the four are TOKENS. A value NAC holds is printed; a value NAC does not
+// hold takes its whole label out of the clause rather than leaving a bracket
+// where it was. Nick, 15 October 2026: "Leave licence number out for now until
+// I have it" — so the electrical licence line simply is not there until it is,
+// and the ARCtick line is, because AU64234 is real.
+//
+// NOTHING IS INVENTED. An absent licence number never becomes "pending",
+// "on application" or a number.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TERMS_TOKENS = Object.freeze([
+  ['businessAddress', 'Business address', 'businessAddress'],
+  ['electricalLicence', 'Electrical contractor licence', 'electricalLicence'],
+  ['qbccLicence', 'QBCC licence', 'qbccLicence'],
+  ['arcAuthorisation', 'ARCtick authorisation', 'arcAuthorisation']
+]);
+
+/**
+ * Fill the contact block from the trust settings.
+ *
+ * @param {string} body  the terms body, templated or already resolved
+ * @param {object} trust NAC's trust settings
+ */
+export function resolveTermsContact(body, trust = {}) {
+  let out = String(body == null ? '' : body);
+  for (const [token, label, field] of TERMS_TOKENS) {
+    const value = String(trust[field] == null ? '' : trust[field]).trim();
+    // A value that is itself a placeholder is no value.
+    const real = value && !/^\[|\b(tbc|tba|pending|n\/a|unknown|insert)\b/i.test(value);
+    out = out.split('{{' + token + '}}').join(real ? ' ' + label + ' ' + value : '');
+  }
+  return out;
+}
+
+/** Which contact-block lines clause 21 is currently unable to print. */
+export function termsContactGaps(trust = {}) {
+  return TERMS_TOKENS
+    .filter(([, , field]) => {
+      const v = String(trust[field] == null ? '' : trust[field]).trim();
+      return !v || /^\[|\b(tbc|tba|pending|n\/a|unknown|insert)\b/i.test(v);
+    })
+    .map(([token, label, field]) => ({ token, label, field }));
+}
+
+/** Any bracketed placeholder still in a terms body, e.g. "[insert number]". */
+export function termsPlaceholders(body) {
+  const found = String(body == null ? '' : body).match(/\[[^\]]{0,60}\]|\{\{[a-zA-Z]+\}\}/g);
+  return found ? [...new Set(found)] : [];
+}

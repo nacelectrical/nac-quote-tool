@@ -42,7 +42,7 @@ export const CONSENT = Object.freeze({
   NONE: 'none'
 });
 
-import { NAC_TERMS_BODY } from './nac-terms.mjs';
+import { NAC_TERMS_BODY, resolveTermsContact } from './nac-terms.mjs';
 
 export const REVIEW_SOURCES = Object.freeze([
   'google', 'facebook', 'product_review', 'email', 'sms', 'word_of_mouth', 'other'
@@ -117,8 +117,22 @@ export function reviewPublishable(review) {
   }
   if (!trimmed(r.text)) reasons.push('Review text is empty.');
   if (!trimmed(r.displayName)) reasons.push('No display name recorded.');
+  // ── A STAR RATING IS OPTIONAL. AN INVENTED ONE IS NOT. ──────────────────
+  //
+  // This required a rating of 1 to 5, and NAC's twelve real Google reviews all
+  // arrived without one: the review notification emails carry the customer's
+  // words and not the number of stars they clicked. So the rule meant NAC's
+  // genuine reviews could not be published at all, and the only ways past it
+  // were to type a number nobody had read — on a page that says "Google
+  // review" beside it — or to show no reviews.
+  //
+  // The words are the review. A rating that IS recorded must still be a real
+  // one, because a rating out of range is a data error; an absent rating
+  // publishes and the page simply draws no stars.
   const rating = num(r.rating);
-  if (rating === null || rating < 1 || rating > 5) reasons.push('Star rating must be 1 to 5.');
+  if (rating !== null && (rating < 1 || rating > 5)) {
+    reasons.push('A star rating has to be 1 to 5. Leave it empty if it is not known.');
+  }
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -626,8 +640,14 @@ export const NAC_TRUST = Object.freeze({
  * anybody has opened the content library still shows the customer the terms
  * they are accepting rather than an empty panel. Anything stored wins.
  */
-export function seedTermsAndConditions(stored = null) {
-  return trimmed(stored) || NAC_TERMS_BODY;
+export function seedTermsAndConditions(stored = null, trust = null) {
+  // The contact block in clause 21 is templated, because the template carried
+  // "[insert street address]" and three "[insert number]"s and they reached
+  // the terms a customer was asked to sign. A value NAC holds is printed; a
+  // value NAC does not hold takes its label out of the clause rather than
+  // leaving a bracket behind. Stored text still wins outright, and is resolved
+  // too in case it was copied from the template.
+  return resolveTermsContact(trimmed(stored) || NAC_TERMS_BODY, trust || NAC_TRUST);
 }
 
 /**

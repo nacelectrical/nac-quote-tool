@@ -185,9 +185,11 @@ test('the equipment request asks for the BRAND, which is what matching needs', (
   assert.match(ask.what, /Braemar/);
 });
 
-test('an unrated review is asked for as a RATING, not as another review', () => {
+test('reviews waiting on approval are asked for as APPROVAL, not as more reviews', () => {
   // NAC's own file: twelve real reviews, none with a star rating, because
-  // Google's notification emails do not carry one.
+  // Google's notification emails do not carry one. They publish without the
+  // stars, so the only thing standing between them and the page is Nick
+  // ticking Approved — and "send us three more reviews" would be the wrong job.
   const content = { reviews: [
     { id: 'a', displayName: 'Christopher Trench', text: 'They replaced an ageing ducted system.',
       rating: null, approved: false, permissionStatus: 'public_source', source: 'google' },
@@ -199,12 +201,29 @@ test('an unrated review is asked for as a RATING, not as another review', () => 
   const r = assetRequest(content, { unit: DAIKIN });
   const rev = r.needs.find(x => x.id === 'reviews');
   assert.ok(rev);
-  assert.match(rev.what, /star rating/i);
-  assert.match(rev.why, /no alt text|not in them/i);
-  assert.match(rev.association, /Business Profile/i);
-  // It must NOT ask for more reviews — there are plenty, they just cannot
-  // publish yet, and "send us three more reviews" would be the wrong job.
-  assert.ok(!/more approved review/i.test(rev.what), 'asked for reviews instead of ratings');
+  assert.match(rev.what, /approval for 3 reviews/i);
+  assert.match(rev.association, /tick Approved/i);
+  assert.ok(!/more approved review/i.test(rev.what), 'asked for reviews instead of approval');
+});
+
+test('the star ratings are an optional extra on reviews that already publish', () => {
+  const content = { reviews: [
+    { id: 'a', displayName: 'Christopher Trench', text: 'They replaced an ageing ducted system.',
+      rating: null, approved: true, permissionStatus: 'public_source', source: 'google' },
+    { id: 'b', displayName: 'Cheryl Judge', text: 'Very happy with the service.',
+      rating: null, approved: true, permissionStatus: 'public_source', source: 'google' },
+    { id: 'c', displayName: 'jen', text: 'Really great service, short wait time.',
+      rating: 5, approved: true, permissionStatus: 'public_source', source: 'google' }
+  ] };
+  const r = assetRequest(content, { unit: DAIKIN });
+  // Three publish, so nothing is short.
+  assert.ok(!r.needs.some(x => x.id === 'reviews'), 'asked for reviews it already has');
+  const stars = r.needs.find(x => x.id === 'review-ratings');
+  assert.ok(stars, 'the missing star ratings were not mentioned at all');
+  assert.match(stars.what, /star ratings for 2 published reviews/i);
+  assert.equal(stars.level, NEED.OPTIONAL);
+  // Never a blocker: the reviews are on the page either way.
+  assert.ok(!r.essential.some(x => x.id === 'review-ratings'));
 });
 
 test('a complete library can issue, and asks for nothing essential', () => {
