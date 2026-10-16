@@ -42,7 +42,7 @@ export const CONSENT = Object.freeze({
   NONE: 'none'
 });
 
-import { NAC_TERMS_BODY } from './nac-terms.mjs';
+import { NAC_TERMS_BODY, resolveTermsContact } from './nac-terms.mjs';
 
 export const REVIEW_SOURCES = Object.freeze([
   'google', 'facebook', 'product_review', 'email', 'sms', 'word_of_mouth', 'other'
@@ -117,8 +117,22 @@ export function reviewPublishable(review) {
   }
   if (!trimmed(r.text)) reasons.push('Review text is empty.');
   if (!trimmed(r.displayName)) reasons.push('No display name recorded.');
+  // ── A STAR RATING IS OPTIONAL. AN INVENTED ONE IS NOT. ──────────────────
+  //
+  // This required a rating of 1 to 5, and NAC's twelve real Google reviews all
+  // arrived without one: the review notification emails carry the customer's
+  // words and not the number of stars they clicked. So the rule meant NAC's
+  // genuine reviews could not be published at all, and the only ways past it
+  // were to type a number nobody had read — on a page that says "Google
+  // review" beside it — or to show no reviews.
+  //
+  // The words are the review. A rating that IS recorded must still be a real
+  // one, because a rating out of range is a data error; an absent rating
+  // publishes and the page simply draws no stars.
   const rating = num(r.rating);
-  if (rating === null || rating < 1 || rating > 5) reasons.push('Star rating must be 1 to 5.');
+  if (rating !== null && (rating < 1 || rating > 5)) {
+    reasons.push('A star rating has to be 1 to 5. Leave it empty if it is not known.');
+  }
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -303,8 +317,91 @@ export function normaliseImageAsset(input = {}) {
     } : null,
     derivatives,
     exifStripped: bool(input.exifStripped),
-    gpsRemoved: bool(input.gpsRemoved)
+    gpsRemoved: bool(input.gpsRemoved),
+    // ── WHAT IS IN THE PHOTOGRAPH ──────────────────────────────────────────
+    //
+    // A proposal that shows a customer a picture of a different machine from
+    // the one they are buying is worse than showing no picture. The library
+    // had no way to say which unit an image depicts, so the only honest thing
+    // the presentation could do was show none.
+    //
+    // `role` is what the picture is FOR; `equipmentModels` is the models it
+    // actually shows. Both are NAC's to set, and an image that names no model
+    // is never offered as a photograph of one.
+    role: ROLES.includes(trimmed(input.role)) ? trimmed(input.role) : 'installation',
+    equipmentModels: list(input.equipmentModels).map(trimmed).filter(Boolean),
+    equipmentBrand: trimmed(input.equipmentBrand) || null
   };
+}
+
+/** What a photograph is for. */
+export const IMAGE_ROLES = Object.freeze({
+  HERO: 'hero',                 // the cover
+  EQUIPMENT: 'equipment',       // a unit, a controller, a sensor
+  INSTALLATION: 'installation', // finished work
+  LOGO: 'logo'
+});
+const ROLES = Object.values(IMAGE_ROLES);
+
+/** Compare model strings the way a parts list does: case and spacing are noise. */
+const modelKey = (v) => trimmed(v).toUpperCase().replace(/[\s\-_/]+/g, '');
+
+/** Brands compare the same way: case and spacing are noise. */
+const brandKey = (v) => trimmed(v).toUpperCase().replace(/[\s\-_/.]+/g, '');
+
+/**
+ * A controller is part of the system, but it is not a picture OF the system.
+ * Where a brand offers both, the unit goes on the card and the controller
+ * waits behind it.
+ */
+function isController(asset) {
+  return list(asset.tags).some(t => /controller|console|thermostat/i.test(trimmed(t)));
+}
+
+/**
+ * The approved photographs of the equipment on THIS quote.
+ *
+ * ── HOW A PHOTOGRAPH IS MATCHED, AND WHOSE CALL THAT IS ────────────────────
+ *
+ * It was the MODEL and only the model, on the reasoning that "a Daikin" is
+ * four hundred different machines and a customer buying an FDYAN160 shown a
+ * wall split has been misled by their own quote.
+ *
+ * Nick, 16 October 2026: "Just use brands. Put one of the Daikin ones next to
+ * a Daikin, Fujitsu next to Fujitsu."
+ *
+ * That is his call to make and the reasoning behind it holds: NAC's library
+ * is NAC's own photographs of NAC's own work, and what is in it is ducted
+ * outdoor units. The wall-split problem was never about brand matching in the
+ * abstract — it was about a library that might contain anything. This one
+ * does not, and he is the person who decides what goes into it.
+ *
+ * So: the MODEL still wins when one is recorded, because an exact match is
+ * strictly better than a brand one and costs nothing. Only when no photograph
+ * names the model does it fall back to the brand. Nothing is matched on
+ * nothing: a photograph with neither a model nor a brand is never offered.
+ *
+ * Returns [] when nothing matches, which is the correct answer — the section
+ * is then not rendered, rather than rendered empty.
+ */
+export function equipmentImagesFor(images = [], unit = {}, { max = 3 } = {}) {
+  const wantedModels = [unit.model, unit.indoorModel, unit.outdoorModel, unit.modelName]
+    .map(modelKey).filter(Boolean);
+  const wantedBrand = brandKey(unit.brandName ?? unit.brand ?? unit.brandId);
+
+  const usable = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const byModel = wantedModels.length
+    ? usable.filter(a => a.equipmentModels.some(m => wantedModels.includes(modelKey(m))))
+    : [];
+  if (byModel.length) return byModel.slice(0, max);
+
+  if (!wantedBrand) return [];
+  const byBrand = usable.filter(a => brandKey(a.equipmentBrand) === wantedBrand);
+  // The unit first, then anything else that brand offers.
+  byBrand.sort((a, b) => (isController(a) ? 1 : 0) - (isController(b) ? 1 : 0));
+  return byBrand.slice(0, max);
 }
 
 /** The largest derivative — what a customer page loads at full width. */
@@ -483,7 +580,15 @@ export function resolveInclusions(evidence = {}, catalogue = INCLUSION_CATALOGUE
 export const EMPTY_TRUST = Object.freeze({
   businessName: '',
   abn: '',
+  /**
+   * The street address, for clause 21 of NAC's terms. Blank until somebody
+   * enters it, and a blank one takes the whole "Business address" line out of
+   * the clause rather than leaving the bracket the template shipped with.
+   */
+  businessAddress: '',
   electricalLicence: '',
+  /** Queensland Building and Construction Commission, where the work needs one. */
+  qbccLicence: '',
   arcAuthorisation: '',
   serviceArea: '',
   workmanshipWarranty: '',
@@ -543,8 +648,14 @@ export const NAC_TRUST = Object.freeze({
  * anybody has opened the content library still shows the customer the terms
  * they are accepting rather than an empty panel. Anything stored wins.
  */
-export function seedTermsAndConditions(stored = null) {
-  return trimmed(stored) || NAC_TERMS_BODY;
+export function seedTermsAndConditions(stored = null, trust = null) {
+  // The contact block in clause 21 is templated, because the template carried
+  // "[insert street address]" and three "[insert number]"s and they reached
+  // the terms a customer was asked to sign. A value NAC holds is printed; a
+  // value NAC does not hold takes its label out of the clause rather than
+  // leaving a bracket behind. Stored text still wins outright, and is resolved
+  // too in case it was copied from the template.
+  return resolveTermsContact(trimmed(stored) || NAC_TERMS_BODY, trust || NAC_TRUST);
 }
 
 /**
@@ -562,6 +673,8 @@ export function normaliseTrust(input = {}) {
   return {
     businessName: trimmed(t.businessName),
     abn: trimmed(t.abn),
+    businessAddress: trimmed(t.businessAddress),
+    qbccLicence: trimmed(t.qbccLicence),
     electricalLicence: trimmed(t.electricalLicence),
     arcAuthorisation: trimmed(t.arcAuthorisation),
     serviceArea: trimmed(t.serviceArea),
@@ -576,7 +689,26 @@ export function normaliseTrust(input = {}) {
   };
 }
 
-/** Only the fields that were actually filled in, as label/value pairs. */
+/**
+ * Only the fields that were actually filled in, as label/value pairs.
+ *
+ * ── CREDENTIALS, NOT WARRANTIES ─────────────────────────────────────────────
+ *
+ * This used to add the workmanship and manufacturer warranties too, and the
+ * proposal has a WARRANTY AND AFTERCARE section that renders both from the
+ * same two fields. So a customer scrolling the page read the identical two
+ * paragraphs twice, a few hundred pixels apart, under different headings —
+ * which does not read as thorough, it reads as padding.
+ *
+ * "Why choose NAC" answers who NAC is: the ABN, the licences, where they work,
+ * that they are insured. What is covered and for how long is its own section
+ * and belongs there.
+ *
+ * A blank field is omitted rather than shown empty. That is how the electrical
+ * contractor licence stays off the page until there is one to print — Nick,
+ * 16 October 2026: "Leave licence number out for now until I have it" — with
+ * no gap and no placeholder standing in for a licence.
+ */
 export function trustFacts(trust) {
   const t = normaliseTrust(trust);
   const out = [];
@@ -585,8 +717,6 @@ export function trustFacts(trust) {
   add('Electrical contractor licence', t.electricalLicence);
   add('ARC refrigeration authorisation', t.arcAuthorisation);
   add('Service area', t.serviceArea);
-  add('Workmanship warranty', t.workmanshipWarranty);
-  add('Manufacturer warranty', t.manufacturerWarranty);
   add('Insurance', t.insuranceStatement);
   if (t.memberships.length) add('Memberships', t.memberships.join(', '));
   return out;
@@ -603,6 +733,20 @@ export function normaliseUpgrade(input = {}) {
     title: trimmed(input.title),
     description: trimmed(input.description),
     priceIncGst: num(input.priceIncGst),
+    // ── UPGRADES YOU BUY MORE THAN ONE OF ──────────────────────────────────
+    //
+    // A smart controller is one thing or nothing. A temperature sensor is one
+    // per room the customer wants sensed, and how many is their call, not
+    // ours. So an upgrade may carry a UNIT price instead of a flat one, and
+    // the page asks for a count.
+    //
+    // Absent stays absent: an upgrade with no unit price is the flat kind it
+    // has always been, and Number(null) being 0 must not turn it into a free
+    // one somebody can order a hundred of.
+    unitPriceIncGst: num(input.unitPriceIncGst),
+    unitLabel: trimmed(input.unitLabel) || 'each',
+    maxQuantity: num(input.maxQuantity),
+    defaultQuantity: num(input.defaultQuantity) ?? 0,
     // What must be true of the design for this upgrade to be offerable. Each
     // entry is a key the presentation builder evaluates against the real job.
     requires: list(input.requires).map(trimmed).filter(Boolean),
@@ -624,8 +768,14 @@ export function resolveUpgrades(library = [], capabilities = {}) {
   const offerable = [], withheld = [];
   for (const u of library.map(normaliseUpgrade).sort((a, b) => a.sortOrder - b.sortOrder)) {
     if (!u.enabled || !u.title) continue;
-    if (u.priceIncGst === null) {
+    // Priced either way — a flat price, or a price per unit.
+    if (u.priceIncGst === null && u.unitPriceIncGst === null) {
       withheld.push({ ...u, reason: 'No price configured.' });
+      continue;
+    }
+    // A counted upgrade with no ceiling is an order form, not a quote.
+    if (u.unitPriceIncGst !== null && (u.maxQuantity === null || u.maxQuantity < 1)) {
+      withheld.push({ ...u, reason: 'Priced per unit but no maximum quantity is set.' });
       continue;
     }
     const missing = u.requires.filter(r => capabilities[r] !== true);

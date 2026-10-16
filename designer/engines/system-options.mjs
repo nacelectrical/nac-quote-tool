@@ -37,6 +37,8 @@ export function normaliseSystemOption(input = {}, index = 0) {
   return {
     id: trimmed(input.id) || ('opt-' + (index + 1)),
     brand,
+    /** The catalogue's own brand id, so a brand-locked upgrade can be matched. */
+    brandId: trimmed(input.brandId) || trimmed(brand).toLowerCase().replace(/[^a-z0-9]+/g, '') || null,
     model,
     label: [brand, model].filter(Boolean).join(' ') || trimmed(input.label),
     capacityKw: n(input.capacityKw ?? input.kw),
@@ -44,6 +46,16 @@ export function normaliseSystemOption(input = {}, index = 0) {
     sku: trimmed(input.sku ?? input.supplierCode) || null,
     priceIncGst: n(input.priceIncGst ?? input.price),
     recommended: input.recommended === true,
+    /**
+     * The manufacturer's warranty on THIS brand, in years.
+     *
+     * It differs between the systems on the page — Braemar carry 7 years where
+     * another brand carries something else — and a customer comparing two
+     * prices is entitled to see that next to them rather than find it later.
+     * It is a manufacturer's figure, so it is stated by NAC or it is absent;
+     * nothing here supplies one.
+     */
+    warrantyYears: n(input.warrantyYears),
     /** One line NAC may add — why this one. Never generated. */
     note: trimmed(input.note)
   };

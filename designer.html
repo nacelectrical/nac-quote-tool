@@ -383,10 +383,24 @@ button,input,select,textarea{font-family:inherit;font-size:inherit}
 .edit-help{background:rgba(245,194,0,.08);border:1px solid rgba(245,194,0,.35);
   border-radius:8px;padding:9px 11px;line-height:1.6}
 @media (pointer:coarse){
-  /* On a touch screen every control in the route panel gets a real target. */
-  .plan-tools .btn{min-height:40px;padding-left:14px;padding-right:14px}
-  .plan-tools select,.plan-tools input{min-height:40px}
-  .btn.tiny{min-height:36px;min-width:40px}
+  /* ── A FINGER IS NOT A MOUSE POINTER ──────────────────────────────────────
+     This rule used to cover the route panel only, so the ROUTE controls were
+     thumb-sized and the toolbar above them — Quick Quote, Site Adjust, Save,
+     Customers, Designs — stayed at 32 px. Nick works on an iPad on site, and
+     32 px is a target you miss.
+
+     44 px is the figure Apple publishes and the one the customer-facing page
+     already holds itself to. Every control gets it, not only the ones somebody
+     remembered. */
+  .btn,.btn.small{min-height:44px;min-width:44px;padding-left:14px;padding-right:14px}
+  /* Height alone is not a target. A ø-select 27 px wide and a +/− stepper 38 px
+     wide are both 44 px tall and both still missable with a thumb. */
+  button,select,input[type=text],input[type=number],input[type=search]{min-height:44px;min-width:44px}
+  .plan-tools select,.plan-tools input{min-height:44px}
+  /* `.tiny` is a genuinely small control — a stepper, a chip — so it gets a
+     target big enough to hit without becoming a button that dominates a row. */
+  .btn.tiny{min-height:40px;min-width:40px}
+  input[type=checkbox],input[type=radio]{min-width:24px;min-height:24px}
 }
 
 /* Routed run table — the colour tells you what job the duct does. */

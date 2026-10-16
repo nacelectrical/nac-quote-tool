@@ -278,10 +278,22 @@ test('private customer data is excluded from the presentation', () => {
   assert.ok(!blob.includes(JOB.notes), 'internal job notes must not appear');
   assert.ok(!blob.includes(CUSTOMER.email), 'the customer email is not content for their own page');
   assert.ok(!blob.includes(CUSTOMER.phone));
-  // Address is reduced to a suburb by default.
+  // ── THE SUBURB EVERYWHERE, THE ADDRESS ON THE COVER ────────────────────
+  //
+  // `hero.site` is the privacy-safe form and is still reduced to a suburb by
+  // default, because that is the one that travels: it is what a page built as
+  // an example of NAC's work would carry, and a past customer's street should
+  // never leave with it.
+  //
+  // The COVER is the one place that names the house in full. Nick, 16 October
+  // 2026: "a strong cover section with... the client name and the property
+  // address." This document was prepared for one household, goes to them on a
+  // secret link, and prices THEIR house — a proposal that does not say which
+  // house is the one that gets mistaken for the neighbour's.
   assert.equal(P.hero.site, 'Peregian Springs');
-  assert.ok(!blob.includes('12 Example Street'));
-  // And only shows in full when privacy settings say so.
+  assert.equal(P.hero.siteAddress, JOB.siteAddress);
+  assert.ok(HTML.includes(JOB.siteAddress), 'the cover does not say which house this is');
+  // And `site` still shows in full only when the privacy settings say so.
   const full = build({ privacy: { showFullAddress: true } }).presentation;
   assert.equal(full.hero.site, JOB.siteAddress);
 });

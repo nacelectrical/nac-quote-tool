@@ -1,0 +1,135 @@
+{
+  "_source": "NAC's own photographs of NAC's own installations, supplied by Nick on 15 October 2026. Unlike the generated fixtures in tests/, these are real.",
+  "_privacy": "Checked on arrival: all seven carry a small EXIF block and NONE carries a GPS IFD, so no customer's location is in them. They are re-encoded again on import, which is what strips the remaining metadata off the copy a customer receives — the result is measured and shown on the Images panel rather than assumed.",
+  "_models": "THE MODEL NUMBERS ARE NOT RECORDED — the compliance plate is not legible in any of these photographs, and a guessed model is a guess on a customer's quote. THE BRAND IS legible in every one: it is the badge on the front. Nick, 16 October 2026: \"Just use brands. Put one of the Daikin ones next to a Daikin, Fujitsu next to Fujitsu.\" So equipmentImagesFor() matches on the brand when no photograph names the model, and an exact model still wins when one is recorded. Filling a model in later only makes the match sharper; it is not needed for these to appear.",
+  "_consent": "An installation photograph also needs a suburb and consent before it reaches the gallery. Those are NAC's to record; nothing here assumes them.",
+  "_orientation": "Every one of these is PORTRAIT. The cover wants one wide landscape shot of a finished install, at least 1600 px across, and none of these is it.",
+  "photos": [
+    {
+      "file": "photos/fujitsu-airstage-outdoor.jpg",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage outdoor unit installed against a rendered wall beside an electric hot water tank",
+      "seen": "Fujitsu, Airstage badge. Outdoor condensing unit, single-stack vertical discharge. Isolator mounted on the wall beside it, conduit and drain run dressed down the wall.",
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
+      "file": "photos/daikin-r32-outdoor-twin-fan.jpg",
+      "role": "equipment",
+      "alt": "A Daikin R32 inverter outdoor unit on mounting feet against a rendered wall",
+      "seen": "Daikin, INVERTER, R32. Twin-fan outdoor unit on galvanised mounting feet, isolator and conduit to the right.",
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "tags": [
+        "daikin",
+        "r32",
+        "outdoor",
+        "ducted",
+        "inverter"
+      ]
+    },
+    {
+      "file": "photos/daikin-r410a-outdoor-twin-fan.jpg",
+      "role": "equipment",
+      "alt": "A Daikin R410A twin-fan outdoor unit mounted beside a window",
+      "seen": "Daikin, R410A. Twin-fan outdoor unit on feet.",
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "tags": [
+        "daikin",
+        "r410a",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
+      "file": "photos/daikin-vrv-iv-outdoor.jpg",
+      "role": "equipment",
+      "alt": "A Daikin VRV IV outdoor unit installed against weatherboard cladding",
+      "seen": "Daikin, VRV IV, R410A. Single-fan outdoor unit on feet, isolator above on the cladding.",
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "tags": [
+        "daikin",
+        "vrv",
+        "r410a",
+        "outdoor"
+      ]
+    },
+    {
+      "file": "photos/braemar-outdoor-close.jpg",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit installed against a painted brick wall",
+      "seen": "Braemar, by SEELEY INTERNATIONAL. Single-fan outdoor unit on mounting feet against white-painted brickwork, isolator on the wall, conduit and insulated pipework dressed down behind it. The unit fills the frame.",
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
+      "file": "photos/braemar-outdoor-wide.jpg",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit on a plant deck, with the conduit run to the wall isolator",
+      "seen": "The same kind of Braemar unit from further back: the full conduit run up to the isolator and the plant deck it stands on. More of the installation, less of the machine.",
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ]
+    },
+    {
+      "file": "photos/airtouch-console-4-zone.jpg",
+      "role": "equipment",
+      "alt": "An AirTouch wall console showing four zones and the set temperature",
+      "seen": "AirTouch console in a glass surround. Four zones — Master, Living, Bed 2 + 3, Office — each at 100%, heating, set to 26 degrees, fan medium.",
+      "equipmentBrand": "AirTouch",
+      "equipmentModels": [],
+      "tags": [
+        "airtouch",
+        "controller",
+        "zoning"
+      ]
+    },
+    {
+      "file": "photos/airtouch-console-5-zone-sensors.jpg",
+      "role": "equipment",
+      "alt": "An AirTouch wall console showing five zones, each with its own set temperature and its own measured room temperature",
+      "seen": "AirTouch console. Five zones — Living Room, Bedroom 1, 2, 3 and 4 — each with a SET temperature and a MEASURED room temperature beside it (24, 24, 24, 24, 23). A per-zone measured reading means a room temperature sensor in each of those rooms: this is a picture of the sensor upgrade actually working, which is the one thing a price list cannot show.",
+      "equipmentBrand": "AirTouch",
+      "equipmentModels": [],
+      "tags": [
+        "airtouch",
+        "controller",
+        "zoning",
+        "sensors"
+      ]
+    },
+    {
+      "file": "photos/fujitsu-airstage-wall-controller.jpg",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage wall controller with a zone switch panel below it",
+      "seen": "Fujitsu Airstage wired wall controller — Mode Heat, Set Temp 24.0 degrees, Fan Med — with a lit zone switch panel beneath showing Kitchen, Living and Bed 2.",
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "controller",
+        "zoning"
+      ]
+    }
+  ],
+  "_brands": "Fujitsu x2, Daikin x3, Braemar x2, AirTouch x2. The Braemar pair arrived 16 October 2026, after a Braemar quote had been rendering the plain branded card for want of one. The close shot is listed first, so it is the one that reaches the system card: a customer looking at 'your recommended system' wants the machine, not the plant deck.",
+  "_controllers": "The two AirTouch consoles and the Fujitsu wall controller are tagged 'controller'. A controller is part of the system but it is not a picture OF the system, so where a brand offers both, the unit goes on the card first."
+}

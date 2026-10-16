@@ -25,12 +25,13 @@
 import { quoteGate } from './quote-gate.mjs';
 import { looksUnfilled, customerStatus } from './customer-data.mjs';
 import { commercialTermsStatus } from './commercial-terms.mjs';
-import { licencePromiseCheck } from './nac-terms.mjs';
+import { licencePromiseCheck, termsPlaceholders } from './nac-terms.mjs';
 import { systemOptionsStatus, chooseSystemOption, optionsFromDesign }
   from './system-options.mjs';
 export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
+  equipmentImagesFor, publicImageRef, publicImageSrcset,
   resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts
 } from './presentation-content.mjs';
 
@@ -116,7 +117,9 @@ export function formatDate(value) {
 const CREDENTIAL_FIELDS = Object.freeze([
   ['abn', 'ABN'],
   ['electricalLicence', 'Electrical contractor licence'],
+  ['qbccLicence', 'QBCC licence'],
   ['arcAuthorisation', 'ARC refrigeration authorisation'],
+  ['businessAddress', 'Business address'],
   ['insuranceStatement', 'Insurance']
 ]);
 
@@ -141,7 +144,44 @@ const CREDENTIAL_FIELDS = Object.freeze([
 export function presentationGate(design, opts = {}) {
   const gate = quoteGate(design);
   const blockers = [...(gate.blockers || [])];
+  const notes = [];
   const issuing = opts.issuing !== false;
+
+  // ── A TEST QUOTE IS A REAL QUOTE THAT SAYS SO ────────────────────────────
+  // Nick asked to see the finished thing before anything real goes out:
+  // "Create a clearly labelled test quote. Do not use the Kauri Crescent job
+  // and do not use any real client contact details."
+  //
+  // DEMONSTRATION content cannot be issued at all, which is right — it is
+  // invented reviews and invented prices and it must never reach a link. But a
+  // test quote has to be ISSUABLE, or the link, the customer's choices and the
+  // acceptance cannot be proved to work. So it runs against the real content
+  // library, at a real price, through the real gates, and the only thing that
+  // stands down is the check that the customer's NAME looks like a real
+  // person's — because on a test quote it is supposed to read as a test.
+  //
+  // Everything else about the customer record still has to be sound: a
+  // reachable contact and a real site address, because a test quote that
+  // cannot be opened proves nothing. And the page says TEST QUOTE on it.
+  const testQuote = opts.testQuote === true;
+
+  // ── A QUOTE-ONLY JOB HAS NO DRAWING TO RECONCILE AGAINST ─────────────────
+  // Nick, 16 October 2026: "Quoting must work independently using information I
+  // enter and approve... Do not fabricate a completed duct design or require
+  // one to issue an installer-approved quote."
+  //
+  // Several checks below compare one rendering of a DESIGN against another —
+  // the coverage table against the outlet schedule, the zone schedule against
+  // the room list, the selected capacity against a calculated load. On a
+  // quote-only job there is no second rendering: the estimator's typed figures
+  // ARE the source, so there is nothing for them to disagree with, and a
+  // disagreement check fed a single number compares it with zero and fails.
+  //
+  // What stays on for a quote-only job is every check about whether the OFFER
+  // is sound — equipment selected, a real price, a real customer, approved
+  // content, NAC's own commercial terms — plus quoteDraftGate(), which checks
+  // the draft itself. Dropping the drawing checks does not drop those.
+  const quoteOnly = design?.quoteOnly === true;
 
   if (!design?.selectedUnit) {
     blockers.push({ code: 'NO_EQUIPMENT_SELECTED', severity: 'CRITICAL',
@@ -185,7 +225,9 @@ export function presentationGate(design, opts = {}) {
     && trimmed(decision.at) && trimmed(decision.customerWording));
   const cap = n(design?.selectedUnit?.capacityKw);
   const load = n(design?.systemLoad?.designKw);
-  if (cap !== null && load !== null && load > 0 && cap < load && !decisionRecorded) {
+  // `load` comes from the load calculation, which a quote-only job has not run,
+  // so there is no calculated figure to be below.
+  if (!quoteOnly && cap !== null && load !== null && load > 0 && cap < load && !decisionRecorded) {
     blockers.push({
       code: 'CAPACITY_BELOW_CALCULATED_LOAD',
       severity: 'CRITICAL',
@@ -216,7 +258,7 @@ export function presentationGate(design, opts = {}) {
   // The register counts rooms that actually carry an outlet, which is the same
   // population as `outletRowRooms` once spill rooms are out of both.
 
-  if (ductedRoomCount && outletRowRooms && ductedRoomCount !== outletRowRooms) {
+  if (!quoteOnly && ductedRoomCount && outletRowRooms && ductedRoomCount !== outletRowRooms) {
     blockers.push({
       code: 'ROOM_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -225,7 +267,7 @@ export function presentationGate(design, opts = {}) {
         + 'different sizes for the same house.'
     });
   }
-  if (registerRooms !== null && outletRowRooms && registerRooms !== outletRowRooms) {
+  if (!quoteOnly && registerRooms !== null && outletRowRooms && registerRooms !== outletRowRooms) {
     blockers.push({
       code: 'OUTLET_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -250,6 +292,11 @@ export function presentationGate(design, opts = {}) {
     } else if (c.includedInSystem === true) {
       // The manufacturer's own controller, in the box with the system. Zero is
       // its real price, not a missing one.
+    } else if (quoteOnly) {
+      // On a quote-only job the controller's cost is already inside the
+      // GST-inclusive system price the estimator entered — there is no bill of
+      // materials to carry a separate line for it. Demanding a cost here asks
+      // for a number that does not exist on this kind of job.
     } else if (n(c.cost) === null && n(c.price) === null) {
       blockers.push({
         code: 'ZONE_CONTROLLER_NOT_PRICED',
@@ -286,6 +333,12 @@ export function presentationGate(design, opts = {}) {
   if (issuing) {
     const cust = customerStatus(opts.customer || {}, { siteAddress: opts.siteAddress });
     for (const f of cust.failures) {
+      if (testQuote && f.field === 'name') {
+        notes.push({ code: 'TEST_QUOTE_NAME', severity: 'CHECK', field: 'name',
+          message: f.reason + ' That is expected on a test quote, and the page is '
+            + 'labelled as one.' });
+        continue;
+      }
       blockers.push({
         code: 'CUSTOMER_DATA_NOT_REAL',
         severity: 'CRITICAL',
@@ -319,7 +372,7 @@ export function presentationGate(design, opts = {}) {
   for (const z of rows(design?.zones?.zones)) {
     for (const r of rows(z.rooms)) zoneRooms.add(trimmed(r));
   }
-  if (zoneRooms.size && coverageRoomCount && zoneRooms.size !== coverageRoomCount) {   // eslint-disable-line
+  if (!quoteOnly && zoneRooms.size && coverageRoomCount && zoneRooms.size !== coverageRoomCount) {   // eslint-disable-line
     blockers.push({
       code: 'ZONE_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -355,6 +408,27 @@ export function presentationGate(design, opts = {}) {
         });
       }
     }
+    // ── NO UNFILLED BRACKET REACHES A DOCUMENT SOMEBODY SIGNS ───────────
+    //
+    // The terms template carried "[insert street address]" and three "[insert
+    // number]"s in clause 21, and they went out on the proposal — in the very
+    // terms the customer is asked to accept. The contact block is templated
+    // now and resolves from the trust settings, so this is the check that it
+    // actually did: any bracket or unresolved token left in the body stops the
+    // proposal.
+    const left = termsPlaceholders(opts.termsAndConditions);
+    if (left.length) {
+      blockers.push({
+        code: 'PLACEHOLDER_IN_TERMS',
+        severity: 'CRITICAL',
+        message: 'The terms and conditions still contain ' + left.slice(0, 3).join(', ')
+          + (left.length > 3 ? ' and ' + (left.length - 3) + ' more' : '')
+          + '. A customer is asked to sign these, and an unfilled bracket on a signed '
+          + 'document is worse than a missing line. Fill the value in the business '
+          + 'settings, or take the line out of the terms.',
+        placeholders: left
+      });
+    }
     for (const w of [t.workmanshipWarranty, t.manufacturerWarranty]) {
       if (looksUnfilled(w)) {
         blockers.push({
@@ -389,7 +463,6 @@ export function presentationGate(design, opts = {}) {
   // and invoices. Nick has asked to leave the electrical contractor licence
   // out for now, so this does not block — but a document promising something
   // the quotation does not carry should never be a thing nobody mentioned.
-  const notes = [];
   const promise = licencePromiseCheck(opts.trust || {});
   if (issuing && !promise.ok) {
     notes.push({ code: 'LICENCE_PROMISED_BY_TERMS', severity: 'CHECK',
@@ -493,6 +566,10 @@ export function upgradeCapabilities(design) {
 function heroSection(d, ctx) {
   const c = ctx.customer || {};
   const privacy = ctx.privacy || {};
+  // On a TEST QUOTE the customer's name is supposed to read as a test, and the
+  // page is banner-labelled as one. Blanking it there would leave the cover
+  // unable to show who the proposal is for, which is the thing being tested.
+  const testQuote = ctx.testQuote === true;
   // ── A NAME, OR NO NAME. NEVER HALF A PLACEHOLDER ───────────────────────
   //
   // Nick: "no customer first name: use neutral wording". Never "Hi ,".
@@ -503,16 +580,30 @@ function heroSection(d, ctx) {
   // name: the proposal opens with a plain "Hello" rather than inventing a
   // person out of a placeholder.
   const name = trimmed(c.name);
-  const first = (name && !looksUnfilled(name) && !/^not\b/i.test(name))
-    ? (name.split(/\s+/)[0] || '') : '';
-  const greeting = first ? 'Hello ' + first : 'Hello';
-  const site = privacy.showFullAddress
-    ? trimmed(ctx.job?.siteAddress || c.address)
-    : suburbOf(ctx.job?.siteAddress || c.address);
+  const real = !!name && (testQuote || (!looksUnfilled(name) && !/^not\b/i.test(name)));
+  const first = real ? (name.split(/\s+/)[0] || '') : '';
+  const greeting = (first && !testQuote) ? 'Hello ' + first : 'Hello';
+  const fullAddress = trimmed(ctx.job?.siteAddress || c.address);
+  const site = privacy.showFullAddress ? fullAddress : suburbOf(fullAddress);
+
+  // ── THE COVER NAMES THE HOUSE THE QUOTE IS FOR ───────────────────────────
+  // Nick: "a strong cover section with the genuine NAC logo, approved
+  // photography, the client name and the property address."
+  //
+  // The SUBURB is the privacy-safe form used in the body of the page and in
+  // anything that might be shown as an example of NAC's work. The cover is a
+  // different case: this document was prepared for one household and goes to
+  // nobody else, and a proposal that does not say which house it prices is the
+  // one that gets confused with the neighbour's. So the cover carries the
+  // address the estimator entered — on the cover only, and never on a page
+  // built as a past-work example.
+  const coverAddress = fullAddress;
   return {
+    /** The full property address, for the cover. */
+    siteAddress: coverAddress,
     greeting,
     // Same rule: a placeholder is not a name anywhere on the page.
-    customerName: first ? name : '',
+    customerName: real ? name : '',
     title: 'Your Ducted Air Conditioning Proposal',
     site,
     proposalNumber: trimmed(ctx.proposalNumber),
@@ -699,9 +790,13 @@ function coverageSection(d) {
   return {
     rooms: conditioned.map(r => {
       const o = byLabel.get(trimmed(r.label));
+      // The outlet SCHEDULE is the authority where one exists. On a quote-only
+      // job there is no schedule, and the count beside each room is the figure
+      // the estimator typed against that room — not a guess, and not zero
+      // because a drawing is missing.
       return {
         name: friendlyLabel(r.label),
-        outlets: n(o?.quantity) ?? 0,
+        outlets: n(o?.quantity) ?? n(r.outlets) ?? 0,
         type: friendlyType(o?.type)
       };
     }),
@@ -711,6 +806,43 @@ function coverageSection(d) {
     provisional: !(n(d.network?.totalDuctLengthM) > 0),
     provisionalNote: 'Final outlet, return-air and indoor-unit positions are confirmed during '
       + 'detailed design and roof-space assessment.'
+  };
+}
+
+/**
+ * WHAT IS IN THE JOB, AND WHAT IS NOT — in the estimator's own words.
+ *
+ * `inclusions` elsewhere on the page is EVIDENCE-BASED: it prints a card only
+ * where the design proves the thing is there, which is why a quote-only job
+ * shows no ductwork card — there is no bill of materials to prove it from.
+ * That is correct and it is also not enough for a customer, because the job
+ * plainly does include ductwork.
+ *
+ * So this section carries the lines a person typed and approved, verbatim.
+ * Nick, 16 October 2026: "Quoting must work independently using information I
+ * enter and approve: equipment, installation scope, outlets, zones,
+ * inclusions, exclusions and price."
+ *
+ * The exclusions matter at least as much as the inclusions. What is NOT in the
+ * price is where a job turns into an argument, and a customer who read it on
+ * the proposal they accepted is not surprised by it later.
+ */
+function scopeSection(d) {
+  const q = d.quoteScope || null;
+  if (!q) return null;
+  const inclusions = rows(q.inclusions).map(trimmed).filter(Boolean);
+  const exclusions = rows(q.exclusions).map(trimmed).filter(Boolean);
+  const summary = trimmed(q.summary);
+  if (!inclusions.length && !exclusions.length && !summary) return null;
+  return {
+    summary,
+    inclusions,
+    exclusions,
+    // Only a plan the estimator marked approved, and only if one was supplied.
+    // Nick: "plan only if supplied and approved."
+    planImage: q.planImage && q.planImage.approved && trimmed(q.planImage.src)
+      ? { src: trimmed(q.planImage.src), caption: trimmed(q.planImage.caption) }
+      : null
   };
 }
 
@@ -752,7 +884,20 @@ function investmentSection(d, ctx) {
       ? Math.round((total - (total / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100
       : n(c.gstAmount),
     baseIncGst: total,
-    selectedOptions: selected.map(o => ({ id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst) })),
+    // ── THE GST BREAKDOWN HAS TO BE OF THE TOTAL, NOT THE BASE ────────────
+    // `subtotalExGst` and `gst` above are the SYSTEM's figures. Printed beside
+    // a total that also carries the chosen upgrades, they do not add up — a
+    // customer reading "$17,817 total, GST $1,457" can see the sum is wrong
+    // on a page asking for their signature. So the breakdown of the figure
+    // they are actually accepting is computed here, from that figure.
+    totalExGst: Math.round((grand / (1 + (n(c.gstRate) ?? 0.1))) * 100) / 100,
+    totalGst: Math.round((grand - (grand / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100,
+    gstRate: n(c.gstRate) ?? 0.1,
+    selectedOptions: selected.map(o => ({
+      id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst),
+      quantity: n(o.quantity) ?? 1,
+      unitPriceIncGst: n(o.unitPriceIncGst), unitLabel: trimmed(o.unitLabel) || null
+    })),
     optionsTotal: optionsTotal || null,
     totalIncGst: grand,
     deposit: depositPct !== null ? {
@@ -814,7 +959,13 @@ export function buildPresentation({
   revision = null, status = 'draft', selectedOptionIds = [],
   privacy = {}, intro = '', heroImage = null, productImage = null,
   /** Alternative systems the customer chooses between, and which one. */
-  systemOptions = null, chosenSystemId = null
+  systemOptions = null, chosenSystemId = null,
+  /**
+   * A TEST QUOTE: real content, real price, real link, labelled on the page.
+   * Unlike `demonstration` it may be issued, so the journey can be proved
+   * end to end — and unlike a real quote, it is never counted as business.
+   */
+  testQuote = false
 } = {}) {
   const d = design || {};
   const trust = normaliseTrust(content.trust || settings.trust);
@@ -861,16 +1012,34 @@ export function buildPresentation({
   const { offerable, withheld } = resolveUpgrades(content.upgrades || [], caps);
   // Exclusive groups are settled HERE, not in the page. The browser enforces
   // them for the customer's benefit; this enforces them for the price's.
-  const wanted = rows(selectedOptionIds);
+  // A selection is either an id, or an id with a count for the upgrades that
+  // are bought by the unit.
+  const wanted = new Map();
+  for (const w of rows(selectedOptionIds)) {
+    if (typeof w === 'string') wanted.set(w, null);
+    else if (w && trimmed(w.id)) wanted.set(trimmed(w.id), n(w.quantity));
+  }
   const seenGroups = new Set();
   const selectedOptions = [];
   for (const o of offerable) {
-    if (!wanted.includes(o.id)) continue;
+    if (!wanted.has(o.id)) continue;
     if (o.group) {
       if (seenGroups.has(o.group)) continue;   // first in the group wins
       seenGroups.add(o.group);
     }
-    selectedOptions.push(o);
+    // ── THE COUNT IS CLAMPED HERE, NOT IN THE BROWSER ─────────────────────
+    // The page offers a spinner with a maximum on it; the price is settled
+    // server-side, so a request asking for two hundred sensors gets the
+    // maximum NAC offered and not two hundred.
+    if (o.unitPriceIncGst !== null) {
+      const asked = wanted.get(o.id) ?? o.defaultQuantity;
+      const qty = Math.max(0, Math.min(o.maxQuantity, Math.round(n(asked) ?? 0)));
+      if (qty < 1) continue;                   // none chosen is not an option
+      selectedOptions.push({ ...o, quantity: qty,
+                             priceIncGst: Math.round(o.unitPriceIncGst * qty * 100) / 100 });
+      continue;
+    }
+    selectedOptions.push({ ...o, quantity: 1 });
   }
 
   const imagesById = {};
@@ -903,7 +1072,7 @@ export function buildPresentation({
   // be published are known. Asking before they are resolved would be asking
   // about a different page from the one about to be built.
   const gate = presentationGate(d, {
-    trust, issuing,
+    trust, issuing, testQuote: testQuote === true,
     termsAndConditions: content.termsAndConditions,
     customer, siteAddress: job.siteAddress || customer.address,
     reviews: selectedReviewSources, installations: selectedInstallSources,
@@ -913,8 +1082,31 @@ export function buildPresentation({
 
   const expired = !!expiresAt && Date.parse(expiresAt) < Date.now();
 
+  // ── A PHOTOGRAPH OF THE MACHINE THEY ARE ACTUALLY BUYING ───────────────
+  //
+  // `productImage` has been a hook on this function since it was written and
+  // nothing ever supplied one, so the system card has always rendered the
+  // branded placeholder. The content library can now say which models an
+  // image shows, and this picks one that names THIS model.
+  //
+  // Nick: "Never use an incorrect generic product image merely because it
+  // looks similar." Matching is on the model and only on the model — a brand
+  // match would put a wall split next to a ducted quote. No match stays null,
+  // and the clean branded card is rendered instead of somebody else's unit.
+  const equipmentShot = productImage || (() => {
+    const matched = equipmentImagesFor(content.images || [], d.selectedUnit || {}, { max: 1 });
+    if (!matched.length) return null;
+    const a = matched[0];
+    const big = publicImageRef(a);
+    return big ? { src: big, alt: trimmed(a.alt) || 'The unit quoted for this home',
+                   srcset: publicImageSrcset(a),
+                   focalPoint: a.focalPoint } : null;
+  })();
+
   const ctx = {
-    customer, job, trust, evidence, privacy, intro, heroImage, productImage,
+    customer, job, trust, evidence, privacy, intro, heroImage,
+    testQuote: testQuote === true,
+    productImage: equipmentShot,
     proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
     selectedOptions, aftercare: content.aftercare || {},
     // ── THE DEPOSIT COMES FROM NAC'S CONFIRMED TERMS ──────────────────────
@@ -954,6 +1146,16 @@ export function buildPresentation({
     expired,
     /** Renders as a watermark on every surface. Never quietly true. */
     demonstration,
+    /**
+     * A TEST QUOTE. Issuable, so the link and the acceptance can be proved —
+     * and banner-labelled on every surface, so nobody mistakes it for an offer
+     * and nobody counts it as one.
+     */
+    testQuote: testQuote === true,
+    testQuoteNote: testQuote === true
+      ? 'TEST QUOTE — this is a test of the quoting system, not an offer. '
+        + 'No price on this page is quoted to anybody and nothing accepted here '
+        + 'creates a contract.' : null,
     demonstrationNote: demonstration
       ? 'DEMONSTRATION — NOT FOR CUSTOMER ISSUE. This is not a quote and no price on it '
         + 'is offered.' : null,
@@ -975,23 +1177,51 @@ export function buildPresentation({
         id: o.id, label: o.label, brand: o.brand, model: o.model,
         capacityKw: o.capacityKw, phase: o.phase, note: o.note,
         recommended: o.recommended,
+        warrantyYears: o.warrantyYears,
         priceIncGst: o.priceIncGst,
         chosen: !!chosenSystem && o.id === chosenSystem.id
       }))
     },
     rationale: rationaleSection(d, ctx),
     inclusions: resolveInclusions(evidence),
+    /** The estimator's own inclusions and exclusions. Null when none were typed. */
+    scopeOfWork: scopeSection(d),
     zones: zonesSection(d),
     coverage: coverageSection(d),
     installations,
     reviews,
     trust: { points: trust.points, facts: trustFacts(trust) },
     investment: investmentSection(d, ctx),
-    options: offerable.map(o => ({
-      id: o.id, title: o.title, description: o.description,
-      priceIncGst: o.priceIncGst, group: o.group,
-      selected: selectedOptions.some(s => s.id === o.id)
-    })),
+    options: offerable.map(o => {
+      const picked = selectedOptions.find(s => s.id === o.id) || null;
+      // ── AN UPGRADE BELONGS TO THE SYSTEMS IT FITS ─────────────────────
+      //
+      // The quote offers a Daikin and a Braemar, and the AirTouch kit NAC
+      // stock is the Daikin one. Offering it against both would let a
+      // customer tick an add-on that cannot go on the system they chose, and
+      // carry its price into their total — which is what happened.
+      //
+      // So every upgrade that names a brand says WHICH of the systems on this
+      // page it fits, and the page drops it when another one is chosen.
+      const brandLocks = rows(o.requires)
+        .map(r => /^(.+)_system$/.exec(trimmed(r)))
+        .filter(Boolean).map(m => m[1]);
+      const forSystemIds = optionStatus.options.length
+        ? optionStatus.options
+            .filter(so => !brandLocks.length || brandLocks.includes(trimmed(so.brandId)))
+            .map(so => so.id)
+        : null;
+      return {
+        id: o.id, title: o.title, description: o.description,
+        forSystemIds,
+        priceIncGst: o.priceIncGst, group: o.group,
+        // Counted upgrades carry what one costs and how many may be had.
+        unitPriceIncGst: o.unitPriceIncGst, unitLabel: o.unitLabel,
+        maxQuantity: o.maxQuantity, defaultQuantity: o.defaultQuantity,
+        quantity: picked ? picked.quantity : 0,
+        selected: !!picked
+      };
+    }),
     warranty: warrantySection(ctx),
     acceptance: {
       canAccept: status !== 'accepted' && status !== 'declined' && status !== 'revoked' && !expired,

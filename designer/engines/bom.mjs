@@ -113,6 +113,16 @@ export function buildBillOfMaterials(design, opts = {}) {
       totalCost: unit.supplierCost ?? null,
       priceSource: unit.supplierCost !== null && unit.supplierCost !== undefined ? PRICE_SOURCE.NAC : null,
       priced: unit.supplierCost !== null && unit.supplierCost !== undefined,
+      // ── THE EVIDENCE TRAVELS WITH THE LINE ─────────────────────────────
+      //
+      // A unit selected off MMEM's list carries their stock code and the
+      // edition it was priced from. Dropping them here left the rate
+      // verification looking at a bare number and asking which supplier
+      // quoted it — on the one line where the answer was already known.
+      // The flex duct lines have carried their code all along; this is the
+      // same fact about the same price list.
+      supplierCode: unit.supplierCode ?? null,
+      supplierSource: unit.supplierSource ?? null,
       sellPrice: unit.sellPrice ?? null,
       category: 'equipment'
     });
@@ -127,6 +137,9 @@ export function buildBillOfMaterials(design, opts = {}) {
       totalCost: design.controller.cost ?? null,
       priceSource: design.controller.cost !== undefined && design.controller.cost !== null ? PRICE_SOURCE.NAC : null,
       priced: design.controller.cost !== undefined && design.controller.cost !== null,
+      // Same as the unit: a Siemens kit or an AirTouch is an MMEM stock
+      // number, and the code is what makes the price checkable later.
+      supplierCode: design.controller.supplierCode ?? null,
       sellPrice: design.controller.price ?? null,
       category: 'equipment'
     });

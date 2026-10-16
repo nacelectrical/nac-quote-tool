@@ -10,7 +10,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NAC_TERMS_BODY, NAC_TERMS_VERSION, NAC_TERMS_EFFECTIVE, NAC_TERMS_LABEL,
-         TERMS_COMMITMENTS, checkTermsAgainstSettings, licencePromiseCheck }
+         TERMS_COMMITMENTS, checkTermsAgainstSettings, licencePromiseCheck,
+         resolveTermsContact, termsContactGaps, termsPlaceholders }
   from '../designer/engines/nac-terms.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
 import { seedTrust, seedTermsAndConditions, NAC_TRUST }
@@ -89,9 +90,58 @@ test('NAC states only what its own terms already commit it to', () => {
 });
 
 test('a library that has never been filled in still shows the real terms', () => {
-  assert.equal(seedTermsAndConditions(null), NAC_TERMS_BODY);
-  assert.equal(seedTermsAndConditions(''), NAC_TERMS_BODY);
+  // The body comes back resolved: clause 21's contact block is templated, so
+  // the seeded text is NAC_TERMS_BODY with the tokens filled from the trust
+  // settings rather than the template verbatim.
+  const seeded = seedTermsAndConditions(null);
+  assert.ok(seeded.startsWith('These Terms apply to every quotation we issue'));
+  assert.ok(seeded.includes('21 CONTACT'));
+  assert.equal(seedTermsAndConditions(''), seeded);
   assert.equal(seedTermsAndConditions('NAC house terms, 2027'), 'NAC house terms, 2027');
+});
+
+test('no unfilled bracket survives into the terms a customer signs', () => {
+  // The template carried "[insert street address]" and three "[insert
+  // number]"s, and they went out on the proposal.
+  const seeded = seedTermsAndConditions(null);
+  assert.deepEqual(termsPlaceholders(seeded), [],
+    'a placeholder reached the terms: ' + termsPlaceholders(seeded).join(', '));
+  assert.ok(!/\[insert/i.test(seeded));
+});
+
+test('a credential NAC holds is printed, and one it does not takes its line out', () => {
+  const seeded = seedTermsAndConditions(null);
+  // Clause 21's contact block only. Clause 12 separately UNDERTAKES that NAC
+  // holds an electrical contractor licence and a QBCC licence where the work
+  // calls for one, which is a commitment and stays in the document whatever
+  // numbers are on file.
+  const i = seeded.indexOf('21 CONTACT');
+  const contact = seeded.slice(i, seeded.indexOf('ACCEPTANCE', i));
+  // Nick has the ARCtick authorisation, so clause 21 states it.
+  assert.ok(contact.includes('ARCtick authorisation AU64234'));
+  // Nick, 15 October 2026: "Leave licence number out for now until I have it."
+  // The label goes with the number — never "Electrical contractor licence" on
+  // its own, and never a bracket, a "TBC" or an invented number.
+  assert.ok(!contact.includes('Electrical contractor licence'));
+  assert.ok(!contact.includes('QBCC licence'));
+  assert.ok(!contact.includes('Business address'));
+  assert.ok(!/\b(TBC|TBA|pending|on application)\b/i.test(contact));
+});
+
+test('a value that is itself a placeholder is treated as no value', () => {
+  const body = 'Business X{{electricalLicence}} END';
+  assert.equal(resolveTermsContact(body, { electricalLicence: '[insert number]' }),
+    'Business X END');
+  assert.equal(resolveTermsContact(body, { electricalLicence: 'TBC' }), 'Business X END');
+  assert.equal(resolveTermsContact(body, { electricalLicence: '86421' }),
+    'Business X Electrical contractor licence 86421 END');
+});
+
+test('the gaps in clause 21 are reportable, so they can be asked for', () => {
+  const gaps = termsContactGaps(NAC_TRUST).map(g => g.field);
+  assert.ok(gaps.includes('businessAddress'));
+  assert.ok(gaps.includes('electricalLicence'));
+  assert.ok(!gaps.includes('arcAuthorisation'), 'the ARC number is on file');
 });
 
 test('the terms never describe the job as a fixed price', () => {

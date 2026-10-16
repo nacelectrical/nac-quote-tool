@@ -29,7 +29,9 @@ const ROUTES = {
   'quote-issue': () => import('../server/quote-issue.js'),
   'quote-respond': () => import('../server/quote-respond.js'),
   'presentation-content': () => import('../server/presentation-content.js'),
-  'presentation-media': () => import('../server/presentation-media.js')
+  'presentation-media': () => import('../server/presentation-media.js'),
+  'quote-list': () => import('../server/quote-list.js'),
+  'servicem8-testjob': () => import('../server/servicem8-testjob.js')
 };
 
 function requestedName(req) {

@@ -1,0 +1,29 @@
+{
+  "_source": "The upgrades NAC already sell, at the prices Nick gave: \"make it so airtouch is 1350 and each temp sensor is 100 each all to be chosen\", then \"oh make it $110 then\". Nothing here was priced by the program, and nothing here is a manufacturer figure the program worked out for itself.",
+  "_brandLock": "The AirTouch kit NAC stock is the Daikin one. Both lines require `daikin_system`, so on a quote where the customer can also choose a Braemar they are not shown greyed out — they are not shown at all, and they cannot end up in a Braemar total.",
+  "_howToUse": "Open /quote-presentation.html, sign in, Optional upgrades, then 'Import NAC upgrades'. Check the prices against what you are charging today, then Save library.",
+  "upgrades": [
+    {
+      "id": "nac-airtouch5",
+      "title": "AirTouch 5 smart control",
+      "description": "Upgrade from the standard Daikin wall controller to AirTouch 5: colour touchscreen, phone app control from anywhere, and each zone set to its own temperature instead of simply open or shut.",
+      "priceIncGst": 1350,
+      "requires": ["ducted_system", "has_zoning", "has_controller", "daikin_system"],
+      "group": "controller",
+      "enabled": true,
+      "sortOrder": 0
+    },
+    {
+      "id": "nac-zone-sensor",
+      "title": "Room temperature sensors",
+      "description": "A temperature sensor in the rooms you choose, so AirTouch holds that room to its setpoint rather than reading the air at the return. One per room — pick how many.",
+      "unitPriceIncGst": 110,
+      "unitLabel": "each",
+      "maxQuantity": 12,
+      "defaultQuantity": 0,
+      "requires": ["ducted_system", "has_zoning", "has_controller", "daikin_system"],
+      "enabled": true,
+      "sortOrder": 1
+    }
+  ]
+}

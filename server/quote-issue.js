@@ -74,7 +74,30 @@ async function signedInStaff(req) {
   }
 }
 
+const { DESIGN_SELECT, parseDesign, designUpdatedAt } = require('./design-row.js');
+
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
+
+/**
+ * The GST rate this offer is frozen at.
+ *
+ * It comes from the costing that produced the price (design.commercials), and
+ * falls back to the commercial settings — the same figure the settings screen
+ * writes. Only when neither carries a number at all is the statutory 10% used,
+ * and that is a default, not an assumption about NAC's registration.
+ *
+ * Read with a null check rather than `||`, because a configured 0 is a real
+ * answer and `Number(0) || 0.1` turns it into ten per cent.
+ */
+function gstRateOf(design, settings) {
+  for (const v of [design && design.commercials && design.commercials.gstRate,
+                   settings && settings.commercial && settings.commercial.gstRate]) {
+    if (v === null || v === undefined || v === '') continue;
+    const x = Number(v);
+    if (Number.isFinite(x) && x >= 0 && x < 1) return x;
+  }
+  return 0.1;
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -97,25 +120,49 @@ module.exports = async function handler(req, res) {
   if (!designId) return res.status(400).json({ error: 'design_required' });
 
   try {
-    const [share, presentationMod] = await Promise.all([
+    const [share, presentationMod, offerMod, draftMod] = await Promise.all([
       import('../designer/engines/presentation-share.mjs'),
-      import('../designer/engines/presentation.mjs')
+      import('../designer/engines/presentation.mjs'),
+      import('../designer/engines/issued-offer.mjs'),
+      import('../designer/engines/quote-draft.mjs')
     ]);
 
     // ── Everything the presentation is built from, server-side ─────────────
     const [designRes, contentRes, settingsRes] = await Promise.all([
-      supa('/rest/v1/nac_designs?id=eq.' + encodeURIComponent(designId) + '&select=data&limit=1',
-        { key: KEY }),
-      supa('/rest/v1/nac_presentation_content?key=eq.library&select=data&limit=1', { key: KEY }),
-      supa('/rest/v1/nac_settings?key=eq.' + SETTINGS_KEY + '&select=value&limit=1', { key: KEY })
+      // ── THE COLUMN IS `design`, AND IT IS TEXT ──────────────────────────
+      //
+      // nac_designs (designer/schema.sql) has `design text not null` holding
+      // the DuctDesign as a JSON STRING, which is what store.mjs saveDesign
+      // writes. This endpoint asked for a column called `data`, which exists
+      // in neither schema.sql nor production-setup.sql — so against the real
+      // database every attempt to issue a quote failed, and no quote has ever
+      // been issued from the live site.
+      supa('/rest/v1/nac_designs?id=eq.' + encodeURIComponent(designId)
+        + '&select=' + DESIGN_SELECT + '&limit=1', { key: KEY }),
+      supa('/rest/v1/nac_presentation_content?key=eq.library&select=data,updated_at&limit=1', { key: KEY }),
+      supa('/rest/v1/nac_settings?key=eq.' + SETTINGS_KEY + '&select=value,updated_at&limit=1', { key: KEY })
     ]);
 
     const designRow = Array.isArray(designRes.body) ? designRes.body[0] : null;
-    const design = designRow && (designRow.data?.design || designRow.data);
-    if (!design) return res.status(404).json({ error: 'design_not_found' });
+    const stored = parseDesign(designRow);
+    if (!stored) return res.status(404).json({ error: 'design_not_found' });
 
     const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
-    const content = (contentRow && contentRow.data) || {};
+    const storedContent = (contentRow && contentRow.data) || {};
+    // ── A LIBRARY NOBODY HAS OPENED STILL KNOWS WHO NAC ARE ───────────────
+    // Without this the first proposal out of a fresh install carries no ABN,
+    // no ARC authorisation and no terms, because the library row does not
+    // exist yet. Anything stored wins outright, field by field; the seed only
+    // fills what nobody has filled.
+    const contentMod = await import('../designer/engines/presentation-content.mjs');
+    const seededTrust = contentMod.seedTrust(storedContent.trust || null);
+    const content = {
+      ...storedContent,
+      trust: seededTrust,
+      termsAndConditions: contentMod.seedTermsAndConditions(
+        storedContent.termsAndConditions || null, seededTrust)
+    };
+    const settingsRow0 = Array.isArray(settingsRes.body) ? settingsRes.body[0] : null;
 
     let settings = {};
     try {
@@ -124,12 +171,86 @@ module.exports = async function handler(req, res) {
       settings = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
     } catch (e) { settings = {}; }
 
+    // ── A QUOTE WITHOUT A DUCT DESIGN ──────────────────────────────────────
+    //
+    // Nick, 16 October 2026: "Quoting must work independently using
+    // information I enter and approve... Do not fabricate a completed duct
+    // design or require one to issue an installer-approved quote."
+    //
+    // The row may hold a QUOTE DRAFT rather than a DuctDesign. It is stored
+    // the same way, issued through the same endpoint, and carries the same
+    // revisions, acceptance and audit trail — the only difference is where the
+    // numbers came from, which is a person rather than a drawing. The draft is
+    // checked by its OWN gate first, because quoteGate() stands down on a
+    // quote-only source and something has to check the offer.
+    const isDraft = stored && stored.schema === draftMod.QUOTE_DRAFT_SCHEMA;
+    if (isDraft) {
+      const dg = draftMod.quoteDraftGate(stored, { upgrades: content.upgrades || [] });
+      if (!dg.ok) {
+        return res.status(409).json({
+          error: 'blocked',
+          message: 'This quote cannot be issued yet.',
+          blockers: dg.blockers.map(b => ({ code: b.code, message: b.message }))
+        });
+      }
+    }
+    const design = isDraft
+      ? draftMod.draftToQuoteSource(stored, { upgrades: content.upgrades || [] })
+      : stored;
+
     const customer = body.customer || design.customer || {};
     const job = body.job || design.job || {};
     const quoteRevision = Number(body.quoteRevision) || 1;
     const validDays = Number(body.validDays) || 30;
+    // On a quote-only job the systems, the chosen one and the upgrade
+    // selections are all IN the draft, because that is where the estimator
+    // entered them. The request may still override — the customer changing
+    // their pick on the page comes through the same field — but a draft issued
+    // straight from the builder does not have to re-send what it just saved.
     const systemOptions = Array.isArray(body.systemOptions) && body.systemOptions.length
-      ? body.systemOptions : null;
+      ? body.systemOptions
+      : (isDraft && design.systemOptions && design.systemOptions.length
+          ? design.systemOptions : null);
+    const selectedOptionIds = Array.isArray(body.selectedOptionIds) && body.selectedOptionIds.length
+      ? body.selectedOptionIds
+      : (isDraft ? draftMod.draftSelectedOptions(stored, { upgrades: content.upgrades || [] }) : []);
+
+    // ── THE PRICE ON THE SCREEN MUST BE THE PRICE IN THE SAVED DESIGN ──────
+    //
+    // buildPresentation takes the system options from the REQUEST when it is
+    // given any, and falls back to the design only when it is not. So the
+    // figure a customer is quoted for the designed unit comes off the
+    // estimator's screen, and the saved design is never consulted. A screen
+    // left open while the design was recosted — in another tab, on the iPad,
+    // by somebody else — issues the old number, and nothing notices.
+    //
+    // The alternatives are a different matter: a Braemar is meant to cost
+    // something other than the Daikin that was designed, and its price is the
+    // estimator's to set. Only the option that IS the designed unit has a
+    // figure the design can check, so only that one is reconciled.
+    //
+    // This refuses rather than silently preferring one number over the other.
+    // Either figure could be the right one, and the application does not get
+    // to decide which; the estimator reloads and issues again.
+    const designedSell = Number(design.commercials && design.commercials.sellPriceIncGst);
+    const designedModel = str(design.selectedUnit && design.selectedUnit.model).trim().toLowerCase();
+    if (systemOptions && Number.isFinite(designedSell) && designedModel) {
+      for (const opt of systemOptions) {
+        if (str(opt && opt.model).trim().toLowerCase() !== designedModel) continue;
+        const asked = Number(opt.priceIncGst);
+        if (!Number.isFinite(asked)) continue;
+        if (Math.round(asked * 100) !== Math.round(designedSell * 100)) {
+          return res.status(409).json({
+            error: 'price_mismatch',
+            message: 'This screen is offering ' + (opt.model || 'the designed system') + ' at $'
+              + asked.toFixed(2) + ', and the saved design prices it at $' + designedSell.toFixed(2)
+              + '. Reload the job and issue again so the customer is quoted the current figure.',
+            screenPriceIncGst: Math.round(asked * 100) / 100,
+            designPriceIncGst: Math.round(designedSell * 100) / 100
+          });
+        }
+      }
+    }
 
     // ── THE GATE RUNS BEFORE ANYTHING IS WRITTEN ───────────────────────────
     // Built as it will be SENT, not as a draft, so every check that only bites
@@ -143,12 +264,15 @@ module.exports = async function handler(req, res) {
       preparedAt: issuedAt, expiresAt,
       revision: quoteRevision,
       status: 'issued',
-      selectedOptionIds: body.selectedOptionIds || [],
+      selectedOptionIds,
       privacy: body.privacy || {},
-      intro: str(body.intro),
+      intro: str(body.intro) || (isDraft ? str(design.intro) : ''),
       heroImage: content.heroImage || null,
       systemOptions,
-      chosenSystemId: str(body.chosenSystemId) || null
+      chosenSystemId: str(body.chosenSystemId) || (isDraft ? str(design.chosenSystemId) : '') || null,
+      // A TEST QUOTE is issuable on purpose, so the link and the acceptance can
+      // be proved end to end. It is never implied: the draft has to say so.
+      testQuote: stored.testQuote === true || body.testQuote === true
     });
 
     if (!built.ok) {
@@ -168,16 +292,89 @@ module.exports = async function handler(req, res) {
         message: 'The proposal did not pass its own audit and was not issued.' });
     }
 
+    // ── FREEZE THE OFFER ───────────────────────────────────────────────────
+    //
+    // The customer may choose between the systems on the page, so the document
+    // is built once for EACH of them, here, while the design and the prices
+    // are the ones this quote is being issued on. From this point nothing
+    // downstream reads the design, the content library or the settings again.
+    //
+    // Every alternative goes through the same gate and the same audit as the
+    // one on screen. An option that would fail either is not something a
+    // customer should be able to select their way into.
+    const presentations = {};
+    const chosenId = str(body.chosenSystemId).trim()
+      || (isDraft ? str(design.chosenSystemId).trim() : '');
+    if (systemOptions && systemOptions.length) {
+      for (const opt of systemOptions) {
+        const id = str(opt && opt.id).trim();
+        if (!id) continue;
+        const alt = (id === chosenId) ? built : presentationMod.buildPresentation({
+          design, customer, job, content, settings,
+          proposalNumber: str(body.proposalNumber),
+          preparedAt: issuedAt, expiresAt,
+          revision: quoteRevision,
+          status: 'issued',
+          selectedOptionIds,
+          privacy: body.privacy || {},
+          intro: str(body.intro) || (isDraft ? str(design.intro) : ''),
+          heroImage: content.heroImage || null,
+          systemOptions,
+          chosenSystemId: id,
+          testQuote: stored.testQuote === true || body.testQuote === true
+        });
+        if (!alt.ok) {
+          return res.status(409).json({
+            error: 'blocked',
+            message: 'This quote cannot be issued: the "' + (opt.label || id)
+              + '" option does not pass the publish gate.',
+            blockers: (alt.blockers || []).map(b => ({ code: b.code, message: b.message }))
+          });
+        }
+        if (!presentationMod.auditPresentation(alt.presentation).ok) {
+          return res.status(409).json({ error: 'audit_failed',
+            message: 'The "' + (opt.label || id) + '" option did not pass its own audit.' });
+        }
+        presentations[id] = alt.presentation;
+      }
+    }
+    if (!Object.keys(presentations).length) {
+      presentations[offerMod.SINGLE_SYSTEM] = built.presentation;
+    }
+
+    const frozen = offerMod.freezeOffer({
+      presentations,
+      defaultSystemId: str(body.chosenSystemId).trim() || offerMod.SINGLE_SYSTEM,
+      // ── A CONFIGURED 0% IS NOT 10% ────────────────────────────────────
+      // `Number(x) || 0.1` reads a legitimately configured zero rate as
+      // falsy and silently replaces it with ten per cent. The rate on the
+      // offer is the rate the costing actually used; it is only defaulted
+      // when there is genuinely nothing on file.
+      gstRate: gstRateOf(design, settings),
+      issuedAt,
+      source: {
+        designId,
+        designUpdatedAt: designUpdatedAt(designRow),
+        contentUpdatedAt: contentRow && (contentRow.updated_at || null),
+        settingsUpdatedAt: settingsRow0 && (settingsRow0.updated_at || null),
+        termsVersion: settings.commercial && settings.commercial.terms
+          && settings.commercial.terms.termsVersion || null
+      }
+    });
+    if (!frozen.ok) {
+      return res.status(500).json({ error: 'offer_not_frozen', message: frozen.message });
+    }
+
     const issue = share.issuePresentation({
       designId, quoteRevision, validDays, issuedBy,
-      selectedOptionIds: body.selectedOptionIds || [],
+      selectedOptionIds,
       supersedes: str(body.supersedes) || null,
       now: issuedAt
     });
-    // What the issue has to remember beyond the token: who it is for, and what
-    // was on offer. The design is loaded fresh on every view, so the quote
-    // follows the job — but the CHOICE the customer was given does not change
-    // because somebody edited a design afterwards.
+    // What the issue remembers: who it is for, and THE OFFER ITSELF. The
+    // frozen documents travel with the issue, so a later edit to the design or
+    // to the content library cannot reach a quote that has already gone out.
+    // Changing what a customer was offered means issuing a new revision.
     const record = {
       ...issue,
       customer, job,
@@ -185,7 +382,8 @@ module.exports = async function handler(req, res) {
       intro: str(body.intro),
       privacy: body.privacy || {},
       systemOptions,
-      chosenSystemId: str(body.chosenSystemId) || null,
+      chosenSystemId: str(body.chosenSystemId).trim() || frozen.offer.defaultSystemId,
+      offer: frozen.offer,
       totalIncGst: built.presentation.investment?.totalIncGst ?? null
     };
 
@@ -216,6 +414,53 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // ── THE PREVIOUS REVISION IS CLOSED, NOT OVERWRITTEN ───────────────────
+    //
+    // supersede() has been in presentation-share.mjs since revisions were
+    // designed, and NOTHING CALLED IT. `supersedes` was recorded on the new
+    // issue and the old link went on serving its own offer as though it were
+    // current — two live links to the same job at two different prices, and
+    // either could be accepted.
+    //
+    // The old issue is marked and pointed forward. Its offer, its totals, its
+    // acceptance and its audit trail are left exactly as they were: an
+    // archived revision is evidence of what was offered, and a customer who
+    // follows an old link is sent to the current one rather than shown an
+    // error.
+    //
+    // An ACCEPTED issue is never relabelled — supersede() keeps its status, so
+    // a signed acceptance survives a later revision being issued.
+    let superseded = null;
+    const prevToken = str(body.supersedes).trim();
+    if (prevToken) {
+      const prevRes = await supa('/rest/v1/nac_quote_issues?token=eq.'
+        + encodeURIComponent(prevToken) + '&select=data&limit=1', { key: KEY });
+      const prevRow = Array.isArray(prevRes.body) ? prevRes.body[0] : null;
+      if (prevRow && prevRow.data) {
+        const { previous } = share.supersede(prevRow.data, record);
+        const patched = await supa('/rest/v1/nac_quote_issues?token=eq.'
+          + encodeURIComponent(prevToken), {
+            method: 'PATCH', key: KEY,
+            body: { data: previous, status: previous.status,
+                    updated_at: new Date().toISOString() }
+          });
+        superseded = {
+          token: prevToken,
+          status: previous.status,
+          // Said plainly, because "superseded" and "still accepted" are
+          // different outcomes and NAC needs to know which one happened.
+          note: previous.status === 'accepted'
+            ? 'The previous revision had already been accepted and keeps that status. '
+              + 'Its acceptance record is unchanged.'
+            : 'The previous link now points customers at this revision.',
+          ok: patched.status < 300
+        };
+      } else {
+        superseded = { token: prevToken, status: null, ok: false,
+          note: 'The previous revision could not be found, so nothing was superseded.' };
+      }
+    }
+
     const base = str(body.baseUrl).replace(/\/+$/, '') || 'https://nac-quote-tool.vercel.app';
     return res.status(200).json({
       ok: true,
@@ -223,7 +468,9 @@ module.exports = async function handler(req, res) {
       url: base + '/quote.html#' + record.token,
       expiresAt: record.expiresAt,
       quoteRevision,
-      totalIncGst: record.totalIncGst
+      gstRate: frozen.offer.gstRate,
+      totalIncGst: record.totalIncGst,
+      superseded
     });
   } catch (e) {
     return res.status(502).json({ error: 'upstream_unavailable' });

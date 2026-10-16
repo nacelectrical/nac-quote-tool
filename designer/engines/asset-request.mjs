@@ -1,0 +1,318 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT NAC STILL HAS TO SUPPLY
+//
+// The brief: "If genuine assets are missing, deliver the functioning upload
+// flow and an exact asset request list specifying what Nicholas must provide,
+// required associations and where each item will appear."
+//
+// So this is not a checklist somebody typed. It reads the actual content
+// library and the actual quote, and says what is missing, what it is for, and
+// which section of the customer's page goes dark without it.
+//
+// TWO KINDS OF MISSING, and they are not the same conversation:
+//
+//   ESSENTIAL   the proposal cannot go to a customer without it. A quote with
+//               no logo and no terms is not a NAC quote.
+//   OPTIONAL    the section hides cleanly. The proposal is still sendable; it
+//               is just thinner than it could be. Nick: never show an empty
+//               card or a broken image as though it were finished.
+//
+// Nothing here invents a photograph, a review, a warranty or a credential. It
+// says what is absent and leaves the supplying to the people who have it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { normaliseImageAsset, imagePublishable, reviewPublishable,
+         installationPublishable, IMAGE_ROLES, equipmentImagesFor,
+         seedTermsAndConditions } from './presentation-content.mjs';
+
+const list = (v) => Array.isArray(v) ? v : [];
+const trimmed = (v) => (v === null || v === undefined) ? '' : String(v).trim();
+
+export const NEED = Object.freeze({ ESSENTIAL: 'essential', OPTIONAL: 'optional' });
+
+function item(level, id, what, why, where, howMany, association = null) {
+  return { level, id, what, why, where, howMany, association };
+}
+
+/**
+ * @param {object} content the content library as stored
+ * @param {object} [job]   { unit } — the equipment on the quote, when there is one
+ */
+export function assetRequest(content = {}, job = {}) {
+  const c = content || {};
+  const images = list(c.images).map(normaliseImageAsset);
+  const approved = images.filter(i => imagePublishable(i).ok);
+  const byRole = (role) => approved.filter(i => i.role === role);
+
+  const needs = [];
+
+  // ── BRANDING ───────────────────────────────────────────────────────────
+  if (!trimmed(c.logo)) {
+    needs.push(item(NEED.ESSENTIAL, 'logo', 'The NAC logo',
+      'Every proposal opens with it. Without one the cover carries NAC\'s name as '
+      + 'plain text, which does not read as a company quote.',
+      'Cover, top left, and the footer of every printed page', 1,
+      'Upload at /quote-presentation.html → Branding'));
+  }
+  if (!c.heroImage || !trimmed(c.heroImage.src)) {
+    needs.push(item(NEED.OPTIONAL, 'hero', 'One wide cover photograph',
+      'A finished installation that looks good across the top of the page. '
+      + 'Landscape, at least 1600 px wide.',
+      'Cover, right-hand side — currently a flat colour', 1,
+      'Upload at /quote-presentation.html → Branding → Hero image'));
+  }
+
+  // ── EQUIPMENT ──────────────────────────────────────────────────────────
+  const unit = job.unit || null;
+  const equipShots = byRole(IMAGE_ROLES.EQUIPMENT);
+  const unitBrand = trimmed(unit && (unit.brandName ?? unit.brand ?? unit.brandId));
+  if (unit && (trimmed(unit.model) || unitBrand)) {
+    const matched = equipmentImagesFor(images, unit);
+    if (!matched.length) {
+      // Matching is on the brand where no photograph names the model, so what
+      // is missing is a photograph of THIS BRAND — not of this exact model.
+      // Asking for the model would send Nick looking for a compliance plate
+      // when a photograph of the machine would do.
+      const label = unitBrand || [unit.model, unit.outdoorModel].map(trimmed)
+        .filter(Boolean).join(' and ');
+      needs.push(item(NEED.OPTIONAL, 'equipment:' + (unitBrand || trimmed(unit.model)),
+        'A photograph of a ' + label + ' unit',
+        'There is no approved ' + label + ' photograph in the library, so the system '
+        + 'card renders the plain branded panel rather than somebody else\'s machine.',
+        'Your recommended system — beside the specification table', 1,
+        'Upload at /quote-presentation.html → Images, set Role to "equipment" and '
+        + 'Brand shown to "' + label + '". The model is optional — it only makes the '
+        + 'match sharper.'));
+    }
+  } else if (!equipShots.length) {
+    needs.push(item(NEED.OPTIONAL, 'equipment', 'Photographs of the units NAC fits',
+      'One or two per model — the indoor unit, the outdoor unit and the controller.',
+      'Your recommended system', 2,
+      'Each one has to name the model it shows, or it is never offered as a '
+      + 'photograph of that model.'));
+  }
+
+  // ── PAST WORK ──────────────────────────────────────────────────────────
+  const installs = list(c.installations)
+    .filter(i => installationPublishable(i, Object.fromEntries(images.map(x => [x.id, x]))).ok);
+  const installShots = byRole(IMAGE_ROLES.INSTALLATION);
+  if (installs.length < 3) {
+    needs.push(item(NEED.OPTIONAL, 'installations',
+      (3 - installs.length) + ' more past installation' + (3 - installs.length === 1 ? '' : 's'),
+      'Three reads as a track record; one reads as the only job that photographed '
+      + 'well. Below three the gallery does not go thin, it is hidden.',
+      'Recent NAC installations', 3 - installs.length,
+      'Each needs a suburb, a brand, the system type and consent ticked. No street '
+      + 'address goes out.'));
+  }
+  if (installShots.length < 6) {
+    // A photograph is tagged for ONE job. The equipment shots sit beside the
+    // system card; the gallery wants finished work tied to a suburb and a
+    // consent. Saying so stops this reading as "send more photographs" to
+    // somebody who has just sent nine.
+    const haveEquip = equipShots.length;
+    needs.push(item(NEED.OPTIONAL, 'installation-photos',
+      (6 - installShots.length) + ' installation photograph'
+        + (6 - installShots.length === 1 ? '' : 's') + ' for the gallery',
+      'Outlets in a ceiling, a tidy outdoor unit on its base, a return air grille, '
+      + 'a controller on a wall. Landscape, at least 800 px wide.'
+      + (haveEquip
+          ? ' NOTE: the ' + haveEquip + ' photograph' + (haveEquip === 1 ? '' : 's')
+            + ' already supplied are tagged "equipment" and appear beside the system '
+            + 'card, not in the gallery. The same photograph can be uploaded again '
+            + 'with the role set to "installation" if it should do both.'
+          : ''),
+      'Recent NAC installations', 6 - installShots.length,
+      'Role "installation", attached to the job it came from, which is where the '
+      + 'suburb and the consent are recorded. Uploads are re-encoded, which is what '
+      + 'strips the EXIF and GPS off the copy customers get.'));
+  }
+
+  // ── REVIEWS ────────────────────────────────────────────────────────────
+  //
+  // A review used to need a star rating to publish, and NAC's twelve real
+  // Google reviews all arrived without one, so the request here was for the
+  // RATINGS rather than for more reviews. The words are the review and an
+  // unrated one now publishes with no stars drawn, so the shortfall is no
+  // longer about ratings — it is about APPROVAL, which is a person's act and
+  // the one thing nobody but Nick can do.
+  //
+  // So the ask names the actual obstacle: reviews sitting on file waiting to
+  // be ticked is a different job from going and collecting more.
+  const reviews = list(c.reviews);
+  const publishable = reviews.filter(r => reviewPublishable(r).ok);
+  const onlyUnapproved = reviews.filter(r => {
+    const why = reviewPublishable(r).reasons;
+    return why.length === 1 && /Not approved/i.test(why[0]);
+  });
+  if (publishable.length < 3) {
+    const short = 3 - publishable.length;
+    const waiting = Math.min(onlyUnapproved.length, short);
+    needs.push(item(NEED.OPTIONAL, 'reviews',
+      waiting
+        ? 'Approval for ' + onlyUnapproved.length + ' review'
+          + (onlyUnapproved.length === 1 ? '' : 's') + ' already on file'
+        : short + ' more approved review' + (short === 1 ? '' : 's'),
+      waiting
+        ? 'They are genuine and everything else about them checks out \u2014 they are '
+          + 'waiting on you to tick Approved. Nothing goes on a customer\u2019s page '
+          + 'until you have.'
+        : 'Below three the section is hidden rather than shown thin.',
+      'What our customers say', Math.max(1, short),
+      waiting
+        ? 'Open /quote-presentation.html \u2192 Reviews and tick Approved on the ones '
+          + 'you are happy to publish.'
+        : 'Import at /quote-presentation.html \u2192 Reviews \u2192 Import Google reviews.'));
+  }
+
+  // ── THE STARS, IF NAC EVER WANTS THEM ──────────────────────────────────
+  // Not a blocker and never guessed. Google's notification emails render the
+  // stars as an image with no alt text, so the figure is not in them; a review
+  // with none publishes and the page simply draws no stars beside it.
+  const unrated = publishable.filter(r => r.rating === null || r.rating === undefined);
+  if (unrated.length) {
+    needs.push(item(NEED.OPTIONAL, 'review-ratings',
+      'The star ratings for ' + unrated.length + ' published review'
+        + (unrated.length === 1 ? '' : 's'),
+      'The reviews publish without them and no stars are drawn. Entering the real '
+      + 'figures adds the stars; nothing is guessed, so nothing is shown until they '
+      + 'are entered.',
+      'What our customers say', unrated.length,
+      'Read them off the Google Business Profile dashboard and enter them at '
+      + '/quote-presentation.html \u2192 Reviews.'));
+  }
+
+  // ── WORDS NAC IS BOUND BY ──────────────────────────────────────────────
+  //
+  // Both of these were being reported missing, and both were already on file.
+  //
+  // THE TERMS are seeded by seedTermsAndConditions() from NAC_TERMS_BODY —
+  // NAC's own Terms and Conditions of Trade — so a proposal issued before
+  // anybody opens the content library still shows the customer the terms they
+  // are accepting. This looked at a bare `content.termsAndConditions`, which
+  // is blank until somebody edits them, and called that nothing.
+  //
+  // THE WARRANTY is not a `content.warranty` object; there has never been one.
+  // The wording lives on the TRUST record as workmanshipWarranty and
+  // manufacturerWarranty, both taken from clauses of the Terms themselves, and
+  // both already filled in.
+  //
+  // Asking for something that has been supplied is worse than a wrong line in
+  // a list: it teaches whoever reads it that the list is not to be trusted.
+  const terms = seedTermsAndConditions(c.termsAndConditions);
+  if (!trimmed(terms)) {
+    needs.push(item(NEED.ESSENTIAL, 'terms', 'NAC\'s terms and conditions of trade',
+      'They print on every proposal and the customer ticks to accept them. A quote '
+      + 'accepted against no terms is an agreement with nothing behind it.',
+      'Accept your proposal — above the signature', 1,
+      '/quote-presentation.html → Terms'));
+  } else if (!trimmed(c.termsAndConditions)) {
+    // Present, but nobody in the library has confirmed they are the current
+    // version. That is a read-and-confirm job, not a write-them-from-scratch
+    // one, and saying so is the difference between five minutes and an hour.
+    needs.push(item(NEED.OPTIONAL, 'terms:confirm',
+      'Confirm the terms on file are the current version',
+      'The proposal is carrying NAC\'s Terms and Conditions of Trade as they were '
+      + 'entered into this project. Nothing has been changed, and nobody has '
+      + 'confirmed since that they are still the version NAC trades on.',
+      'Accept your proposal — above the signature', 1,
+      'Read them at /quote-presentation.html → Terms and save, which records that '
+      + 'they were checked.'));
+  }
+
+  const t0 = c.trust || {};
+  if (!trimmed(t0.workmanshipWarranty) && !trimmed(t0.manufacturerWarranty)) {
+    needs.push(item(NEED.ESSENTIAL, 'warranty', 'The warranty wording',
+      'What the manufacturer covers and for how long, and what NAC covers on the '
+      + 'installation. This is never written by the program — a warranty it made up '
+      + 'would be a promise nobody has made.',
+      'Warranty and aftercare', 1, '/quote-presentation.html → About NAC'));
+  } else if (!trimmed(t0.workmanshipWarranty) || !trimmed(t0.manufacturerWarranty)) {
+    needs.push(item(NEED.OPTIONAL, 'warranty:half',
+      'The other half of the warranty wording',
+      trimmed(t0.workmanshipWarranty)
+        ? 'The workmanship warranty is on file and the manufacturer one is not.'
+        : 'The manufacturer warranty is on file and NAC\'s own workmanship one is not.',
+      'Warranty and aftercare', 1, '/quote-presentation.html → About NAC'));
+  }
+  const a = c.aftercare || {};  // this one IS a content field — see drawAftercare
+  if (!trimmed(a.servicing) && !trimmed(a.filterCare) && !trimmed(a.support)) {
+    needs.push(item(NEED.OPTIONAL, 'aftercare', 'The aftercare wording',
+      'Filter care, servicing intervals and how a customer reaches NAC afterwards.',
+      'Warranty and aftercare', 1, '/quote-presentation.html → Warranty'));
+  }
+  // ── THE FIELDS ARE THE ONES THE LIBRARY ACTUALLY HAS ───────────────────
+  //
+  // This asked for `licenceNumber`, `arcticLicence` and `arcLicence`. The
+  // library has `electricalLicence` and `arcAuthorisation`, and has never had
+  // any of the other three. So the check could not see a licence that WAS on
+  // file and reported both as missing — which is how it came to be asking Nick
+  // for an ARC number the project had already been given.
+  //
+  // A request list that asks for something already supplied teaches the person
+  // reading it to ignore the list, which costs more than the one wrong line.
+  //
+  // They are asked for SEPARATELY now, because they are two different
+  // registrations held by two different authorities, and "licence numbers" as
+  // one item cannot say that one of them has arrived.
+  const t = c.trust || {};
+  if (!trimmed(t.electricalLicence)) {
+    // ── OUTSTANDING, NOT BLOCKING ────────────────────────────────────────
+    //
+    // Nick, 16 October 2026: "Leave licence number out for now until I have
+    // it." The publish gate already treats it that way — presentation.mjs
+    // raises LICENCE_PROMISED_BY_TERMS as a CHECK and lets the quote go — so
+    // listing it as ESSENTIAL made this list stricter than the system it is
+    // supposed to describe, which is its own kind of wrong.
+    //
+    // It is still SAID, and said with the reason, because clause 17.2 of
+    // NAC's own terms tells the customer that licence numbers appear on
+    // quotations and invoices. A document promising something the quotation
+    // does not carry is worth one line on a list, whatever the list's level.
+    //
+    // A blank field is omitted from the customer page, so nothing shows a
+    // gap or a placeholder in the meantime.
+    needs.push(item(NEED.OPTIONAL, 'licence:electrical',
+      'NAC\'s electrical contractor licence number — when you have it',
+      'Clause 17.2 of NAC\'s terms tells the customer that licence numbers appear '
+      + 'on quotations and invoices, and this one carries the ARC authorisation but '
+      + 'not the electrical licence. The trust panel simply leaves the line out '
+      + 'until it is there; it is never filled with a plausible-looking default, '
+      + 'because that would be a fabricated licence.',
+      'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
+  }
+  if (!trimmed(t.arcAuthorisation)) {
+    needs.push(item(NEED.ESSENTIAL, 'licence:arc',
+      'NAC\'s ARC refrigerant handling authorisation',
+      'Required on the proposal for refrigerant work, and never invented for the '
+      + 'same reason as the electrical licence.',
+      'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
+  }
+
+  const essential = needs.filter(x => x.level === NEED.ESSENTIAL);
+  return {
+    ok: essential.length === 0,
+    /** Can a proposal go to a real customer at all? */
+    canIssue: essential.length === 0,
+    essential,
+    optional: needs.filter(x => x.level === NEED.OPTIONAL),
+    needs,
+    have: {
+      logo: !!trimmed(c.logo),
+      heroImage: !!(c.heroImage && trimmed(c.heroImage.src)),
+      approvedImages: approved.length,
+      equipmentPhotos: equipShots.length,
+      installationPhotos: installShots.length,
+      publishableInstallations: installs.length,
+      publishableReviews: publishable.length,
+      terms: !!trimmed(terms),
+      termsConfirmedInLibrary: !!trimmed(c.termsAndConditions),
+      workmanshipWarranty: !!trimmed(t0.workmanshipWarranty),
+      manufacturerWarranty: !!trimmed(t0.manufacturerWarranty),
+      electricalLicence: trimmed(t.electricalLicence) || false,
+      arcAuthorisation: trimmed(t.arcAuthorisation) || false
+    }
+  };
+}
+
+export default { NEED, assetRequest };

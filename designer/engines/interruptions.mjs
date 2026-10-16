@@ -192,11 +192,29 @@ export function collectInterruptions(design, opts = {}) {
   // ── Static pressure ───────────────────────────────────────────────────────
   // The engine reports three states and "not completed" is not a pass.
   if (d.pressure && d.pressure.checkCompleted === false) {
+    // ── THREE WAYS TO NOT COMPLETE, THREE PLACES TO FIX IT ────────────────
+    //
+    // The figure is missing from the data sheet → Equipment.
+    // The duct has not been measured → Ductwork.
+    // The plan scale cannot be relied on → Plan.
+    //
+    // Sending an estimator to Equipment to fix an unmeasured duct wastes the
+    // trip and teaches them to ignore the banner.
+    const ev = d.pressure.lengthEvidence || {};
+    const scaleProblem = ev.code === 'STATIC_PRESSURE_SCALE_NOT_RELIABLE';
+    const lengthProblem = ev.code === 'STATIC_PRESSURE_LENGTH_NOT_MEASURED'
+                       || ev.code === 'STATIC_PRESSURE_NO_INDEX_RUN';
     out.push(item(INTERRUPT.BLOCKING, 'PRESSURE_NOT_COMPLETED',
       'Static pressure check could not be completed',
-      d.pressure.statusLabel || 'No manufacturer available static pressure is on file for this ' +
-      'model, so the check could not be carried out. Enter the figure from the data sheet.',
-      FIX_IN.EQUIPMENT, { covers: ['STATIC_PRESSURE_CHECK_NOT_COMPLETED'] }));
+      (scaleProblem || lengthProblem)
+        ? (d.pressure.statusLabel + '. ' + (ev.reason || ''))
+        : (d.pressure.statusLabel || 'No manufacturer available static pressure is on file for this '
+           + 'model, so the check could not be carried out. Enter the figure from the data sheet.'),
+      scaleProblem ? FIX_IN.PLAN : lengthProblem ? FIX_IN.DUCTWORK : FIX_IN.EQUIPMENT,
+      { covers: ['STATIC_PRESSURE_CHECK_NOT_COMPLETED',
+                 'STATIC_PRESSURE_LENGTH_NOT_MEASURED',
+                 'STATIC_PRESSURE_SCALE_NOT_RELIABLE',
+                 'STATIC_PRESSURE_NO_INDEX_RUN'] }));
   } else if (d.pressure && d.pressure.status === 'fail') {
     out.push(item(INTERRUPT.BLOCKING, 'PRESSURE_FAIL', 'The system will not make its airflow',
       'Calculated ' + round(d.pressure.estimatedRequirementPa, 0) + ' Pa against ' +

@@ -27,8 +27,16 @@ const SHEET = [
   ["L'DRY",           498, 364, null]
 ];
 const PPM = 210 / 4500;            // the Lounge's printed 4.5 m across 210 px
+// WHERE THE SCALE CAME FROM, recorded on the scale itself. calibration.scaleTrust()
+// refuses a px/mm figure with no origin — that is how a scale taken off a car
+// drawn on a plan gets caught — and this fixture was standing on exactly such a
+// bare number. The origin is the one the line above already states: the Lounge's
+// printed 4.5 m measured across 210 px of drawing.
 export const CAL = { pixelsPerMm: PPM, mmPerPixel: 1 / PPM,
-                     imageWidthPx: 818, imageHeightPx: 902, display: {} };
+                     imageWidthPx: 818, imageHeightPx: 902, display: {},
+                     source: 'measured', calibrationDistanceMm: 4500,
+                     pointA: { x: 565, y: 670 }, pointB: { x: 775, y: 670 },
+                     calibratedAt: '2026-09-01T00:00:00Z' };
 /** Above the hallway / laundry junction — never above a bedroom. */
 export const FAN_COIL = { x: 464, y: 428 };
 export const RETURN_GRILLES = [{ x: 352, y: 444 }, { x: 524, y: 412 }];

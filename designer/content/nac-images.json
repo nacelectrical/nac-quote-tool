@@ -1,0 +1,352 @@
+{
+  "_source": "NAC's own photographs of NAC's own installations, supplied by Nick on 15 October 2026. Unlike the generated fixtures in tests/, these are real.",
+  "_generated": "tools/import-nac-photos.mjs — re-encoded in Chromium and verified with scanMetadata(). Do not hand-edit; re-run the tool.",
+  "_notes": [
+    "No INSTALLATION photographs are publishable. A photograph of a customer’s house needs their suburb and their consent recorded against it before it goes on a proposal, and none of these has either. The gallery is left out rather than filled with equipment shots.",
+    "There is no COVER photograph. Every one of these is portrait, and a cover wants a landscape shot of a finished job. The cover falls back to the brand panel until one is supplied.",
+    "9 of 9 photographs carry a brand but no model number — the compliance plate is not legible. They are matched to a quote by brand, which is what Nick asked for; a model number recorded later only makes the match sharper."
+  ],
+  "images": [
+    {
+      "id": "fujitsu-airstage-outdoor",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage outdoor unit installed against a rendered wall beside an electric hot water tank",
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "outdoor",
+        "ducted"
+      ],
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/fujitsu-airstage-outdoor.jpg",
+          "width": 1156,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 270129
+        }
+      ],
+      "sourceFile": "photos/fujitsu-airstage-outdoor.jpg",
+      "sourceSize": {
+        "width": 2044,
+        "height": 2475
+      },
+      "seen": "Fujitsu, Airstage badge. Outdoor condensing unit, single-stack vertical discharge. Isolator mounted on the wall beside it, conduit and drain run dressed down the wall."
+    },
+    {
+      "id": "daikin-r32-outdoor-twin-fan",
+      "role": "equipment",
+      "alt": "A Daikin R32 inverter outdoor unit on mounting feet against a rendered wall",
+      "tags": [
+        "daikin",
+        "r32",
+        "outdoor",
+        "ducted",
+        "inverter"
+      ],
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/daikin-r32-outdoor-twin-fan.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 424464
+        }
+      ],
+      "sourceFile": "photos/daikin-r32-outdoor-twin-fan.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "Daikin, INVERTER, R32. Twin-fan outdoor unit on galvanised mounting feet, isolator and conduit to the right."
+    },
+    {
+      "id": "daikin-r410a-outdoor-twin-fan",
+      "role": "equipment",
+      "alt": "A Daikin R410A twin-fan outdoor unit mounted beside a window",
+      "tags": [
+        "daikin",
+        "r410a",
+        "outdoor",
+        "ducted"
+      ],
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/daikin-r410a-outdoor-twin-fan.jpg",
+          "width": 935,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 314016
+        }
+      ],
+      "sourceFile": "photos/daikin-r410a-outdoor-twin-fan.jpg",
+      "sourceSize": {
+        "width": 1720,
+        "height": 2576
+      },
+      "seen": "Daikin, R410A. Twin-fan outdoor unit on feet."
+    },
+    {
+      "id": "daikin-vrv-iv-outdoor",
+      "role": "equipment",
+      "alt": "A Daikin VRV IV outdoor unit installed against weatherboard cladding",
+      "tags": [
+        "daikin",
+        "vrv",
+        "r410a",
+        "outdoor"
+      ],
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/daikin-vrv-iv-outdoor.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 283541
+        }
+      ],
+      "sourceFile": "photos/daikin-vrv-iv-outdoor.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "Daikin, VRV IV, R410A. Single-fan outdoor unit on feet, isolator above on the cladding."
+    },
+    {
+      "id": "braemar-outdoor-close",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit installed against a painted brick wall",
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ],
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/braemar-outdoor-close.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 346162
+        }
+      ],
+      "sourceFile": "photos/braemar-outdoor-close.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "Braemar, by SEELEY INTERNATIONAL. Single-fan outdoor unit on mounting feet against white-painted brickwork, isolator on the wall, conduit and insulated pipework dressed down behind it. The unit fills the frame."
+    },
+    {
+      "id": "braemar-outdoor-wide",
+      "role": "equipment",
+      "alt": "A Braemar outdoor unit on a plant deck, with the conduit run to the wall isolator",
+      "tags": [
+        "braemar",
+        "outdoor",
+        "ducted"
+      ],
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/braemar-outdoor-wide.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 322994
+        }
+      ],
+      "sourceFile": "photos/braemar-outdoor-wide.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "The same kind of Braemar unit from further back: the full conduit run up to the isolator and the plant deck it stands on. More of the installation, less of the machine."
+    },
+    {
+      "id": "airtouch-console-4-zone",
+      "role": "equipment",
+      "alt": "An AirTouch wall console showing four zones and the set temperature",
+      "tags": [
+        "airtouch",
+        "controller",
+        "zoning"
+      ],
+      "equipmentBrand": "AirTouch",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/airtouch-console-4-zone.jpg",
+          "width": 1146,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 122325
+        }
+      ],
+      "sourceFile": "photos/airtouch-console-4-zone.jpg",
+      "sourceSize": {
+        "width": 2108,
+        "height": 2576
+      },
+      "seen": "AirTouch console in a glass surround. Four zones — Master, Living, Bed 2 + 3, Office — each at 100%, heating, set to 26 degrees, fan medium."
+    },
+    {
+      "id": "airtouch-console-5-zone-sensors",
+      "role": "equipment",
+      "alt": "An AirTouch wall console showing five zones, each with its own set temperature and its own measured room temperature",
+      "tags": [
+        "airtouch",
+        "controller",
+        "zoning",
+        "sensors"
+      ],
+      "equipmentBrand": "AirTouch",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/airtouch-console-5-zone-sensors.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 116741
+        }
+      ],
+      "sourceFile": "photos/airtouch-console-5-zone-sensors.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "AirTouch console. Five zones — Living Room, Bedroom 1, 2, 3 and 4 — each with a SET temperature and a MEASURED room temperature beside it (24, 24, 24, 24, 23). A per-zone measured reading means a room temperature sensor in each of those rooms: this is a picture of the sensor upgrade actually working, which is the one thing a price list cannot show."
+    },
+    {
+      "id": "fujitsu-airstage-wall-controller",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage wall controller with a zone switch panel below it",
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "controller",
+        "zoning"
+      ],
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF",
+        "APP10"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/fujitsu-airstage-wall-controller.jpg",
+          "width": 1050,
+          "height": 1400,
+          "format": "jpg",
+          "bytes": 84633
+        }
+      ],
+      "sourceFile": "photos/fujitsu-airstage-wall-controller.jpg",
+      "sourceSize": {
+        "width": 1932,
+        "height": 2576
+      },
+      "seen": "Fujitsu Airstage wired wall controller — Mode Heat, Set Temp 24.0 degrees, Fan Med — with a lit zone switch panel beneath showing Kitchen, Living and Bed 2."
+    }
+  ],
+  "refused": []
+}

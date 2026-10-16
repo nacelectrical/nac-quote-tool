@@ -76,6 +76,7 @@ const ICONS = {
   check:   'M20 6 9 17l-5-5',
   waste:   'M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13M10 11v6M14 11v6',
   shield:  'M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z',
+  cross:   'M6 6l12 12M18 6 6 18',
   badge:   'M12 3l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 8.7l5.4-.8L12 3Z',
   star:    'M12 3l2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.4l6-.8L12 3Z'
 };
@@ -87,6 +88,10 @@ function icon(name, cls = 'ic') {
 }
 
 function stars(rating) {
+  // No rating recorded, no stars drawn. Rounding an absent rating gave 0 and
+  // printed five empty stars beside a five-star review, which reads as one out
+  // of five — worse than showing none.
+  if (rating === null || rating === undefined || rating === '') return '';
   const r = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
   let out = '<span class="stars" role="img" aria-label="' + r + ' out of 5 stars">';
   for (let i = 0; i < 5; i++) {
@@ -129,67 +134,132 @@ function picture(img, { ratio = '4 / 3', sizes = '100vw', eager = false, cls = '
 // SECTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * THE COVER.
+ *
+ * Nick, 16 October 2026: "A strong cover section using the genuine NAC logo,
+ * approved photography, the client name and the property address" — and
+ * "avoid the long, tiny-text technical-form appearance of the previous
+ * version."
+ *
+ * The old hero was a thin navy band carrying a greeting, a title and three
+ * chips of 11px type. It named the suburb and never the client, and the first
+ * thing under it was an eleven-row specification table. It read like the top
+ * of a form.
+ *
+ * This is a cover page: one screen, the logo, who it is for, which house, what
+ * it is, and the figure — then the document proper begins below it.
+ *
+ * THE PHOTOGRAPH IS OPTIONAL AND NEVER FAKED. With an approved landscape
+ * photograph it is a full-bleed cover behind a navy scrim deep enough to keep
+ * the type legible on any image. With none, the cover is the navy panel on its
+ * own and looks deliberate — no grey box, no placeholder, no broken image.
+ */
 function heroHtml(p) {
   const h = p.hero;
   const logo = safeUrl(p.brand.logo);
+  const img = h.heroImage ? safeUrl(h.heroImage.src || h.heroImage.ref) : '';
   const meta = [
     h.proposalNumber ? ['Proposal', h.proposalNumber] : null,
     h.preparedDate ? ['Prepared', h.preparedDate] : null,
     h.expiryDate ? [h.expired ? 'Expired' : 'Valid until', h.expiryDate] : null
   ].filter(Boolean);
-  // Two columns on a wide screen, stacked on a phone. Without this the desktop
-  // hero was a wall of navy with the title tucked into the left third.
-  return '<header class="hero' + (h.heroImage ? ' has-img' : '') + '" id="top">'
-    + '<div class="hero-in">'
-      + '<div class="hero-top">'
-        + (logo ? '<img class="logo" src="' + logo + '" alt="' + esc(p.brand.name) + '" width="200" height="64">'
-                : '<div class="logo-txt">' + esc(p.brand.name) + '</div>')
+  const total = p.investment ? p.investment.totalIncGst : null;
+
+  return '<header class="cover' + (img ? ' has-img' : '') + '" id="top"'
+    + (img ? ' style="--cover:url(&quot;' + img.replace(/"/g, '&quot;') + '&quot;)"' : '')
+    + '>'
+    + '<div class="cover-in">'
+      + '<div class="cover-top">'
+        + (logo
+            ? '<img class="logo" src="' + logo + '" alt="' + esc(p.brand.name) + '" '
+              + 'width="220" height="70">'
+            : '<div class="logo-txt">' + esc(p.brand.name) + '</div>')
       + '</div>'
-      + '<p class="eyebrow">' + esc(h.greeting) + '</p>'
-      + '<h1>' + esc(h.title) + '</h1>'
-      + when(!!h.site, '<p class="hero-site">' + esc(h.site) + '</p>')
-      + when(meta.length > 0, '<dl class="hero-meta">' + meta.map(([k, v]) =>
-          '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl>')
+      + '<div class="cover-mid">'
+        + '<p class="eyebrow">' + esc(h.greeting) + '</p>'
+        + '<h1>' + esc(h.title) + '</h1>'
+        // WHO IT IS FOR AND WHICH HOUSE — the two things the old cover left out.
+        + when(!!(h.customerName || h.siteAddress || h.site),
+            '<div class="cover-for">'
+            + when(!!h.customerName,
+                '<p class="cover-name">Prepared for ' + esc(h.customerName) + '</p>')
+            + when(!!(h.siteAddress || h.site),
+                '<p class="cover-addr">' + esc(h.siteAddress || h.site) + '</p>')
+            + '</div>')
+      + '</div>'
+      + '<div class="cover-foot">'
+        + when(meta.length > 0, '<dl class="cover-meta">' + meta.map(([k, v]) =>
+            '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl>')
+        + when(total !== null && total !== undefined,
+            '<p class="cover-price"><span>' + esc(p.investment.priceLabel || 'Your investment')
+            + '</span><strong>' + esc(moneyRound(total)) + '</strong>'
+            + '<small>including GST</small></p>')
+      + '</div>'
     + '</div>'
-    + when(!!h.heroImage, '<div class="hero-img">'
-        + picture(h.heroImage, { ratio: '16 / 7', sizes: '100vw', eager: true }) + '</div>')
   + '</header>'
   + '<section class="intro"><p>' + esc(h.intro) + '</p></section>';
 }
 
+/**
+ * THE SYSTEM, LED BY A PHOTOGRAPH OF IT.
+ *
+ * This was an eleven-row specification table beside a small coloured tile, and
+ * it was the first thing under the cover. Brand, indoor unit, outdoor unit,
+ * capacity, power supply, conditioned rooms, supply outlets, zones,
+ * controller, Wi-Fi, warranty — eleven label/value pairs in 15px type is a
+ * data sheet, and a data sheet is exactly the "technical-form appearance"
+ * Nick asked to be rid of.
+ *
+ * The customer needs five things here: what it looks like, who makes it, how
+ * big it is, what controls it, and what it is covered by. The model numbers
+ * matter and are kept, but as a quiet line rather than as two rows of the
+ * table — nobody chooses a system on FDYAN160AV1.
+ *
+ * The photograph is the real one of the real brand, matched by the content
+ * library. With no photograph the branded panel is drawn instead; a lookalike
+ * is never substituted.
+ */
 function systemHtml(p) {
   const s = p.system;
   if (!s) return '';
-  const specs = [
-    ['Brand', s.brand],
-    ['Indoor unit', s.indoorModel],
-    ['Outdoor unit', s.outdoorModel],
-    ['Capacity', s.capacityKw !== null ? s.capacityKw + ' kW' : ''],
-    ['Power supply', s.phase],
-    ['Conditioned rooms', s.conditionedRooms || ''],
-    ['Supply outlets', s.outlets || ''],
-    ['Zones', s.zones || ''],
-    ['Controller', s.controller],
-    ['Wi-Fi control', s.wifi ? 'Included' : ''],
-    ['Warranty', s.warranty]
-  ].filter(([, v]) => str(v).trim() !== '');
 
-  return sect('system', 'Your recommended system',
+  const models = [s.indoorModel, s.outdoorModel].map(str).map(v => v.trim())
+    .filter(Boolean).join('  /  ');
+
+  // The handful of facts a customer actually reads, as headline figures.
+  const facts = [
+    s.capacityKw !== null && s.capacityKw !== undefined
+      ? [s.capacityKw + ' kW', 'Cooling and heating capacity'] : null,
+    s.outlets ? [str(s.outlets), 'Supply air outlets'] : null,
+    s.zones ? [str(s.zones), 'Separately controlled zones'] : null,
+    s.controller ? [str(s.controller), 'Zone control'] : null
+  ].filter(Boolean);
+
+  return sect('system', 'The system we are proposing',
       '<div class="sys">'
       + '<div class="sys-media">'
         + (s.image
-            ? picture(s.image, { ratio: '4 / 3', sizes: '(min-width:900px) 380px, 100vw' })
+            ? picture(s.image, { ratio: '3 / 4', sizes: '(min-width:860px) 400px, 100vw' })
             // Nick: never a lookalike product photo. A clean branded card instead.
             : '<div class="sys-card"><span class="sys-card-brand">' + esc(s.brand) + '</span>'
-              + '<span class="sys-card-kw">' + esc(s.capacityKw !== null ? s.capacityKw + ' kW' : '') + '</span>'
+              + '<span class="sys-card-kw">'
+              + esc(s.capacityKw !== null ? s.capacityKw + ' kW' : '') + '</span>'
               + '<span class="sys-card-type">Ducted reverse cycle</span></div>')
       + '</div>'
       + '<div class="sys-body">'
-        + '<dl class="specs">' + specs.map(([k, v]) =>
-            '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl>'
-        + when(s.totalIncGst !== null,
-            '<p class="sys-price"><span>Total installed</span><strong>'
-            + esc(moneyRound(s.totalIncGst)) + '</strong><small>including GST</small></p>')
+        + '<p class="sys-brand">' + esc(s.brand) + '</p>'
+        + '<h3 class="sys-name">'
+          + esc(s.capacityKw !== null ? s.capacityKw + ' kW ducted reverse cycle'
+                                      : 'Ducted reverse cycle')
+          + '</h3>'
+        + when(!!models, '<p class="sys-models">' + esc(models) + '</p>')
+        + when(!!s.phase, '<p class="sys-supply">' + esc(s.phase) + ' power supply</p>')
+        + when(facts.length > 0, '<ul class="sys-facts">' + facts.map(([v, k]) =>
+            '<li><strong>' + esc(v) + '</strong><span>' + esc(k) + '</span></li>').join('')
+            + '</ul>')
+        + when(!!s.warranty, '<p class="sys-warranty">' + icon('shield')
+            + '<span>' + esc(s.warranty) + '</span></p>')
       + '</div>'
     + '</div>');
 }
@@ -200,12 +270,66 @@ function rationaleHtml(p) {
     '<div class="prose">' + p.rationale.points.map(t => '<p>' + esc(t) + '</p>').join('') + '</div>');
 }
 
+/**
+ * The evidence-based inclusion cards.
+ *
+ * DROPPED when the estimator typed their own inclusions. Both lists describe
+ * the same job, so showing both put "Commissioning and handover" and "Removal
+ * of installation waste" on the page twice, a screen apart, in two different
+ * shapes — which reads as padding and makes the proposal a third longer for
+ * nothing. The typed list is the one a person wrote and approved for THIS
+ * job, so that is the one that is shown.
+ */
 function inclusionsHtml(p) {
+  if (p.scopeOfWork && p.scopeOfWork.inclusions.length) return '';
   if (!p.inclusions || !p.inclusions.length) return '';
   return sect('included', 'What is included',
     '<ul class="cards">' + p.inclusions.map(i =>
       '<li class="card"><span class="card-ic">' + icon(i.icon) + '</span>'
       + '<h3>' + esc(i.title) + '</h3><p>' + esc(i.blurb) + '</p></li>').join('') + '</ul>');
+}
+
+/**
+ * WHAT IS IN THE PRICE, AND WHAT IS NOT.
+ *
+ * The inclusion cards above are EVIDENCE-BASED: each one is printed because
+ * the design proves the thing is there. That is the right rule and it is not
+ * the whole story, because a quote-only job has no bill of materials to prove
+ * anything from and plainly still includes ductwork.
+ *
+ * These are the estimator's own words, as typed and approved. The exclusions
+ * carry at least as much weight as the inclusions: what is NOT in the price is
+ * where a job turns into an argument six weeks later, and a customer who read
+ * it on the proposal they signed is not surprised by it.
+ *
+ * Nick: "Clear inclusions and exclusions."
+ */
+function scopeHtml(p) {
+  const sc = p.scopeOfWork;
+  if (!sc) return '';
+  const col = (title, items, kind) => items.length
+    ? '<div class="scope-col ' + kind + '">'
+      + '<h3>' + esc(title) + '</h3>'
+      + '<ul>' + items.map(t => '<li>' + icon(kind === 'in' ? 'check' : 'cross', 'ic sic')
+          + '<span>' + esc(t) + '</span></li>').join('') + '</ul>'
+      + '</div>'
+    : '';
+  return sect('scope', 'What the price covers',
+      when(!!sc.summary, '<p class="lede">' + esc(sc.summary) + '</p>')
+    + '<div class="scope">'
+      + col('Included in this price', sc.inclusions, 'in')
+      + col('Not included', sc.exclusions, 'out')
+    + '</div>'
+    // when() takes a STRING, so the figure is built behind the condition and
+    // not passed to it: `sc.planImage.src` is evaluated either way.
+    + (sc.planImage
+        ? '<figure class="scope-plan">'
+          + picture({ src: sc.planImage.src, alt: sc.planImage.caption || 'Floor plan' },
+                    { ratio: '16 / 10', sizes: '100vw' })
+          + when(!!sc.planImage.caption,
+              '<figcaption>' + esc(sc.planImage.caption) + '</figcaption>')
+          + '</figure>'
+        : ''));
 }
 
 function zonesHtml(p) {
@@ -243,13 +367,19 @@ function zonesHtml(p) {
 function coverageHtml(p) {
   const c = p.coverage;
   if (!c || !c.rooms.length) return '';
-  return sect('coverage', 'Proposed room coverage',
+  // A column of em-dashes is not information. The outlet TYPE is settled at
+  // detailed design, so on a quote there is none to print and the column comes
+  // out rather than being filled with a placeholder in every row.
+  const showType = c.rooms.some(r => str(r.type).trim() !== '');
+  return sect('coverage', 'Rooms this system conditions',
     '<div class="tablewrap"><table class="grid">'
-    + '<thead><tr><th>Room</th><th>Outlets</th><th>Outlet type</th></tr></thead><tbody>'
+    + '<thead><tr><th>Room</th><th>Outlets</th>'
+      + when(showType, '<th>Outlet type</th>') + '</tr></thead><tbody>'
     + c.rooms.map(r =>
         '<tr><th scope="row" data-l="Room">' + esc(r.name) + '</th>'
         + '<td data-l="Outlets">' + esc(r.outlets) + '</td>'
-        + '<td data-l="Type">' + esc(r.type || '—') + '</td></tr>').join('')
+        + when(showType, '<td data-l="Type">' + esc(r.type || '—') + '</td>')
+        + '</tr>').join('')
     + '</tbody></table></div>'
     + when(c.excluded.length > 0,
         '<p class="note">Not conditioned: ' + esc(c.excluded.join(', ')) + '.</p>')
@@ -314,14 +444,31 @@ function sourceLabel(s) {
             sms: 'Sent to NAC', word_of_mouth: 'Given to NAC' })[s] || 'Customer review';
 }
 
+/**
+ * WHY CHOOSE NAC.
+ *
+ * This was a four-row label/value table — ABN, ARC authorisation, service
+ * area, insurance — set in 15px type under a heading promising a reason to
+ * choose the business. It is the right CONTENT: every line is a credential
+ * NAC can produce on demand, and not one of them is a claim somebody wrote.
+ * It was simply laid out as a footer.
+ *
+ * So the same facts are set as cards a customer reads, and the heading is
+ * answered. NOTHING IS ADDED: there is no invented "20 years of experience"
+ * and no "trusted by thousands", because nobody has given NAC's actual
+ * numbers and a page that makes them up is worth less than one that does not.
+ * `points` are Nick's own selling lines when he writes them, and the section
+ * simply does not draw them until he has.
+ */
 function trustHtml(p) {
   const t = p.trust;
   if (!t || (!t.points.length && !t.facts.length)) return '';
   return sect('about', 'Why choose NAC',
     when(t.points.length > 0, '<ul class="ticks">' + t.points.map(x =>
       '<li>' + icon('check', 'ic tick') + '<span>' + esc(x) + '</span></li>').join('') + '</ul>')
-    + when(t.facts.length > 0, '<dl class="facts">' + t.facts.map(f =>
-      '<div><dt>' + esc(f.label) + '</dt><dd>' + esc(f.value) + '</dd></div>').join('') + '</dl>'));
+    + when(t.facts.length > 0, '<ul class="creds">' + t.facts.map(f =>
+      '<li><span class="cred-k">' + esc(f.label) + '</span>'
+      + '<span class="cred-v">' + esc(f.value) + '</span></li>').join('') + '</ul>'));
 }
 
 /**
@@ -354,6 +501,9 @@ function systemChoiceHtml(p) {
           + esc([o.capacityKw ? o.capacityKw + ' kW' : '', o.phase].filter(Boolean).join(' · '))
           + when(!!o.note, ' — ' + esc(o.note))
         + '</span>'
+        + when(o.warrantyYears > 0,
+            '<span class="sys-warr">' + esc(String(o.warrantyYears))
+            + '-year manufacturer warranty</span>')
         + when(o.recommended === true, '<span class="sys-rec">Our recommendation</span>')
       + '</span></label></li>').join('') + '</ul>');
 }
@@ -364,26 +514,76 @@ function optionsHtml(p) {
   return sect('options', 'Optional upgrades',
     '<p class="lede">Entirely optional. Selecting one prepares a revised proposal for you '
     + 'to review — nothing changes until you accept it.</p>'
-    + '<ul class="opts">' + os.map(o =>
-      '<li><label class="opt">'
-      + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
-      + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
-      + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
-      + '<span class="opt-body">'
-        + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
-        + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
-        + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
-      + '</span></label></li>').join('') + '</ul>');
+    + '<ul class="opts">' + os.map(o => {
+      // ── BOUGHT BY THE UNIT ────────────────────────────────────────────
+      // A sensor is one per room the customer wants sensed. A spinner is the
+      // honest control for that; a tick box would make them ring up to ask
+      // for a second one. The price beside it is what ONE costs, and the
+      // running line underneath says what the chosen number comes to.
+      const counted = o.unitPriceIncGst !== null && o.unitPriceIncGst !== undefined
+                      && o.maxQuantity > 0;
+      if (counted) {
+        const qty = o.quantity || 0;
+        const sysAttr = o.forSystemIds
+          ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
+        return '<li class="opt-li"' + sysAttr + '><div class="opt opt-qty">'
+          + '<span class="opt-body">'
+            + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
+            + '<em>' + esc(money(o.unitPriceIncGst)) + ' ' + esc(o.unitLabel || 'each') + '</em></span>'
+            + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
+            + '<span class="opt-qrow">'
+              + '<label for="q-' + esc(o.id) + '">How many</label>'
+              + '<input type="number" id="q-' + esc(o.id) + '" class="opt-q"'
+              + ' value="' + esc(String(qty)) + '" min="0" max="' + esc(String(o.maxQuantity)) + '"'
+              + ' step="1" inputmode="numeric"'
+              + ' data-opt-id="' + esc(o.id) + '"'
+              + ' data-opt-unit="' + esc(String(o.unitPriceIncGst)) + '">'
+              + '<span class="opt-qsum" data-qsum="' + esc(o.id) + '">'
+              + esc(qty > 0 ? money(o.unitPriceIncGst * qty) : '\u2014') + '</span>'
+            + '</span>'
+          + '</span></div></li>';
+      }
+      const sysAttr2 = o.forSystemIds
+        ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
+      return '<li class="opt-li"' + sysAttr2 + '><label class="opt">'
+        + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
+        + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
+        + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
+        + '<span class="opt-body">'
+          + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
+          + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
+          + when(!!o.description, '<span class="opt-d">' + esc(o.description) + '</span>')
+        + '</span></label></li>';
+    }).join('') + '</ul>');
 }
 
 function investmentHtml(p) {
   const inv = p.investment;
   if (!inv) return '';
+  // ── THE COLUMN HAS TO ADD UP TO THE NUMBER BESIDE IT ────────────────────
+  //
+  // This printed the SYSTEM's ex-GST subtotal and the SYSTEM's GST, then the
+  // chosen upgrades underneath, then a total that included all three. So the
+  // page said $14,570 + $1,457 + $1,350 + $440 and announced $17,817 — a
+  // customer adding up the column NAC put in front of them lands $1,790 short
+  // of the figure they are being asked to sign for.
+  //
+  // The column now runs: the system, each upgrade, then the total's own ex-GST
+  // and GST split. Every line is a figure of the same thing.
+  const opt = (inv.selectedOptions || []).map(o => [
+    o.title + (o.quantity > 1 && o.unitPriceIncGst
+      ? '  (' + o.quantity + ' \u00d7 ' + money(o.unitPriceIncGst) + ')' : ''),
+    money(o.priceIncGst)]);
   const lines = [
-    inv.subtotalExGst !== null ? ['Subtotal (excluding GST)', money(inv.subtotalExGst)] : null,
-    inv.gst !== null ? ['GST', money(inv.gst)] : null
+    inv.baseIncGst !== null && inv.baseIncGst !== undefined
+      ? ['System, supplied and installed', money(inv.baseIncGst)] : null
   ].filter(Boolean);
-  const opt = (inv.selectedOptions || []).map(o => [o.title, money(o.priceIncGst)]);
+  const tax = [
+    inv.totalExGst !== null && inv.totalExGst !== undefined
+      ? ['Total excluding GST', money(inv.totalExGst)] : null,
+    inv.totalGst !== null && inv.totalGst !== undefined
+      ? ['GST', money(inv.totalGst)] : null
+  ].filter(Boolean);
   // Two columns on a wide screen: the breakdown on the left, the headline total
   // and the payment terms on the right. A single 560px column left the right
   // half of a desktop page empty, which read as unfinished rather than roomy.
@@ -394,6 +594,8 @@ function investmentHtml(p) {
         + lines.map(([k, v]) => '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('')
         + opt.map(([k, v]) => '<div class="inv-opt"><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('')
       + '</dl>'
+      + when(tax.length > 0, '<dl class="inv-lines inv-tax">' + tax.map(([k, v]) =>
+          '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl>')
       + when(!!inv.validity, '<p class="note">' + esc(inv.validity) + '</p>')
     + '</div>'
     + '<div class="inv-b">'
@@ -458,6 +660,26 @@ function acceptHtml(p) {
     + when(!!a.terms, '<details class="terms"><summary>Terms and conditions</summary>'
         + '<div class="terms-body">' + esc(a.terms).replace(/\n{2,}/g, '</p><p>')
           .replace(/\n/g, '<br>').replace(/^/, '<p>').replace(/$/, '</p>') + '</div></details>')
+    // ── SIGN IT ────────────────────────────────────────────────────────────
+    //
+    // A typed name is a claim; a signature is the thing a customer recognises
+    // as agreeing. acceptPresentation() has taken a `signature` since it was
+    // written and nothing ever collected one, so every acceptance on file has
+    // a null where the signature goes.
+    //
+    // Drawn on a canvas with pointer events, so a finger on an iPad, a stylus
+    // and a mouse all work from one code path. It is NOT required: a customer
+    // on a device that will not draw must still be able to accept, and the
+    // record says which way it was signed.
+    + '<div class="fld sig-fld">'
+      + '<label for="acc-sig">Your signature</label>'
+      + '<div class="sigwrap"><canvas id="acc-sig" class="sigpad" '
+        + 'aria-label="Sign with your finger, stylus or mouse"></canvas>'
+        + '<span class="sighint" id="acc-sig-hint">Sign here</span></div>'
+      + '<div class="sigbar"><button type="button" class="btn ghost small" id="acc-sig-clear">'
+        + 'Clear signature</button>'
+        + '<span class="note" id="acc-sig-state">Optional — your typed name is enough.</span></div>'
+    + '</div>'
     + '<label class="chk"><input type="checkbox" id="acc-terms" required>'
       + '<span>I have read and accept the proposal and terms above.</span></label>'
     + when(!!a.depositInstructions, '<p class="note">' + esc(a.depositInstructions) + '</p>')
@@ -539,6 +761,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + systemHtml(p)
     + rationaleHtml(p)
     + inclusionsHtml(p)
+    + scopeHtml(p)
     + zonesHtml(p)
     + coverageHtml(p)
     + galleryHtml(p)
@@ -563,7 +786,16 @@ export function renderPresentationHtml(presentation, opts = {}) {
     // same document the PDF does, not a screenshot of a web page.
     + '<style>' + CSS + (print ? PRINT_ONLY : '@media print{' + PRINT_ONLY + '}') + '</style>'
     + '</head><body class="' + (print ? 'print' : 'web')
-        + (p.demonstration ? ' demo' : '') + '">'
+        + (p.demonstration ? ' demo' : '')
+        + (p.testQuote ? ' testq' : '') + '">'
+    // ── A TEST QUOTE SAYS SO, AT THE TOP, ON EVERY SURFACE ─────────────────
+    // A test quote is built on the REAL content library at a real price, which
+    // is the point of it and also what makes it indistinguishable from an
+    // offer. So the first thing on the page, and the first thing a screen
+    // reader reads, is that it is not one.
+    + when(!!p.testQuote && !p.demonstration,
+        '<div class="test-banner" role="note">' + esc(p.testQuoteNote
+          || 'TEST QUOTE — not an offer.') + '</div>')
     // ── DEMONSTRATION ──────────────────────────────────────────────────────
     // Across the page, on screen and on paper, and not dismissible. A page
     // built from demonstration content reads exactly like a quote, which is
@@ -594,9 +826,15 @@ const CSS = `
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
-body{font-family:var(--sans);color:var(--body);background:var(--bg);line-height:1.62;
-  font-size:17px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-.doc{max-width:1060px;margin:0 auto;padding-bottom:96px}
+/* ── TYPE SCALE ───────────────────────────────────────────────────────────
+   Nick: "avoid the long, tiny-text technical-form appearance of the previous
+   version." The page was 17px body with 11.5-15px inside every table, card and
+   chip, in a 1060px column — which is a form, not a proposal. Everything here
+   is a step larger, the column is wider so the larger type still sets in
+   comfortable line lengths, and the sections breathe. */
+body{font-family:var(--sans);color:var(--body);background:var(--bg);line-height:1.65;
+  font-size:18px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.doc{max-width:1120px;margin:0 auto;padding-bottom:112px}
 
 /* ── DEMONSTRATION ───────────────────────────────────────────────────────
    A page built from demonstration content looks exactly like a quote. The
@@ -625,35 +863,69 @@ img{max-width:100%;display:block}
 h1,h2,h3{color:var(--ink);line-height:1.22;font-weight:700;letter-spacing:-.01em}
 p{margin:0 0 1em}p:last-child{margin-bottom:0}
 
-/* ── hero ───────────────────────────────────────────────────────────── */
-.hero{background:linear-gradient(160deg,var(--navy) 0%,var(--navy-2) 100%);color:#fff}
-.hero-in{padding:32px 24px 36px;max-width:1060px;margin:0 auto}
-@media(min-width:900px){
-  .hero.has-img{display:grid;grid-template-columns:1.02fr .98fr;align-items:stretch;
-    max-width:1060px;margin:0 auto}
-  .hero.has-img .hero-in{padding:44px 36px 48px 24px;max-width:none;margin:0;
-    display:flex;flex-direction:column;justify-content:center}
-  .hero.has-img .hero-img{height:100%}
-  .hero.has-img .hero-img .imgbox{height:100%;aspect-ratio:auto!important;border-radius:0}
-  .hero.has-img h1{max-width:15ch;font-size:clamp(30px,3.4vw,40px)}
-}
-.hero-top{margin-bottom:26px}
-.logo{height:56px;width:auto;background:#fff;border-radius:10px;padding:7px 12px}
-.logo-txt{font-weight:800;font-size:19px;color:var(--gold);letter-spacing:.01em}
-.eyebrow{color:var(--gold);font-weight:700;font-size:15px;letter-spacing:.04em;
-  text-transform:uppercase;margin:0 0 10px}
-.hero h1{color:#fff;font-size:clamp(27px,5.2vw,42px);max-width:17ch;margin-bottom:10px}
-.hero-site{color:rgba(255,255,255,.82);font-size:16px;margin:0}
-.hero-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
-.hero-meta>div{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.16);
-  border-radius:9px;padding:9px 14px;min-width:0}
-.hero-meta dt{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;
-  color:rgba(255,255,255,.66);font-weight:600}
-.hero-meta dd{font-size:15px;font-weight:700;color:#fff;white-space:nowrap}
-.hero-img{background:var(--navy)}
-.hero-img .imgbox{border-radius:0}
+/* ── THE COVER ────────────────────────────────────────────────────────────
+   One screen: logo, who it is for, which house, and the figure. With an
+   approved landscape photograph it goes behind a navy scrim deep enough that
+   the type stays legible on ANY image — a cover that depends on the photograph
+   being dark is a cover that breaks on the next photograph. With no
+   photograph it is the navy panel alone and reads as a deliberate design, not
+   as a missing picture. */
+.cover{background:linear-gradient(158deg,var(--navy) 0%,var(--navy-2) 100%);
+  color:#fff;position:relative;isolation:isolate;overflow:hidden;
+  /* Full bleed. The cover sits inside .doc, which is capped at 1120px, so on a
+     desktop it was a navy card floating in white margins — the one element on
+     the page that should run edge to edge. */
+  margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw)}
+.cover.has-img::before{content:"";position:absolute;inset:0;z-index:-2;
+  background-image:var(--cover);background-size:cover;background-position:center}
+.cover.has-img::after{content:"";position:absolute;inset:0;z-index:-1;
+  background:linear-gradient(165deg,rgba(22,32,74,.93) 0%,rgba(22,32,74,.78) 45%,
+    rgba(32,44,97,.90) 100%)}
+.cover-in{max-width:1120px;margin:0 auto;padding:40px 24px 44px;
+  display:flex;flex-direction:column;gap:38px;min-height:min(84vh,680px)}
+@media(min-width:900px){.cover-in{padding:52px 32px 56px;gap:52px}}
+.cover-top{flex:0 0 auto}
+.cover-mid{flex:1 1 auto;display:flex;flex-direction:column;justify-content:center}
+.cover-foot{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:24px 40px;
+  align-items:flex-end;justify-content:space-between}
+.logo{height:62px;width:auto;background:#fff;border-radius:12px;padding:8px 14px}
+.logo-txt{font-weight:800;font-size:21px;color:var(--gold);letter-spacing:.01em}
+.eyebrow{color:var(--gold);font-weight:700;font-size:15px;letter-spacing:.09em;
+  text-transform:uppercase;margin:0 0 14px}
+.cover h1{color:#fff;font-size:clamp(34px,6.4vw,58px);max-width:15ch;margin-bottom:24px;
+  line-height:1.1;letter-spacing:-.025em}
+.cover-for{border-left:4px solid var(--gold);padding-left:18px}
+.cover-name{font-size:clamp(19px,2.4vw,23px);font-weight:700;color:#fff;margin:0 0 4px;
+  letter-spacing:-.01em}
+.cover-addr{font-size:clamp(16px,2vw,19px);color:rgba(255,255,255,.80);margin:0}
+.cover-meta{display:flex;flex-wrap:wrap;gap:10px}
+.cover-meta>div{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+  border-radius:11px;padding:11px 16px;min-width:0}
+.cover-meta dt{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:rgba(255,255,255,.66);font-weight:700;margin-bottom:2px}
+.cover-meta dd{font-size:16px;font-weight:700;color:#fff;white-space:nowrap}
+.cover-price{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin:0;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);
+  border-radius:14px;padding:16px 22px}
+.cover-price span{font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+  font-weight:700;color:rgba(255,255,255,.70)}
+.cover-price strong{font-size:clamp(32px,5.4vw,44px);color:var(--gold);line-height:1.05;
+  letter-spacing:-.03em}
+.cover-price small{font-size:13.5px;color:rgba(255,255,255,.72)}
+@media(min-width:760px){.cover-foot{flex-wrap:nowrap}}
 
-.intro{max-width:760px;margin:0 auto;padding:36px 24px 6px;font-size:18.5px;color:var(--body)}
+/* ── TEST QUOTE ──────────────────────────────────────────────────────────
+   Not a demonstration — a test quote runs on the real content library at a
+   real price so the link and the acceptance can be proved end to end. That is
+   exactly why it has to announce itself. */
+.test-banner{position:sticky;top:0;z-index:60;background:var(--navy);color:var(--gold);
+  font-weight:800;letter-spacing:.05em;font-size:13.5px;text-align:center;
+  padding:11px 16px;line-height:1.45;border-bottom:3px solid var(--gold);
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+.intro{max-width:720px;margin:0 auto;padding:60px 24px 8px;font-size:20px;
+  line-height:1.6;color:var(--body)}
+@media(min-width:900px){.intro{padding:76px 32px 8px}}
 
 /* ── nav ────────────────────────────────────────────────────────────── */
 .nav{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.94);
@@ -666,58 +938,100 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .nav a:hover,.nav a:focus-visible{color:var(--navy);border-bottom-color:var(--gold)}
 
 /* ── sections ───────────────────────────────────────────────────────── */
-.sec{padding:46px 24px;border-bottom:1px solid var(--line)}
+.sec{padding:68px 24px;border-bottom:1px solid var(--line)}
 .sec:last-of-type{border-bottom:none}
-.sec>h2{font-size:clamp(21px,3.2vw,28px);margin-bottom:22px;position:relative;padding-bottom:12px}
-.sec>h2::after{content:"";position:absolute;left:0;bottom:0;width:52px;height:4px;
+.sec>h2{font-size:clamp(25px,3.6vw,34px);margin-bottom:28px;position:relative;
+  padding-bottom:16px;letter-spacing:-.015em}
+.sec>h2::after{content:"";position:absolute;left:0;bottom:0;width:60px;height:4px;
   background:var(--gold);border-radius:2px}
-.lede{font-size:17px;color:var(--muted);margin-bottom:20px;max-width:62ch}
-.note{font-size:15px;color:var(--muted);margin-top:16px;padding-left:14px;
+.lede{font-size:18.5px;color:var(--body);margin-bottom:26px;max-width:62ch}
+.note{font-size:15.5px;color:var(--muted);margin-top:20px;padding-left:16px;
   border-left:3px solid var(--line)}
+@media(min-width:900px){.sec{padding:84px 32px}}
 .prose p{max-width:66ch}
 
+.sys-warr{display:inline-block;margin-top:5px;font-size:13px;font-weight:700;
+  color:var(--ok);background:rgba(30,122,70,.08);border:1px solid rgba(30,122,70,.22);
+  border-radius:99px;padding:2px 10px}
+.opt-qty{cursor:default}
+.opt-qrow{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+.opt-qrow label{font-size:15px;color:var(--muted);font-weight:650}
+.opt-q{width:92px;min-height:48px;font:inherit;font-size:18px;font-weight:700;
+  color:var(--ink);padding:10px 12px;border:2px solid var(--line);border-radius:10px;
+  background:#fff;text-align:center}
+.opt-q:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.opt-qsum{font-size:17px;font-weight:700;color:var(--navy)}
+.opt.opt-qty:has(.opt-q:not([value="0"])){border-color:var(--gold);background:#FFFCF0}
 .imgbox{position:relative;overflow:hidden;background:var(--soft);border-radius:12px}
 .imgbox img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 
-/* ── system ─────────────────────────────────────────────────────────── */
-.sys{display:grid;gap:28px}
-@media(min-width:860px){.sys{grid-template-columns:360px 1fr;align-items:start}}
-.sys-card{aspect-ratio:4/3;border-radius:12px;background:linear-gradient(160deg,var(--navy),var(--navy-2));
-  color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
-  text-align:center;padding:24px}
-.sys-card-brand{font-size:20px;font-weight:700;color:var(--gold)}
-.sys-card-kw{font-size:40px;font-weight:800;line-height:1}
-.sys-card-type{font-size:14px;color:rgba(255,255,255,.75)}
-.specs{display:grid;gap:0;border-top:1px solid var(--line)}
-.specs>div{display:flex;justify-content:space-between;gap:20px;align-items:baseline;
-  padding:12px 2px;border-bottom:1px solid var(--line)}
-.specs dt{color:var(--muted);font-size:15.5px;flex:0 0 auto}
-.specs dd{font-weight:700;color:var(--ink);text-align:right;font-size:16px;
-  overflow-wrap:anywhere;min-width:0}
-.sys-price{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-top:22px;
-  padding:18px 20px;background:var(--soft);border-radius:12px;border:1px solid var(--line)}
-.sys-price span{color:var(--muted);font-size:15px;font-weight:600}
-.sys-price strong{font-size:clamp(26px,4.4vw,34px);color:var(--navy);letter-spacing:-.02em}
-.sys-price small{color:var(--muted);font-size:13.5px}
+/* ── the system ─────────────────────────────────────────────────────── */
+.sys{display:grid;gap:34px}
+@media(min-width:860px){.sys{grid-template-columns:380px 1fr;gap:48px;align-items:start}}
+.sys-media .imgbox{border-radius:16px;box-shadow:var(--shadow)}
+.sys-card{aspect-ratio:3/4;border-radius:16px;
+  background:linear-gradient(160deg,var(--navy),var(--navy-2));
+  color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;text-align:center;padding:28px}
+.sys-card-brand{font-size:22px;font-weight:700;color:var(--gold)}
+.sys-card-kw{font-size:46px;font-weight:800;line-height:1}
+.sys-card-type{font-size:15px;color:rgba(255,255,255,.75)}
+.sys-brand{font-size:15px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--gold-d);margin:0 0 6px}
+.sys-name{font-size:clamp(24px,3.4vw,32px);letter-spacing:-.02em;margin:0 0 10px}
+.sys-models{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14.5px;
+  color:var(--muted);letter-spacing:.02em;margin:0 0 4px;overflow-wrap:anywhere}
+.sys-supply{font-size:15.5px;color:var(--muted);margin:0}
+/* The handful of figures a customer actually reads, as figures — not as two
+   more rows of a label/value table. */
+.sys-facts{list-style:none;display:grid;gap:16px;margin:28px 0 0;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.sys-facts li{display:flex;flex-direction:column;gap:3px;padding:16px 18px;
+  background:var(--soft);border:1px solid var(--line);border-radius:12px}
+.sys-facts strong{font-size:22px;color:var(--navy);letter-spacing:-.02em;line-height:1.2;
+  overflow-wrap:anywhere}
+.sys-facts span{font-size:13.5px;color:var(--muted);font-weight:600;line-height:1.4}
+.sys-warranty{display:flex;gap:11px;align-items:flex-start;margin:24px 0 0;
+  padding:16px 18px;border-radius:12px;background:#EAF6EF;border:1px solid #CBE7D7;
+  font-size:15.5px;color:var(--ink);line-height:1.55}
+.sys-warranty .ic{stroke:var(--ok);flex:0 0 auto;margin-top:3px;width:22px;height:22px}
+
+/* ── what the price covers ──────────────────────────────────────────── */
+.scope{display:grid;gap:22px}
+@media(min-width:800px){.scope{grid-template-columns:1fr 1fr;gap:28px}}
+.scope-col{border:1px solid var(--line);border-radius:14px;padding:26px 24px;
+  box-shadow:var(--shadow);background:#fff}
+.scope-col h3{font-size:18px;margin-bottom:18px;padding-bottom:12px;
+  border-bottom:1px solid var(--line)}
+.scope-col ul{list-style:none;display:grid;gap:13px}
+.scope-col li{display:flex;gap:12px;align-items:flex-start;font-size:16.5px;
+  line-height:1.52;color:var(--body)}
+.sic{flex:0 0 auto;margin-top:4px;width:19px;height:19px;stroke-width:2.6}
+.scope-col.in .sic{stroke:var(--ok)}
+.scope-col.out{background:var(--soft)}
+.scope-col.out .sic{stroke:#A3344A}
+.scope-col.out li{color:var(--muted)}
+.scope-plan{margin-top:28px}
+.scope-plan figcaption{font-size:14.5px;color:var(--muted);margin-top:10px}
 
 /* ── inclusion cards ────────────────────────────────────────────────── */
-.cards{list-style:none;display:grid;gap:14px;
-  grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
-.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 18px;
+.cards{list-style:none;display:grid;gap:18px;
+  grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px 22px;
   box-shadow:var(--shadow);display:flex;flex-direction:column;gap:9px}
 .card-ic{width:40px;height:40px;border-radius:10px;background:var(--soft);
   display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 .ic{width:21px;height:21px;fill:none;stroke:var(--navy);stroke-width:1.8;
   stroke-linecap:round;stroke-linejoin:round}
-.card h3{font-size:16.5px}
-.card p{font-size:14.8px;color:var(--muted);line-height:1.55}
+.card h3{font-size:17.5px}
+.card p{font-size:15.5px;color:var(--muted);line-height:1.58}
 
 /* ── tables ─────────────────────────────────────────────────────────── */
 .tablewrap{border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.grid{width:100%;border-collapse:collapse;font-size:16px}
-.grid thead th{background:var(--soft);text-align:left;font-size:12.5px;
+.grid{width:100%;border-collapse:collapse;font-size:17px}
+.grid thead th{background:var(--soft);text-align:left;font-size:13px;
   text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:13px 18px;font-weight:700}
-.grid tbody th,.grid td{padding:14px 18px;border-top:1px solid var(--line);text-align:left;
+.grid tbody th,.grid td{padding:16px 20px;border-top:1px solid var(--line);text-align:left;
   vertical-align:top}
 .grid tbody th{font-weight:700;color:var(--ink)}
 .pill{display:inline-block;background:var(--soft);border:1px solid var(--line);
@@ -731,18 +1045,18 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .shot-btn{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer}
 .shot-btn .imgbox{border-radius:0}
 .shot-body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px;flex:1}
-.shot h3{font-size:17px}
+.shot h3{font-size:18px}
 .shot-facts{font-size:13.5px;color:var(--gold-d);font-weight:700;letter-spacing:.01em}
-.shot p{font-size:14.8px;color:var(--muted);line-height:1.55}
+.shot p{font-size:15.5px;color:var(--muted);line-height:1.58}
 
 /* ── reviews ────────────────────────────────────────────────────────── */
 .quotes{list-style:none;display:grid;gap:18px;grid-template-columns:1fr}
-.quote{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:22px 20px;
+.quote{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:28px 26px;
   display:flex;flex-direction:column;gap:12px}
 .stars{display:flex;gap:2px}
 .st{width:17px;height:17px;fill:#D8DCE6;stroke:none}
 .st.on{fill:var(--gold)}
-.quote blockquote p{font-size:16px;color:var(--ink);line-height:1.62}
+.quote blockquote p{font-size:18px;color:var(--ink);line-height:1.62}
 .byline{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;font-size:14px;
   color:var(--muted);margin-top:auto}
 .byline strong{color:var(--ink);font-size:14.5px}
@@ -751,8 +1065,16 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 /* ── trust ──────────────────────────────────────────────────────────── */
 .ticks{list-style:none;display:grid;gap:11px;margin-bottom:26px;
   grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
-.ticks li{display:flex;gap:11px;align-items:flex-start;font-size:16px}
+.ticks li{display:flex;gap:12px;align-items:flex-start;font-size:17px}
 .ic.tick{stroke:var(--ok);stroke-width:2.4;flex:0 0 auto;margin-top:3px}
+.creds{list-style:none;display:grid;gap:16px;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.creds li{display:flex;flex-direction:column;gap:7px;padding:22px 24px;background:#fff;
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+.cred-k{font-size:12.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--gold-d)}
+.cred-v{font-size:17px;font-weight:650;color:var(--ink);line-height:1.5;
+  overflow-wrap:anywhere}
 .facts{display:grid;gap:0;border-top:1px solid var(--line)}
 .facts>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 22px;
   padding:13px 2px;border-bottom:1px solid var(--line)}
@@ -766,13 +1088,18 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .opt{display:flex;gap:14px;align-items:flex-start;padding:18px;border:2px solid var(--line);
   border-radius:12px;cursor:pointer;background:#fff;min-height:48px}
 .opt:has(input:checked){border-color:var(--gold);background:#FFFCF0}
-.opt input{width:22px;height:22px;flex:0 0 auto;margin-top:2px;accent-color:var(--navy)}
+/* Tick boxes and radios only. A bare ".opt input" also matched the quantity spinner
+   inside a counted upgrade and shrank it to 22px square, so four sensors read
+   as an empty circle and the customer could neither see nor change the
+   number. */
+.opt input[type=checkbox],.opt input[type=radio]{width:22px;height:22px;flex:0 0 auto;
+  margin-top:2px;accent-color:var(--navy)}
 .opt-body{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
 .opt-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;justify-content:space-between}
-.opt-h strong{font-size:16.5px;color:var(--ink)}
+.opt-h strong{font-size:17.5px;color:var(--ink)}
 .opt-h em{font-style:normal;font-weight:700;color:var(--navy);font-size:16px;white-space:nowrap}
-.opt-d{font-size:14.8px;color:var(--muted);line-height:1.55}
-.sys input{border-radius:50%}
+.opt-d{font-size:15.5px;color:var(--muted);line-height:1.58}
+.sys input[type=radio]{border-radius:50%}
 .sys-rec{align-self:flex-start;font-size:12.5px;font-weight:700;letter-spacing:.4px;
   text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
   padding:4px 10px;margin-top:2px}
@@ -792,6 +1119,9 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .inv-lines dt{color:var(--muted);font-size:15.5px}
 .inv-lines dd{font-weight:650;color:var(--ink)}
 .inv-opt dt::before{content:"+ ";color:var(--gold-d);font-weight:700}
+.inv-tax{margin-top:2px;border-top:none}
+.inv-tax>div{border-bottom:none}
+.inv-tax dt,.inv-tax dd{font-size:14.5px;color:var(--muted);font-weight:600}
 .inv-total{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;margin-top:0;
   padding:24px;border-radius:14px;background:linear-gradient(160deg,var(--navy),var(--navy-2));color:#fff}
 .inv-total span{font-size:15px;color:rgba(255,255,255,.78);font-weight:600;flex:1 0 100%}
@@ -801,8 +1131,29 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .inv-dep{margin-top:18px;font-size:16px}
 .stages{margin:18px 0 0 20px;display:grid;gap:7px;font-size:15.5px}
 
+/* ── signature ──────────────────────────────────────────────────────── */
+.sig-fld{margin-bottom:18px}
+.sigwrap{position:relative;border:2px dashed var(--line);border-radius:12px;background:#FCFCFE;
+  overflow:hidden}
+.sigwrap.signed{border-style:solid;border-color:var(--gold);background:#fff}
+/* A signature needs room for a hand. 150px is about the height of a real
+   signature box on paper, and touch-action:none stops an iPad scrolling the
+   page out from under the finger that is drawing. */
+.sigpad{display:block;width:100%;height:150px;touch-action:none;cursor:crosshair}
+.sighint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+  color:var(--muted);font-size:15px;pointer-events:none}
+.sigwrap.signed .sighint{display:none}
+.sigbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin-top:8px}
+/* 44, like every other control on this page. 40 was a number I typed; 44 is
+   the one the page's own acceptance test enforces, and the Clear-signature
+   button came out at 43. */
+.btn.small{padding:10px 14px;font-size:14px;min-height:44px}
+
 /* ── acceptance ─────────────────────────────────────────────────────── */
-.accept{max-width:620px;margin-inline:auto;background:#fff;border:1px solid var(--line);
+/* Left-aligned with its own heading and with every other section. Centred, it
+   sat in a field of white to the right of the heading above it and read as a
+   widget dropped on the page rather than the end of a document. */
+.accept{max-width:760px;margin-inline:0;background:#fff;border:1px solid var(--line);
   border-radius:16px;padding:28px 26px 30px;box-shadow:var(--shadow)}
 @media(max-width:719px){.accept{padding:22px 18px 24px;border-radius:14px}}
 .accept-total{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:22px;
@@ -961,8 +1312,13 @@ const SCRIPT = `
     }
   });
   function selectedOptions(){
-    return Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
+    var out=Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
       .map(function(i){return i.value;});
+    Array.prototype.slice.call(document.querySelectorAll('.opt-q')).forEach(function(q){
+      var n=Math.max(0,Math.floor(Number(q.value)||0));
+      if(n>0) out.push({id:q.getAttribute('data-opt-id'),quantity:n});
+    });
+    return out;
   }
   function chosenSystem(){
     var r=document.querySelector('.sys-in:checked');
@@ -981,15 +1337,89 @@ const SCRIPT = `
   function money(v){
     return '$' + Math.round(v).toLocaleString('en-AU');
   }
+  // ── AN UPGRADE THAT DOES NOT FIT IS NOT ON THE PAGE ───────────────────
+  //
+  // Not shown greyed out: gone, and its selection cleared, so it cannot sit
+  // in the total against a system it cannot be installed on. The server
+  // withholds it too — this is the same rule, applied where the customer is
+  // actually adding things up.
+  function applySystemFilter(sysId){
+    Array.prototype.slice.call(document.querySelectorAll('.opt-li')).forEach(function(li){
+      var list=li.getAttribute('data-opt-systems');
+      var fits = !list || !sysId || list.split(' ').indexOf(sysId)>=0;
+      var was = li.hidden;
+      li.hidden = !fits;
+      if(!fits){
+        // ── PUT ASIDE, NOT THROWN AWAY ────────────────────────────────────
+        // The upgrade still has to leave the total, because it cannot be
+        // installed on the system now chosen. But a customer who ticks the
+        // AirTouch, looks at the Braemar to compare, and comes back to the
+        // Daikin had their AirTouch silently un-ticked and the price drop by
+        // $1,350 with nothing on the page to say why. Looking at the other
+        // option is not changing your mind.
+        if(was) return;                       // already put aside
+        Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){
+          c.setAttribute('data-was-checked', c.checked?'1':'0'); c.checked=false;
+        });
+        Array.prototype.slice.call(li.querySelectorAll('.opt-q')).forEach(function(q){
+          q.setAttribute('data-was-value', q.value); q.value='0';
+          var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
+          if(sum) sum.textContent='\u2014';
+        });
+        return;
+      }
+      if(!was) return;                        // it was already on the page
+      Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){
+        if(c.hasAttribute('data-was-checked')){
+          c.checked = c.getAttribute('data-was-checked')==='1';
+          c.removeAttribute('data-was-checked');
+        }
+      });
+      Array.prototype.slice.call(li.querySelectorAll('.opt-q')).forEach(function(q){
+        if(q.hasAttribute('data-was-value')){
+          q.value = q.getAttribute('data-was-value');
+          q.removeAttribute('data-was-value');
+        }
+      });
+    });
+    var sec=document.getElementById('options');
+    if(sec){
+      var any=Array.prototype.slice.call(sec.querySelectorAll('.opt-li'))
+        .some(function(li){return !li.hidden;});
+      sec.hidden=!any;
+    }
+  }
+
   function redrawTotal(){
     var sys=document.querySelector('.sys-in:checked');
     if(!sys) return;
+    applySystemFilter(sys.value);
     var total=Number(sys.getAttribute('data-sys-price'))||0;
     Array.prototype.slice.call(document.querySelectorAll('.opt-in:checked'))
       .forEach(function(i){ total += Number(i.getAttribute('data-opt-price'))||0; });
+    // Counted upgrades: clamp to the maximum offered, then add unit x count.
+    Array.prototype.slice.call(document.querySelectorAll('.opt-q')).forEach(function(q){
+      var max=Number(q.getAttribute('max'))||0;
+      var n=Math.max(0,Math.min(max,Math.floor(Number(q.value)||0)));
+      if(String(n)!==q.value) q.value=String(n);
+      var line=n*(Number(q.getAttribute('data-opt-unit'))||0);
+      total+=line;
+      var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
+      if(sum) sum.textContent = n>0 ? money(line) : '\u2014';
+    });
     Array.prototype.slice.call(document.querySelectorAll('[data-total]'))
       .forEach(function(e){ e.textContent=money(total); });
   }
+  // A spinner reports on input as well as change, so the figure moves as the
+  // customer holds the arrow down rather than when they let go.
+  document.addEventListener('input',function(e){
+    var el=e.target;
+    if(!el.classList||!el.classList.contains('opt-q'))return;
+    redrawTotal();
+    if(window.NACQuote&&window.NACQuote.onOptionsChanged){
+      window.NACQuote.onOptionsChanged(selectedOptions(),chosenSystem());
+    }
+  });
   document.addEventListener('change',function(e){
     var el=e.target;
     if(!el.classList||!el.classList.contains('sys-in'))return;
@@ -998,6 +1428,86 @@ const SCRIPT = `
       window.NACQuote.onSystemChanged(el.value);
     }
   });
+
+  /* ── THE SIGNATURE PAD ───────────────────────────────────────────────
+     One pointer path for a finger on an iPad, a stylus and a mouse. The
+     canvas is sized to its own box times the device pixel ratio, so the line
+     is sharp on a retina screen instead of a soft double-width smear, and it
+     is re-sized on rotate — which otherwise clears the drawing, so what was
+     signed is redrawn from the recorded strokes rather than lost. */
+  var sigPad=(function(){
+    var cv=document.getElementById('acc-sig');
+    if(!cv||!cv.getContext) return null;
+    var wrap=cv.parentNode, hint=document.getElementById('acc-sig-hint');
+    var state=document.getElementById('acc-sig-state');
+    var ctx=cv.getContext('2d'), strokes=[], cur=null, drawing=false;
+
+    function paint(){
+      var r=Math.max(1,window.devicePixelRatio||1);
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,cv.width,cv.height);
+      ctx.scale(r,r);
+      ctx.lineWidth=2.2; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#121C2E';
+      for(var i=0;i<strokes.length;i++){
+        var st=strokes[i]; if(st.length<1) continue;
+        ctx.beginPath(); ctx.moveTo(st[0].x,st[0].y);
+        if(st.length===1) ctx.lineTo(st[0].x+0.1,st[0].y+0.1);
+        else for(var j=1;j<st.length;j++) ctx.lineTo(st[j].x,st[j].y);
+        ctx.stroke();
+      }
+    }
+    function resize(){
+      var r=Math.max(1,window.devicePixelRatio||1);
+      var w=cv.clientWidth||600, h=cv.clientHeight||150;
+      cv.width=Math.round(w*r); cv.height=Math.round(h*r);
+      paint();
+    }
+    function at(e){
+      var b=cv.getBoundingClientRect();
+      return {x:e.clientX-b.left, y:e.clientY-b.top};
+    }
+    function mark(){
+      var any=strokes.some(function(s){return s.length>0;});
+      wrap.classList.toggle('signed',any);
+      if(state) state.textContent=any
+        ? 'Signed. Press Clear signature to sign again.'
+        : 'Optional — your typed name is enough.';
+      if(hint) hint.hidden=any;
+    }
+    function down(e){
+      if(e.button!==undefined&&e.button!==0) return;
+      drawing=true; cur=[at(e)]; strokes.push(cur);
+      if(cv.setPointerCapture&&e.pointerId!==undefined){
+        try{cv.setPointerCapture(e.pointerId);}catch(_){}
+      }
+      e.preventDefault(); paint(); mark();
+    }
+    function move(e){ if(!drawing||!cur) return; cur.push(at(e)); e.preventDefault(); paint(); }
+    function up(){ drawing=false; cur=null; mark(); }
+
+    cv.addEventListener('pointerdown',down);
+    cv.addEventListener('pointermove',move);
+    cv.addEventListener('pointerup',up);
+    cv.addEventListener('pointercancel',up);
+    cv.addEventListener('pointerleave',function(){ if(drawing) up(); });
+    window.addEventListener('resize',resize);
+    resize();
+
+    var clr=document.getElementById('acc-sig-clear');
+    if(clr) clr.addEventListener('click',function(){ strokes=[]; paint(); mark(); });
+
+    return {
+      empty:function(){ return !strokes.some(function(s){return s.length>0;}); },
+      /* A PNG data URI, which is what the acceptance record stores and what
+         gets attached to the ServiceM8 job. Capped: a signature is a few
+         kilobytes of ink, and anything past 200 kB is not a signature. */
+      dataUrl:function(){
+        if(this.empty()) return null;
+        try{ var d=cv.toDataURL('image/png');
+             return (d&&d.length<=200000)?d:null; }catch(_){ return null; }
+      }
+    };
+  })();
 
   var form=document.getElementById('acceptForm');
   if(form){
@@ -1011,10 +1521,41 @@ const SCRIPT = `
       if(!ok) return fail('Please confirm you have read the terms.');
       if(err)err.hidden=true;
       var btn=document.getElementById('acceptBtn');
+      var label=btn?btn.textContent:'';
       if(btn){btn.disabled=true;btn.textContent='Sending…';}
       if(window.NACQuote&&window.NACQuote.accept){
-        window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
-          selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
+        // ── AN ACCEPTANCE THAT DID NOT GET THROUGH SAYS SO ────────────────
+        //
+        // This fired and forgot. On a dropped connection the button sat on
+        // "Sending…", disabled, with nothing on the page to say what had
+        // happened — so a customer who pressed Accept in a carpark on one bar
+        // of signal was left looking at a page that had neither accepted
+        // their quote nor admitted it had failed, and could not try again.
+        //
+        // It never said the wrong thing, which is the thing that must never
+        // happen. It said nothing, which is the next worst.
+        var done=false;
+        var recover=function(m){
+          if(done) return; done=true;
+          if(btn){btn.disabled=false;btn.textContent=label||'Accept proposal';}
+          fail(m||'We could not send your acceptance just now. Please check your '
+                 + 'connection and press Accept again \u2014 nothing has been sent, so '
+                 + 'pressing it twice cannot accept this twice.');
+        };
+        try{
+          var r=window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
+            signature:sigPad?sigPad.dataUrl():null,
+            selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
+          if(r&&typeof r.then==='function'){
+            r.then(function(res){
+              // The host reloads the page on a real acceptance. A result that
+              // says it did NOT work puts the button back.
+              if(res&&res.ok===false) recover(res.message);
+            },function(e){ recover(e&&e.message?null:null); });
+            // A reply that never comes is the same problem as a failure.
+            setTimeout(function(){ recover(); },30000);
+          }
+        }catch(e){ recover(); }
       }
     });
   }

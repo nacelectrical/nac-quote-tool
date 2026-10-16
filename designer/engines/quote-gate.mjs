@@ -53,6 +53,34 @@ export const QUOTE_BLOCK = Object.freeze({
  *   finalised or issued. The internal sheet is unaffected.
  */
 export function quoteGate(design) {
+  // ── A QUOTE WITH NO DUCT DESIGN BEHIND IT ────────────────────────────────
+  //
+  // Nick: "Do not fabricate a completed duct design or require one to issue an
+  // installer-approved quote. Retain checks for missing quote information,
+  // invalid prices and incompatible options."
+  //
+  // Almost everything below is ABOUT A DRAWING — BTO prices, fitting
+  // availability, plenum validity, duct sizes, the supply graph, static
+  // pressure, the outlet schedule. On a quote-only job there is no drawing, so
+  // those checks have nothing to read and would either pass vacuously or block
+  // for want of a thing that is deliberately absent. Neither is honest.
+  //
+  // The checks that are about the OFFER — equipment, prices, the customer,
+  // the scope, incompatible upgrades — live in quote-draft.mjs and run on the
+  // draft itself, which is where the figures were typed. presentationGate()
+  // runs both.
+  //
+  // This returns no blockers rather than pretending to have checked a design.
+  if (design && design.quoteOnly === true) {
+    return {
+      ok: true, blockers: [], warnings: [],
+      quoteOnly: true,
+      summary: 'Quote only — no duct design on this job, so the design checks '
+        + '(fittings, plenums, duct sizes, static pressure) do not apply. The offer '
+        + 'itself is checked by quoteDraftGate().'
+    };
+  }
+
   const blockers = [];
   /**
    * Things the estimator must SEE but that do not stop a quote. Kept apart

@@ -19,6 +19,10 @@ import { buildPresentation } from '../../designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '../../designer/ui/presentation-html.mjs';
 import { presentationPrintHtml, renderPresentationPdf } from '../../designer/ui/presentation-pdf.mjs';
 import { buildDemoDesign, DEMO_CONTENT, DEMO_IMAGES } from '../../tests/fixtures/demo-presentation.mjs';
+// The content library screen is NAC's, and now says so: it requires a staff
+// sign-in, and every call it makes carries the session. These two contexts
+// sign in for the same reason the setup-page suite does.
+import { signInContext } from './signin.mjs';
 
 const BASE = process.env.NAC_TEST_BASE || 'http://127.0.0.1:8777';
 const OUT = process.env.NAC_SHOT_DIR || '/tmp/nac-quote-shots';
@@ -282,6 +286,7 @@ console.log('\nPrint and PDF');
 console.log('\nAdmin');
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await signInContext(ctx);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
@@ -322,6 +327,7 @@ console.log('\nAdmin');
 console.log('\nImage storage');
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await signInContext(ctx);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));

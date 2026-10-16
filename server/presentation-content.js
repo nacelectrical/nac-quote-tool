@@ -46,8 +46,27 @@ function supa(path, { method = 'GET', key, body = null, prefer = null } = {}) {
 /** Keep one library document rather than a row per record — it is small. */
 const LIBRARY_KEY = 'library';
 
+const { requireStaff } = require('./staff-auth.js');
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // ── STAFF ONLY, BOTH WAYS ──────────────────────────────────────────────
+  //
+  // This endpoint had no check at all. It runs as the service role, so a GET
+  // handed the whole library — trust copy, payment terms with their deposit
+  // instructions, and every review on file with its customer's name — to
+  // anyone who asked, and a POST let anyone rewrite the terms and conditions
+  // that print on NAC's quotes.
+  //
+  // The reads are staff-only too, not just the writes: no customer-facing
+  // page has needed this since an issued quote became a frozen copy, so there
+  // is nothing on the public side left to serve.
+  const staff = await requireStaff(req, res, 'the content library');
+  if (!staff) return;
+
   const KEY = process.env.SUPABASE_KEY;
   if (!KEY) return res.status(500).json({ error: 'server_not_configured' });
 

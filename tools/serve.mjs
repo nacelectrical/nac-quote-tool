@@ -11,6 +11,7 @@ http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
   const file = path.join(ROOT, url === '/' ? 'designer.html' : url);
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    console.log('404 ' + url);
     res.writeHead(404); return res.end('not found');
   }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });

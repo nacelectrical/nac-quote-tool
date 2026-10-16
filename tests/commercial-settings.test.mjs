@@ -19,6 +19,7 @@ import { proposalAllowance, ALLOWANCE_FIELDS } from '../designer/engines/design-
 import { commercialTermsStatus, TERMS_FIELDS } from '../designer/engines/commercial-terms.mjs';
 import { checkTermsAgainstSettings, NAC_TERMS_LABEL, NAC_TERMS_EFFECTIVE }
   from '../designer/engines/nac-terms.mjs';
+import { buildBillOfMaterials } from '../designer/engines/bom.mjs';
 import { usedRateStatus, rateVerified, VERIFICATION_FIELDS }
   from '../designer/engines/material-verification.mjs';
 
@@ -275,4 +276,43 @@ test('the proposal allowance is not a material rate and is never asked to be one
   const r = usedRateStatus({ design, verifications: {} });
   assert.equal(r.rows.length, 0, 'the allowance was treated as a supplier rate');
   assert.equal(r.ok, true);
+});
+
+test('a unit and a controller off MMEM carry their stock code into the BOM', () => {
+  // This blocked a real quote. Both lines are priced from MMEM's list and both
+  // know the stock code they were priced under — the BOM was dropping it, so
+  // the rate check looked at a bare number and asked which supplier quoted it,
+  // on the two lines where the answer was already on file.
+  const design = {
+    selectedUnit: { brandName: 'Daikin', model: 'FDYAN160AV1 / RZA160C2V1',
+      capacityKw: 16, phase: '1Ph', supplierCost: 4820,
+      supplierCode: 'FDYAN160AV1 / RZA160C2V1',
+      supplierSource: 'MMEM Trade Price List January 2026' },
+    controller: { name: 'Siemens Home zone control — 6 zone', cost: 295,
+      supplierCode: 'MMASEM6ZTPKIT' },
+    outlets: null, zones: null, network: null
+  };
+  const bom = buildBillOfMaterials(design, { settings: DEFAULT_SETTINGS });
+  const unit = bom.items.find(i => i.key === 'indoor_outdoor_system');
+  const ctrl = bom.items.find(i => i.key === 'zone_controller');
+  assert.equal(unit.supplierCode, 'FDYAN160AV1 / RZA160C2V1');
+  assert.equal(unit.supplierSource, 'MMEM Trade Price List January 2026');
+  assert.equal(ctrl.supplierCode, 'MMASEM6ZTPKIT');
+
+  // And that evidence is what the rate check is looking for.
+  const r = usedRateStatus({ design: { bom }, verifications: {} });
+  assert.equal(r.ok, true, 'still blocked: ' + r.needing.map(x => x.label).join(', '));
+});
+
+test('a line with no supplier code is still asked where its price came from', () => {
+  // The fix must not wave through a rate somebody typed in by hand.
+  const design = {
+    controller: { name: 'Some controller', cost: 295 },
+    outlets: null, zones: null, network: null
+  };
+  const bom = buildBillOfMaterials(design, { settings: DEFAULT_SETTINGS });
+  assert.equal(bom.items.find(i => i.key === 'zone_controller').supplierCode, null);
+  const r = usedRateStatus({ design: { bom }, verifications: {} });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.needing.map(x => x.id), ['zone_controller']);
 });
