@@ -580,7 +580,15 @@ export function resolveInclusions(evidence = {}, catalogue = INCLUSION_CATALOGUE
 export const EMPTY_TRUST = Object.freeze({
   businessName: '',
   abn: '',
+  /**
+   * The street address, for clause 21 of NAC's terms. Blank until somebody
+   * enters it, and a blank one takes the whole "Business address" line out of
+   * the clause rather than leaving the bracket the template shipped with.
+   */
+  businessAddress: '',
   electricalLicence: '',
+  /** Queensland Building and Construction Commission, where the work needs one. */
+  qbccLicence: '',
   arcAuthorisation: '',
   serviceArea: '',
   workmanshipWarranty: '',
@@ -665,6 +673,8 @@ export function normaliseTrust(input = {}) {
   return {
     businessName: trimmed(t.businessName),
     abn: trimmed(t.abn),
+    businessAddress: trimmed(t.businessAddress),
+    qbccLicence: trimmed(t.qbccLicence),
     electricalLicence: trimmed(t.electricalLicence),
     arcAuthorisation: trimmed(t.arcAuthorisation),
     serviceArea: trimmed(t.serviceArea),

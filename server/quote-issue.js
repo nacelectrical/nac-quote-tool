@@ -148,7 +148,20 @@ module.exports = async function handler(req, res) {
     if (!stored) return res.status(404).json({ error: 'design_not_found' });
 
     const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
-    const content = (contentRow && contentRow.data) || {};
+    const storedContent = (contentRow && contentRow.data) || {};
+    // ── A LIBRARY NOBODY HAS OPENED STILL KNOWS WHO NAC ARE ───────────────
+    // Without this the first proposal out of a fresh install carries no ABN,
+    // no ARC authorisation and no terms, because the library row does not
+    // exist yet. Anything stored wins outright, field by field; the seed only
+    // fills what nobody has filled.
+    const contentMod = await import('../designer/engines/presentation-content.mjs');
+    const seededTrust = contentMod.seedTrust(storedContent.trust || null);
+    const content = {
+      ...storedContent,
+      trust: seededTrust,
+      termsAndConditions: contentMod.seedTermsAndConditions(
+        storedContent.termsAndConditions || null, seededTrust)
+    };
     const settingsRow0 = Array.isArray(settingsRes.body) ? settingsRes.body[0] : null;
 
     let settings = {};

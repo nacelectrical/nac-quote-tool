@@ -579,3 +579,58 @@ test('nothing on the page is a broken image or a placeholder box', () => {
   assert.ok(!/lorem ipsum|TODO|FIXME|TBC|XXX|\[insert/i.test(h));
   assert.ok(!/Sample Customer|example\.com|example\.invalid|0400 000 000/i.test(h));
 });
+
+// ── 14. A THIN LIBRARY MAKES A SHORT PAGE, NEVER A BROKEN ONE ──────────────
+
+test('a library with nothing in it leaves sections out rather than empty', () => {
+  // Nick: "never show broken images or placeholders on an issued proposal."
+  const d = quoteOnlyDraft();
+  const src = draftToQuoteSource(d, { upgrades: UPGRADES });
+  const built = buildPresentation({
+    design: src, customer: d.customer, job: { siteAddress: d.siteAddress },
+    // No logo, no photographs, no reviews, no past work — a fresh install.
+    content: { trust: quoteOnlyContent().trust, upgrades: UPGRADES,
+               termsAndConditions: quoteOnlyContent().termsAndConditions,
+               reviews: [], installations: [], images: [] },
+    settings: SETTINGS, proposalNumber: d.proposalNumber, revision: 1, status: 'issued',
+    preparedAt: '2026-10-16T00:00:00Z', expiresAt: '2026-11-15T00:00:00Z',
+    systemOptions: src.systemOptions, chosenSystemId: src.chosenSystemId,
+    selectedOptionIds: draftSelectedOptions(d, { upgrades: UPGRADES }),
+    testQuote: true
+  });
+  assert.equal(built.ok, true, JSON.stringify(codes(built.blockers)));
+  const p = built.presentation;
+  // The sections with no content are absent, not empty.
+  assert.equal(p.reviews.length, 0);
+  assert.equal(p.installations.length, 0);
+  assert.equal(p.hero.heroImage, null);
+  assert.equal(p.system.image, null, 'a lookalike product photo was substituted');
+
+  const h = renderPresentationHtml(p, { token: 'T' });
+  // Nothing is drawn for them.
+  assert.ok(!h.includes('What our customers say'), 'an empty reviews section was drawn');
+  assert.ok(!h.includes('Recent NAC installations'), 'an empty gallery was drawn');
+  assert.ok(!/<img[^>]+src="(?:|#|about:blank)"/.test(h), 'an image with no source');
+  // And the page still has the things that make it a quote.
+  assert.ok(h.includes('$17,817'));
+  assert.ok(h.includes('Accept proposal'));
+  assert.ok(h.includes('Not included'));
+});
+
+test('the missing content is reported internally, item by item', async () => {
+  const { assetRequest } = await import('../designer/engines/asset-request.mjs');
+  const r = assetRequest({ trust: quoteOnlyContent().trust, reviews: [], images: [],
+                           installations: [] },
+    { unit: { brandName: 'Daikin', model: 'FDYAN160AV1' } });
+  // Every gap says what it is, why it matters, where it shows and how to fix it.
+  for (const n of r.needs) {
+    assert.ok(n.what && n.why && n.where, JSON.stringify(n));
+  }
+  // The things NAC genuinely has not supplied are named.
+  const what = r.needs.map(n => n.what).join(' | ');
+  assert.match(what, /cover photograph/i);
+  assert.match(what, /installation photographs/i);
+  assert.match(what, /electrical contractor licence/i);
+  // And nothing is invented to fill them.
+  assert.ok(!/placeholder|stock photo|sample/i.test(what));
+});

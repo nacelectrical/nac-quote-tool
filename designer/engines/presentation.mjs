@@ -117,7 +117,9 @@ export function formatDate(value) {
 const CREDENTIAL_FIELDS = Object.freeze([
   ['abn', 'ABN'],
   ['electricalLicence', 'Electrical contractor licence'],
+  ['qbccLicence', 'QBCC licence'],
   ['arcAuthorisation', 'ARC refrigeration authorisation'],
+  ['businessAddress', 'Business address'],
   ['insuranceStatement', 'Insurance']
 ]);
 

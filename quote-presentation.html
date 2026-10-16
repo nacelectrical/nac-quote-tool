@@ -85,6 +85,23 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;bor
   margin:0 auto;width:100%;transition:width .18s}
 .frame iframe{width:100%;height:78vh;border:0;display:block}
 .note{font-size:13px;color:var(--muted);padding-left:12px;border-left:3px solid var(--line);margin-top:12px}
+
+/* ── what is missing ─────────────────────────────────────────────────────
+   Internal only. Nothing on this panel ever reaches a customer; it exists so
+   the gaps are visible HERE instead of showing up as a thin proposal. */
+.gap-head{border-radius:11px;padding:14px 16px;margin-bottom:16px}
+.gap-head.ok{background:#E9F5EE;border:1px solid #C6E3D2;color:#1E7A46}
+.gap-head.bad{background:#FBECEB;border:1px solid #F3C9C6;color:#B3261E}
+.gap-head strong{display:block;font-size:16px;margin-bottom:4px}
+.gap-head p{font-size:13.5px;opacity:.9}
+.gap{border-left:4px solid #E4E7EF;border-radius:0 9px 9px 0;padding:12px 14px;
+  margin-bottom:11px;background:#F6F8FC}
+.gap.bad{border-left-color:#B3261E}
+.gap.warn{border-left-color:#C79C00}
+.gap strong{display:block;font-size:15px;color:#161A27;margin-bottom:4px}
+.gap p{font-size:13.5px;color:#6B7285;margin-bottom:3px}
+.gap-where{color:#16204A!important;font-weight:600}
+.gap-how{font-style:italic}
 </style>
 </head>
 <body>
@@ -117,6 +134,8 @@ import { LIMITS, legacyAssets, librarySizeReport, isDataUriRef }
 import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { requireSignIn, currentSession } from '/designer/auth.mjs';
+import { assetRequest } from '/designer/engines/asset-request.mjs';
+import { seedTrust, seedTermsAndConditions } from '/designer/engines/presentation-content.mjs';
 
 // ── NAC ONLY ───────────────────────────────────────────────────────────────
 //
@@ -132,6 +151,7 @@ function staffHeaders(extra = {}) {
 }
 
 const SECTIONS = [
+  ['gaps',         'What is missing'],
   ['branding',     'Branding'],
   ['about',        'About NAC'],
   ['licences',     'Licences and warranties'],
@@ -215,7 +235,12 @@ function normalise(c) {
   return {
     logo: c.logo || null,
     heroImage: c.heroImage || null,
-    trust: normaliseTrust(c.trust || {}),
+    // ── A LIBRARY NOBODY HAS OPENED STILL KNOWS WHO NAC ARE ─────────────
+    // seedTrust() and seedTermsAndConditions() exist for exactly this and
+    // nothing was calling them, so a fresh install opened these panels blank
+    // and issued proposals with no ABN, no ARC number and no terms. Anything
+    // stored still wins outright, field by field.
+    trust: seedTrust(c.trust || null),
     reviews: (c.reviews || []).map(normaliseReview),
     installations: (c.installations || []).map(normaliseInstallation),
     images: (c.images || []).map(normaliseImageAsset),
@@ -223,7 +248,8 @@ function normalise(c) {
     standardInclusions: c.standardInclusions || {},
     paymentTerms: c.paymentTerms || { stages: [] },
     aftercare: c.aftercare || {},
-    termsAndConditions: c.termsAndConditions || '',
+    termsAndConditions: seedTermsAndConditions(c.termsAndConditions || null,
+      seedTrust(c.trust || null)),
     emailIntro: c.emailIntro || '',
     intro: c.intro || '',
     sectionOrder: c.sectionOrder || [],
@@ -287,6 +313,7 @@ function tagsField(label, tags, onChange, hint) {
 
 // ── panels ──────────────────────────────────────────────────────────────────
 function drawAll() {
+  drawGaps();
   drawBranding(); drawAbout(); drawLicences(); drawReviews(); drawInstalls();
   drawImages(); drawInclusions(); drawUpgrades(); drawPayment(); drawValidity();
   drawTerms(); drawEmail(); drawTemplates();
@@ -299,6 +326,56 @@ function panel(id, title, hint, kids) {
   if (hint) p.appendChild(el('div', { class: 'hint', text: hint }));
   for (const k of [].concat(kids)) if (k) p.appendChild(k);
   return p;
+}
+
+/**
+ * WHAT IS STILL MISSING, IN THE APPLICATION RATHER THAN IN A TERMINAL.
+ *
+ * Nick, 16 October 2026: "Show clear internal notices when content is
+ * missing... never show broken images or placeholders on an issued proposal."
+ *
+ * The second half of that has been true for a while: a section whose content
+ * is missing is HIDDEN, not filled with a grey box. The first half was only
+ * true at a command line — `node tools/asset-request.mjs` printed the list and
+ * nobody running NAC is going to type that.
+ *
+ * So the same engine runs here, over the live library, against the equipment
+ * on a typical NAC job. ESSENTIAL means a proposal cannot be issued at all.
+ * OPTIONAL means it issues and is thinner, with that section left out.
+ */
+function drawGaps() {
+  const r = assetRequest(C, { unit: {
+    model: 'FDYAN160AV1', outdoorModel: 'RZA160C2V1', brandName: 'Daikin' } });
+
+  const item = (n, kind) => el('div', { class: 'gap ' + kind }, [
+    el('strong', { text: n.what + (n.howMany > 1 ? '  × ' + n.howMany : '') }),
+    el('p', { text: n.why }),
+    n.where ? el('p', { class: 'gap-where', text: 'On the page: ' + n.where }) : null,
+    n.association ? el('p', { class: 'gap-how', text: n.association }) : null
+  ]);
+
+  const head = el('div', { class: 'gap-head ' + (r.canIssue ? 'ok' : 'bad') }, [
+    el('strong', { text: r.canIssue
+      ? 'A proposal can go to a customer right now.'
+      : 'A proposal CANNOT be issued until the essentials below are supplied.' }),
+    el('p', { text: r.essential.length + ' essential, ' + r.optional.length + ' optional. '
+      + 'A section with nothing in it is left out of the proposal — it is never '
+      + 'filled with a placeholder, a stock photograph or an invented claim.' })
+  ]);
+
+  panel('gaps', 'What is missing',
+    'Read off this library as it stands. Everything here is something only NAC can '
+  + 'supply: a review, a photograph of your own work, a licence number, a warranty you '
+  + 'are prepared to honour.',
+    [head,
+     r.essential.length
+       ? el('div', {}, [el('h2', { text: 'Essential' }),
+           ...r.essential.map(n => item(n, 'bad'))]) : null,
+     r.optional.length
+       ? el('div', {}, [el('h2', { text: 'Optional — the proposal sends without these' }),
+           ...r.optional.map(n => item(n, 'warn'))]) : null,
+     (!r.essential.length && !r.optional.length)
+       ? el('p', { class: 'hint', text: 'Nothing is missing.' }) : null]);
 }
 
 function drawBranding() {
@@ -363,7 +440,14 @@ function drawLicences() {
   + 'is ever filled in with a plausible default — an invented licence number is a fabricated claim.',
     [el('div', { class: 'grid2' }, [
       field('ABN', t.abn, v => t.abn = v),
+      // Clause 21 of NAC's terms names the business address. The template
+      // shipped with "[insert street address]" in it and that reached the
+      // terms a customer was asked to sign; the line now comes out of the
+      // clause entirely until this field has something in it.
+      field('Business address', t.businessAddress, v => t.businessAddress = v,
+        { hint: 'Printed in clause 21 of the terms. Left out of the clause while it is blank.' }),
       field('Electrical contractor licence', t.electricalLicence, v => t.electricalLicence = v),
+      field('QBCC licence', t.qbccLicence, v => t.qbccLicence = v),
       field('ARC refrigeration authorisation', t.arcAuthorisation, v => t.arcAuthorisation = v),
       field('Service area', t.serviceArea, v => t.serviceArea = v),
       field('NAC workmanship warranty', t.workmanshipWarranty, v => t.workmanshipWarranty = v),

@@ -29,11 +29,25 @@ const trimmed = (v) => (v === null || v === undefined) ? '' : String(v).trim();
 const NOT_A_REAL_VALUE =
   /\b(sample|test|testing|placeholder|example|dummy|lorem|ipsum|tbc|tba|todo|xxx+|n\/?a|none|unknown|not\s+recorded|your\s+name|customer\s+name)\b|\.invalid\b|\bfoo\b|\bbar\b/i;
 
+/**
+ * A value that is a TEMPLATE TOKEN rather than a value.
+ *
+ * NAC's own terms shipped with "[insert street address]" and three "[insert
+ * number]"s in clause 21, and none of them matched the word list above — so a
+ * credential field pasted out of that template read as filled in. A value
+ * wrapped in brackets or braces is the template showing through, whatever the
+ * words inside it are.
+ *
+ * Anchored at the start, so a real value that happens to contain a bracket —
+ * "Lot 14 (Stage 2), Buderim" — is left alone.
+ */
+const TEMPLATE_TOKEN = /^[[<{]/;
+
 /** True when a value is present but is plainly a stand-in. */
 export function looksUnfilled(value) {
   const v = trimmed(value);
   if (!v) return false;                 // absent is a different problem
-  return NOT_A_REAL_VALUE.test(v);
+  return TEMPLATE_TOKEN.test(v) || NOT_A_REAL_VALUE.test(v);
 }
 
 /** Domains that can never receive a real quote. */
