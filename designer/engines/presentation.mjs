@@ -142,7 +142,44 @@ const CREDENTIAL_FIELDS = Object.freeze([
 export function presentationGate(design, opts = {}) {
   const gate = quoteGate(design);
   const blockers = [...(gate.blockers || [])];
+  const notes = [];
   const issuing = opts.issuing !== false;
+
+  // ── A TEST QUOTE IS A REAL QUOTE THAT SAYS SO ────────────────────────────
+  // Nick asked to see the finished thing before anything real goes out:
+  // "Create a clearly labelled test quote. Do not use the Kauri Crescent job
+  // and do not use any real client contact details."
+  //
+  // DEMONSTRATION content cannot be issued at all, which is right — it is
+  // invented reviews and invented prices and it must never reach a link. But a
+  // test quote has to be ISSUABLE, or the link, the customer's choices and the
+  // acceptance cannot be proved to work. So it runs against the real content
+  // library, at a real price, through the real gates, and the only thing that
+  // stands down is the check that the customer's NAME looks like a real
+  // person's — because on a test quote it is supposed to read as a test.
+  //
+  // Everything else about the customer record still has to be sound: a
+  // reachable contact and a real site address, because a test quote that
+  // cannot be opened proves nothing. And the page says TEST QUOTE on it.
+  const testQuote = opts.testQuote === true;
+
+  // ── A QUOTE-ONLY JOB HAS NO DRAWING TO RECONCILE AGAINST ─────────────────
+  // Nick, 16 October 2026: "Quoting must work independently using information I
+  // enter and approve... Do not fabricate a completed duct design or require
+  // one to issue an installer-approved quote."
+  //
+  // Several checks below compare one rendering of a DESIGN against another —
+  // the coverage table against the outlet schedule, the zone schedule against
+  // the room list, the selected capacity against a calculated load. On a
+  // quote-only job there is no second rendering: the estimator's typed figures
+  // ARE the source, so there is nothing for them to disagree with, and a
+  // disagreement check fed a single number compares it with zero and fails.
+  //
+  // What stays on for a quote-only job is every check about whether the OFFER
+  // is sound — equipment selected, a real price, a real customer, approved
+  // content, NAC's own commercial terms — plus quoteDraftGate(), which checks
+  // the draft itself. Dropping the drawing checks does not drop those.
+  const quoteOnly = design?.quoteOnly === true;
 
   if (!design?.selectedUnit) {
     blockers.push({ code: 'NO_EQUIPMENT_SELECTED', severity: 'CRITICAL',
@@ -186,7 +223,9 @@ export function presentationGate(design, opts = {}) {
     && trimmed(decision.at) && trimmed(decision.customerWording));
   const cap = n(design?.selectedUnit?.capacityKw);
   const load = n(design?.systemLoad?.designKw);
-  if (cap !== null && load !== null && load > 0 && cap < load && !decisionRecorded) {
+  // `load` comes from the load calculation, which a quote-only job has not run,
+  // so there is no calculated figure to be below.
+  if (!quoteOnly && cap !== null && load !== null && load > 0 && cap < load && !decisionRecorded) {
     blockers.push({
       code: 'CAPACITY_BELOW_CALCULATED_LOAD',
       severity: 'CRITICAL',
@@ -217,7 +256,7 @@ export function presentationGate(design, opts = {}) {
   // The register counts rooms that actually carry an outlet, which is the same
   // population as `outletRowRooms` once spill rooms are out of both.
 
-  if (ductedRoomCount && outletRowRooms && ductedRoomCount !== outletRowRooms) {
+  if (!quoteOnly && ductedRoomCount && outletRowRooms && ductedRoomCount !== outletRowRooms) {
     blockers.push({
       code: 'ROOM_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -226,7 +265,7 @@ export function presentationGate(design, opts = {}) {
         + 'different sizes for the same house.'
     });
   }
-  if (registerRooms !== null && outletRowRooms && registerRooms !== outletRowRooms) {
+  if (!quoteOnly && registerRooms !== null && outletRowRooms && registerRooms !== outletRowRooms) {
     blockers.push({
       code: 'OUTLET_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -251,6 +290,11 @@ export function presentationGate(design, opts = {}) {
     } else if (c.includedInSystem === true) {
       // The manufacturer's own controller, in the box with the system. Zero is
       // its real price, not a missing one.
+    } else if (quoteOnly) {
+      // On a quote-only job the controller's cost is already inside the
+      // GST-inclusive system price the estimator entered — there is no bill of
+      // materials to carry a separate line for it. Demanding a cost here asks
+      // for a number that does not exist on this kind of job.
     } else if (n(c.cost) === null && n(c.price) === null) {
       blockers.push({
         code: 'ZONE_CONTROLLER_NOT_PRICED',
@@ -287,6 +331,12 @@ export function presentationGate(design, opts = {}) {
   if (issuing) {
     const cust = customerStatus(opts.customer || {}, { siteAddress: opts.siteAddress });
     for (const f of cust.failures) {
+      if (testQuote && f.field === 'name') {
+        notes.push({ code: 'TEST_QUOTE_NAME', severity: 'CHECK', field: 'name',
+          message: f.reason + ' That is expected on a test quote, and the page is '
+            + 'labelled as one.' });
+        continue;
+      }
       blockers.push({
         code: 'CUSTOMER_DATA_NOT_REAL',
         severity: 'CRITICAL',
@@ -320,7 +370,7 @@ export function presentationGate(design, opts = {}) {
   for (const z of rows(design?.zones?.zones)) {
     for (const r of rows(z.rooms)) zoneRooms.add(trimmed(r));
   }
-  if (zoneRooms.size && coverageRoomCount && zoneRooms.size !== coverageRoomCount) {   // eslint-disable-line
+  if (!quoteOnly && zoneRooms.size && coverageRoomCount && zoneRooms.size !== coverageRoomCount) {   // eslint-disable-line
     blockers.push({
       code: 'ZONE_COUNT_DISAGREEMENT',
       severity: 'CRITICAL',
@@ -390,7 +440,6 @@ export function presentationGate(design, opts = {}) {
   // and invoices. Nick has asked to leave the electrical contractor licence
   // out for now, so this does not block — but a document promising something
   // the quotation does not carry should never be a thing nobody mentioned.
-  const notes = [];
   const promise = licencePromiseCheck(opts.trust || {});
   if (issuing && !promise.ok) {
     notes.push({ code: 'LICENCE_PROMISED_BY_TERMS', severity: 'CHECK',
@@ -700,9 +749,13 @@ function coverageSection(d) {
   return {
     rooms: conditioned.map(r => {
       const o = byLabel.get(trimmed(r.label));
+      // The outlet SCHEDULE is the authority where one exists. On a quote-only
+      // job there is no schedule, and the count beside each room is the figure
+      // the estimator typed against that room — not a guess, and not zero
+      // because a drawing is missing.
       return {
         name: friendlyLabel(r.label),
-        outlets: n(o?.quantity) ?? 0,
+        outlets: n(o?.quantity) ?? n(r.outlets) ?? 0,
         type: friendlyType(o?.type)
       };
     }),
@@ -712,6 +765,43 @@ function coverageSection(d) {
     provisional: !(n(d.network?.totalDuctLengthM) > 0),
     provisionalNote: 'Final outlet, return-air and indoor-unit positions are confirmed during '
       + 'detailed design and roof-space assessment.'
+  };
+}
+
+/**
+ * WHAT IS IN THE JOB, AND WHAT IS NOT — in the estimator's own words.
+ *
+ * `inclusions` elsewhere on the page is EVIDENCE-BASED: it prints a card only
+ * where the design proves the thing is there, which is why a quote-only job
+ * shows no ductwork card — there is no bill of materials to prove it from.
+ * That is correct and it is also not enough for a customer, because the job
+ * plainly does include ductwork.
+ *
+ * So this section carries the lines a person typed and approved, verbatim.
+ * Nick, 16 October 2026: "Quoting must work independently using information I
+ * enter and approve: equipment, installation scope, outlets, zones,
+ * inclusions, exclusions and price."
+ *
+ * The exclusions matter at least as much as the inclusions. What is NOT in the
+ * price is where a job turns into an argument, and a customer who read it on
+ * the proposal they accepted is not surprised by it later.
+ */
+function scopeSection(d) {
+  const q = d.quoteScope || null;
+  if (!q) return null;
+  const inclusions = rows(q.inclusions).map(trimmed).filter(Boolean);
+  const exclusions = rows(q.exclusions).map(trimmed).filter(Boolean);
+  const summary = trimmed(q.summary);
+  if (!inclusions.length && !exclusions.length && !summary) return null;
+  return {
+    summary,
+    inclusions,
+    exclusions,
+    // Only a plan the estimator marked approved, and only if one was supplied.
+    // Nick: "plan only if supplied and approved."
+    planImage: q.planImage && q.planImage.approved && trimmed(q.planImage.src)
+      ? { src: trimmed(q.planImage.src), caption: trimmed(q.planImage.caption) }
+      : null
   };
 }
 
@@ -753,6 +843,15 @@ function investmentSection(d, ctx) {
       ? Math.round((total - (total / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100
       : n(c.gstAmount),
     baseIncGst: total,
+    // ── THE GST BREAKDOWN HAS TO BE OF THE TOTAL, NOT THE BASE ────────────
+    // `subtotalExGst` and `gst` above are the SYSTEM's figures. Printed beside
+    // a total that also carries the chosen upgrades, they do not add up — a
+    // customer reading "$17,817 total, GST $1,457" can see the sum is wrong
+    // on a page asking for their signature. So the breakdown of the figure
+    // they are actually accepting is computed here, from that figure.
+    totalExGst: Math.round((grand / (1 + (n(c.gstRate) ?? 0.1))) * 100) / 100,
+    totalGst: Math.round((grand - (grand / (1 + (n(c.gstRate) ?? 0.1)))) * 100) / 100,
+    gstRate: n(c.gstRate) ?? 0.1,
     selectedOptions: selected.map(o => ({
       id: o.id, title: trimmed(o.title), priceIncGst: n(o.priceIncGst),
       quantity: n(o.quantity) ?? 1,
@@ -819,7 +918,13 @@ export function buildPresentation({
   revision = null, status = 'draft', selectedOptionIds = [],
   privacy = {}, intro = '', heroImage = null, productImage = null,
   /** Alternative systems the customer chooses between, and which one. */
-  systemOptions = null, chosenSystemId = null
+  systemOptions = null, chosenSystemId = null,
+  /**
+   * A TEST QUOTE: real content, real price, real link, labelled on the page.
+   * Unlike `demonstration` it may be issued, so the journey can be proved
+   * end to end — and unlike a real quote, it is never counted as business.
+   */
+  testQuote = false
 } = {}) {
   const d = design || {};
   const trust = normaliseTrust(content.trust || settings.trust);
@@ -926,7 +1031,7 @@ export function buildPresentation({
   // be published are known. Asking before they are resolved would be asking
   // about a different page from the one about to be built.
   const gate = presentationGate(d, {
-    trust, issuing,
+    trust, issuing, testQuote: testQuote === true,
     termsAndConditions: content.termsAndConditions,
     customer, siteAddress: job.siteAddress || customer.address,
     reviews: selectedReviewSources, installations: selectedInstallSources,
@@ -999,6 +1104,16 @@ export function buildPresentation({
     expired,
     /** Renders as a watermark on every surface. Never quietly true. */
     demonstration,
+    /**
+     * A TEST QUOTE. Issuable, so the link and the acceptance can be proved —
+     * and banner-labelled on every surface, so nobody mistakes it for an offer
+     * and nobody counts it as one.
+     */
+    testQuote: testQuote === true,
+    testQuoteNote: testQuote === true
+      ? 'TEST QUOTE — this is a test of the quoting system, not an offer. '
+        + 'No price on this page is quoted to anybody and nothing accepted here '
+        + 'creates a contract.' : null,
     demonstrationNote: demonstration
       ? 'DEMONSTRATION — NOT FOR CUSTOMER ISSUE. This is not a quote and no price on it '
         + 'is offered.' : null,
@@ -1027,6 +1142,8 @@ export function buildPresentation({
     },
     rationale: rationaleSection(d, ctx),
     inclusions: resolveInclusions(evidence),
+    /** The estimator's own inclusions and exclusions. Null when none were typed. */
+    scopeOfWork: scopeSection(d),
     zones: zonesSection(d),
     coverage: coverageSection(d),
     installations,
