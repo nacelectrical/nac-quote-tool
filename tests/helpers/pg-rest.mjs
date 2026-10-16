@@ -78,13 +78,35 @@ function admin(text, db = 'postgres') {
 }
 
 function cloneDatabase() {
-  // Another process may be cloning the same template at the same moment;
-  // PostgreSQL serialises that for us and the loser simply retries.
-  for (let i = 0; i < 40; i++) {
-    if (admin('create database "' + DB + '" template "' + TEMPLATE + '"')) return;
-    const until = Date.now() + 200;
-    while (Date.now() < until) { /* wait */ }
+  // Another process may be cloning the same template at the same moment, and
+  // PostgreSQL refuses `create database ... template` while anything is
+  // CONNECTED to the source — which is exactly what the first process to
+  // arrive is doing while it loads the schema into it. So the loser retries.
+  //
+  // ── AND IF IT NEVER WINS, IT SAYS SO ──────────────────────────────────
+  // This used to give up after forty attempts and return as though it had
+  // succeeded. Every later statement then ran against a database that does
+  // not exist, `sql()` swallowed the failure, and the suite failed on an
+  // assertion about missing data — which reads as a product defect and is a
+  // test-harness problem. Two database suites running together made it
+  // intermittent, which is the worst of both worlds.
+  let last = '';
+  for (let i = 0; i < 60; i++) {
+    try {
+      execFileSync(PSQL, ['-d', 'postgres', '-tAX', '-c',
+        'create database "' + DB + '" template "' + TEMPLATE + '"'],
+        { env: ENV, encoding: 'utf8', stdio: 'pipe' });
+      return;
+    } catch (e) {
+      last = String((e && e.stderr) || (e && e.message) || '').trim();
+      // Already there from an earlier run in this same process id: usable.
+      if (/already exists/i.test(last)) return;
+      const until = Date.now() + 250;
+      while (Date.now() < until) { /* wait */ }
+    }
   }
+  throw new Error('could not clone ' + TEMPLATE + ' into ' + DB
+    + ' after 60 attempts over 15s. Last error: ' + last);
 }
 
 // The clone is this process's, and it goes when the process does. Without
