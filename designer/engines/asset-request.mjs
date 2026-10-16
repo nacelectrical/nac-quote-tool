@@ -22,7 +22,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { normaliseImageAsset, imagePublishable, reviewPublishable,
-         installationPublishable, IMAGE_ROLES, equipmentImagesFor } from './presentation-content.mjs';
+         installationPublishable, IMAGE_ROLES, equipmentImagesFor,
+         seedTermsAndConditions } from './presentation-content.mjs';
 
 const list = (v) => Array.isArray(v) ? v : [];
 const trimmed = (v) => (v === null || v === undefined) ? '' : String(v).trim();
@@ -134,33 +135,92 @@ export function assetRequest(content = {}, job = {}) {
   }
 
   // ── WORDS NAC IS BOUND BY ──────────────────────────────────────────────
-  if (!trimmed(c.termsAndConditions)) {
+  //
+  // Both of these were being reported missing, and both were already on file.
+  //
+  // THE TERMS are seeded by seedTermsAndConditions() from NAC_TERMS_BODY —
+  // NAC's own Terms and Conditions of Trade — so a proposal issued before
+  // anybody opens the content library still shows the customer the terms they
+  // are accepting. This looked at a bare `content.termsAndConditions`, which
+  // is blank until somebody edits them, and called that nothing.
+  //
+  // THE WARRANTY is not a `content.warranty` object; there has never been one.
+  // The wording lives on the TRUST record as workmanshipWarranty and
+  // manufacturerWarranty, both taken from clauses of the Terms themselves, and
+  // both already filled in.
+  //
+  // Asking for something that has been supplied is worse than a wrong line in
+  // a list: it teaches whoever reads it that the list is not to be trusted.
+  const terms = seedTermsAndConditions(c.termsAndConditions);
+  if (!trimmed(terms)) {
     needs.push(item(NEED.ESSENTIAL, 'terms', 'NAC\'s terms and conditions of trade',
       'They print on every proposal and the customer ticks to accept them. A quote '
       + 'accepted against no terms is an agreement with nothing behind it.',
       'Accept your proposal — above the signature', 1,
       '/quote-presentation.html → Terms'));
+  } else if (!trimmed(c.termsAndConditions)) {
+    // Present, but nobody in the library has confirmed they are the current
+    // version. That is a read-and-confirm job, not a write-them-from-scratch
+    // one, and saying so is the difference between five minutes and an hour.
+    needs.push(item(NEED.OPTIONAL, 'terms:confirm',
+      'Confirm the terms on file are the current version',
+      'The proposal is carrying NAC\'s Terms and Conditions of Trade as they were '
+      + 'entered into this project. Nothing has been changed, and nobody has '
+      + 'confirmed since that they are still the version NAC trades on.',
+      'Accept your proposal — above the signature', 1,
+      'Read them at /quote-presentation.html → Terms and save, which records that '
+      + 'they were checked.'));
   }
-  const w = c.warranty || {};
-  if (!trimmed(w.equipment) && !trimmed(w.labour)) {
+
+  const t0 = c.trust || {};
+  if (!trimmed(t0.workmanshipWarranty) && !trimmed(t0.manufacturerWarranty)) {
     needs.push(item(NEED.ESSENTIAL, 'warranty', 'The warranty wording',
       'What the manufacturer covers and for how long, and what NAC covers on the '
       + 'installation. This is never written by the program — a warranty it made up '
       + 'would be a promise nobody has made.',
-      'Warranty and aftercare', 1, '/quote-presentation.html → Warranty'));
+      'Warranty and aftercare', 1, '/quote-presentation.html → About NAC'));
+  } else if (!trimmed(t0.workmanshipWarranty) || !trimmed(t0.manufacturerWarranty)) {
+    needs.push(item(NEED.OPTIONAL, 'warranty:half',
+      'The other half of the warranty wording',
+      trimmed(t0.workmanshipWarranty)
+        ? 'The workmanship warranty is on file and the manufacturer one is not.'
+        : 'The manufacturer warranty is on file and NAC\'s own workmanship one is not.',
+      'Warranty and aftercare', 1, '/quote-presentation.html → About NAC'));
   }
-  const a = c.aftercare || {};
+  const a = c.aftercare || {};  // this one IS a content field — see drawAftercare
   if (!trimmed(a.servicing) && !trimmed(a.filterCare) && !trimmed(a.support)) {
     needs.push(item(NEED.OPTIONAL, 'aftercare', 'The aftercare wording',
       'Filter care, servicing intervals and how a customer reaches NAC afterwards.',
       'Warranty and aftercare', 1, '/quote-presentation.html → Warranty'));
   }
+  // ── THE FIELDS ARE THE ONES THE LIBRARY ACTUALLY HAS ───────────────────
+  //
+  // This asked for `licenceNumber`, `arcticLicence` and `arcLicence`. The
+  // library has `electricalLicence` and `arcAuthorisation`, and has never had
+  // any of the other three. So the check could not see a licence that WAS on
+  // file and reported both as missing — which is how it came to be asking Nick
+  // for an ARC number the project had already been given.
+  //
+  // A request list that asks for something already supplied teaches the person
+  // reading it to ignore the list, which costs more than the one wrong line.
+  //
+  // They are asked for SEPARATELY now, because they are two different
+  // registrations held by two different authorities, and "licence numbers" as
+  // one item cannot say that one of them has arrived.
   const t = c.trust || {};
-  if (!trimmed(t.licenceNumber) && !trimmed(t.arcticLicence) && !trimmed(t.arcLicence)) {
-    needs.push(item(NEED.ESSENTIAL, 'licences', 'NAC\'s licence numbers',
-      'The electrical contractor licence and the ARC refrigerant handling licence. '
-      + 'These are never invented — a wrong licence number on a quote is a serious '
-      + 'thing to put in writing.',
+  if (!trimmed(t.electricalLicence)) {
+    needs.push(item(NEED.ESSENTIAL, 'licence:electrical',
+      'NAC\'s electrical contractor licence number',
+      'It prints in the trust panel on every proposal. It is never invented — a '
+      + 'wrong licence number on a quote is a serious thing to put in writing, and a '
+      + 'plausible-looking default is a fabricated licence.',
+      'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
+  }
+  if (!trimmed(t.arcAuthorisation)) {
+    needs.push(item(NEED.ESSENTIAL, 'licence:arc',
+      'NAC\'s ARC refrigerant handling authorisation',
+      'Required on the proposal for refrigerant work, and never invented for the '
+      + 'same reason as the electrical licence.',
       'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
   }
 
@@ -180,8 +240,12 @@ export function assetRequest(content = {}, job = {}) {
       installationPhotos: installShots.length,
       publishableInstallations: installs.length,
       publishableReviews: publishable.length,
-      terms: !!trimmed(c.termsAndConditions),
-      warranty: !!(trimmed(w.equipment) || trimmed(w.labour))
+      terms: !!trimmed(terms),
+      termsConfirmedInLibrary: !!trimmed(c.termsAndConditions),
+      workmanshipWarranty: !!trimmed(t0.workmanshipWarranty),
+      manufacturerWarranty: !!trimmed(t0.manufacturerWarranty),
+      electricalLicence: trimmed(t.electricalLicence) || false,
+      arcAuthorisation: trimmed(t.arcAuthorisation) || false
     }
   };
 }

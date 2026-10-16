@@ -28,6 +28,9 @@ const content = {
   logo: existsSync(ROOT + '/nac-logo.jpg')
     ? 'data:image/jpeg;base64,' + readFileSync(ROOT + '/nac-logo.jpg').toString('base64')
     : '',
+  // NAC's own registered numbers, as Nick has given them. The ARC
+  // authorisation is in here; the electrical contractor licence is not,
+  // because it has not been supplied.
   trust: { ...NAC_TRUST },
   reviews: reviews ? reviews.reviews : [],
   images: [], installations: [],

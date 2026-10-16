@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assetRequest, NEED } from '../designer/engines/asset-request.mjs';
-import { equipmentImagesFor, normaliseImageAsset, IMAGE_ROLES }
+import { equipmentImagesFor, normaliseImageAsset, IMAGE_ROLES, EMPTY_TRUST, NAC_TRUST }
   from '../designer/engines/presentation-content.mjs';
 
 const image = (id, role, models, extra = {}) => normaliseImageAsset({
@@ -81,9 +81,16 @@ test('an empty library cannot issue, and says exactly why', () => {
   assert.equal(r.canIssue, false);
 
   const ids = r.essential.map(x => x.id);
-  for (const must of ['logo', 'terms', 'warranty', 'licences']) {
+  for (const must of ['logo', 'warranty', 'licence:electrical', 'licence:arc']) {
     assert.ok(ids.includes(must), 'nothing asked for ' + must);
   }
+  // THE TERMS ARE NOT ON THAT LIST, and that is correct: an empty library is
+  // still seeded with NAC's own Terms and Conditions of Trade, so a proposal
+  // issued before anybody opens the library still shows the customer what they
+  // are accepting. What is asked for instead is that somebody CONFIRM them.
+  assert.ok(!ids.includes('terms'), 'asked for terms that are seeded and present');
+  assert.ok(r.optional.some(x => x.id === 'terms:confirm'),
+    'nobody was asked to confirm the seeded terms are current');
   // Every entry says what it is, why, where it appears and how to supply it.
   for (const x of r.needs) {
     assert.ok(x.what && x.what.length > 5, JSON.stringify(x));
@@ -130,9 +137,13 @@ test('a complete library can issue, and asks for nothing essential', () => {
   const content = {
     logo: 'data:image/jpeg;base64,/9j/',
     termsAndConditions: 'NAC Terms and Conditions of Trade v1.0',
-    warranty: { equipment: '5 years manufacturer', labour: '2 years NAC workmanship' },
     aftercare: { servicing: 'Annual', filterCare: 'Three-monthly', support: 'Call us' },
-    trust: { licenceNumber: '86420', arcLicence: 'AU00000' },
+    // The names the library actually uses. See the field-name test below: the
+    // warranty wording lives on the TRUST record, not in a `warranty` object,
+    // because there has never been one.
+    trust: { electricalLicence: '86420', arcAuthorisation: 'AU00000',
+             workmanshipWarranty: '5 years on our installation workmanship.',
+             manufacturerWarranty: 'The manufacturer\u2019s warranty, in full.' },
     images: [], reviews: [], installations: []
   };
   const r = assetRequest(content, { unit: DAIKIN });
@@ -141,7 +152,9 @@ test('a complete library can issue, and asks for nothing essential', () => {
   // Optional things are still listed — the proposal is sendable and thinner.
   assert.ok(r.optional.length > 0);
   assert.equal(r.have.terms, true);
-  assert.equal(r.have.warranty, true);
+  assert.equal(r.have.termsConfirmedInLibrary, true);
+  assert.equal(r.have.workmanshipWarranty, true);
+  assert.equal(r.have.manufacturerWarranty, true);
 });
 
 test('what is already there is not asked for again', () => {
@@ -153,4 +166,71 @@ test('what is already there is not asked for again', () => {
   assert.ok(!r.needs.some(x => x.id === 'logo'), 'asked for a logo that is on file');
   assert.ok(!r.needs.some(x => x.id.startsWith('equipment:')),
     'asked for a photograph of a model that already has one');
+});
+
+// ── THE ONE THAT WOULD HAVE CAUGHT IT ───────────────────────────────────────
+
+test('the request list reads the field names the library actually has', () => {
+  // This check asked for `licenceNumber`, `arcticLicence` and `arcLicence`.
+  // The trust record has `electricalLicence` and `arcAuthorisation` and has
+  // never had any of the other three, so the check could not see a licence
+  // that WAS on file and reported it missing — it asked Nick for an ARC
+  // number the project had already been given.
+  //
+  // A request list that asks for something already supplied teaches whoever
+  // reads it to ignore the list, which costs more than the one wrong line.
+  const keys = Object.keys(EMPTY_TRUST);
+  for (const k of ['electricalLicence', 'arcAuthorisation']) {
+    assert.ok(keys.includes(k), 'the trust record no longer has ' + k);
+  }
+
+  // A trust record carrying BOTH licences asks for neither.
+  const both = assetRequest({ trust: { electricalLicence: '86420',
+                                       arcAuthorisation: 'AU64234' } }, {});
+  assert.ok(!both.needs.some(x => x.id.startsWith('licence:')),
+    'asked for a licence that is on file: '
+    + both.needs.filter(x => x.id.startsWith('licence:')).map(x => x.what).join(', '));
+
+  // One on file, one not, is reported as exactly that — not as "licences".
+  const arcOnly = assetRequest({ trust: { arcAuthorisation: 'AU64234' } }, {});
+  const askedFor = arcOnly.needs.filter(x => x.id.startsWith('licence:')).map(x => x.id);
+  assert.deepEqual(askedFor, ['licence:electrical'],
+    'with the ARC authorisation on file, only the electrical licence is outstanding');
+  assert.equal(arcOnly.have.arcAuthorisation, 'AU64234');
+  assert.equal(arcOnly.have.electricalLicence, false);
+});
+
+test('NAC\'s seeded credentials carry the ARC authorisation Nick confirmed', () => {
+  // Nick, 16 October 2026: "Arc is AU:64234". The stored form carries no
+  // colon; the digits are the ones he gave.
+  assert.equal(NAC_TRUST.arcAuthorisation, 'AU64234');
+  assert.match(NAC_TRUST.arcAuthorisation, /^AU\d+$/);
+  // And the electrical licence is still blank, deliberately — a blank licence
+  // keeps blocking, and the one thing worse than a missing licence number on a
+  // quote is an invented one.
+  assert.equal(NAC_TRUST.electricalLicence || '', '');
+
+  const r = assetRequest({ trust: { ...NAC_TRUST } }, {});
+  assert.ok(!r.needs.some(x => x.id === 'licence:arc'));
+  assert.ok(r.needs.some(x => x.id === 'licence:electrical'));
+});
+
+test('the warranty wording is read off the trust record, where it lives', () => {
+  // There has never been a `content.warranty` object. This asked for
+  // `warranty.equipment` and `warranty.labour`, found nothing, and reported
+  // NAC's warranty missing while both halves of it sat on the trust record —
+  // taken from clauses of NAC's own Terms.
+  assert.ok(NAC_TRUST.workmanshipWarranty.length > 40);
+  assert.ok(NAC_TRUST.manufacturerWarranty.length > 40);
+  const r = assetRequest({ trust: { ...NAC_TRUST } }, {});
+  assert.ok(!r.needs.some(x => x.id === 'warranty'),
+    'asked for a warranty that is on file');
+  assert.ok(!r.needs.some(x => x.id === 'warranty:half'));
+
+  // Half of it is reported as half, not as none.
+  const half = assetRequest({ trust: { workmanshipWarranty: 'five years' } }, {});
+  assert.ok(!half.needs.some(x => x.id === 'warranty'));
+  const only = half.needs.find(x => x.id === 'warranty:half');
+  assert.ok(only);
+  assert.match(only.why, /manufacturer one is not/);
 });
