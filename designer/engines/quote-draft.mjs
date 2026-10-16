@@ -164,7 +164,15 @@ export function normaliseQuoteDraft(input = {}) {
 
     intro: trimmed(d.intro),
     validDays: n(d.validDays) ?? 30,
-    status: trimmed(d.status) || 'draft'
+    status: trimmed(d.status) || 'draft',
+
+    /**
+     * A TEST QUOTE: issued on the real content library at a real price so the
+     * link and the acceptance can be proved end to end, and banner-labelled
+     * TEST QUOTE on every surface. Never implied — the draft has to say so,
+     * and it is false unless somebody ticked the box.
+     */
+    testQuote: bool(d.testQuote)
   };
 }
 
@@ -394,6 +402,7 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
     selectedUpgradeIds: [...d.selectedUpgradeIds],
     sensorCount: d.sensorCount,
     upgradeQuantities: { ...d.upgradeQuantities },
+    testQuote: d.testQuote,
 
     systemOptions: d.systems.map(s => ({
       id: s.id, brand: s.brand, brandId: s.brandId, model: s.model,

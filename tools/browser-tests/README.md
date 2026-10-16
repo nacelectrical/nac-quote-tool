@@ -19,6 +19,7 @@ node tools/browser-tests/static-pressure-gate.mjs   # a missing ESP is never rea
 node tools/browser-tests/dialogs.mjs                # the modals that replaced prompt()/confirm()
 node tools/browser-tests/dialogs-in-app.mjs         # those modals driven from the real buttons
 node tools/browser-tests/report-pdf.mjs             # real PDFs, read back with pdf.js
+node tools/browser-tests/quote-builder.mjs         # quoting with NO duct design
 node tools/browser-tests/customers-jobs.mjs         # customer -> job -> design -> quote
 node tools/browser-tests/setup-page.mjs             # /setup.html, all branches
 node tools/browser-tests/material-rates.mjs         # every rate is enterable and persists

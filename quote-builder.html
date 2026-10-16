@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<!--
+  NAC — QUOTE ONLY
+
+  Nick, 16 October 2026: "Pause all duct-designer development and focus on
+  completing NAC's quote tool... Quoting must work independently using
+  information I enter and approve: equipment, installation scope, outlets,
+  zones, inclusions, exclusions and price. Create a clear 'Quote only'
+  workflow."
+
+  This is that workflow, and it is deliberately the SHORT way through. The
+  designer is still there and still opens every saved job; this screen exists
+  because most jobs do not need one to be quoted, and until now there was no
+  way to price a job without first drawing it.
+
+  Everything on this page is typed by a person. NOTHING is derived from a plan,
+  calculated from a load, or inferred from a drawing — and the quote that comes
+  out of it says so, rather than dressing an estimate as a design.
+
+  WHAT IS STILL CHECKED runs down the right-hand side as you type: a missing
+  price, a price of zero, no customer, no inclusions, an upgrade that does not
+  fit the system you chose, and two of your own figures contradicting each
+  other. The quote cannot be issued while anything in that panel is red.
+
+  NAC staff only — a customer's name, their address and what they are being
+  charged.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Quote only — NAC</title>
+<style>
+:root{
+  --navy:#16204A;--navy-2:#202C61;--ink:#161A27;--body:#3D4458;--muted:#6B7285;
+  --gold:#F5C200;--gold-d:#C79C00;--line:#E4E7EF;--soft:#F6F8FC;--ok:#1E7A46;--bad:#B3261E;
+  --warn:#9A6B00;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--body);background:var(--soft);line-height:1.55;font-size:15px}
+header{background:linear-gradient(160deg,var(--navy),var(--navy-2));color:#fff;padding:18px 20px;
+  position:sticky;top:0;z-index:20}
+header .in{max-width:1320px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header h1{font-size:19px;color:var(--gold)}
+header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1;min-width:140px}
+.wrap{max-width:1320px;margin:0 auto;padding:18px 20px 120px;display:grid;gap:18px;
+  grid-template-columns:1fr}
+@media(min-width:1040px){.wrap{grid-template-columns:1fr 360px;align-items:start}}
+.col{display:grid;gap:16px;min-width:0}
+.side{display:grid;gap:16px;min-width:0}
+@media(min-width:1040px){.side{position:sticky;top:78px}}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:13px;padding:18px 20px;
+  display:grid;gap:14px}
+.card>h2{font-size:16px;color:var(--ink);display:flex;align-items:baseline;gap:10px;
+  flex-wrap:wrap}
+.card>h2 small{font-weight:400;font-size:13px;color:var(--muted)}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.f{display:flex;flex-direction:column;gap:5px;min-width:0}
+.f label{font-size:12.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);
+  font-weight:700}
+.f input,.f select,.f textarea{font:inherit;font-size:16px;color:var(--ink);background:#fff;
+  border:1px solid var(--line);border-radius:9px;padding:11px 12px;min-height:46px;width:100%}
+.f textarea{min-height:110px;line-height:1.5;resize:vertical}
+.f input:focus-visible,.f select:focus-visible,.f textarea:focus-visible{
+  outline:2px solid var(--gold);outline-offset:1px}
+.f .hint{font-size:12.5px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
+.btn{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;
+  padding:10px 15px;cursor:pointer;min-height:44px;min-width:44px;text-decoration:none;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.btn.primary{background:var(--gold);border-color:var(--gold-d);font-weight:700}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--bad);border-color:#F3C9C6}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.bar{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+.note{font-size:13.5px;color:var(--muted)}
+
+/* ── repeating rows: systems and rooms ─────────────────────────────────── */
+.rows{display:grid;gap:10px}
+.row{border:1px solid var(--line);border-radius:11px;padding:14px;display:grid;gap:11px;
+  background:var(--soft)}
+.row.chosen{border-color:var(--gold-d);background:#FFFCF0}
+.rowh{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.rowh strong{font-size:15px;color:var(--ink);flex:1;min-width:100px}
+.roomrow{display:grid;gap:9px;grid-template-columns:1fr 1fr 92px auto;align-items:end}
+@media(max-width:620px){.roomrow{grid-template-columns:1fr 1fr;}
+  .roomrow .f:nth-child(3){grid-column:1}.roomrow .btn{grid-column:2;justify-self:end}}
+
+/* ── upgrades ───────────────────────────────────────────────────────────── */
+.ups{display:grid;gap:9px}
+.up{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:11px;
+  padding:13px 14px;background:#fff}
+.up.on{border-color:var(--gold-d);background:#FFFCF0}
+.up input[type=checkbox]{width:22px;height:22px;flex:0 0 auto;margin-top:2px;
+  accent-color:var(--navy)}
+.up .ub{flex:1;min-width:0;display:grid;gap:4px}
+.up .uh{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;
+  justify-content:space-between}
+.up .uh strong{font-size:15px;color:var(--ink)}
+.up .uh em{font-style:normal;font-weight:700;color:var(--navy);white-space:nowrap}
+.up .ud{font-size:13.5px;color:var(--muted)}
+.up .uq{display:flex;align-items:center;gap:9px;margin-top:6px}
+.up .uq input{width:90px;min-height:44px;text-align:center;font-weight:700;font-size:17px;
+  border:2px solid var(--line);border-radius:9px;padding:9px;font-family:inherit;color:var(--ink)}
+.up.off{opacity:.55}
+.up .uwhy{font-size:12.5px;color:var(--warn);font-weight:600}
+
+/* ── the checks panel ───────────────────────────────────────────────────── */
+.checks{display:grid;gap:9px}
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;border-radius:9px;
+  padding:11px 12px;line-height:1.45}
+.chk.bad{background:#FBECEB;border:1px solid #F3C9C6;color:var(--bad)}
+.chk.warn{background:#FFF8E6;border:1px solid #F0DCA8;color:var(--warn)}
+.chk.ok{background:#E9F5EE;border:1px solid #C6E3D2;color:var(--ok)}
+.chk b{flex:0 0 auto}
+.total{background:linear-gradient(160deg,var(--navy),var(--navy-2));color:#fff;border-radius:13px;
+  padding:18px 20px;display:grid;gap:3px}
+.total span{font-size:12.5px;text-transform:uppercase;letter-spacing:.5px;
+  color:rgba(255,255,255,.7);font-weight:700}
+.total strong{font-size:34px;color:var(--gold);letter-spacing:-.02em;line-height:1.1;
+  overflow-wrap:anywhere}
+.total small{font-size:13px;color:rgba(255,255,255,.72)}
+.total .lines{margin-top:8px;display:grid;gap:3px;font-size:13px;color:rgba(255,255,255,.8)}
+.total .lines i{font-style:normal;float:right;font-weight:600;color:#fff}
+
+.flash{border-radius:11px;padding:13px 15px;font-size:14px}
+.flash.ok{background:#E9F5EE;border:1px solid #C6E3D2;color:var(--ok)}
+.flash.bad{background:#FBECEB;border:1px solid #F3C9C6;color:var(--bad)}
+.link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  overflow-wrap:anywhere;color:var(--navy)}
+.testbox{display:flex;gap:10px;align-items:flex-start;background:#FFF8E6;
+  border:1px solid #F0DCA8;border-radius:11px;padding:12px 14px}
+.testbox input{width:22px;height:22px;flex:0 0 auto;margin-top:2px;accent-color:var(--navy)}
+.testbox span{font-size:13.5px;color:var(--warn)}
+dialog{border:none;border-radius:14px;padding:0;max-width:min(1100px,96vw);width:100%;
+  box-shadow:0 20px 60px rgba(22,32,74,.3)}
+dialog::backdrop{background:rgba(22,32,74,.55)}
+.dlg-h{display:flex;gap:12px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.dlg-h strong{flex:1;font-size:16px;color:var(--ink)}
+dialog iframe{width:100%;height:min(78vh,900px);border:0;display:block;background:#fff}
+/* Every control reachable with a finger. */
+@media(pointer:coarse){
+  .btn,input,select,textarea{min-height:46px}
+}
+</style>
+</head>
+<body>
+
+<header><div class="in">
+  <h1>NAC — Quote only</h1>
+  <span class="sub" id="who">No duct design needed. Everything here is what you enter.</span>
+  <a class="btn" href="/quotes.html">Quotes</a>
+  <a class="btn" href="/designer.html">Designer</a>
+</div></header>
+
+<div class="wrap">
+  <div class="col">
+
+    <section class="card">
+      <h2>Customer <small>who the proposal is for, and which house</small></h2>
+      <div class="grid">
+        <div class="f"><label for="cname">Name</label>
+          <input id="cname" autocomplete="off"></div>
+        <div class="f"><label for="cphone">Phone</label>
+          <input id="cphone" inputmode="tel" autocomplete="off"></div>
+        <div class="f"><label for="cemail">Email</label>
+          <input id="cemail" type="email" autocomplete="off"></div>
+      </div>
+      <div class="f"><label for="caddr">Site address</label>
+        <input id="caddr" autocomplete="off">
+        <span class="hint">Printed in full on the cover. The rest of the page uses the suburb.</span></div>
+      <div class="grid">
+        <div class="f"><label for="pnum">Proposal number</label>
+          <input id="pnum" autocomplete="off"></div>
+        <div class="f"><label for="valid">Valid for (days)</label>
+          <input id="valid" type="number" min="1" max="365" step="1" value="30"></div>
+      </div>
+      <label class="testbox"><input type="checkbox" id="istest">
+        <span><b>This is a TEST quote.</b> It is issued on the real content library at a
+        real price so the link and the acceptance can be proved end to end, and every
+        page of it is banner-labelled TEST QUOTE. Never tick this for a real customer.</span></label>
+    </section>
+
+    <section class="card">
+      <h2>Systems <small>one, or several for the customer to choose between</small></h2>
+      <div class="rows" id="systems"></div>
+      <div class="bar"><button class="btn" id="addSys">Add a system</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Zone control</h2>
+      <div class="grid">
+        <div class="f"><label for="ctrl">Controller</label>
+          <input id="ctrl" placeholder="AirTouch 5"></div>
+        <div class="f"><label for="ctrlz">Zones it handles</label>
+          <input id="ctrlz" type="number" min="0" step="1"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Installation scope <small>the counts you took on site</small></h2>
+      <div class="grid">
+        <div class="f"><label for="outlets">Supply outlets</label>
+          <input id="outlets" type="number" min="0" step="1"></div>
+        <div class="f"><label for="returns">Return air grilles</label>
+          <input id="returns" type="number" min="0" step="1"></div>
+        <div class="f"><label for="zones">Zones</label>
+          <input id="zones" type="number" min="0" step="1"></div>
+      </div>
+      <div class="f"><label for="summary">Scope in a sentence</label>
+        <input id="summary" placeholder="Ducted reverse-cycle throughout the single storey, six zones."></div>
+      <div class="f"><label>Rooms being conditioned
+        <span class="hint">Bathrooms, ensuites, the laundry and the garage are not counted.</span></label>
+        <div class="rows" id="rooms"></div>
+        <div class="bar"><button class="btn" id="addRoom">Add a room</button></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>What the price covers</h2>
+      <div class="f"><label for="incl">Included — one per line</label>
+        <textarea id="incl"></textarea>
+        <span class="hint"><button class="btn ghost" id="seedIncl" type="button"
+          style="min-height:34px;padding:4px 10px;font-size:13px">Insert NAC's usual list</button></span></div>
+      <div class="f"><label for="excl">Not included — one per line</label>
+        <textarea id="excl"></textarea>
+        <span class="hint"><button class="btn ghost" id="seedExcl" type="button"
+          style="min-height:34px;padding:4px 10px;font-size:13px">Insert NAC's usual list</button></span></div>
+    </section>
+
+    <section class="card">
+      <h2>Optional upgrades <small>offered to the customer on the page</small></h2>
+      <div class="ups" id="ups"><p class="note">Loading the content library…</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Opening paragraph</h2>
+      <div class="f"><label for="intro">What the proposal opens with</label>
+        <textarea id="intro"></textarea>
+        <span class="hint">Leave empty to use NAC's standard opening.</span></div>
+    </section>
+
+  </div>
+
+  <aside class="side">
+    <div class="total" id="total"></div>
+    <section class="card">
+      <h2>Before this can go out</h2>
+      <div class="checks" id="checks"></div>
+    </section>
+    <section class="card">
+      <h2>Actions</h2>
+      <div class="bar">
+        <button class="btn" id="save">Save</button>
+        <button class="btn" id="preview">Preview</button>
+        <button class="btn primary" id="issue">Issue to customer</button>
+      </div>
+      <div id="flash"></div>
+      <p class="note" id="savedAt"></p>
+    </section>
+  </aside>
+</div>
+
+<dialog id="prev">
+  <div class="dlg-h"><strong>Customer preview</strong>
+    <button class="btn" id="prevClose">Close</button></div>
+  <iframe id="prevFrame" title="Customer preview"></iframe>
+</dialog>
+
+<script type="module">
+import { requireSignIn, currentSession } from '/designer/auth.mjs';
+import {
+  createQuoteDraft, normaliseQuoteDraft, quoteDraftGate, draftToQuoteSource,
+  draftSelectedOptions, chosenSystem
+} from '/designer/engines/quote-draft.mjs';
+import { buildPresentation } from '/designer/engines/presentation.mjs';
+import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
+import { seedTermsAndConditions, seedTrust } from '/designer/engines/presentation-content.mjs';
+import { saveDesign, loadDesign, getJson, SETTINGS_KEYS } from '/designer/engines/store.mjs';
+import { DEFAULT_SETTINGS, mergeSettings } from '/designer/engines/settings.mjs';
+
+await requireSignIn({ pageName: 'the quote builder' });
+
+const $ = (s) => document.querySelector(s);
+const staffHeaders = (extra = {}) => {
+  const s = currentSession();
+  return { ...extra, ...(s && s.access_token
+    ? { Authorization: 'Bearer ' + s.access_token } : {}) };
+};
+const money = (v) => v === null || v === undefined || v === ''
+  ? '—' : '$' + Number(v).toLocaleString('en-AU', { minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2 });
+const numOrNull = (v) => {
+  // Number('') is 0 and Number(null) is 0, which is how a quote with no price
+  // read as a quote at nothing. Absent stays absent all the way to the check.
+  const t = String(v === null || v === undefined ? '' : v).trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
+
+// ── NAC'S USUAL LISTS ──────────────────────────────────────────────────────
+// Starting points the estimator edits, not boilerplate that goes out unread.
+// Every line is something NAC actually does or actually excludes.
+const USUAL_INCLUSIONS = [
+  'Supply and install of the system above',
+  'All ductwork, supply outlets and return air grilles',
+  'Electrical connection to an existing suitable circuit',
+  'Commissioning, balancing and handover',
+  'Removal of all installation waste'
+];
+const USUAL_EXCLUSIONS = [
+  'Switchboard or circuit upgrades, if the existing board cannot carry the system',
+  'Patching or painting beyond the installation openings',
+  'Asbestos handling of any kind',
+  'Structural alterations to accommodate the equipment or ductwork'
+];
+
+const params = new URLSearchParams(location.search);
+let draft = createQuoteDraft({
+  id: params.get('id') || ('Q-' + new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    + '-' + Math.random().toString(36).slice(2, 7).toUpperCase()),
+  systems: [{}],
+  scope: { conditionedRooms: [{}] }
+});
+let content = { upgrades: [] };
+let settings = {};
+let dirty = false;
+
+// ── LOAD ───────────────────────────────────────────────────────────────────
+async function boot() {
+  // The same key the issue endpoint reads server-side, so the preview is
+  // built against the commercial terms the server will use.
+  try {
+    settings = mergeSettings(DEFAULT_SETTINGS,
+      await getJson(SETTINGS_KEYS.hvacSettings, {}) || {});
+  } catch (e) { settings = DEFAULT_SETTINGS; }
+  try {
+    const r = await fetch('/api/presentation-content', { headers: staffHeaders() });
+    if (r.ok) content = (await r.json()).content || content;
+  } catch (e) { /* the upgrades list is simply empty */ }
+
+  const id = params.get('id');
+  if (id) {
+    const stored = await loadDesign(id);
+    if (stored && stored.schema === 'nac.quote.draft.v1') {
+      draft = normaliseQuoteDraft(stored);
+    } else if (stored) {
+      flash('bad', 'That job is a duct design, not a quote-only draft. '
+        + 'Open it in the designer.');
+    }
+  }
+  if (!draft.systems.length) draft.systems = [{ id: 'sys-1' }];
+  if (!draft.scope.conditionedRooms.length) draft.scope.conditionedRooms = [{}];
+  draw();
+}
+
+// ── DRAW ───────────────────────────────────────────────────────────────────
+function el(tag, attrs = {}, kids = []) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v);
+  }
+  for (const c of [].concat(kids)) if (c) n.appendChild(c);
+  return n;
+}
+function field(label, input, hint) {
+  return el('div', { class: 'f' },
+    [el('label', { text: label }), input, hint ? el('span', { class: 'hint', text: hint }) : null]);
+}
+function input(value, attrs, onInput) {
+  const n = el('input', attrs);
+  n.value = value === null || value === undefined ? '' : String(value);
+  n.addEventListener('input', () => { onInput(n.value); mark(); });
+  return n;
+}
+
+function drawSystems() {
+  const host = $('#systems');
+  host.textContent = '';
+  draft.systems.forEach((sys, i) => {
+    const chosen = draft.chosenSystemId === sys.id;
+    const row = el('div', { class: 'row' + (chosen ? ' chosen' : '') });
+    row.appendChild(el('div', { class: 'rowh' }, [
+      el('strong', { text: (sys.brand || sys.model) ? (sys.brand + ' ' + sys.model).trim()
+                                                    : 'System ' + (i + 1) }),
+      el('button', { class: 'btn' + (chosen ? ' primary' : ''), type: 'button',
+        text: chosen ? 'Quoted' : 'Quote this one',
+        onclick: () => { draft.chosenSystemId = sys.id; mark(); draw(); } }),
+      draft.systems.length > 1
+        ? el('button', { class: 'btn danger', type: 'button', text: 'Remove',
+            onclick: () => { draft.systems.splice(i, 1); mark(); draw(); } })
+        : null
+    ]));
+    row.appendChild(el('div', { class: 'grid' }, [
+      field('Brand', input(sys.brand, { placeholder: 'Daikin' }, v => { sys.brand = v; })),
+      field('Indoor model', input(sys.model, { placeholder: 'FDYAN160AV1' }, v => { sys.model = v; })),
+      field('Outdoor model', input(sys.outdoorModel, { placeholder: 'RZA160C2V1' },
+        v => { sys.outdoorModel = v; })),
+      field('Capacity (kW)', input(sys.capacityKw, { type: 'number', step: '0.1', min: '0' },
+        v => { sys.capacityKw = numOrNull(v); })),
+      field('Power supply', input(sys.phase, { placeholder: '1Ph' }, v => { sys.phase = v; })),
+      field('Price including GST', input(sys.priceIncGst,
+        { type: 'number', step: '1', min: '0', inputmode: 'decimal' },
+        v => { sys.priceIncGst = numOrNull(v); })),
+      field('Warranty (years)', input(sys.warrantyYears, { type: 'number', step: '1', min: '0' },
+        v => { sys.warrantyYears = numOrNull(v); }),
+        'Only if it differs from the standard warranty.'),
+      field('Note on the page', input(sys.note, { placeholder: 'Quieter outdoor unit' },
+        v => { sys.note = v; }))
+    ]));
+    host.appendChild(row);
+  });
+}
+
+function drawRooms() {
+  const host = $('#rooms');
+  host.textContent = '';
+  draft.scope.conditionedRooms.forEach((r, i) => {
+    host.appendChild(el('div', { class: 'roomrow' }, [
+      field('Room', input(r.label, { placeholder: 'Living / Dining' }, v => { r.label = v; })),
+      field('Zone', input(r.zone, { placeholder: 'Living' }, v => { r.zone = v; })),
+      field('Outlets', input(r.outlets, { type: 'number', min: '0', step: '1' },
+        v => { r.outlets = numOrNull(v); })),
+      el('button', { class: 'btn danger', type: 'button', text: 'Remove',
+        onclick: () => { draft.scope.conditionedRooms.splice(i, 1); mark(); draw(); } })
+    ]));
+  });
+}
+
+function drawUpgrades() {
+  const host = $('#ups');
+  host.textContent = '';
+  const ups = (content.upgrades || []).filter(u => u && u.enabled !== false);
+  if (!ups.length) {
+    host.appendChild(el('p', { class: 'note',
+      text: 'No upgrades are in the content library yet. Add them at '
+        + '/quote-presentation.html → Upgrades.' }));
+    return;
+  }
+  const sys = chosenSystem(draft);
+  for (const u of ups) {
+    const id = String(u.id || '').trim();
+    const on = draft.selectedUpgradeIds.includes(id);
+    const requires = (u.requires || []).map(String);
+    const brandLock = requires.filter(r => /_system$/.test(r));
+    const brandId = String((sys && sys.brandId) || '').trim();
+    const brandOk = !brandLock.length || (brandId && brandLock.includes(brandId + '_system'));
+    const zoneOk = !requires.includes('has_zoning') || (draft.scope.zoneCount || 0) > 1;
+    const fits = brandOk && zoneOk;
+    const counted = numOrNull(u.unitPriceIncGst) !== null;
+
+    const box = el('label', { class: 'up' + (on ? ' on' : '') + (fits ? '' : ' off') });
+    const tick = el('input', { type: 'checkbox' });
+    tick.checked = on;
+    tick.disabled = !fits;
+    tick.addEventListener('change', () => {
+      draft.selectedUpgradeIds = tick.checked
+        ? [...new Set([...draft.selectedUpgradeIds, id])]
+        : draft.selectedUpgradeIds.filter(x => x !== id);
+      mark(); draw();
+    });
+    const body = el('div', { class: 'ub' }, [
+      el('div', { class: 'uh' }, [
+        el('strong', { text: u.title || id }),
+        el('em', { text: counted ? money(u.unitPriceIncGst) + ' ' + (u.unitLabel || 'each')
+                                 : money(u.priceIncGst) })
+      ]),
+      u.description ? el('div', { class: 'ud', text: u.description }) : null,
+      !fits ? el('div', { class: 'uwhy', text: !brandOk
+        ? 'Only fits ' + brandLock.map(b => b.replace(/_system$/, '')).join(' or ')
+          + ', and this quote is on ' + (sys && sys.brand ? 'a ' + sys.brand : 'another brand')
+          + '. It is withheld rather than offered.'
+        : 'Needs a zoned system, and this quote records '
+          + (draft.scope.zoneCount ?? 0) + ' zone(s).' }) : null
+    ]);
+    if (on && counted) {
+      const q = el('input', { type: 'number', min: '0', step: '1',
+        max: u.maxQuantity !== null && u.maxQuantity !== undefined ? String(u.maxQuantity) : null,
+        inputmode: 'numeric' });
+      q.value = String(draft.upgradeQuantities[id] ?? draft.sensorCount ?? 0);
+      q.addEventListener('input', () => {
+        const n = numOrNull(q.value);
+        draft.upgradeQuantities = { ...draft.upgradeQuantities, [id]: n === null ? 0 : n };
+        // The zone-accessory path reads sensorCount, so the two stay together.
+        if (/sensor/i.test(String(u.title || ''))) draft.sensorCount = n === null ? 0 : n;
+        mark();
+      });
+      body.appendChild(el('div', { class: 'uq' }, [
+        el('span', { class: 'ud', text: 'How many' }), q,
+        el('span', { class: 'uh', text: '' })
+      ]));
+    }
+    box.appendChild(tick); box.appendChild(body);
+    host.appendChild(box);
+  }
+}
+
+function quoteTotals() {
+  const sys = chosenSystem(draft);
+  const base = sys ? numOrNull(sys.priceIncGst) : null;
+  const byId = new Map((content.upgrades || []).map(u => [String(u.id), u]));
+  const lines = [];
+  for (const id of draft.selectedUpgradeIds) {
+    const u = byId.get(id);
+    if (!u) continue;
+    const unit = numOrNull(u.unitPriceIncGst);
+    if (unit !== null) {
+      const q = draft.upgradeQuantities[id] ?? draft.sensorCount ?? 0;
+      if (q > 0) lines.push({ title: u.title + ' × ' + q, amount: Math.round(unit * q * 100) / 100 });
+    } else {
+      const flat = numOrNull(u.priceIncGst);
+      if (flat !== null) lines.push({ title: u.title, amount: flat });
+    }
+  }
+  const options = lines.reduce((s, l) => s + l.amount, 0);
+  const total = base === null ? null : Math.round((base + options) * 100) / 100;
+  return { base, lines, options, total };
+}
+
+function drawTotal() {
+  const t = quoteTotals();
+  const host = $('#total');
+  host.textContent = '';
+  host.appendChild(el('span', { text: 'Total including GST' }));
+  host.appendChild(el('strong', { text: t.total === null ? 'No price yet' : money(t.total) }));
+  if (t.total !== null) {
+    host.appendChild(el('small', {
+      text: 'Ex GST ' + money(Math.round((t.total / 1.1) * 100) / 100)
+        + ' · GST ' + money(Math.round((t.total - t.total / 1.1) * 100) / 100) }));
+    const lines = el('div', { class: 'lines' });
+    lines.appendChild(el('div', { html: 'System<i>' + money(t.base) + '</i>' }));
+    for (const l of t.lines) {
+      lines.appendChild(el('div', { html: String(l.title).replace(/[<>&]/g, '')
+        + '<i>' + money(l.amount) + '</i>' }));
+    }
+    host.appendChild(lines);
+  }
+}
+
+let lastGate = { ok: false, blockers: [], warnings: [] };
+function drawChecks() {
+  const g = quoteDraftGate(draft, { upgrades: content.upgrades || [] });
+  lastGate = g;
+  const host = $('#checks');
+  host.textContent = '';
+  for (const b of g.blockers) {
+    host.appendChild(el('div', { class: 'chk bad' },
+      [el('b', { text: '✕' }), el('span', { text: b.message })]));
+  }
+  for (const w of g.warnings) {
+    host.appendChild(el('div', { class: 'chk warn' },
+      [el('b', { text: '!' }), el('span', { text: w.message })]));
+  }
+  if (g.ok && !g.warnings.length) {
+    host.appendChild(el('div', { class: 'chk ok' },
+      [el('b', { text: '✓' }), el('span', { text: 'Everything this quote needs is here. '
+        + 'The publish gate runs again on the server when you issue it.' })]));
+  }
+  $('#issue').disabled = !g.ok;
+}
+
+function draw() {
+  $('#cname').value = draft.customer.name || '';
+  $('#cemail').value = draft.customer.email || '';
+  $('#cphone').value = draft.customer.phone || '';
+  $('#caddr').value = draft.siteAddress || draft.customer.address || '';
+  $('#pnum').value = draft.proposalNumber || '';
+  $('#valid').value = draft.validDays ?? 30;
+  $('#istest').checked = draft.testQuote === true;
+  $('#ctrl').value = draft.controller.name || '';
+  $('#ctrlz').value = draft.controller.zoneCount ?? '';
+  $('#outlets').value = draft.scope.outletCount ?? '';
+  $('#returns').value = draft.scope.returnCount ?? '';
+  $('#zones').value = draft.scope.zoneCount ?? '';
+  $('#summary').value = draft.scope.summary || '';
+  $('#incl').value = draft.inclusions.join('\n');
+  $('#excl').value = draft.exclusions.join('\n');
+  $('#intro').value = draft.intro || '';
+  drawSystems(); drawRooms(); drawUpgrades(); drawTotal(); drawChecks();
+}
+
+/**
+ * Something changed.
+ *
+ * The totals and the checks refresh HERE rather than at each call site,
+ * because they did not: the repeating rows (systems, rooms, upgrade counts)
+ * call this and nothing else, so typing a price into a system left the total
+ * reading "No price yet" and the checks still demanding one. A panel that
+ * tells you what is wrong is only useful if it is looking at what you just
+ * typed.
+ */
+function mark() {
+  dirty = true;
+  $('#savedAt').textContent = 'Unsaved changes.';
+  drawTotal();
+  drawChecks();
+}
+
+// ── BIND THE PLAIN FIELDS ──────────────────────────────────────────────────
+const bind = (sel, apply) => $(sel).addEventListener('input', (e) => {
+  apply(e.target.value); mark();
+});
+bind('#cname', v => { draft.customer.name = v; });
+bind('#cemail', v => { draft.customer.email = v; });
+bind('#cphone', v => { draft.customer.phone = v; });
+bind('#caddr', v => { draft.siteAddress = v; draft.customer.address = v; });
+bind('#pnum', v => { draft.proposalNumber = v; });
+bind('#valid', v => { draft.validDays = numOrNull(v) ?? 30; });
+bind('#ctrl', v => { draft.controller.name = v; });
+bind('#ctrlz', v => { draft.controller.zoneCount = numOrNull(v); });
+bind('#outlets', v => { draft.scope.outletCount = numOrNull(v); });
+bind('#returns', v => { draft.scope.returnCount = numOrNull(v); });
+bind('#zones', v => { draft.scope.zoneCount = numOrNull(v); drawUpgrades(); });
+bind('#summary', v => { draft.scope.summary = v; });
+bind('#intro', v => { draft.intro = v; });
+bind('#incl', v => { draft.inclusions = v.split('\n').map(s => s.trim()).filter(Boolean); });
+bind('#excl', v => { draft.exclusions = v.split('\n').map(s => s.trim()).filter(Boolean); });
+$('#istest').addEventListener('change', (e) => { draft.testQuote = e.target.checked; mark(); });
+
+$('#addSys').addEventListener('click', () => {
+  draft.systems.push({ id: 'sys-' + (draft.systems.length + 1) }); mark(); draw();
+});
+$('#addRoom').addEventListener('click', () => {
+  draft.scope.conditionedRooms.push({}); mark(); draw();
+});
+$('#seedIncl').addEventListener('click', () => {
+  draft.inclusions = [...USUAL_INCLUSIONS]; mark(); draw();
+});
+$('#seedExcl').addEventListener('click', () => {
+  draft.exclusions = [...USUAL_EXCLUSIONS]; mark(); draw();
+});
+
+function flash(kind, text, extra) {
+  const host = $('#flash');
+  host.textContent = '';
+  const box = el('div', { class: 'flash ' + kind }, [el('div', { text })]);
+  if (extra) box.appendChild(extra);
+  host.appendChild(box);
+}
+
+// ── SAVE ───────────────────────────────────────────────────────────────────
+//
+// Nick: "Report success only after the database confirms it was saved."
+// saveDesign writes locally first so an iPad on a bad connection never loses a
+// site visit, and tells us whether it reached the database. Only `synced`
+// means it left the device, and only `synced` is reported as saved.
+$('#save').addEventListener('click', async () => {
+  const btn = $('#save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    draft = normaliseQuoteDraft({ ...draft, updatedAt: new Date().toISOString() });
+    const r = await saveDesign({
+      ...draft,
+      // What the job list shows, and what the issue endpoint reads back.
+      customer: draft.customer,
+      status: draft.status || 'draft'
+    });
+    if (r.synced) {
+      dirty = false;
+      $('#savedAt').textContent = 'Saved to ' + r.storage + ' at '
+        + new Date().toLocaleTimeString('en-AU');
+      flash('ok', 'Saved. Reopen this quote at ?id=' + draft.id);
+    } else {
+      // Saved on this device only. That is NOT saved, and saying so would be
+      // the one lie that loses a job.
+      flash('bad', 'NOT saved to the database — it is on this device only'
+        + (r.error ? ' (' + r.error + ')' : '')
+        + '. Do not close this tab. Check the connection and save again.');
+    }
+  } catch (e) {
+    flash('bad', 'Save failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+});
+
+// ── PREVIEW ────────────────────────────────────────────────────────────────
+// The real presentation, built in the browser from the real content library —
+// not a mock-up of one. What it refuses to build, the server will refuse too.
+$('#preview').addEventListener('click', () => {
+  const src = draftToQuoteSource(draft, { upgrades: content.upgrades || [] });
+  const built = buildPresentation({
+    design: src,
+    customer: draft.customer,
+    job: { siteAddress: draft.siteAddress },
+    content: {
+      ...content,
+      trust: seedTrust(content.trust),
+      termsAndConditions: seedTermsAndConditions(content.termsAndConditions,
+        seedTrust(content.trust))
+    },
+    settings,
+    proposalNumber: draft.proposalNumber,
+    revision: 1,
+    // A preview is a preview. Built as a draft, so the checks that only bite
+    // on issue do not stop you looking at the page while you work on it.
+    status: 'draft',
+    preparedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + (draft.validDays ?? 30) * 86400000).toISOString(),
+    systemOptions: src.systemOptions,
+    chosenSystemId: src.chosenSystemId,
+    selectedOptionIds: draftSelectedOptions(draft, { upgrades: content.upgrades || [] }),
+    intro: draft.intro,
+    testQuote: draft.testQuote === true
+  });
+  if (!built.ok) {
+    flash('bad', 'The preview cannot be built yet: '
+      + (built.blockers || []).map(b => b.message).join(' '));
+    return;
+  }
+  const html = renderPresentationHtml(built.presentation, { token: 'preview' });
+  const frame = $('#prevFrame');
+  frame.srcdoc = html;
+  $('#prev').showModal();
+});
+$('#prevClose').addEventListener('click', () => $('#prev').close());
+
+// ── ISSUE ──────────────────────────────────────────────────────────────────
+$('#issue').addEventListener('click', async () => {
+  if (dirty) { flash('bad', 'Save the quote first — the server issues what is in the database, '
+    + 'not what is on this screen.'); return; }
+  const btn = $('#issue');
+  btn.disabled = true; btn.textContent = 'Issuing…';
+  try {
+    const r = await fetch('/api/quote-issue', {
+      method: 'POST',
+      headers: staffHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        designId: draft.id,
+        customer: draft.customer,
+        job: { siteAddress: draft.siteAddress },
+        proposalNumber: draft.proposalNumber,
+        validDays: draft.validDays ?? 30,
+        intro: draft.intro,
+        testQuote: draft.testQuote === true
+      })
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const why = (out.blockers || []).map(b => b.message).join(' ') || out.message || out.error;
+      flash('bad', 'Not issued. ' + why);
+      return;
+    }
+    const url = out.url || out.shareUrl || '';
+    flash('ok', 'Issued as revision ' + (out.quoteRevision || 1) + '.',
+      url ? el('p', { class: 'link', text: url }) : null);
+  } catch (e) {
+    flash('bad', 'Issuing failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Issue to customer';
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+await boot();
+</script>
+</body>
+</html>

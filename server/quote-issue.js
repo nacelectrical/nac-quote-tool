@@ -120,10 +120,11 @@ module.exports = async function handler(req, res) {
   if (!designId) return res.status(400).json({ error: 'design_required' });
 
   try {
-    const [share, presentationMod, offerMod] = await Promise.all([
+    const [share, presentationMod, offerMod, draftMod] = await Promise.all([
       import('../designer/engines/presentation-share.mjs'),
       import('../designer/engines/presentation.mjs'),
-      import('../designer/engines/issued-offer.mjs')
+      import('../designer/engines/issued-offer.mjs'),
+      import('../designer/engines/quote-draft.mjs')
     ]);
 
     // ── Everything the presentation is built from, server-side ─────────────
@@ -143,8 +144,8 @@ module.exports = async function handler(req, res) {
     ]);
 
     const designRow = Array.isArray(designRes.body) ? designRes.body[0] : null;
-    const design = parseDesign(designRow);
-    if (!design) return res.status(404).json({ error: 'design_not_found' });
+    const stored = parseDesign(designRow);
+    if (!stored) return res.status(404).json({ error: 'design_not_found' });
 
     const contentRow = Array.isArray(contentRes.body) ? contentRes.body[0] : null;
     const content = (contentRow && contentRow.data) || {};
@@ -157,12 +158,49 @@ module.exports = async function handler(req, res) {
       settings = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
     } catch (e) { settings = {}; }
 
+    // ── A QUOTE WITHOUT A DUCT DESIGN ──────────────────────────────────────
+    //
+    // Nick, 16 October 2026: "Quoting must work independently using
+    // information I enter and approve... Do not fabricate a completed duct
+    // design or require one to issue an installer-approved quote."
+    //
+    // The row may hold a QUOTE DRAFT rather than a DuctDesign. It is stored
+    // the same way, issued through the same endpoint, and carries the same
+    // revisions, acceptance and audit trail — the only difference is where the
+    // numbers came from, which is a person rather than a drawing. The draft is
+    // checked by its OWN gate first, because quoteGate() stands down on a
+    // quote-only source and something has to check the offer.
+    const isDraft = stored && stored.schema === draftMod.QUOTE_DRAFT_SCHEMA;
+    if (isDraft) {
+      const dg = draftMod.quoteDraftGate(stored, { upgrades: content.upgrades || [] });
+      if (!dg.ok) {
+        return res.status(409).json({
+          error: 'blocked',
+          message: 'This quote cannot be issued yet.',
+          blockers: dg.blockers.map(b => ({ code: b.code, message: b.message }))
+        });
+      }
+    }
+    const design = isDraft
+      ? draftMod.draftToQuoteSource(stored, { upgrades: content.upgrades || [] })
+      : stored;
+
     const customer = body.customer || design.customer || {};
     const job = body.job || design.job || {};
     const quoteRevision = Number(body.quoteRevision) || 1;
     const validDays = Number(body.validDays) || 30;
+    // On a quote-only job the systems, the chosen one and the upgrade
+    // selections are all IN the draft, because that is where the estimator
+    // entered them. The request may still override — the customer changing
+    // their pick on the page comes through the same field — but a draft issued
+    // straight from the builder does not have to re-send what it just saved.
     const systemOptions = Array.isArray(body.systemOptions) && body.systemOptions.length
-      ? body.systemOptions : null;
+      ? body.systemOptions
+      : (isDraft && design.systemOptions && design.systemOptions.length
+          ? design.systemOptions : null);
+    const selectedOptionIds = Array.isArray(body.selectedOptionIds) && body.selectedOptionIds.length
+      ? body.selectedOptionIds
+      : (isDraft ? draftMod.draftSelectedOptions(stored, { upgrades: content.upgrades || [] }) : []);
 
     // ── THE PRICE ON THE SCREEN MUST BE THE PRICE IN THE SAVED DESIGN ──────
     //
@@ -213,12 +251,15 @@ module.exports = async function handler(req, res) {
       preparedAt: issuedAt, expiresAt,
       revision: quoteRevision,
       status: 'issued',
-      selectedOptionIds: body.selectedOptionIds || [],
+      selectedOptionIds,
       privacy: body.privacy || {},
-      intro: str(body.intro),
+      intro: str(body.intro) || (isDraft ? str(design.intro) : ''),
       heroImage: content.heroImage || null,
       systemOptions,
-      chosenSystemId: str(body.chosenSystemId) || null
+      chosenSystemId: str(body.chosenSystemId) || (isDraft ? str(design.chosenSystemId) : '') || null,
+      // A TEST QUOTE is issuable on purpose, so the link and the acceptance can
+      // be proved end to end. It is never implied: the draft has to say so.
+      testQuote: stored.testQuote === true || body.testQuote === true
     });
 
     if (!built.ok) {
@@ -249,22 +290,25 @@ module.exports = async function handler(req, res) {
     // one on screen. An option that would fail either is not something a
     // customer should be able to select their way into.
     const presentations = {};
+    const chosenId = str(body.chosenSystemId).trim()
+      || (isDraft ? str(design.chosenSystemId).trim() : '');
     if (systemOptions && systemOptions.length) {
       for (const opt of systemOptions) {
         const id = str(opt && opt.id).trim();
         if (!id) continue;
-        const alt = (id === str(body.chosenSystemId).trim()) ? built : presentationMod.buildPresentation({
+        const alt = (id === chosenId) ? built : presentationMod.buildPresentation({
           design, customer, job, content, settings,
           proposalNumber: str(body.proposalNumber),
           preparedAt: issuedAt, expiresAt,
           revision: quoteRevision,
           status: 'issued',
-          selectedOptionIds: body.selectedOptionIds || [],
+          selectedOptionIds,
           privacy: body.privacy || {},
-          intro: str(body.intro),
+          intro: str(body.intro) || (isDraft ? str(design.intro) : ''),
           heroImage: content.heroImage || null,
           systemOptions,
-          chosenSystemId: id
+          chosenSystemId: id,
+          testQuote: stored.testQuote === true || body.testQuote === true
         });
         if (!alt.ok) {
           return res.status(409).json({
@@ -310,7 +354,7 @@ module.exports = async function handler(req, res) {
 
     const issue = share.issuePresentation({
       designId, quoteRevision, validDays, issuedBy,
-      selectedOptionIds: body.selectedOptionIds || [],
+      selectedOptionIds,
       supersedes: str(body.supersedes) || null,
       now: issuedAt
     });
