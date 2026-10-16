@@ -1347,13 +1347,39 @@ const SCRIPT = `
     Array.prototype.slice.call(document.querySelectorAll('.opt-li')).forEach(function(li){
       var list=li.getAttribute('data-opt-systems');
       var fits = !list || !sysId || list.split(' ').indexOf(sysId)>=0;
+      var was = li.hidden;
       li.hidden = !fits;
-      if(fits) return;
-      Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){c.checked=false;});
+      if(!fits){
+        // ── PUT ASIDE, NOT THROWN AWAY ────────────────────────────────────
+        // The upgrade still has to leave the total, because it cannot be
+        // installed on the system now chosen. But a customer who ticks the
+        // AirTouch, looks at the Braemar to compare, and comes back to the
+        // Daikin had their AirTouch silently un-ticked and the price drop by
+        // $1,350 with nothing on the page to say why. Looking at the other
+        // option is not changing your mind.
+        if(was) return;                       // already put aside
+        Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){
+          c.setAttribute('data-was-checked', c.checked?'1':'0'); c.checked=false;
+        });
+        Array.prototype.slice.call(li.querySelectorAll('.opt-q')).forEach(function(q){
+          q.setAttribute('data-was-value', q.value); q.value='0';
+          var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
+          if(sum) sum.textContent='\u2014';
+        });
+        return;
+      }
+      if(!was) return;                        // it was already on the page
+      Array.prototype.slice.call(li.querySelectorAll('.opt-in')).forEach(function(c){
+        if(c.hasAttribute('data-was-checked')){
+          c.checked = c.getAttribute('data-was-checked')==='1';
+          c.removeAttribute('data-was-checked');
+        }
+      });
       Array.prototype.slice.call(li.querySelectorAll('.opt-q')).forEach(function(q){
-        q.value='0';
-        var sum=document.querySelector('[data-qsum="'+q.getAttribute('data-opt-id')+'"]');
-        if(sum) sum.textContent='\u2014';
+        if(q.hasAttribute('data-was-value')){
+          q.value = q.getAttribute('data-was-value');
+          q.removeAttribute('data-was-value');
+        }
       });
     });
     var sec=document.getElementById('options');
@@ -1495,11 +1521,41 @@ const SCRIPT = `
       if(!ok) return fail('Please confirm you have read the terms.');
       if(err)err.hidden=true;
       var btn=document.getElementById('acceptBtn');
+      var label=btn?btn.textContent:'';
       if(btn){btn.disabled=true;btn.textContent='Sending…';}
       if(window.NACQuote&&window.NACQuote.accept){
-        window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
-          signature:sigPad?sigPad.dataUrl():null,
-          selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
+        // ── AN ACCEPTANCE THAT DID NOT GET THROUGH SAYS SO ────────────────
+        //
+        // This fired and forgot. On a dropped connection the button sat on
+        // "Sending…", disabled, with nothing on the page to say what had
+        // happened — so a customer who pressed Accept in a carpark on one bar
+        // of signal was left looking at a page that had neither accepted
+        // their quote nor admitted it had failed, and could not try again.
+        //
+        // It never said the wrong thing, which is the thing that must never
+        // happen. It said nothing, which is the next worst.
+        var done=false;
+        var recover=function(m){
+          if(done) return; done=true;
+          if(btn){btn.disabled=false;btn.textContent=label||'Accept proposal';}
+          fail(m||'We could not send your acceptance just now. Please check your '
+                 + 'connection and press Accept again \u2014 nothing has been sent, so '
+                 + 'pressing it twice cannot accept this twice.');
+        };
+        try{
+          var r=window.NACQuote.accept({name:name.trim(),acknowledgedTerms:true,
+            signature:sigPad?sigPad.dataUrl():null,
+            selectedOptionIds:selectedOptions(),systemId:chosenSystem()});
+          if(r&&typeof r.then==='function'){
+            r.then(function(res){
+              // The host reloads the page on a real acceptance. A result that
+              // says it did NOT work puts the button back.
+              if(res&&res.ok===false) recover(res.message);
+            },function(e){ recover(e&&e.message?null:null); });
+            // A reply that never comes is the same problem as a failure.
+            setTimeout(function(){ recover(); },30000);
+          }
+        }catch(e){ recover(); }
       }
     });
   }

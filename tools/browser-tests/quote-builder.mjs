@@ -64,8 +64,17 @@ await page.addInitScript(({ ups }) => {
     }
     if (u.includes('/rest/v1/nac_designs')) {
       if ((opts.method || 'GET') === 'POST') {
-        window.__saved.push(JSON.parse(opts.body));
+        const r = JSON.parse(opts.body);
+        window.__saved.push(r);
+        // The row stays in sessionStorage so a RELOAD reads back what was
+        // written, which is what reopening a saved quote actually does.
+        try { sessionStorage.setItem('row:' + r.id, r.design); } catch (e) { /* ignore */ }
         return new Response('', { status: 201 });
+      }
+      const m = /id=eq\.([^&]+)/.exec(u);
+      if (m) {
+        const design = sessionStorage.getItem('row:' + decodeURIComponent(m[1]));
+        return J(design ? [{ id: decodeURIComponent(m[1]), design }] : []);
       }
       return J([]);
     }
@@ -280,6 +289,60 @@ await step('a save that never reached the database is NOT reported as saved', as
 });
 
 // A favicon request against the static server is not a page fault.
+// ── REOPENING A SAVED QUOTE ────────────────────────────────────────────────
+//
+// Nick: "Confirm that saving and reopening preserves the quote."
+//
+// The page is RELOADED at ?id=, so this reads the row back out of the stubbed
+// database exactly as opening the quote tomorrow would — not out of anything
+// still in memory from the session that saved it.
+await step('reopening a saved quote brings all of it back', async () => {
+  const id = await page.evaluate(() => window.__saved[window.__saved.length - 1].id);
+  const before = await page.evaluate(
+    () => JSON.parse(window.__saved[window.__saved.length - 1].design));
+
+  await page.evaluate(() => { window.onbeforeunload = null; });
+  await page.goto(B + '/quote-builder.html?id=' + encodeURIComponent(id),
+    { waitUntil: 'networkidle' });
+  await page.waitForTimeout(600);
+
+  const got = {
+    name: await page.inputValue('#cname'),
+    addr: await page.inputValue('#caddr'),
+    pnum: await page.inputValue('#pnum'),
+    outlets: await page.inputValue('#outlets'),
+    zones: await page.inputValue('#zones'),
+    ctrl: await page.inputValue('#ctrl'),
+    incl: await page.inputValue('#incl'),
+    excl: await page.inputValue('#excl'),
+    test: await page.isChecked('#istest'),
+    systems: await page.locator('#systems .row').count(),
+    rooms: await page.locator('#rooms .roomrow').count(),
+    total: (await page.textContent('#total strong')).trim()
+  };
+  const want = {
+    name: before.customer.name, addr: before.siteAddress,
+    pnum: before.proposalNumber, outlets: String(before.scope.outletCount),
+    zones: String(before.scope.zoneCount), ctrl: before.controller.name,
+    incl: before.inclusions.join('\n'), excl: before.exclusions.join('\n'),
+    test: before.testQuote === true,
+    systems: before.systems.length, rooms: before.scope.conditionedRooms.length,
+    total: '$17,817.00'
+  };
+  for (const k of Object.keys(want)) {
+    if (String(got[k]) !== String(want[k])) {
+      throw new Error(k + ': reopened as ' + JSON.stringify(got[k])
+        + ', was saved as ' + JSON.stringify(want[k]));
+    }
+  }
+  // The upgrades and their counts came back too.
+  const qty = await page.locator('#ups .uq input').first().inputValue();
+  if (qty !== '4') throw new Error('the sensor count reopened as ' + qty);
+  // And it still passes its own checks, so it can be issued straight away.
+  const bad = (await checks()).filter(x => x.startsWith('bad'));
+  if (bad.length) throw new Error(bad.join(' | '));
+});
+
 const real = errs.filter(e => !/favicon\.ico/.test(e)
   && !/Failed to load resource: the server responded with a status of 404/.test(e));
 say('no javascript errors on the page', real.length === 0, real.join(' | '));

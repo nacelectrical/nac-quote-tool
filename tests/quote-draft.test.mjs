@@ -634,3 +634,27 @@ test('the missing content is reported internally, item by item', async () => {
   // And nothing is invented to fill them.
   assert.ok(!/placeholder|stock photo|sample/i.test(what));
 });
+
+// ── 15. THE PAGE'S OWN SAFETY RULES ────────────────────────────────────────
+
+test('a failed acceptance puts the button back and says what happened', () => {
+  const h = html();
+  // The page fired the acceptance and forgot it: on a dropped connection the
+  // button sat on "Sending…", disabled, with nothing to say what had happened,
+  // and the customer could not try again.
+  assert.match(h, /btn\.disabled=false/, 'the accept button is never re-enabled');
+  assert.match(h, /could not send your acceptance/i, 'no message on a failed send');
+  assert.match(h, /pressing it twice cannot accept this twice/i,
+    'the retry does not reassure the customer it is safe');
+  // And it still never claims success it does not have.
+  assert.ok(!/thank you/i.test(h.split('acceptForm')[1] || ''));
+});
+
+test('looking at the other system does not throw away what was ticked', () => {
+  const h = html();
+  // A customer who ticks the AirTouch, looks at the Braemar to compare, and
+  // comes back to the Daikin had their AirTouch silently un-ticked and the
+  // price drop $1,350 with nothing on the page to say why.
+  assert.match(h, /data-was-checked/, 'the selection is not put aside');
+  assert.match(h, /data-was-value/, 'the count is not put aside');
+});
