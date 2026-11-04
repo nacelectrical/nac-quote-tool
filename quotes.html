@@ -69,6 +69,25 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1}
 .facts dt{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.3px}
 .facts dd{font-weight:650;color:var(--ink);overflow-wrap:anywhere}
 .qa{display:flex;flex-wrap:wrap;gap:8px}
+/* ── THE PODIUM PANEL ──────────────────────────────────────────────────
+   Collapsed until it is wanted, because most of the time the estimator is
+   reading the list rather than chasing one quote. */
+.pod{border:1px solid var(--line);border-radius:11px;background:var(--soft);padding:0}
+.pod>summary{cursor:pointer;padding:12px 15px;font-weight:650;color:var(--ink);
+  min-height:44px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pod>summary::marker{color:var(--muted)}
+.pod .body{padding:0 15px 15px;display:grid;gap:11px}
+.pod textarea{font:inherit;width:100%;min-height:190px;border:1px solid var(--line);
+  border-radius:9px;padding:11px 12px;background:#fff;color:var(--ink);line-height:1.5;
+  resize:vertical}
+.pod .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pod label{font-size:13px;color:var(--muted);display:flex;gap:7px;align-items:center}
+.pod input[type=text]{font:inherit;border:1px solid var(--line);border-radius:9px;
+  padding:9px 11px;min-height:44px;background:#fff;color:var(--ink);min-width:150px}
+.pod .said{font-size:13.5px;border-radius:9px;padding:10px 12px}
+.pod .said.ok{background:#E7F4EC;color:var(--ok)}
+.pod .said.bad{background:#FBECEB;color:var(--bad)}
+.pod .hist{font-size:13px;color:var(--muted);display:grid;gap:3px}
 .link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--muted);
   overflow-wrap:anywhere}
 .empty{background:#fff;border:1px dashed var(--line);border-radius:13px;padding:40px 22px;
@@ -200,14 +219,239 @@ function card(q) {
       el('a', { class: 'btn', href: url, target: '_blank', rel: 'noopener',
                 text: 'Open the customer page' }),
       el('button', { class: 'btn', text: 'Copy link', onclick: async (e) => {
-        try { await navigator.clipboard.writeText(url); e.target.textContent = 'Copied'; }
-        catch (_) { e.target.textContent = 'Could not copy'; }
-        setTimeout(() => { e.target.textContent = 'Copy link'; }, 1600);
+        const btn = e.target;
+        try { await navigator.clipboard.writeText(url); btn.textContent = 'Copied'; }
+        catch (_) { btn.textContent = 'Could not copy'; return; }
+        // ── COPIED IS RECORDED AS COPIED ──────────────────────────────
+        // Not as sent. The record has to be able to tell the estimator that
+        // a link went on a clipboard and nobody ever pasted it.
+        await record(q, OUTREACH.LINK_COPIED, (m) => {
+          const pill = document.querySelector('[data-pill="' + q.token + '"]');
+          const note = document.querySelector('[data-state="' + q.token + '"]');
+          const said = document.querySelector('[data-said="' + q.token + '"]');
+          const line = outreachLine(q);
+          if (pill) { pill.className = 'pill ' + line.kind; pill.textContent = line.pill; }
+          if (note) note.textContent = line.text;
+          if (said && m) { said.className = 'said ' + (m.kind || ''); said.textContent = m.text; }
+        });
+        setTimeout(() => { btn.textContent = 'Copy link'; }, 1600);
       } })
     ]),
-    el('p', { class: 'link', text: url })
+    el('p', { class: 'link', text: url }),
+    podiumPanel(q, url)
   ]);
 }
+
+// ── THE PODIUM PANEL ────────────────────────────────────────────────────────
+//
+// Nick, 4 November 2026: "Support a manual Podium workflow now: copy the quote
+// link, provide an editable message that can be pasted into Podium, record that
+// a message was sent manually... Clearly distinguish a copied link from a
+// message successfully sent."
+//
+// NOTHING ON THIS PANEL SENDS ANYTHING. There is no Podium request anywhere in
+// this application, and the panel says so where somebody can read it rather
+// than only in a comment.
+
+/** What this quote's outreach record says, in one line an estimator can act on. */
+function outreachLine(q) {
+  const o = q.outreach;
+  if (!o || o.state === 'none') {
+    return { pill: 'Not sent', kind: 'warn',
+      text: 'Nothing recorded. Nobody has copied this link or marked it sent.' };
+  }
+  if (o.state === 'opted_out') {
+    return { pill: 'Opted out', kind: 'no',
+      text: 'This customer asked not to be followed up. That is not something to resume.' };
+  }
+  if (o.state === 'link_copied') {
+    return { pill: 'Link copied', kind: 'warn',
+      text: 'The link was copied on ' + when(o.linkCopiedAt) + ' but nobody has recorded '
+        + 'sending it. A copied link is not a sent message — mark it sent once it has gone.' };
+  }
+  if (o.state === 'customer_replied') {
+    return { pill: 'Customer replied', kind: 'ok',
+      text: 'The customer wrote back, so follow-up is paused until somebody resumes it.' };
+  }
+  if (o.state === 'taken_over') {
+    return { pill: 'Nick has it', kind: '',
+      text: 'Taken over by hand. Follow-up is paused.' };
+  }
+  return { pill: 'Sent', kind: 'ok',
+    text: 'Marked sent on ' + when(o.sentAt) + (o.channel ? ' via ' + o.channel : '')
+      + (o.sentBy ? ' by ' + o.sentBy : '')
+      + (o.followUpCount ? '. ' + o.followUpCount + ' follow-up(s) recorded.' : '.') };
+}
+
+const OUTREACH = {
+  LINK_COPIED: 'link_copied', SENT_MANUALLY: 'sent_manually',
+  CUSTOMER_REPLIED: 'customer_replied', TAKEN_OVER: 'taken_over',
+  OPTED_OUT: 'opted_out', RESUME: 'resume'
+};
+
+/**
+ * Record what NAC did, and say it ONLY once the database has confirmed it.
+ *
+ * Nick: "Report success only after the database confirms it was saved." A
+ * button that goes green on a request that never landed is the one lie that
+ * loses a job — here it would mean a quote marked sent that nobody sent.
+ *
+ * It refreshes the panel in place rather than redrawing the list, so the
+ * estimator does not lose the message they were editing or the panel they had
+ * open.
+ */
+async function record(q, action, refresh, extra = {}) {
+  const say = (kind, text) => refresh({ kind, text });
+  say('', 'Recording…');
+  try {
+    const r = await fetch('/api/quote-outreach', {
+      method: 'POST', headers: staffHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ token: q.token, action, ...extra })
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      say('bad', (out.message || out.error || 'That was not recorded.')
+        + ' Nothing has been changed.');
+      return false;
+    }
+    q.outreach = out.outreach;
+    say('ok', WORDED[action] || 'Recorded.');
+    return true;
+  } catch (e) {
+    say('bad', 'Not recorded: ' + e.message + '. Nothing has been changed.');
+    return false;
+  }
+}
+
+const WORDED = {
+  link_copied: 'Recorded: the link was copied. That is NOT a sent message — '
+    + 'mark it sent once it has actually gone.',
+  sent_manually: 'Recorded as sent. The follow-up clock starts from now.',
+  customer_replied: 'Recorded: the customer replied. Follow-up is paused.',
+  taken_over: 'Recorded: you have taken this one over. Follow-up is paused.',
+  opted_out: 'Recorded: the customer asked not to be followed up. '
+    + 'This one cannot be resumed.',
+  resume: 'Follow-up resumed.'
+};
+
+function podiumPanel(q, url) {
+  const state = outreachLine(q);
+  const o = q.outreach || {};
+  const first = (q.customerName || '').trim().split(/\s+/)[0] || 'there';
+  const site = q.siteAddress ? ' for ' + q.siteAddress : '';
+
+  // The same message the engine composes (designer/engines/podium.mjs), in NAC's
+  // voice, with no claim about the job that the proposal does not already make:
+  // a message that summarises the offer is a second version of it that nobody
+  // is checking.
+  const sent = o.state === 'sent_manually' || o.sentAt;
+  const message = sent
+    ? ['Hi ' + first + ',', '',
+       'Just following up the air conditioning proposal we sent through' + site
+         + '. The link is still live:', '', url, '',
+       'Happy to go through any of it, or change the options if something else would '
+         + 'suit you better. No rush either way — just let me know if you have any '
+         + 'questions.', '',
+       'Thanks,', 'NAC Electrical Air & Refrigeration'].join('\n')
+    : ['Hi ' + first + ',', '',
+       'Thanks for having us out. Your air conditioning proposal' + site + ' is ready:',
+       '', url, '',
+       'It has the system, what is included, what is not, and the price. There are a '
+         + 'couple of options you can choose between on the page, and you can accept it '
+         + 'from there when you are ready.', '',
+       'Give me a call if you would like to talk any of it through.', '',
+       'Thanks,', 'NAC Electrical Air & Refrigeration'].join('\n');
+
+  const box = el('textarea', { spellcheck: 'true' });
+  box.value = message;
+  const channel = el('input', { type: 'text', placeholder: 'How it went (Podium SMS, phone…)',
+    value: o.channel || 'Podium' });
+
+  const btn = (text, cls, fn, id) => el('button', {
+    class: 'btn' + (cls ? ' ' + cls : ''), text, onclick: fn,
+    ...(id ? { 'data-act': id } : {}) });
+
+  const pill = el('span', { class: 'pill ' + state.kind, text: state.pill,
+    'data-pill': q.token });
+  const note = el('p', { class: 'note', text: state.text, 'data-state': q.token });
+  const said = el('div', { class: 'said', 'data-said': q.token });
+  const hist = el('div', { class: 'hist', 'data-hist': q.token });
+  const row = el('div', { class: 'row', 'data-actions': q.token });
+
+  /** Redraw the panel's own state from the record, keeping the message typed. */
+  function refresh(message) {
+    const now = outreachLine(q);
+    const r = q.outreach || {};
+    pill.className = 'pill ' + now.kind;
+    pill.textContent = now.pill;
+    note.textContent = now.text;
+    if (message) {
+      said.className = 'said ' + (message.kind || '');
+      said.textContent = message.text;
+    }
+    row.textContent = '';
+    const acts = [
+      btn('Copy the message', '', async (e) => {
+        try { await navigator.clipboard.writeText(box.value); e.target.textContent = 'Copied'; }
+        catch (_) { e.target.textContent = 'Could not copy'; }
+        setTimeout(() => { e.target.textContent = 'Copy the message'; }, 1600);
+      }, 'copymsg'),
+      btn('I have sent it', 'primary',
+        () => record(q, OUTREACH.SENT_MANUALLY, refresh, { channel: channel.value.trim() }),
+        'sent')
+    ];
+    if (r.state !== 'opted_out') {
+      if (r.paused) {
+        acts.push(btn('Resume follow-up', '',
+          () => record(q, OUTREACH.RESUME, refresh), 'resume'));
+      } else {
+        acts.push(btn('Customer replied', '',
+          () => record(q, OUTREACH.CUSTOMER_REPLIED, refresh), 'replied'));
+        acts.push(btn('I am handling it', '',
+          () => record(q, OUTREACH.TAKEN_OVER, refresh), 'takeover'));
+      }
+      acts.push(btn('Asked not to be chased', '', () => {
+        // Irreversible, so it asks first.
+        if (window.confirm('Record that ' + (q.customerName || 'this customer')
+          + ' asked not to be followed up? This cannot be undone.')) {
+          record(q, OUTREACH.OPTED_OUT, refresh);
+        }
+      }, 'optout'));
+    }
+    for (const a of acts) row.appendChild(a);
+
+    hist.textContent = '';
+    const events = (q.outreach?.events || []).slice(-6);
+    if (events.length) {
+      hist.appendChild(el('strong', { text: 'What has been recorded' }));
+      for (const e of events) {
+        hist.appendChild(el('div', { text: when(e.at) + ' — '
+          + (WORDED_SHORT[e.state] || e.state) + (e.by ? ' (' + e.by + ')' : '') }));
+      }
+    }
+  }
+  refresh(null);
+
+  return el('details', { class: 'pod', 'data-pod': q.token }, [
+    el('summary', {}, [el('span', { text: 'Send through Podium' }), pill]),
+    el('div', { class: 'body' }, [
+      note,
+      el('p', { class: 'note',
+        text: 'Nothing is sent from here. Edit the message, copy it, paste it into '
+          + 'Podium, then say so below — this application has no Podium connection '
+          + 'and schedules nothing.' }),
+      box,
+      el('div', { class: 'row' }, [el('label', { text: 'Channel' }), channel]),
+      row, said, hist
+    ])
+  ]);
+}
+
+const WORDED_SHORT = {
+  link_copied: 'link copied', sent_manually: 'marked sent',
+  customer_replied: 'customer replied', taken_over: 'taken over by hand',
+  opted_out: 'asked not to be chased', resumed: 'follow-up resumed'
+};
 
 function draw() {
   const stats = $('#stats'); stats.innerHTML = '';

@@ -32,7 +32,8 @@ const ROUTES = {
   'presentation-media': () => import('../server/presentation-media.js'),
   'quote-list': () => import('../server/quote-list.js'),
   'servicem8-testjob': () => import('../server/servicem8-testjob.js'),
-  'ops': () => import('../server/ops.js')
+  'ops': () => import('../server/ops.js'),
+  'quote-outreach': () => import('../server/quote-outreach.js')
 };
 
 function requestedName(req) {
