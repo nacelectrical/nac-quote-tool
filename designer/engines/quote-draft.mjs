@@ -239,6 +239,12 @@ export function normaliseQuoteDraft(input = {}) {
       : null,
 
     intro: trimmed(d.intro),
+    /**
+     * What the site is like, in the estimator's own words — storey count, roof
+     * type, access, anything the plan does not say. Internal: it feeds the
+     * estimator's judgement, not the customer's page.
+     */
+    siteNotes: trimmed(d.siteNotes),
     validDays: n(d.validDays) ?? 30,
     status: trimmed(d.status) || 'draft',
 

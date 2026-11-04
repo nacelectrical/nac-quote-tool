@@ -1058,17 +1058,31 @@ function flash(kind, text, extra) {
 // saveDesign writes locally first so an iPad on a bad connection never loses a
 // site visit, and tells us whether it reached the database. Only `synced`
 // means it left the device, and only `synced` is reported as saved.
+/**
+ * Write the draft out, and say honestly whether it reached the database.
+ *
+ * Shared by the Save button and by Issue, because issuing a quote the database
+ * has not got is how a customer is sent a proposal nobody can reproduce. The
+ * server reads this row to build the offer, so the row has to BE what is on
+ * screen before the link is minted.
+ */
+async function persist() {
+  draft = normaliseQuoteDraft({ ...draft, updatedAt: new Date().toISOString() });
+  const r = await saveDesign({
+    ...draft,
+    // What the job list shows, and what the issue endpoint reads back.
+    customer: draft.customer,
+    status: draft.status || 'draft'
+  });
+  if (r.synced) { dirty = false; }
+  return r;
+}
+
 $('#save').addEventListener('click', async () => {
   const btn = $('#save');
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    draft = normaliseQuoteDraft({ ...draft, updatedAt: new Date().toISOString() });
-    const r = await saveDesign({
-      ...draft,
-      // What the job list shows, and what the issue endpoint reads back.
-      customer: draft.customer,
-      status: draft.status || 'draft'
-    });
+    const r = await persist();
     if (r.synced) {
       dirty = false;
       $('#savedAt').textContent = 'Saved to ' + r.storage + ' at '
@@ -1178,6 +1192,17 @@ $('#issue').addEventListener('click', async () => {
   const btn = $('#issue');
   btn.disabled = true; btn.textContent = 'Issuing…';
   try {
+    // ── WHAT IS APPROVED IS WHAT IS SAVED ────────────────────────────────
+    // The server builds the customer's proposal from the stored row, so an
+    // unsaved change on this screen would be approved here and absent there.
+    const saved = await persist();
+    if (!saved.synced) {
+      flash('bad', 'Not issued: this quote is not in the database yet'
+        + (saved.error ? ' (' + saved.error + ')' : '')
+        + '. The customer\u2019s proposal is built from the saved quote, so it has to '
+        + 'save before it can be issued. Check the connection and try again.');
+      return;
+    }
     const r = await fetch('/api/quote-issue', {
       method: 'POST',
       headers: staffHeaders({ 'Content-Type': 'application/json' }),

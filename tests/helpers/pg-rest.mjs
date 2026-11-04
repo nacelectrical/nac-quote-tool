@@ -192,9 +192,21 @@ const q = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 /** A JSON literal Postgres will accept whatever is inside it. */
 const jsonLit = (v) => '$nacjson$' + JSON.stringify(v) + '$nacjson$';
 
+// The tables the endpoints reach for. A table not in here answers 404 with
+// PostgREST's own "not in the schema cache" message, which is what a project
+// that has not had a migration applied actually says — so a suite can prove
+// the endpoint handles that rather than only the happy path.
 const TABLES = new Set(['nac_designs', 'nac_quote_issues', 'nac_presentation_content',
-                        'nac_settings']);
-const JSONB = { nac_quote_issues: new Set(['data']), nac_presentation_content: new Set(['data']) };
+                        'nac_settings', 'nac_customers', 'nac_jobs',
+                        'nac_integration_calls']);
+const JSONB = {
+  nac_quote_issues: new Set(['data']),
+  nac_presentation_content: new Set(['data']),
+  nac_integration_calls: new Set(['result', 'refusals'])
+};
+/** What `Prefer: resolution=merge-duplicates` conflicts on, per table. */
+const PK = { nac_quote_issues: 'token', nac_designs: 'id', nac_customers: 'id',
+             nac_jobs: 'id', nac_integration_calls: 'id' };
 
 function parseFilters(params) {
   const where = [];
@@ -250,8 +262,7 @@ function handle(req, body, done) {
         }).join(', ');
         let text = 'insert into public.' + table + ' (' + cols + ') values (' + vals + ')';
         if (/merge-duplicates/.test(prefer)) {
-          const pk = table === 'nac_quote_issues' ? 'token'
-            : (table === 'nac_designs' ? 'id' : 'key');
+          const pk = PK[table] || 'key';
           const sets = keys.filter(k => k !== pk)
             .map(k => '"' + k + '" = excluded."' + k + '"').join(', ');
           text += ' on conflict (' + pk + ') do update set ' + sets;

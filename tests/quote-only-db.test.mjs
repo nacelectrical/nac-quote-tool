@@ -28,6 +28,12 @@ import { NAC_TRUST, seedTermsAndConditions } from '../designer/engines/presentat
 const HAVE_PG = existsSync('/usr/lib/postgresql/16/bin/psql');
 const DESIGN_ID = 'Q-TEST-0001';
 const STAFF = { Authorization: 'Bearer test-staff-token' };
+// ── EVERY ISSUE CARRIES AN APPROVAL ─────────────────────────────────────────
+// Nick, 4 November 2026: "Nick approves the exact quote revision before it is
+// sent." The server refuses an issue with no approver recorded, so every issue
+// in this suite carries one, and one test below proves the refusal.
+const APPROVER = 'nick@nacelectrical.com.au';
+
 
 const CONTENT = {
   trust: { ...NAC_TRUST },
@@ -97,7 +103,7 @@ const handlers = async () => ({
 });
 
 const issueBody = (draft, extra = {}) => ({
-  designId: draft.id, customer: draft.customer,
+  designId: draft.id, customer: draft.customer, approvedBy: APPROVER,
   job: { siteAddress: draft.siteAddress },
   proposalNumber: draft.proposalNumber, quoteRevision: 1, validDays: 30,
   intro: draft.intro, testQuote: true, ...extra
@@ -302,4 +308,48 @@ test('a quote-only job still cannot be issued without a signed-in estimator',
       headers: { Authorization: 'Bearer not-a-real-token' }, body: issueBody(draft) });
     assert.ok(issued.status === 401 || issued.status === 403, 'status ' + issued.status);
     assert.equal(row("select count(*)::int as n from public.nac_quote_issues").n, 0);
+  });
+
+// ── THE APPROVAL IS NOT DECORATION ──────────────────────────────────────────
+//
+// Nick, 4 November 2026: "Nick approves the exact quote revision before it is
+// sent." The builder has always had the tick; the server dropped it, so no
+// issued quote carried any record of who approved it and the control existed
+// only on a screen. These two prove it survives the round trip.
+
+test('a quote with nobody recorded as approving it is refused',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest();
+    t.after(() => stop());
+    const { draft } = await setup();
+    const h = await handlers();
+
+    const body = issueBody(draft);
+    delete body.approvedBy;
+    const out = await call(h.issue, { method: 'POST', headers: STAFF, body });
+    assert.equal(out.status, 409);
+    assert.equal(out.body.error, 'approval_required');
+    assert.match(out.body.message, /tick the approval/);
+
+    const issues = row('select count(*)::int as n from public.nac_quote_issues');
+    assert.equal(issues.n, 0, 'A refused issue must mint no token at all.');
+  });
+
+test('the approval is frozen onto the issued offer, with a fingerprint of it',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest();
+    t.after(() => stop());
+    const { draft } = await setup();
+    const h = await handlers();
+
+    const out = await call(h.issue, { method: 'POST', headers: STAFF,
+      body: issueBody(draft, { approvedAt: '2026-11-04T09:30:00Z' }) });
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+
+    const stored = row("select data from public.nac_quote_issues where token = '"
+      + out.body.token + "'");
+    assert.equal(stored.data.approvedBy, APPROVER);
+    assert.equal(stored.data.approvedAt, '2026-11-04T09:30:00Z');
+    assert.match(stored.data.offerFingerprint, /^[0-9a-f]{16}$/,
+      'The exact offer that was approved has to be identifiable afterwards.');
   });

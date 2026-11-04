@@ -119,12 +119,30 @@ module.exports = async function handler(req, res) {
   const designId = str(body.designId).trim();
   if (!designId) return res.status(400).json({ error: 'design_required' });
 
+  // ── NOTHING GOES OUT WITHOUT A RECORDED APPROVAL ──────────────────────────
+  //
+  // Nick, 4 November 2026: "Nick approves the exact quote revision before it is
+  // sent."
+  //
+  // The builder's approval tick was being sent and then dropped on the floor
+  // here, so no issued quote carried any record of who approved it — which
+  // means the control existed on the screen and nowhere that survives. It is
+  // required now, and it is frozen into the offer with everything else.
+  const approvedBy = str(body.approvedBy).trim();
+  if (!approvedBy) {
+    return res.status(409).json({ error: 'approval_required',
+      message: 'This revision has not been approved. Open the preview, read it as the '
+        + 'customer will, and tick the approval before issuing.' });
+  }
+  const approvedAt = str(body.approvedAt).trim() || null;
+
   try {
-    const [share, presentationMod, offerMod, draftMod] = await Promise.all([
+    const [share, presentationMod, offerMod, draftMod, opsMod] = await Promise.all([
       import('../designer/engines/presentation-share.mjs'),
       import('../designer/engines/presentation.mjs'),
       import('../designer/engines/issued-offer.mjs'),
-      import('../designer/engines/quote-draft.mjs')
+      import('../designer/engines/quote-draft.mjs'),
+      import('../designer/engines/ops-api.mjs')
     ]);
 
     // ── Everything the presentation is built from, server-side ─────────────
@@ -384,7 +402,19 @@ module.exports = async function handler(req, res) {
       systemOptions,
       chosenSystemId: str(body.chosenSystemId).trim() || frozen.offer.defaultSystemId,
       offer: frozen.offer,
-      totalIncGst: built.presentation.investment?.totalIncGst ?? null
+      totalIncGst: built.presentation.investment?.totalIncGst ?? null,
+      // ── WHO APPROVED WHAT ─────────────────────────────────────────────
+      // Frozen with the offer, so it cannot be back-filled later, and read by
+      // the operations surface before it will hand an integration a link: an
+      // unapproved revision has no customer link to hand over.
+      approvedBy,
+      approvedAt: approvedAt || issuedAt,
+      // A digest of the exact offer that was approved. An approval recorded
+      // against this fingerprint does not travel to a different one.
+      // Taken over the STORED draft, through the one shared function the
+      // operations surface also uses, so the two can never drift into
+      // disagreeing about whether an approved quote is still the approved one.
+      offerFingerprint: opsMod.draftOfferFingerprint(stored, quoteRevision)
     };
 
     const ins = await supa('/rest/v1/nac_quote_issues', {

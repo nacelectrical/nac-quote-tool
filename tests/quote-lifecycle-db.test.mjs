@@ -116,6 +116,12 @@ function call(handler, { method = 'GET', query = {}, body = null, headers = {} }
 }
 
 const STAFF = { Authorization: 'Bearer test-staff-token' };
+// ── EVERY ISSUE CARRIES AN APPROVAL ─────────────────────────────────────────
+// Nick, 4 November 2026: "Nick approves the exact quote revision before it is
+// sent." The server refuses an issue with no approver recorded, so every issue
+// in this suite carries one, and one test below proves the refusal.
+const APPROVER = 'nick@nacelectrical.com.au';
+
 
 async function setup() {
   reset();
@@ -233,7 +239,7 @@ test('save → issue → open → choose → accept, against PostgreSQL',
     // ── ISSUE ────────────────────────────────────────────────────────────
     const issued = await call(issueHandler, {
       method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER,
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER,
               job: { siteAddress: CUSTOMER.address },
               proposalNumber: 'NAC-TEST-0001', quoteRevision: 1, validDays: 30,
               systemOptions, chosenSystemId: 'sys-a' }
@@ -362,7 +368,7 @@ test('editing the design after issue does not change the issued quote',
 
     const issued = await call(issueHandler, {
       method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
               proposalNumber: 'NAC-TEST-0002', quoteRevision: 1, validDays: 30,
               systemOptions, chosenSystemId: 'sys-a' }
     });
@@ -473,7 +479,7 @@ test('a new revision closes the old link and keeps its record',
     const respondHandler = (await import('../server/quote-respond.js')).default;
 
     const issue = (rev, supersedes) => call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
               proposalNumber: 'NAC-TEST-REV', quoteRevision: rev, validDays: 30,
               systemOptions, chosenSystemId: 'sys-a', supersedes: supersedes || null } });
 
@@ -542,7 +548,7 @@ test('an accepted revision is never relabelled by a later one',
     const respondHandler = (await import('../server/quote-respond.js')).default;
 
     const v1 = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-ACC',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-ACC',
               quoteRevision: 1, validDays: 30, systemOptions, chosenSystemId: 'sys-a' } });
     const t1 = v1.body.token;
     await call(viewHandler, { method: 'GET', query: { token: t1 } });
@@ -554,7 +560,7 @@ test('an accepted revision is never relabelled by a later one',
 
     // NAC issues a corrected revision afterwards.
     const v2 = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-ACC',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-ACC',
               quoteRevision: 2, validDays: 30, systemOptions, chosenSystemId: 'sys-b',
               supersedes: t1 } });
     assert.equal(v2.status, 200);
@@ -579,7 +585,7 @@ test('a stale page cannot answer a replaced offer, or a total it is not showing'
     const respondHandler = (await import('../server/quote-respond.js')).default;
 
     const v1 = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-TAMPER',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-TAMPER',
               quoteRevision: 3, validDays: 30, systemOptions, chosenSystemId: 'sys-a' } });
     const token = v1.body.token;
     const opened = await call(viewHandler, { method: 'GET', query: { token } });
@@ -635,7 +641,7 @@ test('pressing accept twice is one acceptance; a different answer is refused',
     const respondHandler = (await import('../server/quote-respond.js')).default;
 
     const v = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-TWICE',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-TWICE',
               quoteRevision: 1, validDays: 30, systemOptions, chosenSystemId: 'sys-a' } });
     const token = v.body.token;
     await call(viewHandler, { method: 'GET', query: { token } });
@@ -687,7 +693,7 @@ test('the GST on the record is the GST that was configured',
     const viewHandler = (await import('../server/quote-view.js')).default;
 
     const v = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-GST',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-GST',
               quoteRevision: 1, validDays: 30, systemOptions, chosenSystemId: 'sys-a' } });
     assert.equal(v.status, 200);
     // Frozen WITH the offer, so a later change to the setting cannot restate
@@ -718,7 +724,7 @@ test('the customer page carries NAC\'s reviews, word for word',
     const viewHandler = (await import('../server/quote-view.js')).default;
 
     const v = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-REVIEWS',
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-REVIEWS',
               quoteRevision: 1, validDays: 30, systemOptions, chosenSystemId: 'sys-a' } });
     const opened = await call(viewHandler, { method: 'GET', query: { token: v.body.token } });
     const reviews = opened.body.presentation.reviews;
@@ -757,7 +763,7 @@ test('a screen holding a stale price cannot issue it',
     const stale = systemOptions.map(o => o.id === 'sys-a'
       ? { ...o, priceIncGst: sell - 2500 } : o);
     const refused = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {},
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {},
               proposalNumber: 'NAC-TEST-STALE', quoteRevision: 1, validDays: 30,
               systemOptions: stale, chosenSystemId: 'sys-a' } });
 
@@ -773,7 +779,7 @@ test('a screen holding a stale price cannot issue it',
     const otherPrice = systemOptions.map(o => o.id === 'sys-b'
       ? { ...o, priceIncGst: 12345 } : o);
     const issued = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: {},
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: {},
               proposalNumber: 'NAC-TEST-ALT', quoteRevision: 1, validDays: 30,
               systemOptions: otherPrice, chosenSystemId: 'sys-a' } });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
@@ -797,7 +803,7 @@ test('the portal lists what was issued, opened, accepted and signed',
 
     // Three quotes in three different states.
     const mk = (rev, pn) => call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
               proposalNumber: pn, quoteRevision: rev, validDays: 30,
               systemOptions, chosenSystemId: 'sys-a' } });
 
@@ -887,7 +893,7 @@ test('an accepted quote carries the signature and tries to book the job',
     const respondHandler = (await import('../server/quote-respond.js')).default;
 
     const v = await call(issueHandler, { method: 'POST', headers: STAFF,
-      body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+      body: { designId: DESIGN_ID, approvedBy: APPROVER, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
               proposalNumber: 'NAC-SIGN-1', quoteRevision: 1, validDays: 30,
               systemOptions, chosenSystemId: 'sys-a' } });
     const token = v.body.token;

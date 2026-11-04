@@ -126,7 +126,7 @@ say('');
 
 // 1 ── ISSUE
 const issued = await call(issueH, { method: 'POST', headers: STAFF,
-  body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+  body: { designId: DESIGN_ID, approvedBy: 'nick@nacelectrical.com.au', customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
           proposalNumber: 'NAC-TEST-0001', quoteRevision: 1, validDays: 30,
           systemOptions, chosenSystemId: 'sys-a', baseUrl: 'http://127.0.0.1:8899' } });
 if (issued.status !== 200) { say('ISSUE FAILED: ' + JSON.stringify(issued.body)); await stop(); process.exit(1); }
@@ -201,7 +201,7 @@ say('6. RE-PRESSED  ' + repeat.status + ' ' + (repeat.body.repeat ? 'repeat:true
 // is still holding the old figure is refused, naming both numbers, rather than
 // the application quietly deciding which one the customer gets.
 const staleIssue = await call(issueH, { method: 'POST', headers: STAFF,
-  body: { designId: DESIGN_ID, customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-0001',
+  body: { designId: DESIGN_ID, approvedBy: 'nick@nacelectrical.com.au', customer: CUSTOMER, job: {}, proposalNumber: 'NAC-TEST-0001',
           quoteRevision: 2, validDays: 30, systemOptions, chosenSystemId: 'sys-a',
           supersedes: t1 } });
 say('7. STALE PRICE ' + staleIssue.status + ' ' + staleIssue.body.error + ' — screen $'
@@ -215,7 +215,7 @@ const newSell = Number(JSON.parse(
 const freshOptions = systemOptions.map(o => o.id === 'sys-a'
   ? { ...o, priceIncGst: newSell } : o);
 const v2 = await call(issueH, { method: 'POST', headers: STAFF,
-  body: { designId: DESIGN_ID, customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
+  body: { designId: DESIGN_ID, approvedBy: 'nick@nacelectrical.com.au', customer: CUSTOMER, job: { siteAddress: CUSTOMER.address },
           proposalNumber: 'NAC-TEST-0001', quoteRevision: 2, validDays: 30,
           systemOptions: freshOptions, chosenSystemId: 'sys-a', supersedes: t1,
           baseUrl: 'http://127.0.0.1:8899' } });
