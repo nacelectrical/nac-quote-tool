@@ -394,7 +394,7 @@ function coverageHtml(p) {
     + when(c.provisional, '<p class="note">' + esc(c.provisionalNote) + '</p>'));
 }
 
-function galleryHtml(p) {
+function galleryHtml(p, print = false) {
   const gs = p.installations || [];
   if (!gs.length) return '';
   return sect('work', 'Recent NAC installations',
@@ -403,13 +403,26 @@ function galleryHtml(p) {
         g.brand, g.capacityKw ? g.capacityKw + ' kW' : '',
         g.zoneCount ? g.zoneCount + ' zones' : ''
       ].filter(Boolean).join(' · ');
+      // ── A PHOTOGRAPH IS NOT ALWAYS A CASE STUDY ──────────────────────
+      //
+      // A case-study record carries a suburb and leads with it. A gallery
+      // drawn from the photographs themselves has no suburb, and printing
+      // an empty heading — or the word "undefined" — above each one is
+      // worse than leading with what the picture actually shows.
+      const heading = str(g.location).trim();
+      const shot = picture(g.cover,
+        { ratio: '4 / 3', sizes: '(min-width:900px) 320px, 45vw' });
       return '<li class="shot">'
-        + '<button type="button" class="shot-btn" data-gallery="' + i + '"'
-        + ' aria-label="View larger image of the ' + esc(g.location) + ' installation">'
-        + picture(g.cover, { ratio: '4 / 3', sizes: '(min-width:900px) 320px, 45vw' })
-        + '</button>'
+        // A lightbox button is a control nobody can press on paper, and the
+        // printed document carries none at all.
+        + (print ? shot
+          : '<button type="button" class="shot-btn" data-gallery="' + i + '"'
+            + ' aria-label="View a larger image of '
+            + esc(heading ? 'the ' + heading + ' installation'
+                          : (g.description || 'this installation')) + '">'
+            + shot + '</button>')
         + '<div class="shot-body">'
-          + '<h3>' + esc(g.location) + '</h3>'
+          + when(!!heading, '<h3>' + esc(heading) + '</h3>')
           + when(!!facts, '<p class="shot-facts">' + esc(facts) + '</p>')
           + when(!!g.description, '<p>' + esc(g.description) + '</p>')
         + '</div></li>';
@@ -526,14 +539,35 @@ function systemChoiceHtml(p, print = false) {
         // model: repeating the indoor model under its own name adds nothing.
         + when(!!o.outdoorModel,
             '<span class="sys-pair">' + esc(o.modelPair || o.model) + '</span>')
+        // The unit itself, beside the price, so a customer comparing two
+        // systems can see both. Through picture() so it carries the srcset
+        // and the focal point rather than loading a full-width photograph
+        // into a 190px box on a phone.
         + when(!!(o.image && o.image.src),
-            '<img class="sys-img" src="' + esc(o.image && o.image.src) + '" alt="'
-            + esc((o.image && o.image.alt) || (o.label + ' unit')) + '" loading="lazy">')
+            '<span class="sys-img">' + picture(o.image,
+              { ratio: '4 / 3', sizes: '(min-width:900px) 220px, 40vw' }) + '</span>')
         + when(o.warrantyYears > 0,
             '<span class="sys-warr">' + esc(String(o.warrantyYears))
             + '-year manufacturer warranty</span>')
         + when(o.recommended === true, '<span class="sys-rec">Our recommendation</span>')
       + '</span></label></li>').join('') + '</ul>');
+}
+
+/**
+ * The picture beside one upgrade.
+ *
+ * Nick, 5 November 2026: "Airtouch pictures next to Airtouch option, sensor
+ * next to sensor option." Small and first, so the words still lead and the
+ * price is still the thing being read — it is there to say WHICH thing this
+ * is, not to sell it.
+ *
+ * `aria-hidden`, because the title beside it already says what it is and a
+ * screen reader reading the alt text as well would say it twice.
+ */
+function upgradeThumb(o) {
+  if (!o.image || !o.image.src) return '';
+  return '<span class="opt-img" aria-hidden="true">'
+    + picture(o.image, { ratio: '1 / 1', sizes: '92px' }) + '</span>';
 }
 
 function optionsHtml(p) {
@@ -555,6 +589,7 @@ function optionsHtml(p) {
         const sysAttr = o.forSystemIds
           ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
         return '<li class="opt-li"' + sysAttr + '><div class="opt opt-qty">'
+          + upgradeThumb(o)
           + '<span class="opt-body">'
             + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
             + '<em>' + esc(money(o.unitPriceIncGst)) + ' ' + esc(o.unitLabel || 'each') + '</em></span>'
@@ -577,6 +612,7 @@ function optionsHtml(p) {
         + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
         + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
         + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
+        + upgradeThumb(o)
         + '<span class="opt-body">'
           + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
           + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
@@ -823,7 +859,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + scopeHtml(p)
     + zonesHtml(p)
     + coverageHtml(p)
-    + galleryHtml(p)
+    + galleryHtml(p, print)
     + reviewsHtml(p)
     + trustHtml(p)
     + systemChoiceHtml(p, print)
@@ -834,7 +870,22 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + when(!print, printBarHtml(p))
     + footerHtml(p);
 
-  return '<!DOCTYPE html>\n<html lang="en-AU"><head>'
+  // ── ON PAPER THERE IS NO FOLD ───────────────────────────────────────
+  //
+  // Every photograph on the page is `loading="lazy"`, which is right for a
+  // customer scrolling a web page and wrong for a document being printed:
+  // the browser renders the PDF without ever scrolling, so anything below
+  // the first screen is still unloaded when the page is captured. Four
+  // installation photographs came out as four empty boxes.
+  //
+  // The print build asks for all of them up front. It is done here rather
+  // than threaded through every picture() call because it is true of the
+  // whole document and of nothing else.
+  const page = (html) => print
+    ? html.replace(/loading="lazy"/g, 'loading="eager"')
+    : html;
+
+  return page('<!DOCTYPE html>\n<html lang="en-AU"><head>'
     + '<meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
     + '<meta name="robots" content="noindex,nofollow">'
@@ -873,7 +924,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
         + 'aria-label="Installation photograph"><button class="lb-close" id="lbClose" '
         + 'aria-label="Close">&times;</button><img id="lbImg" alt=""></div>')
     + when(!print, '<script>' + SCRIPT + '</script>')
-    + '</body></html>';
+    + '</body></html>');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1174,8 +1225,12 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .sys-pair{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
-.sys-img{display:block;margin-top:9px;width:100%;max-width:190px;height:auto;
-  border-radius:9px;border:1px solid var(--line)}
+.sys-img{display:block;margin-top:10px;width:100%;max-width:220px}
+.sys-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
+/* The picture beside an upgrade: small, so the words still lead. */
+.opt-img{flex:0 0 auto;width:92px;margin-right:2px}
+.opt-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
+@media(max-width:560px){.opt-img{width:70px}}
 
 /* ── take a copy away ───────────────────────────────────────────────── */
 .printbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;

@@ -149,11 +149,31 @@ brochures**, **standard inclusions and exclusions**, **installation
 allowances**, included-service cards, optional upgrades, payment terms, quote
 validity, terms and conditions, and the email introduction.
 
+### Pictures
+
+Three places a photograph appears on a proposal, and all three come from the
+**Product images** tab:
+
+- **The installations gallery.** Tick **"This is NAC's own work"** on a
+  photograph and it appears under *Recent NAC installations*, captioned with
+  the description already written for it. A manufacturer's stock shot is a
+  picture of the same machine and not a picture of your work, so it stays out.
+- **The unit beside each option.** Matched on the brand and model the
+  photograph says it shows, so the Daikin option gets a Daikin and the Braemar
+  gets a Braemar. An option you have no photograph of shows none.
+- **The picture beside each upgrade.** Matched against the upgrade's own
+  wording — the AirTouch console lands on the AirTouch line and the console
+  showing room sensors lands on the sensors line. You can pick one by hand on
+  the **Optional upgrades** tab instead, and the panel shows you which
+  photograph has been matched before a customer sees it.
+
 Two rules the library enforces:
 
 - A review, a photograph or a brochure that has not been approved does not
   appear on a proposal, and a section with nothing in it is left out rather
-  than filled with a placeholder.
+  than filled with a placeholder. A lookalike photograph beside a price is a
+  product claim, so an option or an upgrade with no matching picture gets
+  none.
 - An allowance with no figure is held back, not quoted at zero. A zero on a
   proposal reads as "no charge".
 

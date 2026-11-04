@@ -32,7 +32,8 @@ export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   equipmentImagesFor, publicImageRef, publicImageSrcset,
-  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor
+  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor,
+  ownWorkGallery, upgradeImageFor, optionImageFor
 } from './presentation-content.mjs';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
@@ -1094,7 +1095,28 @@ export function buildPresentation({
     ...selectionCtx,
     selectedIds: content.selectedInstallationIds, excludedIds: content.excludedInstallationIds
   });
-  const installations = selectedInstallSources.map(i => publicInstallation(i, imagesById));
+  let installations = selectedInstallSources.map(i => publicInstallation(i, imagesById));
+
+  // ── PICTURES OF NAC'S OWN WORK ────────────────────────────────────────
+  //
+  // Nick, 5 November 2026: "I want to have pictures of our installs in."
+  //
+  // The records above are case studies — a suburb, a description, consent —
+  // and they win wherever NAC has written them. Where there are none, the
+  // gallery is drawn from the photographs themselves: every approved image
+  // Nick marked as his own work, captioned with the description already
+  // written for it. He had nine of them in the library and no proposal
+  // showed one, because the gallery could only read a record nobody had
+  // made.
+  const fromPhotos = installations.length
+    ? []
+    : ownWorkGallery(content.images || [], { max: 6 }).map(g => ({
+        id: g.id, location: null, description: g.caption, brand: g.brand,
+        capacityKw: null, zoneCount: null, cover: g.cover, images: [g.cover],
+        /** Drawn from a photograph rather than from a case-study record. */
+        fromPhoto: true
+      }));
+  installations = installations.length ? installations : fromPhotos;
 
   // THE GATE RUNS HERE, once the reviews and installations that would actually
   // be published are known. Asking before they are resolved would be asking
@@ -1214,7 +1236,14 @@ export function buildPresentation({
       chosenId: chosenSystem ? chosenSystem.id : null,
       options: optionStatus.options.map(o => ({
         id: o.id, label: o.label, brand: o.brand, model: o.model,
-        outdoorModel: o.outdoorModel, modelPair: o.modelPair, image: o.image,
+        outdoorModel: o.outdoorModel, modelPair: o.modelPair,
+        // ── THE UNIT, BESIDE THE OPTION ───────────────────────────────
+        // Nick, 5 November 2026: "unit pic next to each option." The same
+        // matcher the single system card uses, per option, so somebody
+        // choosing between a Daikin and a Braemar can see both. An option
+        // NAC has no photograph of gets none — a lookalike beside a price
+        // is a product claim.
+        image: optionImageFor(content.images || [], o),
         capacityKw: o.capacityKw, phase: o.phase, note: o.note,
         recommended: o.recommended,
         warrantyYears: o.warrantyYears,
@@ -1254,6 +1283,12 @@ export function buildPresentation({
       return {
         id: o.id, title: o.title, description: o.description,
         forSystemIds,
+        // ── THE PICTURE BESIDE THE UPGRADE ────────────────────────────
+        // Nick, 5 November 2026: "Airtouch pictures next to Airtouch
+        // option, sensor next to sensor option." NAC's own photograph of
+        // the thing, matched to the upgrade by what the photograph says it
+        // shows. An upgrade NAC has no picture of gets none.
+        image: upgradeImageFor(content.images || [], o),
         priceIncGst: o.priceIncGst, group: o.group,
         // Counted upgrades carry what one costs and how many may be had.
         unitPriceIncGst: o.unitPriceIncGst, unitLabel: o.unitLabel,

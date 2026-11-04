@@ -110,6 +110,17 @@ export async function importPhotos({ check = false } = {}) {
       tags: p.tags || [],
       equipmentBrand: p.equipmentBrand || '',
       equipmentModels: p.equipmentModels || [],
+      // ── NAC'S OWN WORK ─────────────────────────────────────────────
+      //
+      // Every one of these is a machine NAC put on a wall — "installed
+      // against a rendered wall", "on a plant deck, with the conduit run" —
+      // and the approval note below says so in as many words. They were
+      // marked `role: equipment` and nothing else, so they fed the single
+      // system card and never the gallery: Nick had nine photographs of his
+      // own installations in the library and no proposal showed one.
+      //
+      // The role is what a picture is FOR. This is whose work it is.
+      ownWork: p.ownWork !== false,
       // The approval is a person's, and the record says whose and why.
       approved: true,
       approvedBy: 'nick@nacelectrical.com.au',

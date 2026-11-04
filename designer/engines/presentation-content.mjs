@@ -330,7 +330,21 @@ export function normaliseImageAsset(input = {}) {
     // is never offered as a photograph of one.
     role: ROLES.includes(trimmed(input.role)) ? trimmed(input.role) : 'installation',
     equipmentModels: list(input.equipmentModels).map(trimmed).filter(Boolean),
-    equipmentBrand: trimmed(input.equipmentBrand) || null
+    equipmentBrand: trimmed(input.equipmentBrand) || null,
+    /**
+     * NAC'S OWN WORK.
+     *
+     * Nick, 5 November 2026: "I want to have pictures of our installs in."
+     *
+     * A photograph can be two things at once, and NAC's are: a picture OF a
+     * Daikin outdoor unit, and a picture of a job NAC did. The `role` says
+     * what it is for; this says whose work it is. It is the difference
+     * between a manufacturer's stock shot and a machine NAC put on a wall,
+     * and only the second belongs in a gallery headed "our installations".
+     *
+     * Never inferred. A photograph is NAC's work because somebody said so.
+     */
+    ownWork: bool(input.ownWork)
   };
 }
 
@@ -744,6 +758,16 @@ export function normaliseUpgrade(input = {}) {
     // has always been, and Number(null) being 0 must not turn it into a free
     // one somebody can order a hundred of.
     unitPriceIncGst: num(input.unitPriceIncGst),
+    /**
+     * The photograph that goes beside this upgrade on the page.
+     *
+     * Nick, 5 November 2026: "Airtouch pictures next to Airtouch option,
+     * sensor next to sensor option." Left empty, upgradeImageFor() matches
+     * the library against this upgrade's own title. Set, it wins outright —
+     * and if the id names nothing publishable, the upgrade gets NO picture
+     * rather than a substitute, because NAC asked for that one.
+     */
+    imageId: trimmed(input.imageId) || null,
     unitLabel: trimmed(input.unitLabel) || 'each',
     maxQuantity: num(input.maxQuantity),
     defaultQuantity: num(input.defaultQuantity) ?? 0,
@@ -989,4 +1013,144 @@ export function brochuresFor(stored = [], unit = {}) {
   });
 
   return { matched, usable, withheld };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PICTURES OF NAC'S OWN WORK, AND PICTURES BESIDE WHAT THEY ARE OF
+//
+// Nick, 5 November 2026: "I want to have pictures of our installs in also as
+// well as unit pic next to each option. And Airtouch pictures next to Airtouch
+// option, sensor next to sensor option."
+//
+// Three separate asks, and they are three separate things:
+//
+//   · a GALLERY of jobs NAC has done — proof of the work;
+//   · the UNIT on each equipment option — so a customer comparing two systems
+//     can see both of them;
+//   · the right photograph beside each UPGRADE — the AirTouch console beside
+//     the AirTouch, the sensors beside the sensors.
+//
+// Nothing here invents a match. An option or an upgrade with no photograph NAC
+// has approved and labelled gets no photograph: a lookalike beside a price is
+// a product claim, and Nick's rule has always been that an incorrect generic
+// product image is worse than none.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NAC's own installations, from the image library.
+ *
+ * The richer `installations` records — a suburb, a description, consent — are
+ * case studies and take precedence wherever NAC has written them. This is the
+ * path for the ordinary case: Nick approves a photograph of a job and says it
+ * is his own work, and it appears. Nothing more is asked of him.
+ *
+ * The caption is the photograph's own alt text, because that is already a
+ * description of what is in it written by a person.
+ */
+export function ownWorkGallery(images = [], { max = 6 } = {}) {
+  const usable = list(images).map(normaliseImageAsset)
+    .filter(a => a.ownWork === true && imagePublishable(a).ok)
+    .filter(a => a.role !== IMAGE_ROLES.LOGO && a.role !== IMAGE_ROLES.HERO);
+
+  return usable.slice(0, Math.max(0, max)).map(a => ({
+    id: a.id,
+    cover: { src: publicImageRef(a), alt: trimmed(a.alt),
+             srcset: publicImageSrcset(a), focalPoint: a.focalPoint },
+    // What it is of, in NAC's own words. Never generated.
+    caption: trimmed(a.alt),
+    brand: trimmed(a.equipmentBrand) || null
+  })).filter(g => !!g.cover.src);
+}
+
+const wordKey = (v) => trimmed(v).toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/**
+ * The photograph that belongs beside one upgrade.
+ *
+ * `imageId` on the upgrade wins outright — NAC saying "this picture, this
+ * option" is the end of it. Otherwise the library is scored against the
+ * upgrade's own title, and only POSITIVE evidence can select a photograph:
+ *
+ *   a model the photograph names, appearing in the title   +3
+ *   the photograph's brand, appearing in the title         +2
+ *   a tag on the photograph, appearing in the title        +1
+ *
+ * Nothing scoring zero is offered, so an upgrade NAC has no picture of gets
+ * none rather than the nearest thing. Where two photographs score the same,
+ * the one with fewer tags the title does NOT mention wins: between an AirTouch
+ * console and an AirTouch console showing room sensors, "AirTouch 5 smart
+ * control" takes the first and "Room temperature sensors" takes the second.
+ */
+export function upgradeImageFor(images = [], upgrade = {}) {
+  const assets = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const explicit = trimmed(upgrade.imageId);
+  if (explicit) {
+    const hit = assets.find(a => a.id === explicit);
+    // An explicit id that names nothing publishable is NOT quietly replaced by
+    // a guess: NAC asked for that picture and it is not available.
+    return hit ? publicPicture(hit) : null;
+  }
+
+  const title = wordKey([upgrade.title, upgrade.description].filter(Boolean).join(' '));
+  if (!title) return null;
+
+  let best = null;
+  for (const a of assets) {
+    let score = 0;
+    for (const m of a.equipmentModels) {
+      const k = wordKey(m);
+      if (k && title.includes(k)) score += 3;
+    }
+    const brand = wordKey(a.equipmentBrand);
+    if (brand && title.includes(brand)) score += 2;
+
+    let unmatched = 0;
+    for (const t of list(a.tags)) {
+      const k = wordKey(t);
+      if (k.length < 4) continue;
+      // Either way round: a "controller" tag matches a title saying "control".
+      if (title.includes(k) || k.includes(wordKey(trimmed(upgrade.title).split(/\s+/)
+            .find(w => w.length >= 5) || '\u0000'))) score += 1;
+      else unmatched += 1;
+    }
+    if (score <= 0) continue;
+    if (!best || score > best.score
+        || (score === best.score && unmatched < best.unmatched)) {
+      best = { asset: a, score, unmatched };
+    }
+  }
+  return best ? publicPicture(best.asset) : null;
+}
+
+/** One asset, in the shape a page renders. */
+function publicPicture(a) {
+  const src = publicImageRef(a);
+  if (!src) return null;
+  return { src, alt: trimmed(a.alt), srcset: publicImageSrcset(a),
+           focalPoint: a.focalPoint, id: a.id };
+}
+
+/**
+ * The photograph that belongs on one equipment option.
+ *
+ * The same matcher the single system card already uses, per option, so a
+ * customer choosing between a Daikin and a Braemar sees both of them. An
+ * option carrying its own `image` keeps it — that is NAC being explicit.
+ */
+export function optionImageFor(images = [], option = {}) {
+  // An explicit src still has to be one a customer page will load: https, or
+  // a data URI. The renderer refuses anything else silently, so refusing it
+  // here as well means the absence is visible to the gate and the checks
+  // rather than only at the moment the page is drawn.
+  if (option && option.image && allowedRef(option.image.src)) {
+    return { src: trimmed(option.image.src), alt: trimmed(option.image.alt) || null,
+             srcset: list(option.image.srcset), focalPoint: option.image.focalPoint };
+  }
+  const matched = equipmentImagesFor(images, {
+    model: option.model, outdoorModel: option.outdoorModel,
+    brandName: option.brand, brandId: option.brandId
+  }, { max: 1 });
+  return matched.length ? publicPicture(matched[0]) : null;
 }

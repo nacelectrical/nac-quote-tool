@@ -75,6 +75,24 @@ say('the page says TEST QUOTE before anything else',
   && /TEST QUOTE/.test(await page.locator('.test-banner').innerText()));
 
 // ── THE IMAGES LOAD ─────────────────────────────────────────────────────────
+//
+// Every picture on the page is `loading="lazy"`, so one below the first
+// screen has not been fetched until somebody scrolls to it. Reading the whole
+// page is what a customer does, and it is what this has to do before it can
+// say whether the pictures load — otherwise it reports the installation
+// gallery as broken for behaving exactly as intended.
+await page.evaluate(async () => {
+  const step = window.innerHeight;
+  for (let y = 0; y < document.body.scrollHeight; y += step) {
+    window.scrollTo(0, y);
+    await new Promise(r => setTimeout(r, 90));
+  }
+  window.scrollTo(0, 0);
+});
+await page.waitForFunction(
+  () => [...document.querySelectorAll('img:not(#lbImg)')]
+    .every(n => n.complete), null, { timeout: 15000 }).catch(() => {});
+
 // The lightbox image is deliberately empty until a gallery photograph is
 // opened, so it is not one of the page's pictures.
 const imgs = await page.$$eval('img:not(#lbImg)', ns => ns.map(n => ({

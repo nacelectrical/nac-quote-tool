@@ -75,15 +75,21 @@ test('an option with only an indoor model does not print a pair of one', () => {
 
 test('an option’s picture reaches the page when NAC hold one', () => {
   const draft = quoteOnlyDraft();
-  draft.systems[0].image = { src: 'media/daikin-ducted.jpg', alt: 'Daikin ducted unit' };
+  // A real reference: the renderer will not load a src it cannot vouch for,
+  // so a relative path here would prove nothing about what a customer sees.
+  const SRC = 'https://example.test/media/daikin-ducted.jpg';
+  draft.systems[0].image = { src: SRC, alt: 'Daikin ducted unit' };
   const { p, html } = present(draft);
   const daikin = p.systemChoice.options.find(o => o.brand === 'Daikin');
-  assert.equal(daikin.image.src, 'media/daikin-ducted.jpg');
-  assert.ok(html.includes('media/daikin-ducted.jpg'));
+  assert.equal(daikin.image.src, SRC, 'NAC being explicit wins over the matcher');
+  assert.ok(html.includes(SRC));
   assert.ok(html.includes('alt="Daikin ducted unit"'), 'an image needs its alt text');
 });
 
-test('an option with no picture renders no image element at all', () => {
+test('an option NAC has no photograph of renders no image element at all', () => {
+  // This fixture's content library carries no images, so neither option can
+  // be matched to one. A missing photograph is absent, never a broken image
+  // and never a lookalike.
   const { html } = present(quoteOnlyDraft());
   assert.ok(!/class="sys-img"/.test(html),
     'a missing photograph must be absent, not a broken image');

@@ -43,7 +43,8 @@
         "width": 2044,
         "height": 2475
       },
-      "seen": "Fujitsu, Airstage badge. Outdoor condensing unit, single-stack vertical discharge. Isolator mounted on the wall beside it, conduit and drain run dressed down the wall."
+      "seen": "Fujitsu, Airstage badge. Outdoor condensing unit, single-stack vertical discharge. Isolator mounted on the wall beside it, conduit and drain run dressed down the wall.",
+      "ownWork": true
     },
     {
       "id": "daikin-r32-outdoor-twin-fan",
@@ -82,7 +83,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "Daikin, INVERTER, R32. Twin-fan outdoor unit on galvanised mounting feet, isolator and conduit to the right."
+      "seen": "Daikin, INVERTER, R32. Twin-fan outdoor unit on galvanised mounting feet, isolator and conduit to the right.",
+      "ownWork": true
     },
     {
       "id": "daikin-r410a-outdoor-twin-fan",
@@ -120,7 +122,8 @@
         "width": 1720,
         "height": 2576
       },
-      "seen": "Daikin, R410A. Twin-fan outdoor unit on feet."
+      "seen": "Daikin, R410A. Twin-fan outdoor unit on feet.",
+      "ownWork": true
     },
     {
       "id": "daikin-vrv-iv-outdoor",
@@ -158,7 +161,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "Daikin, VRV IV, R410A. Single-fan outdoor unit on feet, isolator above on the cladding."
+      "seen": "Daikin, VRV IV, R410A. Single-fan outdoor unit on feet, isolator above on the cladding.",
+      "ownWork": true
     },
     {
       "id": "braemar-outdoor-close",
@@ -195,7 +199,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "Braemar, by SEELEY INTERNATIONAL. Single-fan outdoor unit on mounting feet against white-painted brickwork, isolator on the wall, conduit and insulated pipework dressed down behind it. The unit fills the frame."
+      "seen": "Braemar, by SEELEY INTERNATIONAL. Single-fan outdoor unit on mounting feet against white-painted brickwork, isolator on the wall, conduit and insulated pipework dressed down behind it. The unit fills the frame.",
+      "ownWork": true
     },
     {
       "id": "braemar-outdoor-wide",
@@ -232,7 +237,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "The same kind of Braemar unit from further back: the full conduit run up to the isolator and the plant deck it stands on. More of the installation, less of the machine."
+      "seen": "The same kind of Braemar unit from further back: the full conduit run up to the isolator and the plant deck it stands on. More of the installation, less of the machine.",
+      "ownWork": true
     },
     {
       "id": "airtouch-console-4-zone",
@@ -269,7 +275,8 @@
         "width": 2108,
         "height": 2576
       },
-      "seen": "AirTouch console in a glass surround. Four zones — Master, Living, Bed 2 + 3, Office — each at 100%, heating, set to 26 degrees, fan medium."
+      "seen": "AirTouch console in a glass surround. Four zones — Master, Living, Bed 2 + 3, Office — each at 100%, heating, set to 26 degrees, fan medium.",
+      "ownWork": true
     },
     {
       "id": "airtouch-console-5-zone-sensors",
@@ -307,7 +314,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "AirTouch console. Five zones — Living Room, Bedroom 1, 2, 3 and 4 — each with a SET temperature and a MEASURED room temperature beside it (24, 24, 24, 24, 23). A per-zone measured reading means a room temperature sensor in each of those rooms: this is a picture of the sensor upgrade actually working, which is the one thing a price list cannot show."
+      "seen": "AirTouch console. Five zones — Living Room, Bedroom 1, 2, 3 and 4 — each with a SET temperature and a MEASURED room temperature beside it (24, 24, 24, 24, 23). A per-zone measured reading means a room temperature sensor in each of those rooms: this is a picture of the sensor upgrade actually working, which is the one thing a price list cannot show.",
+      "ownWork": true
     },
     {
       "id": "fujitsu-airstage-wall-controller",
@@ -345,7 +353,8 @@
         "width": 1932,
         "height": 2576
       },
-      "seen": "Fujitsu Airstage wired wall controller — Mode Heat, Set Temp 24.0 degrees, Fan Med — with a lit zone switch panel beneath showing Kitchen, Living and Bed 2."
+      "seen": "Fujitsu Airstage wired wall controller — Mode Heat, Set Temp 24.0 degrees, Fan Med — with a lit zone switch panel beneath showing Kitchen, Living and Bed 2.",
+      "ownWork": true
     }
   ],
   "refused": []

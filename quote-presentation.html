@@ -136,7 +136,8 @@ import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { requireSignIn, currentSession } from '/designer/auth.mjs';
 import { assetRequest } from '/designer/engines/asset-request.mjs';
 import { seedTrust, seedTermsAndConditions, standardScope, normaliseAllowance,
-         allowancesFor, SHIPPED_STANDARD_SCOPE, normaliseBrochure, brochuresFor }
+         allowancesFor, SHIPPED_STANDARD_SCOPE, normaliseBrochure, brochuresFor,
+         upgradeImageFor }
   from '/designer/engines/presentation-content.mjs';
 
 // ── NAC ONLY ───────────────────────────────────────────────────────────────
@@ -685,7 +686,20 @@ function drawImages() {
             + 'photograph naming no model is never offered as a photograph of one.')
         : null,
       tagsField('Tags', a.tags, x => a.tags = x),
-      el('div', { class: 'tools' }, [toggle('Approved for marketing', a.approved, x => a.approved = x)]),
+      el('div', { class: 'tools' }, [
+        toggle('Approved for marketing', a.approved, x => a.approved = x),
+        // ── NAC'S OWN WORK ────────────────────────────────────────────
+        //
+        // Nick, 5 November 2026: "I want to have pictures of our installs
+        // in." A photograph can be two things at once — a picture OF a
+        // Daikin, and a picture of a job NAC did — and the role field only
+        // ever said the first. This says whose work it is, and it is what
+        // puts the photograph in the gallery headed "Recent NAC
+        // installations". Never inferred: a manufacturer's stock shot is a
+        // picture of the same machine and not a picture of NAC's work.
+        toggle('This is NAC’s own work — show it in the installations gallery',
+          a.ownWork, x => a.ownWork = x)
+      ]),
       el('div', { class: 'note', text: 'Sizes stored: '
         + (a.derivatives || []).map(d => d.width + 'px').join(', ')
         + ((a.derivatives || []).some(d => isDataUriRef(d.ref))
@@ -1171,6 +1185,48 @@ function drawInclusions() {
      el('h2', { text: 'Card wording' })].concat(rows));
 }
 
+/**
+ * Which photograph sits beside one upgrade on the customer's page.
+ *
+ * It SHOWS the match as well as offering the choice: the whole point is that
+ * Nick can see the AirTouch photograph has landed on the AirTouch line before
+ * a customer does.
+ */
+function upgradeImageField(u) {
+  const equipment = (C.images || []).filter(a => a.role === 'equipment');
+  const matched = upgradeImageFor(C.images || [], u);
+  const chosen = matched
+    ? (C.images || []).find(a => a.id === matched.id) : null;
+
+  const options = [['', 'Match it to the title automatically'],
+    ...equipment.map(a => [a.id, (a.alt || a.id).slice(0, 70)])];
+
+  const preview = chosen && (chosen.derivatives || []).length
+    ? el('img', { src: chosen.derivatives[0].ref || '', alt: '',
+        style: 'width:96px;height:96px;object-fit:cover;border-radius:9px;'
+             + 'border:1px solid var(--line)' })
+    : null;
+
+  const said = matched
+    ? (u.imageId ? 'You chose this one.' : 'Matched automatically: ' + matched.id)
+    : (u.imageId
+        ? 'That image is not in the library or is not approved, so this upgrade '
+          + 'shows NO picture — it is not replaced with a different one.'
+        : 'No photograph matches this upgrade, so it shows none. A lookalike '
+          + 'beside a price is a product claim.');
+
+  return el('div', { class: 'row' }, [
+    el('div', { style: 'display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap' }, [
+      preview,
+      el('div', { style: 'flex:1;min-width:220px' }, [
+        selectField('Picture beside this upgrade', u.imageId || '', options,
+          x => { u.imageId = x || null; markDirty(); drawUpgrades(); }),
+        el('div', { class: 'note', text: said })
+      ])
+    ])
+  ]);
+}
+
 function drawUpgrades() {
   const list = el('div');
   C.upgrades.forEach((u, i) => {
@@ -1188,6 +1244,14 @@ function drawUpgrades() {
           x => u.priceIncGst = numOrNull(x), { type: 'number' })
       ]),
       field('Description', u.description, x => u.description = x, { rows: 2 }),
+      // ── THE PICTURE BESIDE IT ────────────────────────────────────────────
+      //
+      // Nick: "Airtouch pictures next to Airtouch option, sensor next to
+      // sensor option." Left on "match it to the title", the library is
+      // searched against this upgrade's own wording — an AirTouch photograph
+      // lands on the AirTouch line and the one showing room sensors lands on
+      // the sensors line. Choosing one here overrides that.
+      upgradeImageField(u),
       // ── UPGRADES YOU BUY MORE THAN ONE OF ────────────────────────────────
       //
       // A smart controller is one thing or nothing. A room temperature sensor
