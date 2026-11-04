@@ -82,6 +82,17 @@ always type a controller by hand instead.
 The outlet, return and zone counts you took on site, the rooms, and what the
 price covers.
 
+- **Zones.** Add a zone for each one the customer will be able to switch on and
+  off, name it the way they will read it on the proposal, and then pick that
+  zone on each room below. Renaming a zone takes its rooms with it; removing
+  one frees its rooms rather than deleting them, and the checks panel tells
+  you a room is sitting outside the zoning.
+
+  The **Zones** count at the top of the step counts the list for you once
+  there is one, and stops being typeable — a number that can contradict the
+  list beside it eventually will. The old way through is untouched: leave the
+  zone list empty, type a count, and quote the job without naming them.
+
 - **Insert NAC's usual list** fills the inclusions and exclusions from the
   content library. Edit them for the job in front of you.
 - **Installation allowances** are the named sums you set up in the library — a

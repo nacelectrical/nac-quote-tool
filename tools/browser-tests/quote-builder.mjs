@@ -218,6 +218,11 @@ await step('a price of zero is refused', async () => {
 });
 
 // rooms
+//
+// The ZONES are left off for now, and deliberately: the zone-control checks
+// below drive the zone COUNT, which stops being typeable the moment a zone
+// list exists. The rooms are put into their zones further down, in the section
+// that drives the zone editor itself.
 await goStep(4);
 const roomRows = () => page.locator('#rooms .roomrow');
 const ROOMS = [['Living / Dining', 'Living', 3], ['Kitchen', 'Living', 1], ['Master', 'Master', 2],
@@ -226,9 +231,10 @@ const ROOMS = [['Living / Dining', 'Living', 3], ['Kitchen', 'Living', 1], ['Mas
 for (let i = 0; i < ROOMS.length; i++) {
   await show('#addRoom'); if (await roomRows().count() <= i) await page.click('#addRoom');
   const r = roomRows().nth(i);
+  // The zone is a <select> now, so the text boxes on a room row are its name
+  // and its outlet count.
   await r.locator('input').nth(0).fill(ROOMS[i][0]);
-  await r.locator('input').nth(1).fill(ROOMS[i][1]);
-  await r.locator('input').nth(2).fill(String(ROOMS[i][2]));
+  await r.locator('input').nth(1).fill(String(ROOMS[i][2]));
 }
 await show('#seedIncl'); await page.click('#seedIncl');
 await page.click('#seedExcl');
@@ -376,6 +382,99 @@ await step('the kit\u2019s cost is shown to the estimator', async () => {
   // $295.00 is the Siemens 6-zone kit's MMEM cost. It belongs on this screen.
   const internal = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
   if (!/295/.test(internal)) throw new Error('the cost is not shown: ' + internal.slice(0, 120));
+});
+
+// ── CHOOSING THE ZONES ─────────────────────────────────────────────────────
+//
+// Nick, 5 November 2026: "Want to be able to choose the zones."
+//
+// Until now a zone was not a thing on this screen. There was a number in the
+// scope and a free-text box on every room, so the same name had to be typed
+// once per room, "Living" and "living" were two zones, and a typo was a
+// seventh zone on a six-zone house that then blocked the quote.
+await goStep(4);
+const zoneRows = () => page.locator('#zonelist .zonerow');
+const ZONES = ['Living', 'Master', 'Bed 2', 'Bed 3', 'Bed 4', 'Study'];
+
+await step('zones are made, named and counted', async () => {
+  await show('#addZone');
+  for (let i = 0; i < ZONES.length; i++) {
+    if (await zoneRows().count() <= i) await page.click('#addZone');
+    const box = zoneRows().nth(i).locator('input');
+    await box.fill(ZONES[i]);
+    await box.blur();
+    await page.waitForTimeout(120);
+  }
+  if (await zoneRows().count() !== ZONES.length) {
+    throw new Error('expected ' + ZONES.length + ' zones, got ' + await zoneRows().count());
+  }
+  // The count FOLLOWS the list and stops being typeable, because a field that
+  // can contradict the thing beside it eventually will.
+  if (await page.inputValue('#zones') !== '6') {
+    throw new Error('the zone count did not follow the list: '
+      + await page.inputValue('#zones'));
+  }
+  if (!await page.locator('#zones').evaluate(e => e.readOnly)) {
+    throw new Error('the zone count is still typeable alongside a zone list');
+  }
+});
+
+await step('each room is put in a zone by picking one', async () => {
+  for (let i = 0; i < ROOMS.length; i++) {
+    await show('#rooms');
+    await roomRows().nth(i).locator('select').selectOption(ROOMS[i][1]);
+    await page.waitForTimeout(80);
+  }
+  // The zone row says which rooms are in it, so "Living" being two rooms is
+  // visible without counting down the list.
+  const living = await zoneRows().nth(0).textContent();
+  if (!/Living \/ Dining/.test(living) || !/Kitchen/.test(living)) {
+    throw new Error('the Living zone does not list its rooms: ' + living);
+  }
+});
+
+await step('renaming a zone takes its rooms with it', async () => {
+  const box = zoneRows().nth(0).locator('input');
+  await box.fill('Living & Kitchen');
+  await box.blur();
+  await page.waitForTimeout(200);
+  // Every room that was in it now points at the new name. Leaving them behind
+  // is how an empty zone and an unzoned room appear at the same moment.
+  for (const i of [0, 1]) {
+    const v = await roomRows().nth(i).locator('select').inputValue();
+    if (v !== 'Living & Kitchen') {
+      throw new Error('room ' + i + ' was left behind on rename: ' + v);
+    }
+  }
+  if (await page.inputValue('#zones') !== '6') throw new Error('the count moved on a rename');
+  // Back, for the rest of the run.
+  await box.fill('Living'); await box.blur(); await page.waitForTimeout(200);
+});
+
+await step('removing a zone frees its rooms rather than deleting them', async () => {
+  const before = await roomRows().count();
+  await show('#zonelist');
+  await zoneRows().nth(5).locator('button').click();   // Study
+  await page.waitForTimeout(250);
+  if (await roomRows().count() !== before) throw new Error('a room was deleted with its zone');
+  if (await page.inputValue('#zones') !== '5') {
+    throw new Error('the count did not follow the removal: ' + await page.inputValue('#zones'));
+  }
+  const study = await roomRows().nth(6).locator('select').inputValue();
+  if (study !== '') throw new Error('the freed room kept a zone that no longer exists: ' + study);
+  // The checks panel says so rather than letting it go out quietly.
+  const c = await checks();
+  if (!c.some(x => /not in any zone/i.test(x))) {
+    throw new Error('an unzoned room was not reported: ' + c.join(' | '));
+  }
+  // Put it back and re-home the room.
+  await show('#addZone'); await page.click('#addZone');
+  const box = zoneRows().nth(5).locator('input');
+  await box.fill('Study'); await box.blur(); await page.waitForTimeout(200);
+  await show('#rooms');
+  await roomRows().nth(6).locator('select').selectOption('Study');
+  await page.waitForTimeout(200);
+  if (await page.inputValue('#zones') !== '6') throw new Error('back to six zones failed');
 });
 
 // ── upgrades ───────────────────────────────────────────────────────────────
@@ -548,6 +647,8 @@ await step('reopening a saved quote brings all of it back', async () => {
     zones: await page.inputValue('#zones'),
     ctrl: (await show('#ctrlSel'), await page.inputValue('#ctrlSel')),
     pic: await page.inputValue('#ctrlPic'),
+    zones: (await show('#zonelist'), await page.locator('#zonelist .zonerow input')
+      .evaluateAll(ns => ns.map(n => n.value).join('|'))),
     incl: await page.inputValue('#incl'),
     excl: await page.inputValue('#excl'),
     test: await page.isChecked('#istest'),
@@ -560,6 +661,7 @@ await step('reopening a saved quote brings all of it back', async () => {
     pnum: before.proposalNumber, outlets: String(before.scope.outletCount),
     zones: String(before.scope.zoneCount), ctrl: before.controller.id,
     pic: before.controller.imageId,
+    zones: (before.scope.zones || []).join('|'),
     incl: before.inclusions.join('\n'), excl: before.exclusions.join('\n'),
     test: before.testQuote === true,
     systems: before.systems.length, rooms: before.scope.conditionedRooms.length,
@@ -569,6 +671,12 @@ await step('reopening a saved quote brings all of it back', async () => {
   // A round trip that compares '' with '' proves nothing. The picture must
   // actually have been saved for the comparison below to mean anything.
   if (!want.pic) throw new Error('the chosen picture never reached the saved quote');
+  if (want.zones.split('|').length !== 6) {
+    throw new Error('the zone list did not reach the saved quote: ' + want.zones);
+  }
+  if (before.scope.zonesChosen !== true) {
+    throw new Error('the quote does not record that the zones were chosen');
+  }
   for (const k of Object.keys(want)) {
     if (String(got[k]) !== String(want[k])) {
       throw new Error(k + ': reopened as ' + JSON.stringify(got[k])

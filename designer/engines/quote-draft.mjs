@@ -193,17 +193,91 @@ export function normaliseQuoteDraft(input = {}) {
     // ── THE SCOPE, AS THE ESTIMATOR SAW IT ─────────────────────────────────
     // Counts typed by a person who walked the house. They are NOT a design
     // and are never presented as one.
-    scope: {
-      outletCount: n(d.scope?.outletCount),
-      returnCount: n(d.scope?.returnCount),
-      zoneCount: n(d.scope?.zoneCount),
-      conditionedRooms: list(d.scope?.conditionedRooms).map(r => ({
+    scope: (() => {
+      const conditionedRooms = list(d.scope?.conditionedRooms).map(r => ({
         label: trimmed(r && r.label),
         zone: trimmed(r && r.zone),
         outlets: n(r && r.outlets)
-      })).filter(r => r.label),
-      summary: trimmed(d.scope?.summary)
-    },
+      })).filter(r => r.label);
+
+      /**
+       * ── THE ZONES, AS A LIST ─────────────────────────────────────────
+       *
+       * Nick, 5 November 2026: "Want to be able to choose the zones."
+       *
+       * Before this there was no such thing as a zone. There was a NUMBER in
+       * the scope, and a free-text box on every room where the estimator
+       * typed a zone name again and again — so "Living" and "living" were two
+       * zones, a typo was a seventh zone on a six-zone house, and the quote
+       * then blocked itself on a mismatch the estimator had to go and hunt
+       * for. Nothing could be renamed, reordered, or created empty.
+       *
+       * A zone is now a thing the estimator makes, names and orders, and a
+       * room POINTS at one. The rooms still carry the name, so everything
+       * downstream — the quote source, the presentation, an old saved
+       * quote — reads exactly as it did.
+       *
+       * SEEDED FROM THE ROOMS where a draft has none, which is every quote
+       * raised before today and every one the ops API creates. Nothing is
+       * invented: the zones are the distinct names already typed, in the
+       * order they first appear.
+       */
+      const dedupe = (names) => {
+        const seen = new Set(); const out = [];
+        for (const name of names) {
+          const k = name.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k); out.push(name);
+        }
+        return out;
+      };
+      const named = dedupe(list(d.scope?.zones)
+        .map(z => trimmed(typeof z === 'string' ? z : z && z.name))
+        .filter(Boolean));
+      /**
+       * HAS ANYBODY ACTUALLY SET THE ZONES UP?
+       *
+       * This is a STORED FLAG, not "is the list non-empty", and the
+       * difference matters: normalising seeds a list from the rooms, so one
+       * round trip through the store would otherwise turn every legacy quote
+       * into one whose zones had been "chosen" — and the typed zone count
+       * would be silently replaced by the rooms' word for it, on a quote
+       * somebody may already have sent.
+       *
+       * The builder sets it when the estimator uses the zone editor. Seeding
+       * never does.
+       */
+      const chosen = bool(d.scope?.zonesChosen) && named.length > 0;
+      // A draft that has never seen the zone editor — every quote raised
+      // before today, and every one the ops API creates. The zones are the
+      // distinct names already typed on the rooms, in the order they appear.
+      // NOTHING IS INVENTED, and the typed count is NOT quietly replaced: see
+      // zoneCount below, and the gate.
+      const zones = chosen
+        ? named : dedupe(conditionedRooms.map(r => r.zone).filter(Boolean));
+
+      return {
+        outletCount: n(d.scope?.outletCount),
+        returnCount: n(d.scope?.returnCount),
+        /**
+         * The number the customer page prints.
+         *
+         * Where the estimator has BUILT a zone list, the count follows it and
+         * the two can no longer disagree — which is the whole point of having
+         * a list. Where they have not, the typed number stands exactly as it
+         * did, including when it contradicts the rooms: that contradiction is
+         * the estimator's to resolve and the gate still says so. Taking the
+         * rooms' word for it here would silently change a number on a
+         * customer's page.
+         */
+        zoneCount: chosen ? zones.length : n(d.scope?.zoneCount),
+        zones,
+        /** True once somebody has actually set the zones up. */
+        zonesChosen: chosen,
+        conditionedRooms,
+        summary: trimmed(d.scope?.summary)
+      };
+    })(),
 
     inclusions: list(d.inclusions).map(trimmed).filter(Boolean),
     exclusions: list(d.exclusions).map(trimmed).filter(Boolean),
@@ -415,14 +489,54 @@ export function quoteDraftGate(draft, { upgrades = [] } = {}) {
   // the page states a number the rest of the quote does not support. This is
   // not a design check — there is no drawing involved — it is the quote
   // disagreeing with itself, and it is the estimator's to resolve.
-  const zoneNames = [...new Set(d.scope.conditionedRooms.map(r => trimmed(r.zone))
-    .filter(Boolean))];
-  if (zoneNames.length && d.scope.zoneCount !== null
-      && zoneNames.length !== d.scope.zoneCount) {
-    block(DRAFT_BLOCK.ZONE_COUNT_MISMATCH,
-      'The scope records ' + d.scope.zoneCount + ' zone(s), but the rooms are grouped into '
-      + zoneNames.length + ' (' + zoneNames.join(', ') + '). The proposal would print one '
-      + 'of those two numbers.');
+  if (d.scope.zonesChosen) {
+    // The count follows the list, so those two can no longer disagree. What
+    // still can is a room pointing at a zone that is not ON the list — which a
+    // draft reaching the gate from the ops API or an old save can carry.
+    const onList = new Set(d.scope.zones.map(z => z.toLowerCase()));
+    const stray = [...new Set(d.scope.conditionedRooms.map(r => trimmed(r.zone))
+      .filter(Boolean).filter(z => !onList.has(z.toLowerCase())))];
+    if (stray.length) {
+      block(DRAFT_BLOCK.ZONE_COUNT_MISMATCH,
+        'These rooms are in zones that are not on the zone list: ' + stray.join(', ')
+        + '. Add them on the scope step, or put the rooms in a zone that is listed.');
+    }
+
+    // ── LOOSE ENDS, SAID OUT LOUD ───────────────────────────────────────
+    //
+    // Neither of these is a reason to stop a quote — a zone really can be
+    // quoted before its rooms are settled, and a room really can be outside
+    // the zoning. But both print on the customer's page, so the estimator is
+    // told rather than finding out from the customer.
+    if (d.scope.conditionedRooms.length) {
+      const empty = d.scope.zones.filter(z => !d.scope.conditionedRooms
+        .some(r => trimmed(r.zone).toLowerCase() === z.toLowerCase()));
+      if (empty.length && empty.length < d.scope.zones.length) {
+        warn('DRAFT_ZONE_WITHOUT_ROOMS',
+          'No rooms are in ' + empty.join(', ') + '. The proposal lists '
+          + (empty.length === 1 ? 'that zone' : 'those zones')
+          + ' with nothing in ' + (empty.length === 1 ? 'it' : 'them') + '.');
+      }
+      const loose = d.scope.conditionedRooms.filter(r => !trimmed(r.zone))
+        .map(r => r.label);
+      if (loose.length) {
+        warn('DRAFT_ROOM_WITHOUT_ZONE',
+          loose.join(', ') + (loose.length === 1 ? ' is' : ' are')
+          + ' not in any zone, so ' + (loose.length === 1 ? 'it' : 'they')
+          + ' will not appear on the zone schedule.');
+      }
+    }
+  } else {
+    // No list yet. The original rule, unchanged: the typed count against the
+    // zones the rooms name between them.
+    const zoneNames = d.scope.zones;
+    if (zoneNames.length && d.scope.zoneCount !== null
+        && zoneNames.length !== d.scope.zoneCount) {
+      block(DRAFT_BLOCK.ZONE_COUNT_MISMATCH,
+        'The scope records ' + d.scope.zoneCount + ' zone(s), but the rooms are grouped into '
+        + zoneNames.length + ' (' + zoneNames.join(', ') + '). The proposal would print one '
+        + 'of those two numbers.');
+    }
   }
 
   // Outlets, the same way: the per-room counts have to add up to the total the
@@ -572,11 +686,14 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
   // one "always open" would be the application deciding a commissioning detail
   // on the customer's page. The presentation prints no constant-zone note
   // unless a design put one there.
-  const zoneNames = [...new Set(d.scope.conditionedRooms.map(r => r.zone).filter(Boolean))];
-  const zones = zoneNames.length
-    ? zoneNames.map(name => ({
+  // IN THE ESTIMATOR'S ORDER, from the zone list, and a zone with no rooms in
+  // it yet is still a zone: it is on the quote because somebody put it there,
+  // and dropping it would quietly change the count the page prints.
+  const zones = d.scope.zones.length
+    ? d.scope.zones.map(name => ({
         name,
-        rooms: d.scope.conditionedRooms.filter(r => r.zone === name)
+        rooms: d.scope.conditionedRooms
+                 .filter(r => trimmed(r.zone).toLowerCase() === name.toLowerCase())
                  .map(r => r.label).filter(Boolean)
       }))
     : Array.from({ length: Math.max(0, zoneCount) }, (_, i) => ({

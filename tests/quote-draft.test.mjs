@@ -756,3 +756,117 @@ test('the house rule sizes the kit to the job, and says it did', async () => {
   // picking something that does not fit.
   assert.equal(at(12).houseRuleApplies, false);
 });
+
+// ── CHOOSING THE ZONES ─────────────────────────────────────────────────────
+//
+// Nick, 5 November 2026: "Want to be able to choose the zones."
+//
+// Before this a zone was not a thing. There was a number in the scope and a
+// free-text box on every room, so the same name had to be typed once per room,
+// "Living" and "living" were two zones, and a typo was an extra zone that
+// blocked the quote on a mismatch with the number.
+
+test('a zone list, in the estimator’s order, drives the count', () => {
+  const d = normaliseQuoteDraft(quoteOnlyDraft({ scope: {
+    outletCount: 4, returnCount: 1, zoneCount: 99,
+    zonesChosen: true,
+    zones: ['Living', 'Bedrooms', 'Study'],
+    conditionedRooms: [
+      { label: 'Living', zone: 'Living', outlets: 2 },
+      { label: 'Master', zone: 'Bedrooms', outlets: 1 },
+      { label: 'Bedroom 2', zone: 'Bedrooms', outlets: 1 }
+    ] } }));
+  assert.deepEqual(d.scope.zones, ['Living', 'Bedrooms', 'Study']);
+  // The typed 99 does not survive a list: with a list the two cannot disagree,
+  // which is the whole point of having one.
+  assert.equal(d.scope.zoneCount, 3);
+  assert.equal(d.scope.zonesChosen, true);
+
+  const src = draftToQuoteSource(d, { upgrades: UPGRADES });
+  assert.deepEqual(src.zones.zones.map(z => z.name), ['Living', 'Bedrooms', 'Study']);
+  assert.deepEqual(src.zones.zones[1].rooms, ['Master', 'Bedroom 2']);
+  // A zone with no rooms in it yet is STILL A ZONE: it is on the quote because
+  // somebody put it there, and dropping it would change the printed count.
+  assert.deepEqual(src.zones.zones[2].rooms, []);
+  assert.equal(src.zones.zoneCount, 3);
+});
+
+test('a zone list nobody chose does NOT take over the typed count', () => {
+  // The flag is stored, not inferred from "the list is non-empty". Normalising
+  // seeds a list from the rooms, so one round trip through the store would
+  // otherwise turn every quote raised before today into one whose zones had
+  // been chosen — and silently replace a number already on a customer's page.
+  const once = normaliseQuoteDraft(quoteOnlyDraft({ scope: {
+    outletCount: 4, returnCount: 1, zoneCount: 6,
+    conditionedRooms: [
+      { label: 'Living', zone: 'Living', outlets: 3 },
+      { label: 'Master', zone: 'Master', outlets: 1 }
+    ] } }));
+  assert.equal(once.scope.zonesChosen, false);
+  assert.equal(once.scope.zoneCount, 6, 'the typed count was overwritten');
+  // Round-tripped, it still disagrees, and still says so.
+  const twice = normaliseQuoteDraft(once);
+  assert.equal(twice.scope.zoneCount, 6);
+  assert.ok(codes(gateOf(twice).blockers).includes(DRAFT_BLOCK.ZONE_COUNT_MISMATCH));
+});
+
+test('a room in a zone that is not on the list stops the quote', () => {
+  const d = quoteOnlyDraft({ scope: {
+    outletCount: 4, returnCount: 1,
+    zonesChosen: true, zones: ['Living', 'Bedrooms'],
+    conditionedRooms: [
+      { label: 'Living', zone: 'Living', outlets: 2 },
+      { label: 'Master', zone: 'Bedroom', outlets: 2 }
+    ] } });
+  const g = gateOf(d);
+  assert.ok(codes(g.blockers).includes(DRAFT_BLOCK.ZONE_COUNT_MISMATCH),
+    JSON.stringify(codes(g.blockers)));
+  assert.match(g.blockers.find(b => b.code === DRAFT_BLOCK.ZONE_COUNT_MISMATCH).message,
+    /Bedroom/);
+});
+
+test('zone names differing only in case are one zone', () => {
+  const d = normaliseQuoteDraft(quoteOnlyDraft({ scope: {
+    outletCount: 2, returnCount: 1,
+    zonesChosen: true, zones: ['Living', 'living', 'LIVING'],
+    conditionedRooms: [{ label: 'Living', zone: 'living', outlets: 2 }] } }));
+  assert.deepEqual(d.scope.zones, ['Living']);
+  assert.equal(d.scope.zoneCount, 1);
+  // And the room still finds its zone, whichever way it was typed.
+  const src = draftToQuoteSource(d, { upgrades: UPGRADES });
+  assert.deepEqual(src.zones.zones[0].rooms, ['Living']);
+  assert.deepEqual(codes(gateOf(d).blockers).filter(c => c === DRAFT_BLOCK.ZONE_COUNT_MISMATCH),
+    []);
+});
+
+test('an empty zone and an unzoned room are warnings, never blockers', () => {
+  const d = quoteOnlyDraft({ scope: {
+    outletCount: 4, returnCount: 1,
+    zonesChosen: true, zones: ['Living', 'Study'],
+    conditionedRooms: [
+      { label: 'Living', zone: 'Living', outlets: 2 },
+      { label: 'Hall', zone: '', outlets: 2 }
+    ] } });
+  const g = gateOf(d);
+  // A zone really can be quoted before its rooms are settled, and a room
+  // really can sit outside the zoning. Both print, so both are said out loud.
+  assert.ok(!codes(g.blockers).includes(DRAFT_BLOCK.ZONE_COUNT_MISMATCH));
+  assert.ok(codes(g.warnings).includes('DRAFT_ZONE_WITHOUT_ROOMS'),
+    JSON.stringify(codes(g.warnings)));
+  assert.ok(codes(g.warnings).includes('DRAFT_ROOM_WITHOUT_ZONE'));
+  assert.match(g.warnings.find(w => w.code === 'DRAFT_ZONE_WITHOUT_ROOMS').message, /Study/);
+  assert.match(g.warnings.find(w => w.code === 'DRAFT_ROOM_WITHOUT_ZONE').message, /Hall/);
+});
+
+test('quoting on a zone count alone is still a way through', () => {
+  // No rooms grouped, no zone list: the estimator who walked the house and
+  // knows it is six zones is not made to build a list before pricing it.
+  const d = normaliseQuoteDraft(quoteOnlyDraft({ scope: {
+    outletCount: 12, returnCount: 2, zoneCount: 6, conditionedRooms: [] } }));
+  assert.deepEqual(d.scope.zones, []);
+  assert.equal(d.scope.zoneCount, 6);
+  assert.deepEqual(codes(gateOf(d).blockers), []);
+  const src = draftToQuoteSource(d, { upgrades: UPGRADES });
+  assert.deepEqual(src.zones.zones.map(z => z.name),
+    ['Zone 1', 'Zone 2', 'Zone 3', 'Zone 4', 'Zone 5', 'Zone 6']);
+});

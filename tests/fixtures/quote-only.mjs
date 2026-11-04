@@ -69,6 +69,14 @@ export function quoteOnlyDraft(over = {}) {
     scope: {
       outletCount: 10, returnCount: 2, zoneCount: 6,
       summary: 'Ducted reverse-cycle throughout the single storey, six zones.',
+      // ── THE ZONES, CHOSEN ─────────────────────────────────────────────
+      //
+      // Nick, 5 November 2026: "Want to be able to choose the zones." A zone
+      // is a thing the estimator makes and names, in their own order, and the
+      // rooms point at one. The count follows this list, so the two can no
+      // longer contradict each other on the customer's page.
+      zonesChosen: true,
+      zones: ['Living', 'Master', 'Bed 2', 'Bed 3', 'Bed 4', 'Study'],
       conditionedRooms: [
         { label: 'Living / Dining', zone: 'Living', outlets: 3 },
         { label: 'Kitchen', zone: 'Living', outlets: 1 },
