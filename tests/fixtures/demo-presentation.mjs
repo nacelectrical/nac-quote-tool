@@ -262,104 +262,104 @@ export const DEMO_CONTENT = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A COMPLETE, QUOTABLE DEMONSTRATION DESIGN
+// THE DEMONSTRATION JOB
 //
-// The shipped fixtures are deliberately blocked from quoting — they carry
-// placeholder material rates and unpriced BTO configurations, which is exactly
-// what the quote gate exists to catch. A demonstration of the CUSTOMER
-// presentation therefore needs a design that has passed that gate.
+// This used to build a real duct design: it ran the router, the BTO placement,
+// the pressure estimate and the bill of materials through runPipeline(), with
+// a demonstration rate invented for every material line, looping until the
+// quote gate stopped objecting. It demonstrated a pipeline that no longer
+// exists.
 //
-// Rather than bypass the gate, this runs the real pipeline once, reads which
-// rates it is actually missing, supplies a demonstration rate for each of
-// those, and runs it again. So the demo quote is priced the way a real job is
-// priced — through the gate, not around it — and if the gate ever starts
-// blocking for a new reason, this fixture stops producing a quote too.
+// A quote is now a quote draft and nothing else, so the demonstration is one
+// too — the same shape every real job has, through the same
+// draftToQuoteSource() the application uses. There is no bill of materials to
+// invent rates for, which also means there are no invented rates.
+//
+// It is still DEMONSTRATION DATA: the customer is invented, the reviews and
+// the photographs are generated, and `DEMO_CONTENT.demonstration` is true, so
+// buildPresentation() refuses to issue it. That refusal is the point.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { buildApproved } from './approved-job.mjs';
-import { runPipeline } from '../../designer/engines/pipeline.mjs';
-import { buildCatalogue } from '../../designer/engines/catalogue.mjs';
-import { MATERIAL_CATALOGUE } from '../../designer/engines/materials.mjs';
+import { createQuoteDraft, draftToQuoteSource, draftSelectedOptions }
+  from '../../designer/engines/quote-draft.mjs';
 
-/** A stable, obviously-fake rate derived from the key, so runs are repeatable. */
-function demoRate(key) {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 997;
-  return Math.round((6 + (h % 34)) * 100) / 100;
+/** The draft behind the demonstration quote. */
+export function demoDraft(over = {}) {
+  return createQuoteDraft({
+    id: 'D-DEMO-1',
+    proposalNumber: 'NAC-2026-0184',
+    customer: {
+      name: 'Sarah Whitlock',
+      email: 'sarah.whitlock@bigpond.com',
+      phone: '0412 665 108',
+      address: '34 Kauri Crescent, Peregian Springs QLD 4573'
+    },
+    systems: [
+      { id: 'sys-a', brand: 'Daikin', brandId: 'daikin', model: 'FDYAN160AV1',
+        outdoorModel: 'RZA160C2V1', capacityKw: 16, phase: '1Ph',
+        priceIncGst: 15400, recommended: true,
+        note: 'Premium inverter, quietest indoor unit' },
+      { id: 'sys-b', brand: 'Braemar', brandId: 'braemar', model: 'KDHV160D1S',
+        outdoorModel: 'KCHV160D1B', capacityKw: 16.3, phase: '1Ph',
+        priceIncGst: 13900, warrantyYears: 7 }
+    ],
+    controller: { id: 'siemens_z8', name: 'Siemens Home zone control \u2014 8 zone',
+                  zoneCount: 8 },
+    scope: {
+      outletCount: 12, returnCount: 2, zoneCount: 6,
+      summary: 'Ducted reverse-cycle throughout, six zones.',
+      conditionedRooms: [
+        { label: 'Open plan', zone: 'Open plan', outlets: 4 },
+        { label: 'Master', zone: 'Master', outlets: 2 },
+        { label: 'Bedroom 2', zone: 'Bed 2', outlets: 1 },
+        { label: 'Bedroom 3', zone: 'Bed 3', outlets: 1 },
+        { label: 'Bedroom 4', zone: 'Bed 4', outlets: 1 },
+        { label: 'Media', zone: 'Media', outlets: 3 }
+      ]
+    },
+    inclusions: [
+      'Supply and install of the system above',
+      'All ductwork, supply outlets and return air grilles',
+      'Electrical connection to an existing suitable circuit',
+      'Commissioning, balancing and handover',
+      'Removal of all installation waste'
+    ],
+    exclusions: [
+      'Switchboard or circuit upgrades, if the existing board cannot carry the system',
+      'Patching or painting beyond the installation openings',
+      'Asbestos handling of any kind'
+    ],
+    selectedUpgradeIds: [],
+    intro: 'Thank you for having us out. This proposal covers a ducted reverse-cycle '
+         + 'system sized for the rooms you want conditioned.',
+    ...over
+  });
 }
 
-/** A demonstration rate for every material line, so nothing is a placeholder. */
-function demoMaterialRates() {
-  const rates = {};
-  for (const [key, def] of Object.entries(MATERIAL_CATALOGUE)) {
-    if (def.byDiameter) {
-      const byDia = {};
-      for (const dia of Object.keys(def.byDiameter)) byDia[dia] = demoRate(key + dia);
-      rates[key] = byDia;
-    } else {
-      rates[key] = demoRate(key);
-    }
-  }
-  return rates;
+/**
+ * The demonstration quote source, in the shape buildPresentation() reads.
+ *
+ * `out` keeps its name so the tests and the browser suites that destructure
+ * it do not all have to change; it is a quote source now rather than a design.
+ */
+export async function buildDemoDesign(over = {}) {
+  const draft = demoDraft(over);
+  const upgrades = DEMO_CONTENT.upgrades || [];
+  const out = draftToQuoteSource(draft, { upgrades });
+  return {
+    out,
+    draft,
+    selectedOptionIds: draftSelectedOptions(draft, { upgrades }),
+    settings: DEMO_SETTINGS
+  };
 }
 
-export async function buildDemoDesign() {
-  const first = await buildApproved();
-  const catalogue = await buildCatalogue({});
-  const settings = first.settings;
-  const nacRates = demoMaterialRates();
-
-  // Fabricated BTO bodies are priced per EXACT configuration and never
-  // substituted, so the configurations this design actually produces have to be
-  // read off a run rather than guessed. Re-running can change the set, so this
-  // converges rather than assuming one pass is enough.
-  const btoRates = {};
-  let out = first.out;
-  for (let pass = 0; pass < 4; pass++) {
-    let added = false;
-    for (const item of (out.bom?.items || [])) {
-      if (item.key === 'bto_fitting' && item.configKey && !btoRates[item.configKey]) {
-        btoRates[item.configKey] = { cost: demoRate(item.configKey) + 180, verified: true,
-          quoteRef: 'DEMO-FAB-0001', effectiveDate: '2026-09-01' };
-        added = true;
-      }
-    }
-    const next = await buildApproved();
-    // ── THE REDUCED-CAPACITY DECISION, ON THE RECORD ────────────────────────
-    // Dungannon really was installed with a 16 kW machine against a 22.5 kW
-    // calculated load. The presentation gate refuses to describe that as
-    // adequate unless somebody has owned the decision and said what the
-    // customer is to be told — so here is that record, which is what the real
-    // job had behind it.
-    next.design.capacityDecision = {
-      acknowledgedBy: 'Nick Cahill',
-      at: '2026-09-01T00:00:00Z',
-      customerWording: 'This system is sized to the home\'s everyday cooling and heating '
-        + 'needs rather than to the peak calculated load. On the hottest afternoons of the '
-        + 'year it will run continuously and may not hold the set temperature in every room '
-        + 'at once.'
-    };
-    // ── EVERY USED RATE, VERIFIED ──────────────────────────────────────────
-    // A rate typed into a box is still just a number. A verified rate says
-    // where it came from, when it was quoted and who checked it — so the demo
-    // has to carry that too, or it demonstrates a job that could not be sold.
-    // The supplier and dates here are demonstration data like everything else
-    // in this fixture, which is why it is watermarked and cannot be issued.
-    const priced = runPipeline(next.design, { catalogue, settings, nacRates, btoRates });
-    const rateVerifications = {};
-    for (const row of (priced.rateVerification?.rows || [])) {
-      rateVerifications[row.id] = {
-        supplier: 'Metal Mart / MMEM',
-        supplierDesc: row.label,
-        effectiveDate: '2026-09-01',
-        cost: row.currentRate ?? 0,
-        verifiedBy: 'Nick Cahill',
-        verifiedAt: '2026-09-15'
-      };
-    }
-    out = runPipeline(next.design, { catalogue, settings, nacRates, btoRates,
-                                     rateVerifications });
-    if (!added && (out.quoteGate?.ok ?? false)) break;
-  }
-  return { out, nacRates, btoRates, catalogue, settings };
-}
+/** NAC's commercial terms, as the demonstration carries them. */
+export const DEMO_SETTINGS = {
+  commercial: { terms: {
+    depositPercent: 50, balanceDueEvent: 'completion', validityDays: 30,
+    paymentMethods: ['Direct deposit', 'EFT'],
+    termsVersion: 'NAC T&C v1.0 (23 September 2026)', confirmed: true,
+    confirmedBy: 'nick@nacelectrical.com.au', confirmedAt: '2026-09-23T00:00:00Z'
+  } }
+};

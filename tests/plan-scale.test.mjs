@@ -14,11 +14,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { recordCalibration, SCALE_SOURCE, VERIFIED_SCALE_SOURCES }
+  from '../designer/engines/calibration.mjs';
 import { scaleChanged, invalidateForNewScale, proposalStageAudit,
          SCALE_DERIVED, ESTIMATOR_DECISIONS, SCALE_CHANGE_TOLERANCE }
   from '../designer/engines/scale-invalidation.mjs';
-import { recordCalibration, SCALE_SOURCE, VERIFIED_SCALE_SOURCES, capabilities, DESIGN_STAGE }
-  from '../designer/engines/design-stage.mjs';
 
 // ── §10 the calibration workflow ────────────────────────────────────────────
 test('two points and a real distance produce a recorded, verified calibration', () => {
@@ -172,22 +172,4 @@ test('a clean proposal passes, and its allowance is not mistaken for ductwork', 
   };
   const a = proposalStageAudit(good);
   assert.equal(a.ok, true, JSON.stringify(a.violations));
-});
-
-test('proposal stage cannot route, calculate pressure or build a duct BOM', () => {
-  const caps = capabilities({
-    designStage: DESIGN_STAGE.PROPOSAL,
-    calibration: { pixelsPerMm: 0.039, verified: true, source: SCALE_SOURCE.MEASURED },
-    rooms: [{ id: 'r1', conditioned: true, areaSqM: 20, status: 'Verified',
-              measurement: { source: 'manual' } }]
-  }, { settings: { commercial: { proposalAllowance: { ductwork: 900 } } } });
-
-  assert.equal(caps.mayRouteDucts, false);
-  assert.equal(caps.mayCalculatePressure, false);
-  assert.equal(caps.mayBuildDuctBom, false);
-  assert.match(caps.reasonFor('routeDucts'), /proposal stage/i);
-  // But it may still measure, select and quote on the allowance.
-  assert.equal(caps.mayMeasureRooms, true);
-  assert.equal(caps.maySelectEquipment, true);
-  assert.equal(caps.mayQuoteProposal, true);
 });

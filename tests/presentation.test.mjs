@@ -173,19 +173,18 @@ test('the HTML and the PDF show the same equipment, options and total', () => {
 });
 
 test('a blocked quote cannot be published', () => {
+  // This used to poison the bill of materials with a placeholder rate. There
+  // is no bill of materials on a quote now, so the block it stands in for is
+  // the one that still exists and still matters: a quote with no price.
   const blocked = JSON.parse(JSON.stringify(DESIGN));
-  blocked.bom.items = [...blocked.bom.items,
-    { key: 'flex_duct', label: 'Insulated flexible duct R1.0 300 mm',
-      priceStatus: 'PLACEHOLDER', priceSource: 'placeholder', cost: 12, lineTotal: 12 }];
-  blocked.bom.placeholderCount = 1;
-  blocked.bom.placeholderLabels = ['Insulated flexible duct R1.0 300 mm'];
-  blocked.bom.placeholderValue = 12;
+  delete blocked.commercials.sellPriceIncGst;
+  blocked.systemOptions = [];
   const gate = presentationGate(blocked);
   assert.equal(gate.ok, false);
   const out = buildPresentation({ design: blocked, content: DEMO_CONTENT });
   assert.equal(out.ok, false);
   assert.equal(out.presentation, null, 'a blocked quote must yield no presentation at all');
-  assert.ok(out.blockers.length > 0);
+  assert.ok((out.blockers || []).length > 0, 'blocked with no reason given');
 });
 
 test('a quote with no equipment or no price cannot be published', () => {
@@ -302,24 +301,30 @@ test('the public page contains no supplier cost, job cost or margin', () => {
   const audit = auditPresentation(P);
   assert.equal(audit.ok, true, 'leaked keys: ' + JSON.stringify(audit.leaks));
 
-  const c = DESIGN.commercials;
-  const forbiddenNumbers = [c.totalJobCost, c.grossProfit, c.grossMarginPct,
-                            DESIGN.bom.equipmentCost, DESIGN.bom.materialsCost]
-    .filter(v => typeof v === 'number' && v > 0);
+  // A quote source carries no bill of materials and no job costing, so the
+  // figures to hunt for are the ones NAC does hold internally: what the zone
+  // kit costs, and what MMEM charge for the equipment.
+  const internalFigures = [295, 320, 250, 1100, 4820, 5700];
   for (const doc of [HTML, PRINT]) {
-    for (const v of forbiddenNumbers) {
+    const prose = doc.replace(/data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+/g, 'data:');
+    for (const v of internalFigures) {
       const printed = '$' + v.toLocaleString('en-AU', { minimumFractionDigits: 2 });
-      assert.ok(!doc.includes(printed), 'internal figure ' + printed + ' must not be rendered');
+      assert.ok(!prose.includes(printed), 'internal figure ' + printed + ' must not be rendered');
     }
-    assert.ok(!/gross\s*(profit|margin)/i.test(doc));
-    assert.ok(!/supplier\s*cost/i.test(doc));
-    assert.ok(!/job\s*cost/i.test(doc));
+    assert.ok(!/gross\s*(profit|margin)/i.test(prose));
+    assert.ok(!/supplier\s*cost/i.test(prose));
+    assert.ok(!/\bmarkup\b/i.test(prose));
+    assert.ok(!/\bMMEM\b/.test(prose), 'the supplier is not named on a customer page');
   }
 });
 
 test('internal warnings never appear in the customer presentation', () => {
-  const codes = (DESIGN.warnings || []).map(w => w.code).filter(Boolean);
-  assert.ok(codes.length > 0, 'the fixture should carry internal warnings to test against');
+  // A quote source carries no design warnings, so the codes to look for are
+  // the ones the QUOTE can raise. None of them is customer-facing: a blocker
+  // stops the quote being issued at all, and a note is for the estimator.
+  const codes = ['DRAFT_NO_PRICE', 'DRAFT_BAD_PRICE', 'DRAFT_OPTION_INCOMPATIBLE',
+                 'DRAFT_CONTROLLER_TOO_SMALL', 'CUSTOMER_DATA_NOT_REAL',
+                 'PLACEHOLDER_IN_TERMS', 'TEST_QUOTE_NAME', 'UNPRICED_LINES'];
   for (const doc of [HTML, PRINT]) {
     for (const code of new Set(codes)) {
       assert.ok(!doc.includes(code), 'warning code ' + code + ' must not reach the customer');
@@ -340,13 +345,21 @@ test('an inclusion is only claimed when the quote actually contains it', () => {
   assert.equal(one.length, 1);
   assert.equal(one[0].key, 'wifi');
 
-  // This design has no Wi-Fi adaptor on the bill, so the card is absent.
+  // This quote has no Wi-Fi adaptor, so the card is absent.
   assert.ok(P.inclusions.every(i => i.key !== 'wifi'));
   assert.ok(!HTML.includes('Wi-Fi control</h3>'));
-  // But the things it does contain are there.
-  for (const key of ['indoor_unit', 'outlets', 'returns', 'controller', 'pipework']) {
+
+  // `pipework` and `ductwork` used to be evidenced by a bill of materials.
+  // There is no bill on a quote, so they are no longer CLAIMED by the card
+  // grid — they are in the estimator's own typed inclusions instead, which is
+  // where the customer reads them and which this asserts.
+  for (const key of ['indoor_unit', 'outlets', 'returns', 'controller']) {
     assert.ok(P.inclusions.some(i => i.key === key), 'expected inclusion ' + key);
   }
+  assert.ok(P.inclusions.every(i => i.key !== 'pipework'),
+    'pipework was claimed with nothing behind it');
+  assert.ok(P.scopeOfWork.inclusions.some(t => /ductwork/i.test(t)),
+    'the typed inclusions are what tell the customer about the ductwork');
 });
 
 test('an incompatible upgrade is never offered', () => {

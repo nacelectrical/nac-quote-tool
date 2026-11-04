@@ -9,7 +9,7 @@ const TYPES = { '.html':'text/html; charset=utf-8', '.mjs':'text/javascript; cha
   '.css':'text/css', '.json':'application/json', '.jpg':'image/jpeg', '.png':'image/png', '.sql':'text/plain' };
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
-  const file = path.join(ROOT, url === '/' ? 'designer.html' : url);
+  const file = path.join(ROOT, url === '/' ? 'quotes.html' : url);
   if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     console.log('404 ' + url);
     res.writeHead(404); return res.end('not found');

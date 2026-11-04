@@ -13,7 +13,6 @@ import { suggestOpenPlanGroups, applyOpenPlanGroups, zoningAlreadySet,
          roomsTouch, opennessBetween, zoneRemedies,
          OPEN_PLAN_TYPES } from '../designer/engines/zoning-groups.mjs';
 import { buildRoom, manualMeasurement } from '../designer/engines/rooms.mjs';
-import { suggestZones } from '../designer/engines/zones.mjs';
 import { CONDITIONING } from '../designer/engines/classify.mjs';
 
 const PPM = 0.05667;
@@ -158,24 +157,6 @@ test('excluded rooms are never grouped into a zone', () => {
 });
 
 // ── Applying it ─────────────────────────────────────────────────────────────
-
-test('the grouping reaches the zones', () => {
-  const w = (m) => m * 1000 * PPM;
-  let rooms = [at('KITCHEN', 0, 0, 4, 4), at('MEALS', w(4), 0, 4, 4),
-               at('LIVING', w(8), 0, 5, 4), at('BEDROOM 2', 0, w(9), 3, 3)]
-    .map(r => ({ ...r, status: 'Verified' }));
-  const before = suggestZones(rooms, {
-    rows: rooms.map(r => ({ roomId: r.id, adjustedLs: 100 })), allocatedAirflowLs: 400 });
-  assert.equal(before.zoneCount, 4, 'ungrouped, every room is its own zone');
-
-  rooms = applyOpenPlanGroups(rooms, suggestOpenPlanGroups(rooms, { calibration: CAL }));
-  const after = suggestZones(rooms, {
-    rows: rooms.map(r => ({ roomId: r.id, adjustedLs: 100 })), allocatedAirflowLs: 400 });
-  assert.equal(after.zoneCount, 2, 'the open-plan area is one zone');
-  const openPlan = after.zones.find(z => z.roomIds.length === 3);
-  assert.ok(openPlan);
-  assert.equal(openPlan.alwaysOpen, true, 'the largest grouped zone becomes the constant zone');
-});
 
 // ── Nothing already decided is ever overwritten ─────────────────────────────
 

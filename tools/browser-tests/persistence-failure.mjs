@@ -8,7 +8,7 @@ for (const [label, status] of [['database rejects (403)', 403], ['database unrea
   p.on('pageerror',e=>console.log('  [pageerror]',e.message.slice(0,120)));
   await p.route('**/rest/v1/**', r => status===null ? r.abort('connectionfailed')
     : r.fulfill({status, contentType:'application/json', body:'{"message":"no"}'}));
-  await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
+  await p.goto('http://127.0.0.1:8777/quote-builder.html',{waitUntil:'load'}); await p.waitForTimeout(1200);
   await p.locator('button',{hasText:'Load the sample builder plan'}).first().click();
   await p.waitForTimeout(2500);
   await p.locator('button',{hasText:'Save'}).first().click();

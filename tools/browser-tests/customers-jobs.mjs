@@ -60,7 +60,7 @@ async function newPage(ctx) {
 /** Build a design in the designer for a given customer, and save it. */
 async function designFor(ctx, customer, jobDescription) {
   const p = await newPage(ctx);
-  await p.goto('http://127.0.0.1:8777/designer.html', { waitUntil: 'load' });
+  await p.goto('http://127.0.0.1:8777/quote-builder.html', { waitUntil: 'load' });
   await p.waitForTimeout(1500);
   // save() may raise a dialog when the design disagrees with the customer
   // record, and it waits for an answer — so answer it, and record what it said.
@@ -156,7 +156,7 @@ say('and the estimator WAS told about the difference',
 
 console.log('\n[6] The quote carries the same customer and job');
 const p = await newPage(ctx);
-await p.goto('http://127.0.0.1:8777/designer.html', { waitUntil: 'load' });
+await p.goto('http://127.0.0.1:8777/quote-builder.html', { waitUntil: 'load' });
 await p.waitForTimeout(1500);
 const quote = await p.evaluate(async () => {
   const app = window.nacDesigner;

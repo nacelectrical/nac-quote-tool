@@ -9,7 +9,7 @@
 
 import { chromium } from 'playwright';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const PAGES=['index.html','admin.html','designer.html','intake.html','next.html','sign.html','splits.html','NAC — Your Ducted AC Details.html'];
+const PAGES=['index.html','admin.html','quotes.html','quote-builder.html','intake.html','next.html','sign.html','splits.html','NAC — Your Ducted AC Details.html'];
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
 for (const page of PAGES) {
   const p=await b.newPage({viewport:{width:1400,height:900}});

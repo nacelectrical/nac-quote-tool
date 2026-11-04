@@ -18,7 +18,7 @@ p.on('pageerror', e => console.log('   [pageerror]', e.message.slice(0, 140)));
 const native = [];
 p.on('dialog', async d => { native.push(d.type() + ': ' + d.message().slice(0, 60)); await d.dismiss(); });
 
-await p.goto('http://127.0.0.1:8777/designer.html');
+await p.goto('http://127.0.0.1:8777/quote-builder.html');
 await p.evaluate(() => localStorage.setItem('nac_session_v1', JSON.stringify({
   access_token: 'T', expires_at: Math.floor(Date.now() / 1000) + 3600,
   user: { email: 'nick@nacelectrical.com.au' } })));

@@ -17,19 +17,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildApproved } from './fixtures/approved-job.mjs';
 import { DEMO_CONTENT, buildDemoDesign } from './fixtures/demo-presentation.mjs';
 import { buildPresentation } from '../designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
 import { presentationPrintHtml } from '../designer/ui/presentation-pdf.mjs';
-import { customerReportDoc, docText } from '../designer/engines/report-doc.mjs';
 import { issuePresentation, acceptPresentation, declinePresentation,
          revokePresentation, changeOptions, supersede,
          ISSUE_STATUS } from '../designer/engines/presentation-share.mjs';
-import { designRulesFor, settingsForDesign } from '../designer/engines/design-rules.mjs';
-import { selectDiameter } from '../designer/engines/ducts.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
-import { pressureReadiness } from '../designer/engines/supply-graph.mjs';
 import { quoteGate } from '../designer/engines/quote-gate.mjs';
 
 
@@ -49,7 +44,6 @@ import { quoteGate } from '../designer/engines/quote-gate.mjs';
 const BUILDABLE = { ok: true, rows: [], unbuildable: [], partsCost: null,
                     summary: 'Stood in for by the presentation fixtures.' };
 
-const APPROVED = (await buildApproved()).out;
 const DEMO = { ...(await buildDemoDesign()).out, fittingAssembly: BUILDABLE };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +83,9 @@ const readable = (text) => String(text)
 const SURFACES = {
   'the customer HTML': readable(renderPresentationHtml(P)),
   'the print / PDF HTML': readable(presentationPrintHtml(P)),
-  'the customer report document': readable(docText(customerReportDoc(DEMO))),
+  // The customer report document was a third surface produced by report-doc.mjs,
+  // the designer's own document builder. It went with the designer; the two
+  // surfaces a customer can reach now are the page and its printable form.
   'the presentation payload itself': readable(JSON.stringify(P))
 };
 
@@ -117,32 +113,6 @@ function leaks(text, form) {
   return new RegExp('(?<![\\d.,])' + esc + '(?![\\d])').test(text);
 }
 
-test('no cost, fee or margin figure appears on any customer surface', () => {
-  const c = DEMO.commercials;
-  const secret = {
-    equipmentCost: c.equipmentCost, materialsCost: c.materialsCost,
-    labourCost: c.labourCost, subcontractorCost: c.subcontractorCost,
-    otherCost: c.otherCost, totalJobCost: c.totalJobCost,
-    jobFee: c.jobFee, grossProfit: c.grossProfit
-  };
-  for (const [name, value] of Object.entries(secret)) {
-    for (const form of moneyForms(value)) {
-      for (const [where, text] of Object.entries(SURFACES)) {
-        assert.ok(!leaks(text, form), name + ' (' + form + ') reached ' + where);
-      }
-    }
-  }
-  // The margin percentage, to whatever precision it is carried at.
-  const pct = Number(c.grossMarginPct);
-  assert.ok(Number.isFinite(pct) && pct > 0, 'the fixture must have a margin to leak');
-  for (const form of [String(pct), pct.toFixed(1), String(Math.round(pct))]) {
-    for (const [where, text] of Object.entries(SURFACES)) {
-      assert.ok(!new RegExp(form.replace('.', '\\.') + '\\s*%').test(text),
-        'the gross margin reached ' + where);
-    }
-  }
-});
-
 test('no cost, margin or supplier field name reaches a customer surface', () => {
   const FORBIDDEN = [
     /unitCost/, /totalCost/, /equipmentCost/, /materialsCost/, /labourCost/,
@@ -152,20 +122,6 @@ test('no cost, margin or supplier field name reaches a customer surface', () => 
   for (const [where, text] of Object.entries(SURFACES)) {
     for (const re of FORBIDDEN) {
       assert.ok(!re.test(text), String(re) + ' reached ' + where);
-    }
-  }
-});
-
-test('the bill of materials never reaches a customer surface', () => {
-  // A line-by-line BOM is NAC's cost structure written out. The customer gets
-  // what is being installed, not what each piece was bought for.
-  assert.ok(!('bom' in P), 'the presentation carries the BOM');
-  for (const [where, text] of Object.entries(SURFACES)) {
-    for (const item of DEMO.bom.items) {
-      for (const form of moneyForms(item.unitCost)) {
-        assert.ok(!leaks(text, form),
-          'the cost of "' + item.label + '" (' + form + ') reached ' + where);
-      }
     }
   }
 });
@@ -276,276 +232,12 @@ test('superseding an accepted revision archives it without altering it', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Ø250 PREVENTS Ø200
+// Sections 3 to 7 stood here: duct sizes, the outlet schedule against the bill
+// of materials, airflow reconciling off a main, plenum collars against spigots,
+// and a static pressure check over zero metres of duct. Every one of them was
+// about a drawing this application no longer produces, and they went with the
+// engines that produced it. checkpoint/before-designer-removal has them.
 // ─────────────────────────────────────────────────────────────────────────────
-
-test('the approved job carries ø250 as its own rule, not the application default', () => {
-  const rules = designRulesFor(APPROVED, DEFAULT_SETTINGS);
-  assert.equal(rules.minimumSupplyBranchDiameterMm, 250);
-  assert.equal(rules.source.minimumSupplyBranchDiameterMm, 'design',
-    'the minimum came from settings, so opening the job elsewhere could resize it');
-});
-
-test('no supply duct in a ø250 job is smaller than ø250', () => {
-  const supply = APPROVED.network.sections.filter(s => s.role !== 'return');
-  assert.ok(supply.length >= 10, 'the fixture must have a network to check');
-  for (const s of supply) {
-    assert.ok(s.diameterMm >= 250,
-      s.id + ' (' + s.destination + ') is ø' + s.diameterMm + ' in a ø250 job');
-  }
-  // The schedule and the outlet register say the same thing.
-  for (const r of APPROVED.nacSchedule.rooms) {
-    for (const mm of r.finalSizesMm) {
-      assert.ok(mm >= 250, r.room + ' is scheduled at ø' + mm);
-    }
-  }
-  for (const line of APPROVED.bom.items.filter(i => i.key === 'flex_duct')) {
-    assert.ok(/ (250|300|350|400) mm$/.test(line.label),
-      'the order buys ' + line.label + ' for a ø250 job');
-  }
-});
-
-test('the rule is what prevents it — the same airflow sizes to ø200 without it', () => {
-  // 40 L/s is a small bedroom, and it is exactly the case that produced ø200.
-  const at = (minMm) => selectDiameter(40, 'final', {
-    settings: settingsForDesign(
-      { designRules: { minimumSupplyBranchDiameterMm: minMm } }, DEFAULT_SETTINGS)
-  });
-  const held = at(250);
-  const free = at(200);
-  assert.equal(held.diameterMm, 250, 'the ø250 minimum did not hold');
-  assert.ok(free.diameterMm <= 200, 'ø200 is no longer reachable at all — the rule proves nothing');
-  // And the engine owns up to WHY, rather than passing the minimum off as maths.
-  assert.equal(held.sizeBasis, 'installer_minimum');
-  assert.equal(held.raisedByMinimum, true);
-  assert.equal(held.minimumAppliedMm, 250);
-  assert.ok(held.calculatedDiameterMm < 250, 'the calculation is being reported as 250');
-  assert.match(held.reason, /NOT because the airflow required it/);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. THE OUTLET SCHEDULE AND THE BILL OF MATERIALS AGREE
-// ─────────────────────────────────────────────────────────────────────────────
-
-const finals = APPROVED.network.sections.filter(s => s.role === 'final');
-const bomQty = (key, re = null) => APPROVED.bom.items
-  .filter(i => i.key === key && (!re || re.test(i.label)))
-  .reduce((n, i) => n + Number(i.quantity || 0), 0);
-
-test('one outlet, one final duct, one diffuser, one schedule row', () => {
-  const scheduled = APPROVED.nacSchedule.rooms.reduce((n, r) => n + r.outletCount, 0);
-  assert.equal(APPROVED.outlets.totals.total, 10);
-  assert.equal(finals.length, APPROVED.outlets.totals.total, 'finals vs outlets');
-  assert.equal(scheduled, APPROVED.outlets.totals.total, 'schedule vs outlets');
-  assert.equal(APPROVED.nacSchedule.totals.outlets, APPROVED.outlets.totals.total);
-  assert.equal(bomQty('diffuser_round'), APPROVED.outlets.totals.total,
-    'the order buys a different number of diffusers than the design has outlets');
-});
-
-test('every diffuser bought is the size the schedule calls for', () => {
-  const wanted = new Map();
-  for (const r of APPROVED.nacSchedule.rooms) {
-    for (const mm of r.finalSizesMm) wanted.set(mm, (wanted.get(mm) || 0) + 1);
-  }
-  const bought = new Map();
-  for (const i of APPROVED.bom.items.filter(x => x.key === 'diffuser_round')) {
-    const mm = Number(/(\d+)\s*mm/.exec(i.label)?.[1]);
-    bought.set(mm, (bought.get(mm) || 0) + Number(i.quantity || 0));
-  }
-  assert.deepEqual([...bought.entries()].sort(), [...wanted.entries()].sort(),
-    'the diffusers ordered do not match the sizes on the schedule');
-});
-
-test('the return grilles on the schedule are the return grilles on the order', () => {
-  assert.equal(bomQty('return_grille'), APPROVED.nacSchedule.totals.returns);
-  assert.equal(APPROVED.returnComponents.grilles.length, APPROVED.nacSchedule.totals.returns);
-});
-
-test('every fabricated BTO on the schedule is on the order, once each', () => {
-  const onSchedule = APPROVED.btos.length;
-  assert.ok(onSchedule > 0, 'the fixture must have BTOs');
-  assert.equal(bomQty('bto_fitting'), onSchedule,
-    onSchedule + ' fabricated fittings in the design, ' + bomQty('bto_fitting') + ' on the order');
-});
-
-test('the duct bought covers the duct routed, in whole 6 m lengths', () => {
-  const lengths = APPROVED.bom.items.filter(i => i.key === 'flex_duct');
-  assert.ok(lengths.length > 0);
-  for (const l of lengths) {
-    assert.equal(l.unit, '6 m length', 'duct is bought in 6 m lengths');
-    assert.equal(l.quantity, Math.ceil(l.quantity), 'a part length cannot be bought');
-  }
-  const bought = lengths.reduce((n, l) => n + Number(l.quantity) * 6, 0);
-  const routed = Number(APPROVED.network.totalDuctLengthM)
-    + Number(APPROVED.returnDesign?.totalDuctLengthM || 0);
-  assert.ok(bought >= routed,
-    'the order buys ' + bought + ' m for ' + routed.toFixed(1) + ' m of routed duct');
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. AIRFLOW OFF A MAIN RECONCILES
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Every final duct downstream of a section, following parentId. */
-function finalsUnder(id) {
-  const byParent = new Map();
-  for (const s of APPROVED.network.sections) {
-    if (!byParent.has(s.parentId)) byParent.set(s.parentId, []);
-    byParent.get(s.parentId).push(s);
-  }
-  const out = [];
-  const walk = (sectionId) => {
-    for (const child of byParent.get(sectionId) || []) {
-      if (child.role === 'final') out.push(child); else walk(child.id);
-    }
-  };
-  walk(id);
-  return out;
-}
-
-test('each main carries exactly the air its own outlets take', () => {
-  const mains = APPROVED.network.sections.filter(s => s.role === 'main');
-  assert.ok(mains.length >= 2 && mains.length <= 3, 'NAC runs 2 or 3 mains off the plenum');
-  for (const m of mains) {
-    const under = finalsUnder(m.id);
-    assert.ok(under.length > 0, m.id + ' feeds nothing');
-    const sum = under.reduce((n, f) => n + Number(f.airflowLs || 0), 0);
-    assert.ok(Math.abs(sum - Number(m.airflowLs)) <= 1,
-      m.id + ' carries ' + m.airflowLs + ' L/s to outlets totalling ' + sum + ' L/s');
-  }
-});
-
-test('an outlet taken straight off a main is counted once, not twice', () => {
-  // The direct case is the one that double-counted: a final hanging off a main
-  // through its own BTO, with no branch in between.
-  const direct = finals.filter(f => {
-    const parent = APPROVED.network.sections.find(s => s.id === f.parentId);
-    return parent && parent.role === 'main';
-  });
-  assert.ok(direct.length > 0, 'the fixture must have a direct-off-main outlet');
-  const total = finals.reduce((n, f) => n + Number(f.airflowLs || 0), 0);
-  const mains = APPROVED.network.sections.filter(s => s.role === 'main');
-  const carried = mains.reduce((n, m) => n + Number(m.airflowLs || 0), 0);
-  assert.ok(Math.abs(carried - total) <= 2,
-    'the mains carry ' + carried + ' L/s and the outlets take ' + total + ' L/s');
-});
-
-test('the mains, the schedule and the spigots all state the same airflow', () => {
-  const sched = APPROVED.nacSchedule.plenum;
-  const carried = APPROVED.network.sections
-    .filter(s => s.role === 'main').reduce((n, m) => n + Number(m.airflowLs || 0), 0);
-  assert.ok(Math.abs(sched.totalAirflowLs - carried) <= 2, 'schedule vs network');
-  const spigots = APPROVED.supplySpigots.rows
-    .reduce((n, r) => n + Number(r.airflowLs || 0), 0);
-  assert.ok(Math.abs(spigots - carried) <= 2, 'spigots vs network');
-  // And every room's scheduled total is its outlets' airflow. The outlet
-  // register is the join between an outlet and the duct that feeds it, so the
-  // reconciliation goes through it rather than guessing at an id.
-  const sectionOf = (outletId) => {
-    const row = APPROVED.outletRegister.find(o => o.id === outletId);
-    assert.ok(row, 'outlet ' + outletId + ' is not in the register');
-    const sec = APPROVED.network.sections.find(x => x.id === row.finalSectionId);
-    assert.ok(sec, 'outlet ' + outletId + ' points at a duct that does not exist');
-    return sec;
-  };
-  for (const r of APPROVED.nacSchedule.rooms) {
-    const own = r.outletIds.reduce((n, id) => n + Number(sectionOf(id).airflowLs || 0), 0);
-    assert.ok(Math.abs(own - r.totalLs) <= 1,
-      r.room + ' is scheduled at ' + r.totalLs + ' L/s and ducted for ' + own + ' L/s');
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. PLENUM COLLARS = SPIGOTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-test('the plenum is fabricated with one collar per main, and no spare', () => {
-  const plenum = APPROVED.supplyPlenum;
-  const spigots = APPROVED.supplySpigots;
-  const mains = APPROVED.network.sections.filter(s => s.role === 'main');
-  assert.equal(plenum.collarCount, spigots.count, 'collars vs spigots');
-  assert.equal(plenum.collarCount, mains.length, 'collars vs mains off the plenum');
-  assert.equal(plenum.collarCount, spigots.rows.length, 'collars vs spigot rows');
-  assert.equal(APPROVED.nacSchedule.plenum.ductCount, plenum.collarCount,
-    'the schedule states a different number of ducts off the plenum');
-});
-
-test('every collar is the diameter of the duct that goes into it', () => {
-  const plenum = APPROVED.supplyPlenum;
-  for (const r of APPROVED.supplySpigots.rows) {
-    assert.equal(r.diameterMm, plenum.collarDiameterMm,
-      'spigot ' + r.key + ' is ø' + r.diameterMm + ' into a ø' + plenum.collarDiameterMm + ' collar');
-  }
-  for (const m of APPROVED.network.sections.filter(s => s.role === 'main')) {
-    assert.equal(m.diameterMm, plenum.collarDiameterMm,
-      m.id + ' leaves the plenum at ø' + m.diameterMm);
-  }
-  assert.equal(APPROVED.plenumCheck.ok, true,
-    'the plenum check failed: ' + JSON.stringify(APPROVED.plenumCheck.failures));
-});
-
-test('the collars physically fit across the face NAC fabricates', () => {
-  const p = APPROVED.supplyPlenum;
-  const needed = p.collarCount * p.collarDiameterMm;
-  assert.ok(p.collarRowMm >= needed,
-    p.collarCount + ' × ø' + p.collarDiameterMm + ' needs ' + needed
-      + ' mm and the collar row is ' + p.collarRowMm + ' mm');
-  assert.ok(p.bodyWidthMm >= p.collarRowMm, 'the collar row is wider than the plenum body');
-  // And the order buys the plenum that was designed, not a catalogue box.
-  const line = APPROVED.bom.items.find(i => i.key === 'supply_plenum');
-  assert.ok(line, 'the plenum is not on the order');
-  assert.ok(line.label.includes(String(p.collarCount)),
-    'the plenum on the order does not state its collar count: ' + line.label);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. ZERO ROUTE LENGTH CANNOT PASS A STATIC PRESSURE CHECK
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** The same network with every duct length erased — the Kauri failure exactly. */
-const unmeasured = (sections) => ({
-  sections: sections.map(s => ({ ...s, lengthM: 0, lengthMm: 0, effectiveLengthM: 0 })),
-  totalDuctLengthM: 0
-});
-
-test('a network with no measured length is NOT CALCULATED, not "passed"', () => {
-  const r = pressureReadiness(unmeasured(APPROVED.network.sections));
-  assert.equal(r.ok, false);
-  assert.match(r.status, /NOT CALCULATED/i);
-  assert.match(r.reason, /zero/i);
-});
-
-test('one measured duct among many is still not a calculation', () => {
-  const some = APPROVED.network.sections.map((s, i) =>
-    (i === 0 ? { ...s } : { ...s, lengthM: 0, lengthMm: 0, effectiveLengthM: 0 }));
-  const r = pressureReadiness({ sections: some, totalDuctLengthM: some[0].lengthM });
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /no measured length/i);
-});
-
-test('an empty network is not a low pressure drop either', () => {
-  assert.equal(pressureReadiness({ sections: [], totalDuctLengthM: 0 }).ok, false);
-  assert.equal(pressureReadiness(null).ok, false);
-  assert.equal(pressureReadiness(undefined).ok, false);
-});
-
-test('an unmeasured design is blocked from quoting on exactly that ground', () => {
-  const blind = { ...APPROVED,
-    network: unmeasured(APPROVED.network.sections),
-    pressureReadiness: pressureReadiness(unmeasured(APPROVED.network.sections)) };
-  const gate = quoteGate(blind);
-  assert.equal(gate.ok, false);
-  assert.ok(gate.blockers.some(b => /pressure/i.test(b.code + ' ' + b.message)),
-    'nothing in the quote gate mentions the missing pressure calculation');
-});
-
-test('the measured design DOES calculate, so the check is worth something', () => {
-  const r = pressureReadiness(APPROVED.network);
-  assert.equal(r.ok, true, r.reason || '');
-  assert.ok(Number(APPROVED.pressure?.totalPa ?? APPROVED.pressure?.totalStaticPa ?? 0) > 0
-    || APPROVED.pressure?.components?.length > 0,
-    'the approved job has no pressure figure at all');
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. A SELL PRICE IS NOT A COST
@@ -558,76 +250,83 @@ test('the measured design DOES calculate, so the check is worth something', () =
 // over, and are added after it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('all six fixed-price lines are on the order, priced, and cost nothing', () => {
-  const fixed = APPROVED.bom.items.filter(i => i.fixedSell);
-  assert.equal(fixed.length, 6, fixed.map(f => f.key).join(','));
-  assert.deepEqual(fixed.map(f => f.key).sort(),
-    ['consumables', 'drain_kit', 'interconnect_cable', 'isolator',
-     'outdoor_feet', 'power_cable']);
-  for (const l of fixed) {
-    assert.equal(l.priceSource, 'nac_sell');
-    assert.equal(l.priced, true, l.label + ' reads as a hole in the costing');
-    assert.equal(l.totalCost, null, l.label + ' put a sell price into the job cost');
-    assert.ok(l.sellPrice > 0 && l.sellTotal > 0);
-    assert.equal(l.sellTotal, Math.round(l.sellPrice * l.quantity * 100) / 100);
-  }
-  // The exact figures NAC gave.
-  const at = (k) => fixed.find(f => f.key === k).sellPrice;
-  assert.equal(at('outdoor_feet'), 95);
-  assert.equal(at('drain_kit'), 80);
-  assert.equal(at('interconnect_cable'), 7.20);
-  assert.equal(at('power_cable'), 9.40);
-  assert.equal(at('isolator'), 68);
-  assert.equal(at('consumables'), 145);
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT NAC PAYS NEVER REACHES WHAT THE CUSTOMER READS
+//
+// The sweep that stood here read its secret figures off the design's own
+// costing block — equipmentCost, materialsCost, labourCost, jobFee,
+// grossProfit, grossMarginPct. A quote source has none of those, so the sweep
+// had nothing to look for and would have passed on an empty set, which is
+// worse than not having it.
+//
+// It is rebuilt here against the figures NAC actually holds internally on a
+// quote: the MMEM cost of the zone kit, the MMEM cost of the equipment, and a
+// margin worked out over them. Every surface a customer can reach is searched
+// for every way each of those can be written.
+// ─────────────────────────────────────────────────────────────────────────────
 
-test('the job fee is worked out over the cost, never over the sell lines', () => {
-  const c = APPROVED.commercials;
-  assert.equal(c.pricingBasis.feeBaseExGst, c.totalJobCost);
-  assert.equal(c.fixedSellExGst, APPROVED.bom.fixedSellTotal);
-  assert.equal(c.sellPriceExGst,
-    Math.round((c.totalJobCost + c.jobFee + c.fixedSellExGst) * 100) / 100);
+test('no cost, fee or margin figure appears on any customer surface', async () => {
+  const { ZONE_CONTROLLERS } = await import('../designer/engines/catalogue.mjs');
+  const { MMEM_DUCTED } = await import('../designer/engines/supplier-pricing.mjs');
 
-  // The counter-check: charging them the other way round costs the customer
-  // the fee's share of them again. That difference is what this is preventing.
-  const ifTreatedAsCost = (c.totalJobCost + c.fixedSellExGst) + c.jobFee;
-  assert.equal(Math.round(ifTreatedAsCost * 100) / 100, c.sellPriceExGst,
-    'on a flat fee the totals coincide — the difference shows on any percentage basis');
-  // What must NOT happen is the sell figure landing in the job cost.
-  assert.ok(!APPROVED.bom.items.some(i => i.fixedSell && i.totalCost !== null));
-  assert.equal(APPROVED.bom.materialsCost,
-    Math.round(APPROVED.bom.items
-      .filter(i => i.category !== 'equipment')
-      .reduce((n, i) => n + (i.totalCost || 0), 0) * 100) / 100);
-});
+  // What this job costs NAC, from the real supplier records.
+  const kit = ZONE_CONTROLLERS.find(c => c.id === 'siemens_z8');
+  const unit = MMEM_DUCTED.find(m => /FDYAN160AV1 \/ RZA160C2V1/.test(m.code));
+  assert.ok(kit && kit.cost > 0, 'no zone kit cost to leak');
+  assert.ok(unit && unit.cost > 0, 'no equipment cost to leak');
 
-test('the margin says what it does not know', () => {
-  const c = APPROVED.commercials;
-  assert.ok(c.marginExcludesCostOf, 'the margin is overstated and nothing says so');
-  assert.equal(c.marginExcludesCostOf.fixedSellExGst, c.fixedSellExGst);
-  assert.match(c.marginExcludesCostOf.note, /not recorded/);
-  assert.match(c.marginExcludesCostOf.note, /lower than the figure shown/);
-  assert.equal(c.grossProfit, Math.round((c.jobFee + c.fixedSellExGst) * 100) / 100);
-});
+  const sell = P.investment.totalIncGst;
+  const cost = kit.cost + unit.cost;
+  const grossProfit = Math.round((sell / 1.1 - cost) * 100) / 100;
+  const grossMarginPct = Math.round((grossProfit / (sell / 1.1)) * 1000) / 10;
 
-test('the strap is still bought, it is just not charged for', () => {
-  const strap = APPROVED.bom.items.find(i => i.key === 'hanging_kit');
-  assert.ok(strap, 'the duct hanging strap fell off the order');
-  assert.equal(strap.noCharge, true);
-  assert.ok(strap.quantity > 0, 'an installer cannot hang duct with no strap');
-  assert.equal(strap.totalCost, 0);
-  assert.ok(APPROVED.bom.warnings.some(w => w.code === 'LINES_NOT_SEPARATELY_CHARGED'));
-});
+  // ── A BARE NUMBER IS SEARCHED IN THE PROSE, NOT IN THE MARKUP ──────────
+  //
+  // The first run of this caught "320" — the Siemens 8-zone kit's cost — in
+  // the customer HTML, and it was `sizes="(min-width:900px) 320px, 45vw"` on
+  // an image. A stylesheet is full of round numbers and none of them is a
+  // price, so a bare figure is looked for in what a customer can actually
+  // READ, with tags, attributes, styles and scripts taken out. Anything
+  // written as money is still searched across the whole document, because
+  // "$320.00" in a stylesheet would be a leak however it got there.
+  const prose = (text) => String(text)
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ');
+  const surfaceFor = (text, form) => /[$,]/.test(form) ? text : prose(text);
 
-test('no fixed-price figure reaches a customer surface either', () => {
-  // A sell price is still NAC's commercial structure. The customer sees one
-  // total, not a line saying the isolator was $68.
-  for (const l of APPROVED.bom.items.filter(i => i.fixedSell)) {
-    for (const form of moneyForms(l.sellTotal)) {
+  const secret = {
+    'the zone kit cost': kit.cost,
+    'the equipment cost': unit.cost,
+    'the total job cost': cost,
+    'the gross profit': grossProfit
+  };
+  for (const [name, value] of Object.entries(secret)) {
+    for (const form of moneyForms(value)) {
       for (const [where, text] of Object.entries(SURFACES)) {
-        assert.ok(!leaks(text, form),
-          'the charge for "' + l.label + '" (' + form + ') reached ' + where);
+        assert.ok(!leaks(surfaceFor(text, form), form),
+          name + ' (' + form + ') reached ' + where);
       }
+    }
+  }
+
+  assert.ok(grossMarginPct > 0, 'the fixture must have a margin to leak');
+  for (const form of [String(grossMarginPct), grossMarginPct.toFixed(1),
+                      String(Math.round(grossMarginPct))]) {
+    for (const [where, text] of Object.entries(SURFACES)) {
+      assert.ok(!new RegExp(form.replace('.', '\\.') + '\\s*%').test(text),
+        'the gross margin reached ' + where);
+    }
+  }
+});
+
+test('the words for an internal figure never reach a customer surface either', () => {
+  // A number can be coincidental. These cannot.
+  for (const [where, text] of Object.entries(SURFACES)) {
+    for (const word of [/supplier\s*cost/i, /gross\s*(profit|margin)/i, /\bmark[- ]?up\b/i,
+                        /\bjob\s*fee\b/i, /\bMMEM\b/, /\bex\s*GST\s*cost\b/i,
+                        /\bwhat we pay\b/i, /\btrade price\b/i]) {
+      assert.ok(!word.test(text), word + ' reached ' + where);
     }
   }
 });
