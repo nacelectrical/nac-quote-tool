@@ -90,6 +90,26 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1}
 .pod .hist{font-size:13px;color:var(--muted);display:grid;gap:3px}
 .link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--muted);
   overflow-wrap:anywhere}
+/* ── waiting for Nick, and what the integration did ─────────────────── */
+.ask{background:#FFFBF0;border:1px solid var(--warn);border-left-width:4px;border-radius:13px;
+  padding:16px 18px;display:grid;gap:10px}
+.ask h2{font-size:16px;color:var(--ink)}
+.ask .one{background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 15px;
+  display:grid;gap:7px}
+.ask .oneh{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
+.ask .oneh strong{font-size:16px;color:var(--ink)}
+.ask .oneh .addr{color:var(--muted);font-size:14px;flex:1;min-width:150px}
+.ask .asknote{font-size:14px;color:var(--body);font-style:italic}
+.ask ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--warn)}
+.act{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px 18px;
+  display:grid;gap:10px}
+.act h2{font-size:16px;color:var(--ink)}
+.act table{width:100%;border-collapse:collapse;font-size:13.5px}
+.act th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.3px;
+  color:var(--muted);font-weight:700;padding:6px 10px 6px 0;white-space:nowrap}
+.act td{padding:7px 10px 7px 0;border-top:1px solid var(--line);vertical-align:top}
+.act td.why{color:var(--bad)}
+.act .wrapx{overflow-x:auto}
 .empty{background:#fff;border:1px dashed var(--line);border-radius:13px;padding:40px 22px;
   text-align:center;color:var(--muted)}
 .err{background:#FBECEB;border:1px solid #F3C9C6;color:var(--bad);border-radius:11px;padding:14px 16px}
@@ -106,10 +126,15 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1}
 
 <div class="wrap">
   <div class="cards" id="stats"></div>
+  <!-- Section 11: "Notify Nick that a quote needs approval" and "Record
+       actions and failures so NAC can see what happened". Both were written
+       to the database and read by no screen. -->
+  <div id="approvals"></div>
   <div class="bar" id="filters"></div>
   <div class="bar" id="sm8"></div>
   <div id="sm8Result"></div>
   <div id="list"><p class="note">Loading…</p></div>
+  <div id="activity"></div>
 </div>
 
 <script type="module">
@@ -536,6 +561,134 @@ async function testServiceM8() {
   }
 }
 
+// ── WAITING FOR NICK, AND WHAT THE INTEGRATION DID ─────────────────────────
+//
+// Nick, section 11: "Notify Nick that a quote needs approval... Record
+// actions and failures so NAC can see what happened and retry safely."
+//
+// `quote.request_approval` wrote the request onto the draft and nothing
+// displayed it, so the operation notified nobody. Every call was written to
+// nac_integration_calls and nothing read it back, so "NAC can see what
+// happened" was true of the database and of no screen in the application.
+let OPS = null;
+
+function drawApprovals() {
+  const host = $('#approvals');
+  host.textContent = '';
+  if (!OPS || !OPS.approvals || !OPS.approvals.length) return;
+
+  const box = el('div', { class: 'ask' }, [
+    el('h2', { text: OPS.approvals.length === 1
+      ? 'One quote is waiting for your approval'
+      : OPS.approvals.length + ' quotes are waiting for your approval' }),
+    el('p', { class: 'note',
+      text: 'Asked for through the operations surface. Asking is not approving — '
+        + 'open the quote, read the preview as the customer will, and tick the '
+        + 'approval there. Nothing issues without it.' })
+  ]);
+
+  for (const a of OPS.approvals) {
+    const one = el('div', { class: 'one' }, [
+      el('div', { class: 'oneh' }, [
+        el('strong', { text: a.customerName || 'Unnamed customer' }),
+        el('span', { class: 'addr', text: a.siteAddress || 'No site address recorded' }),
+        a.testQuote ? el('span', { class: 'pill warn', text: 'test quote' }) : null,
+        el('span', { class: 'pill ' + (a.ready ? 'ok' : 'warn'),
+          text: a.ready ? 'ready to approve' : 'not ready' })
+      ]),
+      el('div', { class: 'facts' }, [
+        fact('Proposal', a.proposalNumber || '—'),
+        fact('System', a.system || '—'),
+        fact('Price', money(a.totalIncGst)),
+        fact('Asked', when(a.requestedAt) + (a.requestedBy ? ' by ' + a.requestedBy : ''))
+      ]),
+      a.note ? el('p', { class: 'asknote', text: '“' + a.note + '”' }) : null,
+      // The gate is re-run when this list is built, not trusted from when the
+      // request was made: the quote may have moved on since it was asked for.
+      a.missing && a.missing.length
+        ? el('ul', {}, a.missing.map(m => el('li', { text: m })))
+        : null,
+      a.alreadyIssued
+        ? el('p', { class: 'note',
+            text: 'A revision of this quote has already been issued. Approving this one '
+              + 'means issuing a new revision.' })
+        : null,
+      el('div', { class: 'qa' }, [
+        el('a', { class: 'btn primary',
+          href: '/quote-builder.html?id=' + encodeURIComponent(a.quoteId),
+          text: 'Open and review it' })
+      ])
+    ]);
+    box.appendChild(one);
+  }
+  host.appendChild(box);
+}
+
+function drawActivity() {
+  const host = $('#activity');
+  host.textContent = '';
+  if (!OPS) return;
+  const i = OPS.integration || {};
+
+  const head = [
+    el('h2', { text: 'What the assistant did' }),
+    // Said plainly, so an empty log is never read as "connected and quiet".
+    el('p', { class: 'note', text: i.configured
+      ? 'An integration key is configured. Automatic sending and follow-up '
+        + 'scheduling are still off, and nobody owns scheduling yet.'
+      : 'NOT CONNECTED. No integration key has been issued, so every call to the '
+        + 'operations surface is refused. Nothing below means the assistant is '
+        + 'working — it means nothing has called.' }),
+    i.callLogPresent ? null : el('p', { class: 'note',
+      text: 'The integration call log is not in this project, so nothing can be '
+        + 'recorded and every operation that would change something is refused. '
+        + 'Apply designer/ops-integration-schema.sql.' })
+  ].filter(Boolean);
+
+  if (!OPS.calls || !OPS.calls.length) {
+    host.appendChild(el('div', { class: 'act' }, [...head,
+      el('p', { class: 'note', text: 'Nothing has been recorded yet.' })]));
+    return;
+  }
+
+  const rows = OPS.calls.map(c => el('tr', {}, [
+    el('td', { text: when(c.at) }),
+    el('td', { text: c.operation }),
+    el('td', { text: c.integration }),
+    el('td', { text: c.status }),
+    el('td', { text: c.quoteId || '—' }),
+    el('td', { class: c.why.length ? 'why' : '', text: c.why.join(' ') || '' })
+  ]));
+
+  host.appendChild(el('div', { class: 'act' }, [...head,
+    el('div', { class: 'wrapx' }, [
+      el('table', {}, [
+        el('thead', {}, [el('tr', {}, ['When', 'Operation', 'Key', 'Outcome', 'Quote', 'Why not']
+          .map(h => el('th', { text: h })))]),
+        el('tbody', {}, rows)
+      ])
+    ])
+  ]));
+}
+
+/**
+ * The approvals and the activity log.
+ *
+ * Deliberately separate from the quote list and deliberately non-fatal: this
+ * is NAC's view of an integration that is not connected to anything yet, and
+ * it must never be the reason the quote list fails to load.
+ */
+async function loadOps() {
+  try {
+    const r = await fetch('/api/ops-activity', { headers: staffHeaders() });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.ok) return;
+    OPS = j;
+    drawApprovals();
+    drawActivity();
+  } catch (e) { /* the quote list stands on its own */ }
+}
+
 async function load() {
   const list = $('#list');
   list.innerHTML = '';
@@ -551,6 +704,7 @@ async function load() {
     }
     DATA = j;
     draw();
+    loadOps();
   } catch (e) {
     list.innerHTML = '';
     list.appendChild(el('div', { class: 'err',

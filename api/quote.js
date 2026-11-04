@@ -33,7 +33,8 @@ const ROUTES = {
   'quote-list': () => import('../server/quote-list.js'),
   'servicem8-testjob': () => import('../server/servicem8-testjob.js'),
   'ops': () => import('../server/ops.js'),
-  'quote-outreach': () => import('../server/quote-outreach.js')
+  'quote-outreach': () => import('../server/quote-outreach.js'),
+  'ops-activity': () => import('../server/ops-activity.js')
 };
 
 function requestedName(req) {

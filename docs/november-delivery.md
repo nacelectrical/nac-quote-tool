@@ -104,6 +104,24 @@ opening a second customer, draft or booking task.
 `NAC_OPS_KEYS` is unset, so every call answers 503 and says it is not connected
 to anything.
 
+Two of the requirements were stored rather than done, and are now both on
+`/quotes.html`:
+
+- **"Notify Nick that a quote needs approval."** `quote.request_approval` wrote
+  the request onto the draft and no screen read it, so the operation notified
+  nobody. The portal now shows what is waiting — who asked, what it is, what it
+  is worth, the assistant's note, and whether it passes the gate *now* rather
+  than when it was asked for. There is deliberately no approve button on that
+  panel: Nick opens the quote and ticks the approval on the preview, which is
+  the only place an approval can be made.
+- **"Record actions and failures so NAC can see what happened."** Every call was
+  written to the database and nothing read it back. The portal now lists them,
+  newest first, with the reason for each refusal. And refusals were not being
+  logged at all — the one kind of call NAC most needs to see, the assistant
+  being told no, was the one kind leaving no trace. They are logged now, under
+  their own id, so a refused call does not consume the caller's idempotency
+  key.
+
 **Nobody owns follow-up scheduling yet.** `SCHEDULING_OWNER` is `'undecided'`
 in both engines and is read before anything would be scheduled. Two systems
 that both believe they own it will both send, and it cannot be decided without
@@ -115,7 +133,7 @@ knowing whether Podium chases customers itself.
 
 | Checks | Where they ran |
 |---|---|
-| **792 node tests** — engines, gates, pricing, sizing, the offer freeze, the operations surface, the Podium state machine, the printable proposal | locally |
+| **800 node tests** — engines, gates, pricing, sizing, the offer freeze, the operations surface, the Podium state machine, the printable proposal | locally |
 | **The real `/api/ops`, `/api/quote-issue`, `/api/quote-view`, `/api/quote-respond` handlers** end to end — a test enquiry to a customer, a job, a draft, a priced quote issued and accepted, a booking task, and every refusal | against a **local PostgreSQL carrying NAC's own schema** (`designer/schema.sql`, `quote-presentation-schema.sql`, `crm-schema.sql`, `ops-integration-schema.sql`) |
 | **The whole journey in a real browser** at 1440px, 820px and 390px — a labelled test enquiry through to the Podium panel | locally, against the static server, database stubbed |
 | **Every browser suite**: quote-builder, portal-podium, quote-page-customer, quote-presentation (50 checks), auth-gate, dialogs, customers-jobs, persistence-failure, persistence-settings, signed-in-smoke, system-choice, storage-sync-warning, setup-page | locally |

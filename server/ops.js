@@ -808,6 +808,23 @@ module.exports = async function handler(req, res) {
 
   const g = ops.guard(operation, body, state);
   if (!g.ok) {
+    // ── A REFUSAL IS SOMETHING THAT HAPPENED ──────────────────────────
+    //
+    // Nick: "Record actions and failures so NAC can see what happened and
+    // retry safely." Refusals used to return here without reaching the log,
+    // so the one kind of call NAC most needs to see — the assistant being
+    // told no, and why — was the one kind that left no trace.
+    //
+    // Under its own id, NOT the idempotency key's: a refused call has not
+    // been carried out, so it must not consume the key. The caller fixes the
+    // request and retries with the same key, exactly as they should.
+    await writeCall(KEY, {
+      id: integration.id + ':refused:' + ops.requestHash(operation, body),
+      integration: integration.id, operation,
+      request_hash: ops.requestHash(operation, body),
+      status: 'refused', result: null, refusals: g.refusals,
+      quote_id: trimmed(body.quoteId) || null
+    }).catch(() => {});
     return res.status(409).json({ error: 'refused', refusals: g.refusals });
   }
 

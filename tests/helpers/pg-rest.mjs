@@ -236,13 +236,32 @@ function handle(req, body, done) {
   const limit = url.searchParams.get('limit');
   const limitSql = limit ? ' limit ' + (parseInt(limit, 10) || 1) : '';
 
+  // ── `order` IS NOT OPTIONAL TO IMPLEMENT ───────────────────────────────
+  //
+  // This shim skipped it, so a suite asserting "newest first" passed on
+  // insertion order and would have passed just as well against an endpoint
+  // that never asked for an order at all. A harness that silently ignores a
+  // query parameter hides exactly the bug it is there to catch.
+  const order = url.searchParams.get('order');
+  let orderSql = '';
+  if (order) {
+    const parts = order.split(',').map(x => x.trim()).filter(Boolean).map(part => {
+      const [col, ...mods] = part.split('.');
+      const dir = mods.includes('desc') ? 'desc' : 'asc';
+      const nulls = mods.includes('nullsfirst') ? ' nulls first'
+        : mods.includes('nullslast') ? ' nulls last' : '';
+      return '"' + col.replace(/"/g, '') + '" ' + dir + nulls;
+    });
+    if (parts.length) orderSql = ' order by ' + parts.join(', ');
+  }
+
   try {
     if (req.method === 'GET') {
       const sel = url.searchParams.get('select') || '*';
       const cols = sel === '*' ? '*'
         : sel.split(',').map(c => '"' + c.trim().replace(/"/g, '') + '"').join(', ');
       const text = 'select coalesce(json_agg(t), \'[]\'::json) from (select ' + cols
-        + ' from public.' + table + whereSql + limitSql + ') t';
+        + ' from public.' + table + whereSql + orderSql + limitSql + ') t';
       return done(200, JSON.parse(sql(text).trim() || '[]'));
     }
 

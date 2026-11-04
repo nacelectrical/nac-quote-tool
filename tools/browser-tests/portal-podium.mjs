@@ -92,6 +92,7 @@ await page.addInitScript(({ quote }) => {
     sessionStorage.setItem('extra', JSON.stringify(extra || {}));
   };
   window.__refuseNext = false;
+  window.__setOps = (o) => sessionStorage.setItem('ops', JSON.stringify(o));
 
   const real = window.fetch;
   window.fetch = async (url, opts = {}) => {
@@ -146,6 +147,15 @@ await page.addInitScript(({ quote }) => {
         schedulingOwner: 'undecided' });
     }
 
+    // ── WAITING FOR NICK, AND WHAT THE ASSISTANT DID ──────────────────
+    if (u.includes('/api/ops-activity')) {
+      return J(JSON.parse(sessionStorage.getItem('ops') || 'null') || {
+        ok: true,
+        integration: { configured: false, callLogPresent: true,
+                       automationEnabled: false, schedulingOwner: 'undecided' },
+        approvals: [], calls: [], counts: { waiting: 0, failed: 0, refused: 0 }
+      });
+    }
     if (u.includes('/api/servicem8-selftest')) return J({ ok: false, reason: 'no_api_key' });
     if (u.includes('supabase.co/auth/v1/user')) {
       return J({ id: 'u1', email: 'nick@nacelectrical.com.au' });
@@ -343,6 +353,96 @@ await t('issued, accepted, declined, expired and superseded all read back', asyn
     const head = await page.textContent('.qh');
     must(head.toLowerCase().includes(expect), status + ' is not shown: ' + head);
   }
+});
+
+// ── NOTIFYING NICK, AND WHAT NAC CAN SEE ────────────────────────────────────
+//
+// Nick, section 11: "Notify Nick that a quote needs approval... Record
+// actions and failures so NAC can see what happened and retry safely." Both
+// were written to the database and read by no screen, which is the same as
+// not notifying and not recording.
+
+await t('a quote the assistant asked about is on the screen Nick looks at', async () => {
+  await page.evaluate(() => window.__setOps({
+    ok: true,
+    integration: { configured: true, callLogPresent: true,
+                   automationEnabled: false, schedulingOwner: 'undecided' },
+    counts: { waiting: 1, failed: 0, refused: 1 },
+    approvals: [{
+      quoteId: 'Q-ASK-1', customerName: 'TEST — Riley Nguyen (do not contact)',
+      siteAddress: '7 Example Court, Testville QLD', proposalNumber: 'NAC-TEST-9',
+      requestedBy: 'ops-assistant', requestedAt: '2026-11-04T09:00:00Z',
+      note: 'Priced off the plan — over to you.', system: 'Daikin FDYAN160AV1',
+      totalIncGst: 16027, testQuote: true, ready: true, missing: [],
+      alreadyIssued: false
+    }],
+    calls: [{ integration: 'ops-assistant', operation: 'quote.update_draft',
+      status: 'refused', quoteId: 'Q-ASK-1', customerId: null,
+      at: '2026-11-04T09:01:00Z',
+      why: ['Prices are set in the quote tool, from NAC’s own catalogue.'] }]
+  }));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('.ask', { timeout: 10000 });
+
+  const ask = await page.textContent('.ask');
+  must(/waiting for your approval/i.test(ask), ask.slice(0, 80));
+  must(/Riley Nguyen/.test(ask), 'the customer is not named');
+  must(/Priced off the plan/.test(ask), 'the assistant’s note is not shown');
+  must(/ops-assistant/.test(ask), 'who asked is not shown');
+  must(/ready to approve/.test(ask), 'the gate result is not shown');
+  must(/\$16,027/.test(ask), 'the price is not shown: ' + ask.slice(0, 200));
+  // Asking is not approving, and the screen has to say so.
+  must(/Asking is not approving/i.test(ask), 'the screen reads as an approval button');
+  const href = await page.getAttribute('.ask a.btn', 'href');
+  must(href === '/quote-builder.html?id=Q-ASK-1', 'it does not open the quote: ' + href);
+  // And there is no approve control here — approval is a tick on the preview.
+  const buttons = await page.$$eval('.ask button', bs => bs.map(b => b.textContent));
+  must(buttons.length === 0, 'the portal offers an approve control: ' + buttons.join(','));
+});
+
+await t('a refused call is visible, with the reason', async () => {
+  const act = await page.textContent('.act');
+  must(/What the assistant did/.test(act));
+  must(/quote\.update_draft/.test(act), 'the operation is not listed');
+  must(/refused/.test(act), 'the outcome is not shown');
+  must(/Prices are set in the quote tool/.test(act), 'the reason is not shown');
+});
+
+await t('an unconnected integration says so rather than looking quiet', async () => {
+  await page.evaluate(() => window.__setOps({
+    ok: true,
+    integration: { configured: false, callLogPresent: true,
+                   automationEnabled: false, schedulingOwner: 'undecided' },
+    approvals: [], calls: [], counts: { waiting: 0, failed: 0, refused: 0 }
+  }));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('.act');
+  const act = await page.textContent('.act');
+  must(/NOT CONNECTED/.test(act), act.slice(0, 160));
+  must(/Nothing below means the assistant is working/.test(act), act.slice(0, 220));
+  must((await page.locator('.ask').count()) === 0,
+    'an empty approval list must render nothing, not an empty panel');
+});
+
+await t('a missing call log says what to apply', async () => {
+  await page.evaluate(() => window.__setOps({
+    ok: true,
+    integration: { configured: true, callLogPresent: false,
+                   automationEnabled: false, schedulingOwner: 'undecided' },
+    approvals: [], calls: [], counts: { waiting: 0, failed: 0, refused: 0 }
+  }));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('.act');
+  must(/ops-integration-schema\.sql/.test(await page.textContent('.act')));
+});
+
+await t('the activity panel never takes the quote list down with it', async () => {
+  await page.evaluate(() => sessionStorage.setItem('ops', 'BROKEN'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-pod]', { timeout: 10000 });
+  must((await page.locator('.q').count()) > 0,
+    'the quote list went down with the integration panel');
+  await page.evaluate(() => sessionStorage.removeItem('ops'));
 });
 
 await t('no javascript errors on the page', async () => {

@@ -53,6 +53,20 @@ in the brief, and the connection details at the foot are what is still needed.
                    │ approve a quote, or change │
                    │ an answered offer.         │
                    └────────────────────────────┘
+
+  And the two things that come back the other way, to a screen rather
+  than to a system — /quotes.html, NAC staff only:
+
+      quote.request_approval  ──▶  "waiting for your approval"
+                                   who asked, what for, what it is worth,
+                                   and whether it passes the gate NOW.
+                                   No approve button: Nick opens it and
+                                   ticks the approval on the preview.
+
+      every call, ok or not   ──▶  "what the assistant did"
+                                   the operation, the key's id, the
+                                   outcome, and the reason for a refusal.
+                                   An integration key cannot read this.
 ```
 
 The quote tool owns **the numbers**: sizing, equipment, pricing, revisions,
@@ -116,6 +130,12 @@ still needed. It carries no customer, pricing or design information.
 | `quote.approved_link` | `delivery:read` | no | The customer link, for an approved, issued, still-live revision. Refuses otherwise. |
 | `quote.status` | `quote:read` | no | Where it stands and what the customer chose. |
 | `booking.create_task` | `booking:write` | yes | Opens the booking and deposit task — only after an acceptance. |
+
+`GET /api/ops-activity` sits beside these and is **NAC staff only** — an
+integration key cannot open it. It is what makes two of the requirements real
+rather than stored: the quotes waiting for Nick's approval, and every call the
+integration has made with the reason for each refusal. Both appear on
+`/quotes.html`. An assistant does not get to read NAC's audit trail of itself.
 
 Each key carries only the scopes its integration needs. A delivery key cannot
 open a draft; a read key cannot write one.
@@ -230,13 +250,96 @@ yet, that operation answers `customer_records_unavailable` and says so.
 
 ---
 
+## The demonstration, with a test enquiry
+
+`tests/ops-surface-db.test.mjs` runs this against the real handlers and a real
+PostgreSQL carrying NAC's own schema. The customer says TEST in their own name
+and the phone number is not a real one.
+
+```
+POST /api/ops   Authorization: Bearer <key>
+
+{ "operation": "enquiry.find_or_create", "idempotencyKey": "enq-1",
+  "name": "TEST ENQUIRY — Riley Nguyen (do not contact)",
+  "phone": "0400 000 111", "email": "test.enquiry@example.invalid",
+  "siteAddress": "7 Example Court, Testville QLD 4000", "source": "Podium (test)" }
+
+→ { "customerId": "CUS-TEST-ENQUIRY-RILEY-NGUYEN-DO-9B8A99",
+    "jobId": "JOB-7-EXAMPLE-COURT-TESTVILL-1C4F2A",
+    "created": true, "matchedOn": null,
+    "note": "A new customer record was opened." }
+```
+
+Send it again with a different key and the same person: `created: false`,
+`matchedOn: "phone"`, the same two ids, and still one customer in the database.
+Send it again with the **same** key and it replays — `replayed: true`, the same
+result, no second anything.
+
+```
+{ "operation": "quote.create_draft", "jobId": "JOB-7-EXAMPLE-…", "idempotencyKey": "d-1" }
+→ { "quoteId": "Q-7-EXAMPLE-COURT-TESTVILLE-810747", "revision": 1, "status": "draft",
+    "note": "An empty draft. Equipment and prices are set in the quote tool." }
+
+{ "operation": "quote.preview", "quoteId": "Q-7-EXAMPLE-…" }
+→ { "canIssue": false,
+    "missing": [ "This quote has no equipment on it.", … ],
+    "note": "Not ready. The missing items above are the estimator's to fill in." }
+```
+
+And the refusals, which are the point of the surface:
+
+```
+{ "operation": "quote.update_draft", "quoteId": "Q-…", "idempotencyKey": "p-1",
+  "patch": { "systems": [{ "model": "FDYAN100A", "priceIncGst": 9000 }] } }
+→ 409 { "error": "refused", "refusals": [
+      { "code": "PRICE_NOT_ACCEPTED",
+        "fields": ["systems[0].priceIncGst"],
+        "message": "Prices are set in the quote tool, from NAC's own catalogue
+                    and settings. Refused: systems[0].priceIncGst." } ] }
+
+{ "operation": "quote.approve", … }     → 404 unknown_operation
+{ "operation": "quote.update_draft", "patch": { "approvedBy": "the assistant" } }
+                                        → 409 NOT_YOURS_TO_SET
+{ "operation": "quote.approved_link", "quoteId": "Q-…" }
+                                        → 409 NOT_APPROVED
+{ "operation": "booking.create_task", … before an acceptance }
+                                        → 409 NOT_ACCEPTED
+```
+
+Every one of those refusals is written to the call log under its own id — a
+refused call has not been carried out, so it does not consume the idempotency
+key — and appears on `/quotes.html` with the reason.
+
+Once the estimator has priced it:
+
+```
+{ "operation": "quote.request_approval", "quoteId": "Q-…", "idempotencyKey": "a-1",
+  "note": "Priced off the plan — over to you." }
+→ { "state": "requested", "fingerprint": "7c1a…", "ready": true,
+    "event": "quote.approval_requested",
+    "note": "Nick has been asked to approve this revision, in the quote tool.
+             Requesting approval is not approving it." }
+```
+
+That is what puts the quote on Nick's screen. He opens it, reads the preview as
+the customer will, and ticks the approval there. Only then:
+
+```
+{ "operation": "quote.approved_link", "quoteId": "Q-…" }
+→ { "url": "https://…/quote.html#<token>", "revision": 1,
+    "approvedBy": "nick@nacelectrical.com.au", "expiresAt": "…",
+    "note": "Deliver this link through Podium. This application sends nothing." }
+```
+
 ## What has been proven, and where
 
 | Checked | Where it ran |
 |---|---|
 | The engine: scopes, refusals, fingerprints, idempotency, customer matching | `tests/ops-api.test.mjs` — 35 tests, locally |
 | The Podium state machine: copied vs sent, every stop reason, opt-out, the message | `tests/podium-outreach.test.mjs` — 22 tests, locally |
-| The real `/api/ops` handler end to end: a test enquiry to a customer, a job, a draft, a plan reference, a priced quote issued and accepted, the booking task, and every refusal | `tests/ops-surface-db.test.mjs` — 16 tests, against a **local PostgreSQL carrying NAC's own schema** |
+| The real `/api/ops` handler end to end: a test enquiry to a customer, a job, a draft, a plan reference, a priced quote issued and accepted, the booking task, and every refusal | `tests/ops-surface-db.test.mjs` — 24 tests, against a **local PostgreSQL carrying NAC's own schema** |
+| The approval request reaching Nick's screen, the gate being re-run rather than trusted, a refused call visible with its reason, and an integration key refused its own audit trail | the same suite, same database |
+| Those two panels on `/quotes.html` in a real browser, at desktop, iPad and phone widths | `tools/browser-tests/portal-podium.mjs` |
 | The approval surviving the round trip, and an issue with no approver refused | `tests/quote-only-db.test.mjs`, against the same local database |
 
 **Nothing has been run against the live Supabase project, against Podium, or

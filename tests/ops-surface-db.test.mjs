@@ -532,3 +532,183 @@ test('the options an integration reads carry customer prices and no costs at all
         '"' + leak + '" must never reach an integration.');
     }
   });
+
+// ── NOTIFYING NICK, AND WHAT NAC CAN SEE ────────────────────────────────────
+//
+// Nick, section 11: "Notify Nick that a quote needs approval... Record
+// actions and failures so NAC can see what happened and retry safely."
+//
+// Both were half-built: the approval request was written onto the draft and
+// nothing displayed it, and every call was written to nac_integration_calls
+// and nothing read it back. /api/ops-activity is the read behind both, and it
+// is NAC STAFF ONLY — an assistant does not get to read NAC's audit trail of
+// itself.
+
+const STAFF = { Authorization: 'Bearer test-staff-token' };
+
+test('an approval request reaches the screen Nick actually looks at',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const h = await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+
+    // A real, priced quote the estimator could issue.
+    const draft = quoteOnlyDraft({ id: 'Q-OPS-ASK-1', testQuote: true });
+    sql("insert into public.nac_designs (id, design, updated_at) values ('"
+      + draft.id + "', $nacjson$" + JSON.stringify(draft) + "$nacjson$, now())");
+
+    // Nothing is waiting before anybody asks.
+    const quiet = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(quiet.status, 200, JSON.stringify(quiet.body));
+    assert.deepEqual(quiet.body.approvals, []);
+
+    const asked = await op(h, 'quote.request_approval',
+      { quoteId: draft.id, idempotencyKey: 'ask-1',
+        note: 'Priced off the plan — over to you.' });
+    assert.equal(asked.status, 200, JSON.stringify(asked.body));
+
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(seen.body.counts.waiting, 1);
+    const a = seen.body.approvals[0];
+    assert.equal(a.quoteId, draft.id);
+    assert.equal(a.customerName, draft.customer.name);
+    assert.equal(a.note, 'Priced off the plan — over to you.');
+    assert.equal(a.requestedBy, 'test-assistant');
+    assert.equal(a.testQuote, true);
+    assert.equal(a.ready, true, 'a complete quote reads as ready: '
+      + JSON.stringify(a.missing));
+    assert.ok(a.system && a.totalIncGst > 0,
+      'Nick should be able to triage it without opening it');
+  });
+
+test('the gate is re-run now, not trusted from when the request was made',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const h = await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+
+    const draft = quoteOnlyDraft({ id: 'Q-OPS-ASK-2', testQuote: true });
+    sql("insert into public.nac_designs (id, design, updated_at) values ('"
+      + draft.id + "', $nacjson$" + JSON.stringify(draft) + "$nacjson$, now())");
+    await op(h, 'quote.request_approval', { quoteId: draft.id, idempotencyKey: 'a' });
+
+    // The quote moves on AFTER the request: the price comes off it. Read the
+    // STORED row and edit that — rewriting from the original fixture would
+    // erase the approval request the server just wrote onto it.
+    const stored = JSON.parse(row("select design from public.nac_designs where id = '"
+      + draft.id + "'").design);
+    const broken = { ...stored,
+      systems: stored.systems.map(x => ({ ...x, priceIncGst: null })) };
+    sql("update public.nac_designs set design = $nacjson$" + JSON.stringify(broken)
+      + "$nacjson$ where id = '" + draft.id + "'");
+
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    const a = seen.body.approvals[0];
+    assert.equal(a.ready, false,
+      'a quote that lost its price must not still read as ready to approve');
+    assert.ok(a.missing.length, 'and it has to say what is missing now');
+  });
+
+test('an approved and issued quote stops asking', { skip: !HAVE_PG && 'needs PostgreSQL' },
+  async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const h = await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+    const issueH = (await import('../server/quote-issue.js')).default;
+
+    const draft = quoteOnlyDraft({ id: 'Q-OPS-ASK-3', testQuote: true });
+    sql("insert into public.nac_designs (id, design, updated_at) values ('"
+      + draft.id + "', $nacjson$" + JSON.stringify(draft) + "$nacjson$, now())");
+    await op(h, 'quote.request_approval', { quoteId: draft.id, idempotencyKey: 'a' });
+    assert.equal((await call(activity, { method: 'GET', headers: STAFF }))
+      .body.counts.waiting, 1);
+
+    const issued = await call(issueH, { method: 'POST', headers: STAFF,
+      body: { designId: draft.id, customer: draft.customer,
+              job: { siteAddress: draft.siteAddress }, quoteRevision: 1, validDays: 30,
+              testQuote: true, approvedBy: 'nick@nacelectrical.com.au' } });
+    assert.equal(issued.status, 200, JSON.stringify(issued.body));
+
+    const after = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(after.body.approvals[0].alreadyIssued, true,
+      'it must say a revision has gone out, so approving again means a new one');
+  });
+
+test('every call is in a log NAC can read, with the reason it was refused',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const h = await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+
+    const enq = await op(h, 'enquiry.find_or_create', { ...ENQUIRY, idempotencyKey: 'a' });
+    const draft = await op(h, 'quote.create_draft',
+      { jobId: enq.body.jobId, idempotencyKey: 'b' });
+    // And one that is refused, so the log carries a failure as well.
+    await op(h, 'quote.update_draft', { quoteId: draft.body.quoteId, idempotencyKey: 'c',
+      patch: { systems: [{ model: 'X', priceIncGst: 9000 }] } });
+
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(seen.body.integration.callLogPresent, true);
+    const ops = seen.body.calls.map(c => c.operation);
+    assert.ok(ops.includes('enquiry.find_or_create') && ops.includes('quote.create_draft'));
+
+    const refused = seen.body.calls.find(c => c.status === 'refused');
+    assert.ok(refused, 'a refused call has to be visible: ' + JSON.stringify(seen.body.calls));
+    assert.equal(seen.body.counts.refused, 1);
+    assert.ok(refused.why.join(' ').includes('Prices are set in the quote tool'),
+      'and it has to say WHY: ' + JSON.stringify(refused.why));
+
+    // Newest first, so the last thing that happened is the first thing read.
+    assert.equal(seen.body.calls[0].operation, 'quote.update_draft');
+  });
+
+test('the activity log never carries an integration’s secret',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    const h = await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+    await op(h, 'enquiry.find_or_create', { ...ENQUIRY, idempotencyKey: 'a' });
+
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    const text = JSON.stringify(seen.body);
+    assert.ok(!text.includes(SECRET), 'the integration’s secret reached NAC’s screen');
+    assert.ok(text.includes('test-assistant'), 'the key’s id is what identifies it');
+  });
+
+test('an integration key cannot read NAC’s audit trail of itself',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    await setup();
+    const activity = (await import('../server/ops-activity.js')).default;
+
+    // The ops key opens the operations surface and nothing else.
+    const asKey = await call(activity, { method: 'GET', headers: KEYED });
+    assert.equal(asKey.status, 401);
+    const anon = await call(activity, { method: 'GET' });
+    assert.equal(anon.status, 401);
+  });
+
+test('a project with no call log says so rather than looking quiet',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    await setup({ callLog: false });
+    const activity = (await import('../server/ops-activity.js')).default;
+
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(seen.status, 200);
+    assert.equal(seen.body.integration.callLogPresent, false);
+    assert.deepEqual(seen.body.calls, []);
+  });
+
+test('the activity read says the integration is not connected', { skip: !HAVE_PG && 'needs PostgreSQL' },
+  async (t) => {
+    const stop = await startRest(); t.after(() => stop());
+    await setup();
+    delete process.env.NAC_OPS_KEYS;
+    const activity = (await import('../server/ops-activity.js')).default;
+    const seen = await call(activity, { method: 'GET', headers: STAFF });
+    assert.equal(seen.body.integration.configured, false,
+      'an empty log must not read as "connected and quiet"');
+    assert.equal(seen.body.integration.automationEnabled, false);
+    assert.equal(seen.body.integration.schedulingOwner, 'undecided');
+  });
