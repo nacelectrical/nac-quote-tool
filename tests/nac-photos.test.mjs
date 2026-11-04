@@ -34,9 +34,9 @@ const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DOC = JSON.parse(readFileSync(ROOT + '/designer/content/nac-photos.json', 'utf8'));
 
 test('every photograph in the manifest is actually in the repository', () => {
-  // Nine of NAC's own work, and one manufacturer product image of the room
-  // sensor, supplied by Nick on 5 November 2026.
-  assert.equal(DOC.photos.length, 10);
+  // Nine of NAC's own work, plus six manufacturer images supplied by Nick on
+  // 5 November 2026: the room sensor, and a ducted set for each of five brands.
+  assert.equal(DOC.photos.length, 15);
   for (const p of DOC.photos) {
     const full = ROOT + '/designer/content/' + p.file;
     assert.ok(existsSync(full), p.file + ' is listed and not present');
@@ -66,7 +66,7 @@ test('whose work each photograph is, is recorded and not inferred', () => {
   const own = DOC.photos.filter(p => p.ownWork !== false);
   const supplied = DOC.photos.filter(p => p.ownWork === false);
   assert.equal(own.length, 9);
-  assert.equal(supplied.length, 1);
+  assert.equal(supplied.length, 6);
   for (const p of supplied) {
     assert.ok(p._provenance && p._provenance.length > 40,
       p.file + ' is not NAC’s own work and does not say where it came from');
@@ -161,11 +161,13 @@ test('a Braemar quote gets a Braemar, now that one has arrived', () => {
 test('every brand NAC quotes has a photograph of its own', () => {
   const lib = assets();
   const brands = [...new Set(DOC.photos.map(p => p.equipmentBrand))];
-  assert.deepEqual(brands.sort(), ['AirTouch', 'Braemar', 'Daikin', 'Fujitsu']);
+  assert.deepEqual(brands.sort(), ['AirTouch', 'Braemar', 'Daikin', 'Fujitsu',
+    'Mitsubishi Electric', 'Mitsubishi Heavy Industries']);
 
-  // The three a system is quoted under. AirTouch is a controller brand and
+  // The brands a system is quoted under. AirTouch is a controller brand and
   // never appears as "your recommended system", which is why it is not here.
-  for (const brand of ['Daikin', 'Fujitsu', 'Braemar']) {
+  for (const brand of ['Daikin', 'Fujitsu', 'Braemar', 'Mitsubishi Electric',
+                       'Mitsubishi Heavy Industries']) {
     const got = equipmentImagesFor(lib, { brandName: brand });
     assert.ok(got.length >= 1, brand + ' has no photograph on file');
     for (const a of got) {
@@ -173,7 +175,12 @@ test('every brand NAC quotes has a photograph of its own', () => {
     }
   }
 
-  // A brand NAC does not stock gets none, rather than the nearest thing.
+  // ── A BARE "MITSUBISHI" IS NOT A BRAND ────────────────────────────────
+  //
+  // Mitsubishi Electric and Mitsubishi Heavy Industries are two different
+  // companies, and the library now holds a photograph of each. A loose match
+  // would show a customer the other one's machine, so there is none: no
+  // picture is the safe answer, a coin flip between two manufacturers is not.
   assert.deepEqual(equipmentImagesFor(lib, { brandName: 'Mitsubishi' }), []);
 });
 

@@ -149,6 +149,99 @@
     "y": 0.5
    },
    "_provenance": "Supplied by Nick on 5 November 2026 to replace the console photograph on the room-sensor upgrade. A manufacturer product image, cropped to the sensor: the source was a wide shot of a kitchen with the sensor at one edge, which a square thumbnail crops straight out. Nothing in it was altered."
+  },
+  {
+   "file": "photos/mitsubishi-heavy-ducted-set.jpg",
+   "role": "equipment",
+   "alt": "A Mitsubishi Heavy Industries ducted system — the indoor fan coil, the outdoor unit and the wired wall controller",
+   "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged MITSUBISHI HEAVY INDUSTRIES with the three-diamond mark, and a wired wall controller showing Set temp 23.0 degrees.",
+   "equipmentBrand": "Mitsubishi Heavy Industries",
+   "equipmentModels": [],
+   "tags": [
+    "mitsubishi",
+    "heavy industries",
+    "ducted",
+    "outdoor",
+    "controller",
+    "set"
+   ],
+   "ownWork": false,
+   "optionImage": true,
+   "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered."
+  },
+  {
+   "file": "photos/mitsubishi-electric-ducted-set.jpg",
+   "role": "equipment",
+   "alt": "A Mitsubishi Electric ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+   "seen": "A product set on a white background: two views of a ducted indoor fan coil, a twin-fan outdoor unit badged Mitsubishi Electric carrying an R32 label, and a wall controller showing 20.5 degrees.",
+   "equipmentBrand": "Mitsubishi Electric",
+   "equipmentModels": [],
+   "tags": [
+    "mitsubishi",
+    "electric",
+    "ducted",
+    "outdoor",
+    "controller",
+    "set"
+   ],
+   "ownWork": false,
+   "optionImage": true,
+   "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renderA '5 YEARS WARRANTY' roundel was removed, because the warranty NAC states on the option is the one that binds NAC — a badge in a picture that disagrees with the line beside it is what gets argued about later. Nothing else in it was altered."
+  },
+  {
+   "file": "photos/braemar-ducted-set.jpg",
+   "role": "equipment",
+   "alt": "A Braemar ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+   "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged Braemar, and a black wall controller showing 24 degrees.",
+   "equipmentBrand": "Braemar",
+   "equipmentModels": [],
+   "tags": [
+    "braemar",
+    "ducted",
+    "outdoor",
+    "controller",
+    "set"
+   ],
+   "ownWork": false,
+   "optionImage": true,
+   "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered."
+  },
+  {
+   "file": "photos/daikin-ducted-set.jpg",
+   "role": "equipment",
+   "alt": "A Daikin ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+   "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged DAIKIN INVERTER carrying an R32 label, and a wall controller showing 27 degrees.",
+   "equipmentBrand": "Daikin",
+   "equipmentModels": [],
+   "tags": [
+    "daikin",
+    "ducted",
+    "outdoor",
+    "controller",
+    "set"
+   ],
+   "ownWork": false,
+   "optionImage": true,
+   "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renderA '5 YEARS WARRANTY' roundel was removed, because the warranty NAC states on the option is the one that binds NAC — a badge in a picture that disagrees with the line beside it is what gets argued about later. Nothing else in it was altered."
+  },
+  {
+   "file": "photos/fujitsu-airstage-ducted-set.jpg",
+   "role": "equipment",
+   "alt": "A Fujitsu Airstage ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+   "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged FUJITSU AIRSTAGE, and a wall controller.",
+   "equipmentBrand": "Fujitsu",
+   "equipmentModels": [],
+   "tags": [
+    "fujitsu",
+    "airstage",
+    "ducted",
+    "outdoor",
+    "controller",
+    "set"
+   ],
+   "ownWork": false,
+   "optionImage": true,
+   "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered."
   }
  ],
  "_brands": "Fujitsu x2, Daikin x3, Braemar x2, AirTouch x2. The Braemar pair arrived 16 October 2026, after a Braemar quote had been rendering the plain branded card for want of one. The close shot is listed first, so it is the one that reaches the system card: a customer looking at 'your recommended system' wants the machine, not the plant deck.",

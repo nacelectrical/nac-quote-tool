@@ -4,7 +4,7 @@
   "_notes": [
     "No INSTALLATION photographs are publishable. A photograph of a customer’s house needs their suburb and their consent recorded against it before it goes on a proposal, and none of these has either. The gallery is left out rather than filled with equipment shots.",
     "There is no COVER photograph. Every one of these is portrait, and a cover wants a landscape shot of a finished job. The cover falls back to the brand panel until one is supplied.",
-    "10 of 10 photographs carry a brand but no model number — the compliance plate is not legible. They are matched to a quote by brand, which is what Nick asked for; a model number recorded later only makes the match sharper."
+    "15 of 15 photographs carry a brand but no model number — the compliance plate is not legible. They are matched to a quote by brand, which is what Nick asked for; a model number recorded later only makes the match sharper."
   ],
   "images": [
     {
@@ -399,6 +399,205 @@
         "height": 430
       },
       "seen": "A flat white AirTouch wall sensor with a pale blue square on its face, mounted on the wall of an open-plan kitchen and dining area. Temperatures for two zones are shown as figures over the room."
+    },
+    {
+      "id": "mitsubishi-heavy-ducted-set",
+      "role": "equipment",
+      "alt": "A Mitsubishi Heavy Industries ducted system — the indoor fan coil, the outdoor unit and the wired wall controller",
+      "tags": [
+        "mitsubishi",
+        "heavy industries",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Mitsubishi Heavy Industries",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/mitsubishi-heavy-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 46065
+        }
+      ],
+      "sourceFile": "photos/mitsubishi-heavy-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged MITSUBISHI HEAVY INDUSTRIES with the three-diamond mark, and a wired wall controller showing Set temp 23.0 degrees."
+    },
+    {
+      "id": "mitsubishi-electric-ducted-set",
+      "role": "equipment",
+      "alt": "A Mitsubishi Electric ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "mitsubishi",
+        "electric",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Mitsubishi Electric",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/mitsubishi-electric-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 36865
+        }
+      ],
+      "sourceFile": "photos/mitsubishi-electric-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: two views of a ducted indoor fan coil, a twin-fan outdoor unit badged Mitsubishi Electric carrying an R32 label, and a wall controller showing 20.5 degrees."
+    },
+    {
+      "id": "braemar-ducted-set",
+      "role": "equipment",
+      "alt": "A Braemar ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "braemar",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/braemar-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 36420
+        }
+      ],
+      "sourceFile": "photos/braemar-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged Braemar, and a black wall controller showing 24 degrees."
+    },
+    {
+      "id": "daikin-ducted-set",
+      "role": "equipment",
+      "alt": "A Daikin ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "daikin",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/daikin-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 41881
+        }
+      ],
+      "sourceFile": "photos/daikin-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged DAIKIN INVERTER carrying an R32 label, and a wall controller showing 27 degrees."
+    },
+    {
+      "id": "fujitsu-airstage-ducted-set",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/fujitsu-airstage-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 47763
+        }
+      ],
+      "sourceFile": "photos/fujitsu-airstage-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged FUJITSU AIRSTAGE, and a wall controller."
     }
   ],
   "refused": []

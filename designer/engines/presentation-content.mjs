@@ -344,7 +344,24 @@ export function normaliseImageAsset(input = {}) {
      *
      * Never inferred. A photograph is NAC's work because somebody said so.
      */
-    ownWork: bool(input.ownWork)
+    ownWork: bool(input.ownWork),
+    /**
+     * THE PICTURE FOR THIS BRAND'S EQUIPMENT OPTION.
+     *
+     * Nick, 5 November 2026: "Put these in the options for each brand",
+     * sending a product set for each — the indoor fan coil, the outdoor unit
+     * and the controller, on white.
+     *
+     * NAC's own photographs of finished work are the right thing in the
+     * gallery and a poor thing beside a price: an outdoor unit against a
+     * rendered wall does not show a customer what they are buying. A brand's
+     * set image does. This marks which one to put on the option, and it beats
+     * the brand match rather than competing with it.
+     *
+     * It does NOT touch the system card: that card is a portrait crop, and a
+     * wide product set squeezed into it loses both ends.
+     */
+    optionImage: bool(input.optionImage)
   };
 }
 
@@ -1153,6 +1170,21 @@ export function optionImageFor(images = [], option = {}) {
   if (option && option.image && allowedRef(option.image.src)) {
     return { src: trimmed(option.image.src), alt: trimmed(option.image.alt) || null,
              srcset: list(option.image.srcset), focalPoint: option.image.focalPoint };
+  }
+
+  // ── THE BRAND'S OWN SET IMAGE, WHERE NAC HAS ONE ────────────────────────
+  //
+  // Matched on the brand EXACTLY as the brand is named. "Mitsubishi Electric"
+  // and "Mitsubishi Heavy Industries" are two different companies, and a
+  // customer quoted one of them must never be shown a photograph of the
+  // other's machine — so a loose "mitsubishi" match is worse than no match at
+  // all, and there is none.
+  const wantBrand = brandKey(option.brand ?? option.brandName ?? option.brandId);
+  if (wantBrand) {
+    const set = list(images).map(normaliseImageAsset)
+      .filter(a => a.optionImage === true && imagePublishable(a).ok)
+      .find(a => brandKey(a.equipmentBrand) === wantBrand);
+    if (set) return publicPicture(set);
   }
   const matched = equipmentImagesFor(images, {
     model: option.model, outdoorModel: option.outdoorModel,

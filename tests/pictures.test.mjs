@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 
 import { ownWorkGallery, upgradeImageFor, optionImageFor, normaliseImageAsset }
   from '../designer/engines/presentation-content.mjs';
+import { readFileSync } from 'node:fs';
 import { loadNacImages } from '../tools/import-nac-photos.mjs';
 import { buildTestQuote } from '../tools/quote-only-proof.mjs';
 import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
@@ -33,8 +34,9 @@ const SENSORS = { id: 'sensor', title: 'Room temperature sensors',
 // ── PICTURES OF NAC'S OWN WORK ──────────────────────────────────────────────
 
 test('NAC’s own photographs are marked as NAC’s own work', () => {
-  // Nine of NAC's own, and one manufacturer product image of the room sensor.
-  assert.equal(IMAGES.length, 10);
+  // Nine of NAC's own work, plus six manufacturer images: the room sensor and
+  // a ducted set for each of five brands.
+  assert.equal(IMAGES.length, 15);
   const own = IMAGES.filter(i => normaliseImageAsset(i).ownWork === true);
   assert.equal(own.length, 9);
   for (const i of own) {
@@ -79,6 +81,88 @@ test('each option gets a photograph of ITS brand, not the other one’s', () => 
   assert.ok(/daikin/.test(daikin.id), 'the Daikin option got ' + daikin.id);
   assert.ok(/braemar/.test(braemar.id), 'the Braemar option got ' + braemar.id);
   assert.notEqual(daikin.id, braemar.id);
+});
+
+// ── THE BRAND SET IMAGES NICK SUPPLIED ──────────────────────────────────────
+//
+// Nick, 5 November 2026: "Put these in the options for each brand", with a
+// product set for each — the indoor fan coil, the outdoor unit and the
+// controller, on white. They beat NAC's own photographs on the option, because
+// an outdoor unit against a rendered wall does not show a customer what they
+// are buying.
+
+const SET_BRANDS = [
+  ['Daikin', 'daikin', 'daikin-ducted-set'],
+  ['Braemar', 'braemar', 'braemar-ducted-set'],
+  ['Fujitsu', 'fujitsu', 'fujitsu-airstage-ducted-set'],
+  ['Mitsubishi Electric', 'me', 'mitsubishi-electric-ducted-set'],
+  ['Mitsubishi Heavy Industries', 'mhi', 'mitsubishi-heavy-ducted-set']
+];
+
+test('every brand Nick supplied a set for gets that set on its option', () => {
+  for (const [brand, brandId, expected] of SET_BRANDS) {
+    const img = optionImageFor(IMAGES, { brand, brandId, model: 'ANY-1' });
+    assert.ok(img, brand + ' got no picture at all');
+    assert.equal(img.id, expected, brand + ' got ' + img.id);
+  }
+});
+
+test('MITSUBISHI ELECTRIC AND MITSUBISHI HEAVY INDUSTRIES ARE NOT THE SAME COMPANY', () => {
+  // Two different manufacturers that both say "Mitsubishi" on the badge. A
+  // customer quoted one of them must never be shown the other's machine, so
+  // the match is on the brand exactly as it is named.
+  const electric = optionImageFor(IMAGES,
+    { brand: 'Mitsubishi Electric', brandId: 'me' });
+  const heavy = optionImageFor(IMAGES,
+    { brand: 'Mitsubishi Heavy Industries', brandId: 'mhi' });
+  assert.notEqual(electric.id, heavy.id);
+  assert.ok(/electric/.test(electric.id));
+  assert.ok(/heavy/.test(heavy.id));
+
+  // And a bare "Mitsubishi" is not enough to pick either. No picture is the
+  // safe answer; a coin flip between two manufacturers is not.
+  assert.equal(optionImageFor(IMAGES, { brand: 'Mitsubishi', brandId: 'mitsubishi' }),
+    null, 'a bare "Mitsubishi" was matched to one of them');
+});
+
+test('a brand with no set image still gets nothing invented for it', () => {
+  // Samsung is in NAC's catalogue and Nick supplied no set for it.
+  assert.equal(optionImageFor(IMAGES, { brand: 'Samsung', brandId: 'samsung' }), null);
+});
+
+test('the set images are 4:3, which is the box the option renders in', () => {
+  for (const [, , id] of SET_BRANDS) {
+    const a = normaliseImageAsset(IMAGES.find(i => i.id === id));
+    const d = a.derivatives[a.derivatives.length - 1];
+    const ratio = d.width / d.height;
+    assert.ok(Math.abs(ratio - 4 / 3) < 0.02,
+      id + ' is ' + d.width + '×' + d.height + ' — the option box crops it');
+  }
+});
+
+test('no set image is in the gallery of NAC’s own work', () => {
+  // They are manufacturer product shots on white. The gallery is headed
+  // "Recent NAC installations" and these are not installations.
+  const gallery = ownWorkGallery(IMAGES, { max: 20 }).map(g => g.id);
+  for (const [, , id] of SET_BRANDS) {
+    assert.ok(!gallery.includes(id), id + ' reached the gallery of NAC’s own work');
+  }
+});
+
+test('no set image carries a warranty badge into the page', () => {
+  // Two of them arrived with a "5 YEARS WARRANTY" roundel. The warranty NAC
+  // states on the option is the one that binds NAC, and a badge in a picture
+  // that disagrees with the line beside it is what gets argued about later —
+  // NAC quote the Braemar at seven.
+  const doc = JSON.parse(readFileSync(
+    new URL('../designer/content/nac-photos.json', import.meta.url), 'utf8'));
+  const badged = doc.photos.filter(p => /ducted-set/.test(p.file)
+    && /WARRANTY/i.test(p._provenance || ''));
+  assert.equal(badged.length, 2, 'the two badged sets are not recorded as such');
+  for (const p of badged) {
+    assert.match(p._provenance, /removed/,
+      p.file + ' records a warranty badge and does not say it was removed');
+  }
 });
 
 test('a brand NAC has no photograph of gets no photograph', () => {

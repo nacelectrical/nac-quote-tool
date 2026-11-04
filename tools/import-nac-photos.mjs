@@ -121,6 +121,8 @@ export async function importPhotos({ check = false } = {}) {
       //
       // The role is what a picture is FOR. This is whose work it is.
       ownWork: p.ownWork !== false,
+      // The picture to put on this brand's equipment option.
+      ...(p.optionImage ? { optionImage: true } : {}),
       // ── WHERE THE SUBJECT IS ─────────────────────────────────────────
       //
       // The page crops a photograph to a square beside an upgrade and to 4:3

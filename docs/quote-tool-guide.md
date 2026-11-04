@@ -158,9 +158,15 @@ Three places a photograph appears on a proposal, and all three come from the
   photograph and it appears under *Recent NAC installations*, captioned with
   the description already written for it. A manufacturer's stock shot is a
   picture of the same machine and not a picture of your work, so it stays out.
-- **The unit beside each option.** Matched on the brand and model the
-  photograph says it shows, so the Daikin option gets a Daikin and the Braemar
-  gets a Braemar. An option you have no photograph of shows none.
+- **The unit beside each option.** Where you have supplied a product set for a
+  brand — the indoor fan coil, the outdoor unit and the controller — that is
+  what the option shows. Otherwise it falls back to a photograph matched on the
+  brand and model. An option you have no photograph of shows none.
+
+  Brands are matched **exactly as they are named**. Mitsubishi Electric and
+  Mitsubishi Heavy Industries are two different companies, so a brand recorded
+  as plain "Mitsubishi" matches neither and shows no picture — which is the
+  safe answer.
 - **The picture beside each upgrade.** Matched against the upgrade's own
   wording — the AirTouch console lands on the AirTouch line and the console
   showing room sensors lands on the sensors line. You can pick one by hand on
