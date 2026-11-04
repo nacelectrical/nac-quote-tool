@@ -156,6 +156,16 @@ dialog iframe{width:100%;height:min(78vh,900px);border:0;display:block;backgroun
    Nick asked for clear steps rather than one long form. On a phone they
    scroll sideways rather than wrapping into three rows of stubs. */
 .steps{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:62px;z-index:15}
+/* ── THE STEPS HAVE TO BE REACHABLE ON A PHONE ──────────────────────────
+   The header wraps to two lines at phone width and is taller than the 62px
+   the step nav sticks at, so the nav slid underneath it and the estimator
+   could not change step at all on the one device they are most likely to be
+   holding. Below the wrap point the header scrolls away and the steps take
+   the top for themselves. */
+@media(max-width:700px){
+  header{position:static}
+  .steps{top:0}
+}
 .steps ol{max-width:1320px;margin:0 auto;padding:0 12px;display:flex;gap:2px;
   list-style:none;overflow-x:auto;scrollbar-width:none}
 .steps ol::-webkit-scrollbar{display:none}
@@ -728,7 +738,9 @@ function drawSystems() {
       field('Note on the page', input(sys.note, { placeholder: 'Quieter outdoor unit' },
         v => { sys.note = v; }))
     ]));
-    row.appendChild(optionMoney(sys));
+    const money = el('div', { class: 'omoney', 'data-money': String(i) });
+    fillOptionMoney(money, sys);
+    row.appendChild(money);
     host.appendChild(row);
   });
 }
@@ -742,9 +754,9 @@ function drawSystems() {
  * where the cost is not known, the figure is NOT shown — an unknown margin is
  * said to be unknown rather than filled in with something flattering.
  */
-function optionMoney(sys) {
+function fillOptionMoney(box, sys) {
   const d = optionDetail(sys, { catalogue: APPROVED_PRICES, gstRate: 0.1 });
-  const box = el('div', { class: 'omoney' });
+  box.textContent = '';
   const line = (label, value, cls) => el('div', { class: 'om' + (cls ? ' ' + cls : '') },
     [el('span', { text: label }), el('b', { text: value })]);
 
@@ -771,7 +783,23 @@ function optionMoney(sys) {
   if (d.priceBasis.message) {
     box.appendChild(el('p', { class: 'hint', text: d.priceBasis.message }));
   }
-  return box;
+}
+
+/**
+ * Refresh what each option is worth, WITHOUT redrawing the fields.
+ *
+ * Typing a price used to leave the markup and margin box reading "No price
+ * yet" until something else forced a full redraw — the estimator entered a
+ * figure and the panel beside it disagreed with them. It cannot redraw the
+ * whole row on every keystroke, because that destroys the input being typed
+ * into; the money panel holds nothing focusable, so replacing its contents is
+ * safe.
+ */
+function refreshOptionMoney() {
+  draft.systems.forEach((sys, i) => {
+    const box = document.querySelector('.omoney[data-money="' + i + '"]');
+    if (box) fillOptionMoney(box, sys);
+  });
 }
 
 /**
@@ -1193,6 +1221,12 @@ function mark() {
   dirty = true;
   $('#savedAt').textContent = 'Unsaved changes.';
   drawTotal();
+  // What each option is worth, and whether the price is fixed or provisional,
+  // both follow what was just typed. Leaving them until the next full redraw
+  // meant the panel beside the price contradicted the price.
+  refreshOptionMoney();
+  drawFirmness();
+  drawAllowanceButtons();
   drawChecks();
 }
 
@@ -1453,8 +1487,12 @@ $('#printPrev').addEventListener('click', async () => {
 
 // ── ISSUE ──────────────────────────────────────────────────────────────────
 $('#issue').addEventListener('click', async () => {
-  if (dirty) { flash('bad', 'Save the quote first — the server issues what is in the database, '
-    + 'not what is on this screen.'); return; }
+  // Unsaved changes used to be refused here with "save the quote first". That
+  // was the right rule — the server issues what is in the database, not what
+  // is on this screen — enforced in the wrong place: it stopped the estimator
+  // to make them press a button this handler can press itself. It saves
+  // below, and refuses only if the save does NOT land.
+  //
   // Nick: "preview proposal → Nick approves → issue customer link." The tick
   // is the approval and it is recorded with the issue.
   if (!$('#approved').checked) {

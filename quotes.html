@@ -462,8 +462,13 @@ function draw() {
     ['Not in ServiceM8', c.notInServiceM8, c.notInServiceM8 > 0 ? 'alert' : '']
   ];
   for (const [label, value, cls] of tiles) {
+    // A count the server did not send is a dash, not the word "undefined".
+    // A tile reading "undefined" is the screen telling the estimator it does
+    // not know, in the one register that looks like a fault in the page.
+    const shown = (value === null || value === undefined || value === '')
+      ? '—' : String(value);
     stats.appendChild(el('div', { class: 'stat ' + cls }, [
-      el('b', { text: String(value) }), el('span', { text: label })]));
+      el('b', { text: shown }), el('span', { text: label })]));
   }
 
   // ── THE WRITE PATH, CHECKED ON PURPOSE ─────────────────────────────────
