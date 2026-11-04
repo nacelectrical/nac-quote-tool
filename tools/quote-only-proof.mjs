@@ -29,6 +29,7 @@ import { draftToQuoteSource, draftSelectedOptions, quoteDraftGate }
   from '../designer/engines/quote-draft.mjs';
 import { buildPresentation } from '../designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
+import { presentationPrintHtml, pdfOptions } from '../designer/ui/presentation-pdf.mjs';
 import { loadNacImages } from './import-nac-photos.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -146,5 +147,36 @@ if (import.meta.url === 'file://' + process.argv[1]) {
       + (errs.length ? '   ERRORS: ' + errs.join(' | ') : '   no js errors'));
     await page.close();
   }
+
+  // ── THE PRINTABLE VERSION, FROM THE SAME OFFER ────────────────────────
+  //
+  // Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+  // same offer data." The same presentation object the web page was rendered
+  // from, so the paper copy cannot be a different offer — and it is produced
+  // here so it can be LOOKED AT rather than assumed.
+  const printFile = resolve(OUT, 'test-quote-print.html');
+  writeFileSync(printFile, presentationPrintHtml(p));
+  const pp = await browser.newPage({ viewport: { width: 1240, height: 1754 } });
+  await pp.goto('file://' + printFile, { waitUntil: 'load' });
+  await pp.emulateMedia({ media: 'print' });
+  await pp.waitForTimeout(400);
+  const pdfFile = resolve(OUT, 'test-quote.pdf');
+  const pdf = await pp.pdf(pdfOptions(p));
+  writeFileSync(pdfFile, pdf);
+  await pp.screenshot({ path: resolve(OUT, 'test-quote-print.png'), fullPage: true });
+
+  // What must NOT be on paper: the interactive furniture, and anything
+  // internal. The leak sweep in tests/ checks the figures; this checks the
+  // document a customer would actually hold.
+  const printed = presentationPrintHtml(p);
+  const strays = ['data-print', 'class="nav"', 'class="sticky"', 'id="acceptBtn"',
+                  'supplierCost', 'markupPct', 'marginPct', 'grossProfit', 'MMEM']
+    .filter(x => printed.includes(x));
+  console.log('\n  printable  ' + printFile);
+  console.log('  pdf        ' + pdfFile + '  ('
+    + Math.round(pdf.length / 1024) + ' kB)');
+  console.log('  clean      ' + (strays.length
+    ? 'NO — found ' + strays.join(', ') : 'yes — no controls and nothing internal'));
+  await pp.close();
   await browser.close();
 }

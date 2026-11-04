@@ -482,18 +482,29 @@ function trustHtml(p) {
  * Drawn only when there IS a choice. A single-system quote shows the system
  * where it always did and no chooser at all.
  */
-function systemChoiceHtml(p) {
+function systemChoiceHtml(p, print = false) {
   const sc = p.systemChoice;
   if (!sc || !sc.offersChoice || !sc.options?.length) return '';
-  return sect('choose', 'Choose your system',
-    '<p class="lede">Two ways to do the same job. Whichever you choose is the price '
-    + 'below — the installation, the ductwork and the workmanship warranty are the '
-    + 'same either way.</p>'
+  return sect('choose', print ? 'Your system' : 'Choose your system',
+    '<p class="lede">' + (print
+      ? 'Two ways to do the same job, and the one marked below is the price on this '
+        + 'proposal. The installation, the ductwork and the workmanship warranty are '
+        + 'the same either way.'
+      : 'Two ways to do the same job. Whichever you choose is the price '
+        + 'below — the installation, the ductwork and the workmanship warranty are the '
+        + 'same either way.') + '</p>'
     + '<ul class="opts syschoice">' + sc.options.map(o =>
       '<li><label class="opt sys">'
-      + '<input type="radio" name="sys" class="sys-in" value="' + esc(o.id) + '"'
-      + ' data-sys-price="' + esc(String(o.priceIncGst)) + '"'
-      + (o.chosen ? ' checked' : '') + '>'
+      // ── NOTHING TO PRESS ON PAPER ────────────────────────────────────
+      // A radio button in a printed document is a control nobody can use.
+      // The printed version marks the chosen system with a glyph instead,
+      // which says the same thing and is not an input.
+      + (print
+        ? '<span class="sys-mark" aria-hidden="true">' + (o.chosen ? '●' : '○') + '</span>'
+          + '<span class="sr-only">' + (o.chosen ? 'Selected' : 'Not selected') + '</span>'
+        : '<input type="radio" name="sys" class="sys-in" value="' + esc(o.id) + '"'
+          + ' data-sys-price="' + esc(String(o.priceIncGst)) + '"'
+          + (o.chosen ? ' checked' : '') + '>')
       + '<span class="opt-body">'
         + '<span class="opt-h"><strong>' + esc(o.label) + '</strong>'
         + '<em>' + esc(moneyRound(o.priceIncGst)) + '</em></span>'
@@ -745,6 +756,27 @@ function navHtml(p) {
     + '</ul></nav>';
 }
 
+/**
+ * A way to take a copy away.
+ *
+ * Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+ * same offer data." A customer who wants it on paper, or as a PDF to send to
+ * their partner, should not have to find Cmd-P — and "we will send you a PDF"
+ * is not a feature.
+ *
+ * It prints THIS document, with the interactive furniture dropped by
+ * WEB_PRINT_HIDE, so the paper copy cannot be a different offer from the one
+ * on screen. Save-as-PDF is the same button in every browser's print dialog.
+ */
+function printBarHtml(p) {
+  if (!p.investment) return '';
+  return '<div class="printbar">'
+    + '<button type="button" class="btn ghost printbtn" data-print>'
+    + 'Save or print a copy</button>'
+    + '<span>Prints as a clean document — the choices you have made are included.</span>'
+    + '</div>';
+}
+
 function stickyHtml(p) {
   if (!p.investment || !p.acceptance.canAccept) return '';
   return '<div class="sticky" id="sticky">'
@@ -786,11 +818,12 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + galleryHtml(p)
     + reviewsHtml(p)
     + trustHtml(p)
-    + systemChoiceHtml(p)
+    + systemChoiceHtml(p, print)
     + investmentHtml(p)
     + when(!print, optionsHtml(p))
     + warrantyHtml(p)
     + when(!print, acceptHtml(p))
+    + when(!print, printBarHtml(p))
     + footerHtml(p);
 
   return '<!DOCTYPE html>\n<html lang="en-AU"><head>'
@@ -803,7 +836,8 @@ export function renderPresentationHtml(presentation, opts = {}) {
     // Print rules apply unconditionally in print mode, and inside @media print
     // for the web build — so Cmd-P from the customer's own link produces the
     // same document the PDF does, not a screenshot of a web page.
-    + '<style>' + CSS + (print ? PRINT_ONLY : '@media print{' + PRINT_ONLY + '}') + '</style>'
+    + '<style>' + CSS + (print ? PRINT_ONLY
+        : '@media print{' + PRINT_ONLY + WEB_PRINT_HIDE + '}') + '</style>'
     + '</head><body class="' + (print ? 'print' : 'web')
         + (p.demonstration ? ' demo' : '')
         + (p.testQuote ? ' testq' : '') + '">'
@@ -1123,10 +1157,20 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
   padding:4px 10px;margin-top:2px}
 .syschoice .opt-h em{font-size:18px}
+.sys-mark{flex:0 0 auto;font-size:17px;line-height:1.2;color:var(--navy)}
+/* Said to a screen reader, not shown. The glyph beside it is decorative. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .sys-pair{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
 .sys-img{display:block;margin-top:9px;width:100%;max-width:190px;height:auto;
   border-radius:9px;border:1px solid var(--line)}
+
+/* ── take a copy away ───────────────────────────────────────────────── */
+.printbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;
+  padding:18px 0 4px;border-top:1px solid var(--line);margin-top:8px}
+.printbar span{color:var(--muted);font-size:14px;flex:1;min-width:200px}
+.printbtn{min-height:48px}
 
 /* ── investment ─────────────────────────────────────────────────────── */
 .inv-prov{margin-top:12px;padding:12px 14px;border-radius:10px;
@@ -1279,6 +1323,34 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 `;
 
 /** Print rules. Applied for mode:'print' and also inside @media print for web. */
+/**
+ * What the WEB document drops when the customer prints it.
+ *
+ * Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+ * same offer data."
+ *
+ * The same document, not a second one. A separate print route would be a
+ * second rendering of the offer, and two renderings can disagree — which is
+ * exactly the failure that put a static artifact in front of a customer in
+ * September. So the printable version IS this page, with its interactive
+ * furniture removed: the section nav, the sticky total bar, the radio
+ * chooser, the upgrade tick-list and the acceptance form are all things you
+ * cannot do on paper.
+ *
+ * What the customer chose is still printed, because the investment lines
+ * carry the selected options and the chosen system's price.
+ *
+ * The SYSTEM CHOOSER stays. It is the one "interactive" block that is worth
+ * having on paper — it shows both systems, their prices and which one is
+ * selected — and the dedicated print render (mode: 'print') keeps it too. The
+ * two renderings must agree about what is in the document, because two
+ * renderings that disagree is the failure this is all guarding against.
+ */
+const WEB_PRINT_HIDE = `
+.nav,.sticky,.accept,.printbar,.lightbox{display:none!important}
+#options{display:none!important}
+`;
+
 const PRINT_ONLY = `
 @page{size:A4;margin:14mm 12mm}
 /* The demonstration mark has to be on every printed page, not only the first,
@@ -1315,6 +1387,11 @@ body{font-size:11pt;background:#fff}
 const SCRIPT = `
 (function(){
   "use strict";
+  // Save or print a copy. The browser's own dialog, printing this document
+  // with the interactive furniture hidden, so the paper copy is the same
+  // offer as the screen rather than a second rendering of it.
+  var pb=document.querySelector('[data-print]');
+  if(pb) pb.addEventListener('click',function(){ window.print(); });
   var lb=document.getElementById('lightbox'),lbImg=document.getElementById('lbImg'),
       lbClose=document.getElementById('lbClose'),last=null;
   function openLb(src,alt){ if(!lb)return; last=document.activeElement;
