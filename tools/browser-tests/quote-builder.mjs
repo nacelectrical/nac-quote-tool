@@ -33,6 +33,29 @@ const UPGRADES = [
     description: 'A sensor in the rooms you choose.', enabled: true, sortOrder: 2 }
 ];
 
+// ── THE PICTURE LIBRARY, AS THE CONTENT API SERVES IT ──────────────────────
+//
+// Two assets, and the pair is the point: a Zonemaster wall panel and an
+// AirTouch console. The quote's zone control is a SIEMENS kit, and neither of
+// these is a Siemens part — so the right answer on this screen is that neither
+// is matched to it, and the estimator picks one or leaves it blank.
+//
+// A one-pixel PNG. These checks are about which id is chosen and recorded,
+// not about what the photograph looks like.
+const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+  + 'AAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+const LIBRARY_IMAGES = [
+  { id: 'zonemaster-6-zone-wall-panel', role: 'equipment', approved: true,
+    exifStripped: true, gpsRemoved: true, equipmentBrand: 'Zonemaster',
+    alt: 'A Zonemaster six-zone wall panel, with a labelled switch for each zone',
+    derivatives: [{ ref: PIXEL, width: 600, height: 600, format: 'png' }] },
+  { id: 'airtouch-console-4-zone', role: 'equipment', approved: true,
+    exifStripped: true, gpsRemoved: true, equipmentBrand: 'AirTouch',
+    alt: 'An AirTouch console on the wall of a hallway',
+    tags: ['airtouch', 'controller'],
+    derivatives: [{ ref: PIXEL, width: 600, height: 600, format: 'png' }] }
+];
+
 const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
 // The estimator quotes from a laptop at the desk and an iPad in the roof
 // space, so the same run drives both.
@@ -48,7 +71,7 @@ page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.te
 // A signed-in staff session, and a stubbed backend: the content library comes
 // back with NAC's upgrades, and every nac_settings / nac_designs call is
 // answered so the page can be driven without touching production.
-await page.addInitScript(({ ups }) => {
+await page.addInitScript(({ ups, imgs }) => {
   localStorage.setItem('nac_session_v1', JSON.stringify({
     access_token: 'test-token', user: { email: 'nick@nacelectrical.com.au' },
     expires_at: Math.floor(Date.now() / 1000) + 86400 }));
@@ -59,7 +82,7 @@ await page.addInitScript(({ ups }) => {
     const J = (o, s = 200) => new Response(JSON.stringify(o),
       { status: s, headers: { 'Content-Type': 'application/json' } });
     if (u.includes('/api/presentation-content')) {
-      return J({ content: { upgrades: ups, reviews: [], installations: [], images: [],
+      return J({ content: { upgrades: ups, reviews: [], installations: [], images: imgs,
                             standardInclusions: { commissioning: true, wasteRemoval: true } } });
     }
     if (u.includes('/rest/v1/nac_designs')) {
@@ -104,7 +127,7 @@ await page.addInitScript(({ ups }) => {
     }
     return real(url, opts);
   };
-}, { ups: UPGRADES });
+}, { ups: UPGRADES, imgs: LIBRARY_IMAGES });
 
 await page.goto(B + '/quote-builder.html', { waitUntil: 'networkidle' });
 await page.waitForTimeout(400);
@@ -305,6 +328,47 @@ await step('a controller can still be typed by hand', async () => {
   await page.waitForTimeout(250);
 });
 
+// ── THE PICTURE OF THE ZONE CONTROL ────────────────────────────────────────
+//
+// Nick, 5 November 2026, sending a photograph of a Zonemaster six-zone wall
+// panel. The quote's control is a SIEMENS kit, so the check that matters is
+// the one that proves nothing was matched to it on its own.
+await step('a Siemens kit is given no picture by itself', async () => {
+  const box = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
+  if (!/Picture of the zone control/.test(box)) {
+    throw new Error('the picture chooser is not on the controller card');
+  }
+  if (await page.locator('#ctrlPic').inputValue() !== '') {
+    throw new Error('a picture was matched to a Siemens kit without being chosen');
+  }
+  if (await page.locator('#ctrlBox img').count()) {
+    throw new Error('a photograph is shown beside a kit nobody paired it with');
+  }
+});
+
+await step('the estimator picks the picture, and sees the one the customer will', async () => {
+  await show('#ctrlPic');
+  await page.selectOption('#ctrlPic', 'zonemaster-6-zone-wall-panel');
+  await page.waitForTimeout(250);
+  if (await page.locator('#ctrlBox img').count() !== 1) {
+    throw new Error('the chosen photograph is not shown back');
+  }
+  const alt = await page.locator('#ctrlBox img').getAttribute('alt');
+  if (!/Zonemaster/.test(String(alt))) throw new Error('wrong picture shown: ' + alt);
+  // The choice is LEFT IN for the rest of the run, so the save and the reopen
+  // below carry it and the round trip is proved rather than assumed.
+});
+
+await step('clearing the picture clears it', async () => {
+  await show('#ctrlPic');
+  await page.selectOption('#ctrlPic', '');
+  await page.waitForTimeout(250);
+  if (await page.locator('#ctrlBox img').count()) throw new Error('the picture did not clear');
+  // Back on, for the save and reopen checks.
+  await page.selectOption('#ctrlPic', 'zonemaster-6-zone-wall-panel');
+  await page.waitForTimeout(250);
+});
+
 await step('the kit\u2019s cost is shown to the estimator', async () => {
   // $295.00 is the Siemens 6-zone kit's MMEM cost. It belongs on this screen.
   const internal = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
@@ -480,6 +544,7 @@ await step('reopening a saved quote brings all of it back', async () => {
     outlets: await page.inputValue('#outlets'),
     zones: await page.inputValue('#zones'),
     ctrl: (await show('#ctrlSel'), await page.inputValue('#ctrlSel')),
+    pic: await page.inputValue('#ctrlPic'),
     incl: await page.inputValue('#incl'),
     excl: await page.inputValue('#excl'),
     test: await page.isChecked('#istest'),
@@ -491,11 +556,16 @@ await step('reopening a saved quote brings all of it back', async () => {
     name: before.customer.name, addr: before.siteAddress,
     pnum: before.proposalNumber, outlets: String(before.scope.outletCount),
     zones: String(before.scope.zoneCount), ctrl: before.controller.id,
+    pic: before.controller.imageId,
     incl: before.inclusions.join('\n'), excl: before.exclusions.join('\n'),
     test: before.testQuote === true,
     systems: before.systems.length, rooms: before.scope.conditionedRooms.length,
     total: '$17,817.00'
   };
+
+  // A round trip that compares '' with '' proves nothing. The picture must
+  // actually have been saved for the comparison below to mean anything.
+  if (!want.pic) throw new Error('the chosen picture never reached the saved quote');
   for (const k of Object.keys(want)) {
     if (String(got[k]) !== String(want[k])) {
       throw new Error(k + ': reopened as ' + JSON.stringify(got[k])

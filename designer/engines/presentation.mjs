@@ -33,7 +33,7 @@ import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   equipmentImagesFor, publicImageRef, publicImageSrcset,
   resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor,
-  ownWorkGallery, upgradeImageFor, optionImageFor
+  ownWorkGallery, upgradeImageFor, optionImageFor, controllerImageFor
 } from './presentation-content.mjs';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
@@ -736,7 +736,7 @@ function listSentence(items) {
   return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
 }
 
-function zonesSection(d) {
+function zonesSection(d, images = []) {
   const zs = rows(d.zones?.zones);
   if (!zs.length) return null;
   const c = d.controller || {};
@@ -749,6 +749,19 @@ function zonesSection(d) {
     controllerSku: trimmed(c.supplierCode || c.sku) || null,
     controllerMaxZones: n(c.maxZones),
     controllerIncludedInSystem: c.includedInSystem === true,
+    // ── THE PART, NOT A LOOKALIKE ───────────────────────────────────────
+    //
+    // Nick, 5 November 2026, sending a Zonemaster six-zone wall panel. The
+    // zones section named the controller and showed nothing, so a customer
+    // reading "Siemens Home zone control — 6 zone" had no idea what was
+    // going on their wall.
+    //
+    // controllerImageFor() will only put a picture here when NAC picked it
+    // by id, or when the photograph's own brand is in the controller's name.
+    // Not a score over the words "zone" and "control", which every zone
+    // controller ever made has in its name and which would therefore put any
+    // panel in the library beside any kit.
+    controllerImage: controllerImageFor(images, c),
     // NO PRICE. `controllerPriceIncGst` carried `c.cost` — MMEM's ex-GST
     // SUPPLIER cost, on a payload that is stored against the issued quote and
     // served to the customer's browser. Nothing rendered it, so it leaked
@@ -1255,7 +1268,7 @@ export function buildPresentation({
     inclusions: resolveInclusions(evidence),
     /** The estimator's own inclusions and exclusions. Null when none were typed. */
     scopeOfWork: scopeSection(d),
-    zones: zonesSection(d),
+    zones: zonesSection(d, content.images || []),
     coverage: coverageSection(d),
     installations,
     reviews,

@@ -346,18 +346,35 @@ function zonesHtml(p) {
   // One markup, two presentations: a real table on wide screens, and the same
   // rows as cards under 720px. Nick: "avoid horizontal tables; convert
   // schedules into cards."
+  // ── THE CONTROL, WITH ITS PICTURE ───────────────────────────────────────
+  //
+  // Nick, 5 November 2026, sending a photograph of a six-zone wall panel. The
+  // section named the part and showed nothing, so the one component the
+  // customer actually touches every day was the one thing on the proposal
+  // they could not picture.
+  //
+  // Alt text, NOT aria-hidden: unlike the upgrade thumbnails, nothing beside
+  // this says what the panel looks like, so the description is the only way a
+  // screen reader conveys it.
+  const ctrlLine = when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller)
+    + when(!!z.controllerSku, ' (' + esc(z.controllerSku) + ')')
+    + when(z.controllerMaxZones > 0, ', which handles up to ' + esc(z.controllerMaxZones)
+        + ' zones')
+    + '.'
+    + when(z.controllerIncludedInSystem === true,
+        ' It is supplied with the system at no separate charge.')
+    + '</p>');
+  const ctrlPic = z.controllerImage && z.controllerImage.src
+    ? '<figure class="ctrl-img">'
+      + picture(z.controllerImage, { ratio: '1 / 1', sizes: '(max-width:560px) 40vw, 180px' })
+      + '</figure>'
+    : '';
+
   return sect('zones', 'Your zones',
     // The actual part, its supplier code and what it costs. "Controlled by the
     // Brand Standard Controller" named nothing a customer could look up and
     // nothing anybody had priced.
-    when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller)
-      + when(!!z.controllerSku, ' (' + esc(z.controllerSku) + ')')
-      + when(z.controllerMaxZones > 0, ', which handles up to ' + esc(z.controllerMaxZones)
-          + ' zones')
-      + '.'
-      + when(z.controllerIncludedInSystem === true,
-          ' It is supplied with the system at no separate charge.')
-      + '</p>')
+    (ctrlPic ? '<div class="ctrl-row">' + ctrlPic + '<div>' + ctrlLine + '</div></div>' : ctrlLine)
     + '<div class="tablewrap"><table class="grid">'
     + '<thead><tr><th>Zone</th>' + when(z.showRooms, '<th>Rooms</th>')
       + '<th>Control</th></tr></thead><tbody>'
@@ -1229,6 +1246,14 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 .sys-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
 /* The picture beside an upgrade: small, so the words still lead. */
 .opt-img{flex:0 0 auto;width:92px;margin-right:2px}
+.ctrl-row{display:flex;gap:16px;align-items:flex-start}
+.ctrl-row > div{flex:1 1 auto;min-width:0}
+.ctrl-row .lede{margin-top:0}
+.ctrl-img{flex:0 0 auto;width:180px;margin:0}
+.ctrl-img .imgbox{border-radius:10px;border:1px solid var(--line);overflow:hidden;background:#fff}
+/* On a phone a 40vw picture beside the sentence left the text in a 186px
+   gutter, four words to the line. The picture goes above it instead. */
+@media(max-width:560px){.ctrl-row{display:block}.ctrl-img{width:150px;margin-bottom:12px}}
 .opt-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
 @media(max-width:560px){.opt-img{width:70px}}
 

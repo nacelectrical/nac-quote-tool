@@ -173,6 +173,16 @@ Three places a photograph appears on a proposal, and all three come from the
   the **Optional upgrades** tab instead, and the panel shows you which
   photograph has been matched before a customer sees it.
 
+- **The picture beside the zone control.** This one is **chosen by hand**, on
+  the Zone control card in the quote builder, and it is deliberate. Every zone
+  controller ever made is named with the words "zone" and "control", so a
+  matcher scoring on those words would put any panel in your library beside
+  any kit — a Zonemaster photograph on a Siemens line, under its price, on the
+  page the customer signs. The only match made without you is a photograph
+  whose own brand is in the controller's name. Pick one and the card shows you
+  the picture the customer will see; pick none and the page names the part and
+  shows no picture.
+
 Two rules the library enforces:
 
 - A review, a photograph or a brochure that has not been approved does not

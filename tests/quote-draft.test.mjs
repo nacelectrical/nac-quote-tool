@@ -720,8 +720,11 @@ test('the controller cost never leaves for the customer page', async () => {
   const src = draftToQuoteSource(d, { upgrades: UPGRADES });
   // The whole key set, pinned: anything new on this object is something new
   // a customer's browser receives, and that has to be a decision.
+  // `imageId` is a library id, not a price and not a cost: it names which of
+  // NAC's approved photographs goes beside the part on the page, and the page
+  // was always going to be told that one way or another.
   assert.deepEqual(Object.keys(src.controller).sort(),
-    ['includedInSystem', 'maxZones', 'name', 'priceIncGst']);
+    ['imageId', 'includedInSystem', 'maxZones', 'name', 'priceIncGst']);
   // `priceIncGst` is what a CUSTOMER would be charged for the kit on the rare
   // job where it is not in the system price — never the supplier cost, and
   // null whenever it is included.

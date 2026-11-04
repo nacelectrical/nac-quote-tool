@@ -134,8 +134,21 @@ export async function importPhotos({ check = false } = {}) {
       // The approval is a person's, and the record says whose and why.
       approved: true,
       approvedBy: 'nick@nacelectrical.com.au',
-      approvalNote: 'NAC’s own photographs of NAC’s own work, supplied by Nick '
-        + 'on 15–16 October 2026 for use on customer proposals.',
+      // ── WHOSE PICTURE IT IS, PER PICTURE ───────────────────────────
+      //
+      // This note used to read "NAC's own photographs of NAC's own work,
+      // supplied by Nick on 15–16 October 2026" on EVERY record. It was true
+      // of the nine installation photographs and false of the seven
+      // manufacturer product images added since — a false provenance stamped
+      // on the approval of a picture that goes in front of a customer, which
+      // is exactly the record somebody would rely on later.
+      //
+      // The manifest already carries `_provenance` on each of those, written
+      // when it was imported. That is what the approval note says now; the
+      // blanket sentence is kept only for the photographs it is true of.
+      approvalNote: p._provenance
+        || 'NAC’s own photograph of NAC’s own work, supplied by Nick '
+           + 'on 15–16 October 2026 for use on customer proposals.',
       // Measured on the re-encoded bytes by scanMetadata(), not asserted.
       exifStripped: true,
       gpsRemoved: true,

@@ -164,6 +164,20 @@ export function normaliseQuoteDraft(input = {}) {
         : !!trimmed(d.controller?.name),
       /** A separate charge, on the rare job where the kit is not in the price. */
       priceIncGst: money(d.controller?.priceIncGst),
+      /**
+       * THE PICTURE OF THIS PART, PICKED BY HAND.
+       *
+       * Nick, 5 November 2026, sending a Zonemaster six-zone wall panel.
+       *
+       * There is no automatic match worth having here. Every zone controller
+       * is named with the words "zone" and "control", so a matcher scoring on
+       * them would put any panel in the library beside any kit — a Zonemaster
+       * photograph on a Siemens line, under its price, on the page a customer
+       * signs. So the picture is NAC's to choose, by id, and the only match
+       * made without one is a controller whose own name carries the brand of
+       * the photograph.
+       */
+      imageId: trimmed(d.controller?.imageId),
       note: trimmed(d.controller?.note)
     },
 
@@ -551,7 +565,11 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
       ? { name: d.controller.name, maxZones: d.controller.zoneCount,
           includedInSystem: d.controller.includedInPrice === true,
           priceIncGst: d.controller.includedInPrice === true
-            ? null : d.controller.priceIncGst }
+            ? null : d.controller.priceIncGst,
+          // The photograph NAC picked for this part, by id. The presentation
+          // resolves it against the approved library; an id naming nothing
+          // publishable shows no picture rather than the nearest lookalike.
+          imageId: trimmed(d.controller.imageId) || null }
       : null,
 
     commercials: sys && sys.priceIncGst !== null ? {

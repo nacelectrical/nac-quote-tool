@@ -15,7 +15,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ownWorkGallery, upgradeImageFor, optionImageFor, normaliseImageAsset }
+import { ownWorkGallery, upgradeImageFor, optionImageFor, normaliseImageAsset,
+         controllerImageFor }
   from '../designer/engines/presentation-content.mjs';
 import { readFileSync } from 'node:fs';
 import { loadNacImages } from '../tools/import-nac-photos.mjs';
@@ -34,9 +35,9 @@ const SENSORS = { id: 'sensor', title: 'Room temperature sensors',
 // ── PICTURES OF NAC'S OWN WORK ──────────────────────────────────────────────
 
 test('NAC’s own photographs are marked as NAC’s own work', () => {
-  // Nine of NAC's own work, plus six manufacturer images: the room sensor and
-  // a ducted set for each of five brands.
-  assert.equal(IMAGES.length, 15);
+  // Nine of NAC's own work, plus seven manufacturer images: the room sensor,
+  // a ducted set for each of five brands, and the Zonemaster wall panel.
+  assert.equal(IMAGES.length, 16);
   const own = IMAGES.filter(i => normaliseImageAsset(i).ownWork === true);
   assert.equal(own.length, 9);
   for (const i of own) {
@@ -343,4 +344,124 @@ test('none of this put a cost, a margin or a supplier on the page', () => {
       assert.ok(!doc.includes(leak), '"' + leak + '" reached a customer document');
     }
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ZONE CONTROL, AND WHY THIS ONE IS MATCHED BY HAND
+//
+// Nick, 5 November 2026, sending a photograph of a Zonemaster six-zone wall
+// panel on its own, straight after the exchange that made a Siemens kit the
+// zone control in the price and the AirTouch the upgrade from it.
+//
+// The zones section named the part and showed nothing, so the one component
+// the customer touches every day was the one thing on the proposal they could
+// not picture. It shows a picture now — but ONLY the picture NAC picked, or
+// one whose own brand is in the controller's name.
+//
+// The reason is the whole point of these checks. Every zone controller ever
+// made is named with the words "zone" and "control". Score a library on those
+// and a Zonemaster panel matches "Siemens Home zone control — 6 zone" with
+// room to spare, and a customer buying a Siemens kit is shown a photograph of
+// another manufacturer's part, beside its price, on the page they sign.
+//
+// NAC's price list records the zone kits as Siemens — MMASEM4ZTPKIT,
+// MMASEM6ZTPKIT, MMASEM8ZTPKIT — and NOTHING anywhere says a Zonemaster panel
+// is the plate that ships with them. So the library holds the photograph and
+// the matcher refuses to make that claim on its own.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('THE SIEMENS KIT GETS NO PICTURE ON ITS OWN, AND THAT IS THE CHECK', () => {
+  // The quote's actual zone control. There is a Zonemaster panel in the
+  // library, a Fujitsu wall controller and two AirTouch consoles, and the
+  // honest answer is none of them.
+  const got = controllerImageFor(IMAGES,
+    { name: 'Siemens Home zone control — 6 zone' });
+  assert.equal(got, null, 'a Siemens line was given somebody else’s panel');
+});
+
+test('a controller whose own name carries the brand gets that brand’s picture', () => {
+  const zm = controllerImageFor(IMAGES, { name: 'Zonemaster 6 zone wall panel' });
+  assert.ok(zm, 'the Zonemaster panel was not matched to a Zonemaster controller');
+  assert.equal(zm.id, 'zonemaster-6-zone-wall-panel');
+
+  // And the AirTouch console, not the AirTouch room sensor: both are AirTouch,
+  // and the console is the one tagged as the controller.
+  const at = controllerImageFor(IMAGES, { name: 'AirTouch 5 zone control' });
+  assert.ok(at, 'no AirTouch picture for an AirTouch controller');
+  assert.match(at.id, /console/);
+});
+
+test('NAC naming the picture wins, and it is the only way onto a Siemens line', () => {
+  const got = controllerImageFor(IMAGES,
+    { name: 'Siemens Home zone control — 6 zone',
+      imageId: 'zonemaster-6-zone-wall-panel' });
+  assert.ok(got, 'the chosen picture did not appear');
+  assert.equal(got.id, 'zonemaster-6-zone-wall-panel');
+  assert.ok(got.alt && /Zonemaster/.test(got.alt), 'no alt text travelled');
+});
+
+test('a chosen picture that is not publishable shows none, not the nearest thing', () => {
+  assert.equal(controllerImageFor(IMAGES,
+    { name: 'Zonemaster 6 zone wall panel', imageId: 'no-such-picture' }), null);
+
+  // Unapproved is not publishable either, and "Zonemaster" in the name would
+  // otherwise have matched it.
+  const unapproved = IMAGES.map(i =>
+    /zonemaster/.test(i.id) ? { ...i, approved: false } : i);
+  assert.equal(controllerImageFor(unapproved,
+    { name: 'Zonemaster 6 zone wall panel' }), null);
+});
+
+test('an unnamed controller is not matched to anything', () => {
+  assert.equal(controllerImageFor(IMAGES, {}), null);
+  assert.equal(controllerImageFor(IMAGES, { name: '   ' }), null);
+});
+
+test('the chosen picture reaches the customer page, with its description', () => {
+  // The real path: the draft carries the id, draftToQuoteSource carries it to
+  // the quote source, the presentation resolves it against the library and the
+  // page renders it.
+  const { built } = buildTestQuote({}, {
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, includedInPrice: true,
+                  imageId: 'zonemaster-6-zone-wall-panel' }
+  });
+  assert.equal(built.ok, true,
+    'blocked: ' + JSON.stringify((built.blockers || []).map(b => b.code)));
+  const p = built.presentation;
+  assert.ok(p.zones.controllerImage, 'the zones section carries no picture');
+  assert.equal(p.zones.controllerImage.id, 'zonemaster-6-zone-wall-panel');
+
+  const html = markup(renderPresentationHtml(p, { token: 'T' }));
+  const zones = html.slice(html.indexOf('id="zones"'), html.indexOf('id="coverage"'));
+  assert.match(zones, /class="ctrl-img"/, 'no picture in the zones section');
+  // ALT TEXT, not aria-hidden. Unlike the upgrade thumbnails, nothing beside
+  // this says what the panel looks like, so the description is the only way a
+  // screen reader conveys it.
+  assert.match(zones, /alt="A Zonemaster six-zone wall panel/);
+  assert.ok(!/ctrl-img[\s\S]{0,200}aria-hidden/.test(zones),
+    'the only description of the panel was hidden from a screen reader');
+  // The part is still named. The picture is beside the words, not instead.
+  assert.match(zones, /Siemens Home zone control/);
+
+  // And it prints. A photograph that only appears when somebody scrolls past
+  // it is a photograph that is missing from the PDF.
+  const printed = markup(presentationPrintHtml(p));
+  const pz = printed.slice(printed.indexOf('id="zones"'), printed.indexOf('id="coverage"'));
+  assert.match(pz, /class="ctrl-img"/);
+  assert.ok(!/ctrl-img[\s\S]{0,400}loading="lazy"/.test(pz),
+    'the panel is lazy-loaded in a document nobody scrolls');
+});
+
+test('the shipped test quote shows NO zone-control picture, because none is paired', () => {
+  // Deliberate, and worth pinning so nobody "fixes" it later. The fixture's
+  // zone control is a Siemens kit and NAC has no photograph of one. Until Nick
+  // confirms which plate ships with his Siemens kits, the proposal names the
+  // part and shows nothing — which is the truth.
+  assert.equal(P.zones.controllerImage, null);
+  const zones = WEB_MARKUP.slice(WEB_MARKUP.indexOf('id="zones"'),
+    WEB_MARKUP.indexOf('id="coverage"'));
+  assert.ok(!/ctrl-img/.test(zones), 'a zone-control picture appeared unpaired');
+  assert.ok(!/zonemaster/i.test(WEB_MARKUP),
+    'the Zonemaster panel reached a Siemens quote');
 });

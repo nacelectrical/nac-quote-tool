@@ -242,6 +242,26 @@
    "ownWork": false,
    "optionImage": true,
    "_provenance": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered."
+  },
+  {
+   "file": "photos/zonemaster-6-zone-wall-panel.jpg",
+   "role": "equipment",
+   "alt": "A Zonemaster six-zone wall panel, with a labelled switch for each zone",
+   "seen": "A white wall plate badged Zonemaster at the bottom right, carrying six labelled buttons in a column with a round illuminated switch beside each. The labels read FAMILY, LOUNGE, MASTER, BEDROOM 2, BEDROOM 3 and STUDY. Five of the rings are lit blue; the one beside BEDROOM 2 is pale, so that zone is off.",
+   "equipmentBrand": "Zonemaster",
+   "equipmentModels": [],
+   "tags": [
+    "zonemaster",
+    "zone",
+    "zoning",
+    "switch",
+    "switches",
+    "panel",
+    "6 zone",
+    "wall"
+   ],
+   "ownWork": false,
+   "_provenance": "Supplied by Nick on 5 November 2026. A product image of a Zonemaster wall panel. Cropped only: the image was cropped to the panel itself (the supplied file was 527x527 with the panel occupying a 247x376 box) and then centred on white in a 600x600 square, which is the shape the page renders it in. Nothing in it was retouched. Nothing in it was altered. IT IS NOT MATCHED TO ANY CONTROLLER AUTOMATICALLY. NAC's zone kits are recorded as Siemens (MMASEM4ZTPKIT / MMASEM6ZTPKIT / MMASEM8ZTPKIT) and nothing in the library says a Zonemaster panel is the part that ships with them, so controllerImageFor() puts this picture on a controller only when the controller's own name says Zonemaster, or when NAC picks it by hand."
   }
  ],
  "_brands": "Fujitsu x2, Daikin x3, Braemar x2, AirTouch x2. The Braemar pair arrived 16 October 2026, after a Braemar quote had been rendering the plain branded card for want of one. The close shot is listed first, so it is the one that reaches the system card: a customer looking at 'your recommended system' wants the machine, not the plant deck.",

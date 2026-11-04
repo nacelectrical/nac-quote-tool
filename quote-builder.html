@@ -410,7 +410,8 @@ import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
 import { selectZoneController } from '/designer/engines/equipment.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { presentationPrintHtml } from '/designer/ui/presentation-pdf.mjs';
-import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor }
+import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor,
+         controllerImageFor, imagePublishable, IMAGE_ROLES }
   from '/designer/engines/presentation-content.mjs';
 import { saveDesign, loadDesign, getJson, SETTINGS_KEYS, loadNacBrands }
   from '/designer/engines/store.mjs';
@@ -1029,6 +1030,55 @@ function drawControllerInner() {
           v => { draft.controller.priceIncGst = numOrNull(v); }),
         'What the CUSTOMER pays for the kit — never what NAC paid for it.'));
     }
+  }
+
+  // ── THE PICTURE OF THE PART ───────────────────────────────────────────
+  //
+  // Nick, 5 November 2026, sending a photograph of a six-zone wall panel.
+  //
+  // CHOSEN BY HAND, and that is the point rather than a shortcut. Every zone
+  // controller ever made is named with the words "zone" and "control", so a
+  // matcher scoring on them would put any panel in the library beside any
+  // kit — a Zonemaster photograph on a Siemens line, under its price, on the
+  // page a customer signs. The only automatic match is a photograph whose own
+  // brand is in the controller's name, so a kit NAC has a picture of but has
+  // not paired gets this list and no guess.
+  if (draft.controller.name || draft.controller.id) {
+    const pics = (content.images || [])
+      .filter(a => a && a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+    const psel = el('select', { id: 'ctrlPic' });
+    psel.appendChild(el('option', { value: '', text: '\u2014 no picture \u2014' }));
+    for (const a of pics) {
+      psel.appendChild(el('option', { value: a.id,
+        text: (a.equipmentBrand ? a.equipmentBrand + ' \u2014 ' : '')
+          + (a.alt || a.id) }));
+    }
+    const heldPic = String(draft.controller.imageId || '');
+    psel.value = [...psel.options].some(o => o.value === heldPic) ? heldPic : '';
+    psel.addEventListener('change', () => {
+      draft.controller.imageId = psel.value;
+      mark(); drawController();
+    });
+    // What the customer page will actually show, resolved by the SAME function
+    // the proposal uses — so a chosen id that turns out not to be publishable
+    // reads as "no picture" here rather than looking fine until it is issued.
+    const shown = controllerImageFor(content.images || [],
+      { name: draft.controller.name, imageId: draft.controller.imageId });
+    const hint = draft.controller.imageId && !shown
+      ? 'That picture is not publishable, so the customer page will show none. '
+        + 'Approve it on the Images panel or choose another.'
+      : (shown
+          ? 'Shown beside the zone control on the customer page.'
+          : 'Optional. Without one the page names the part and shows no picture, '
+            + 'which is better than a photograph of somebody else\u2019s.');
+    const picField = field('Picture of the zone control', psel, hint);
+    if (shown && shown.src) {
+      const img = el('img', { src: shown.src, alt: shown.alt || '',
+        style: 'width:92px;height:92px;object-fit:cover;border-radius:9px;'
+          + 'border:1px solid #d8dee6;margin-top:8px;background:#fff' });
+      picField.appendChild(img);
+    }
+    host.appendChild(picField);
   }
 
   const notes = [];

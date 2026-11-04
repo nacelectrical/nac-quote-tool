@@ -58,9 +58,12 @@ function nacLogo() {
  * @param {object} extraContent library fields to lay over NAC's own, so a
  *   caller can prove something that needs content this fixture does not carry
  *   — a manufacturer brochure, say. Everything else stays NAC's real content.
+ * @param {object} draftOver draft fields to lay over the fixture's, for the
+ *   same reason: a check that needs a zone control paired with a picture, say.
+ *   Shallow, so a replaced section is replaced whole.
  */
-export function buildTestQuote(extraContent = {}) {
-  const draft = quoteOnlyDraft({ testQuote: true });
+export function buildTestQuote(extraContent = {}, draftOver = {}) {
+  const draft = quoteOnlyDraft({ testQuote: true, ...draftOver });
 
   // NAC's nine photographs, imported through tools/import-nac-photos.mjs:
   // re-encoded in Chromium and verified clean by scanMetadata().
@@ -98,11 +101,12 @@ export function buildTestQuote(extraContent = {}) {
   });
 
   return { draft, content, gate, built, reviewCount: reviews.length,
-           imageCount: images.length };
+           imageCount: images.length,
+           ownCount: images.filter(i => i.ownWork === true).length };
 }
 
 if (import.meta.url === 'file://' + process.argv[1]) {
-  const { draft, gate, built, reviewCount, imageCount } = buildTestQuote();
+  const { draft, gate, built, reviewCount, imageCount, ownCount } = buildTestQuote();
 
   console.log('draft gate: ' + (gate.ok ? 'passes' : 'BLOCKED'));
   for (const b of gate.blockers) console.log('   BLOCK ' + b.code + ' — ' + b.message);
@@ -125,8 +129,14 @@ if (import.meta.url === 'file://' + process.argv[1]) {
   console.log('  of which   $' + p.investment.totalGst.toFixed(2) + ' GST');
   console.log('  deposit    $' + p.investment.deposit.amount.toFixed(2)
     + ' (' + p.investment.deposit.percent + '%)');
-  console.log('  photos     ' + imageCount + ' of NAC’s own, '
+  // "16 of NAC's own" was true when the library held only NAC's own work and
+  // false the moment manufacturer product images were added to it. The split
+  // is reported, because the difference is the whole basis of the gallery.
+  console.log('  photos     ' + imageCount + ' in the library ('
+    + ownCount + ' of NAC’s own work, ' + (imageCount - ownCount) + ' supplied), '
     + (p.system.image ? 'one matched to the Daikin' : 'none matched'));
+  console.log('  zone ctrl  ' + (p.zones && p.zones.controllerImage
+    ? 'picture paired by hand' : 'no picture — none is paired with this kit'));
   console.log('  reviews    ' + reviewCount + ' approved, '
     + p.reviews.filter(r => r.rating === null).length + ' with no star rating recorded');
   console.log('  labelled   ' + (p.testQuote ? 'TEST QUOTE' : 'NOT LABELLED'));

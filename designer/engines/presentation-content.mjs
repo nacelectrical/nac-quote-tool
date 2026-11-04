@@ -1192,3 +1192,71 @@ export function optionImageFor(images = [], option = {}) {
   }, { max: 1 });
   return matched.length ? publicPicture(matched[0]) : null;
 }
+
+/**
+ * The photograph that belongs beside the ZONE CONTROLLER.
+ *
+ * Nick, 5 November 2026: a Zonemaster six-zone wall panel, sent on its own,
+ * straight after the exchange that made Siemens the zone control in the price
+ * and AirTouch the upgrade.
+ *
+ * This matcher is DELIBERATELY STRICTER than the upgrade one, and it is worth
+ * saying why rather than leaving it to look like an oversight.
+ *
+ * Every zone controller ever made is named with the words "zone" and
+ * "control". Score a library on those and a Zonemaster panel matches "Siemens
+ * Home zone control — 6 zone" with room to spare, and a customer buying a
+ * Siemens kit is shown a photograph of somebody else's part, beside its price,
+ * on a document they are being asked to sign. That is the same error as
+ * putting a Mitsubishi Electric machine on a Mitsubishi Heavy Industries
+ * quote, and no amount of scoring fixes it, because the evidence genuinely
+ * is not there.
+ *
+ * So only two things select a picture here:
+ *
+ *   1. `controller.imageId` — NAC naming the picture for this part outright.
+ *   2. The asset's own `equipmentBrand` appearing in the controller's name —
+ *      an AirTouch console on a controller called "AirTouch 5", a Zonemaster
+ *      panel on a controller called "Zonemaster 6 zone".
+ *
+ * A model the photograph names, appearing in the controller's name, counts as
+ * the brand does: it is the part identifying itself.
+ *
+ * Anything else gets no picture. A zone controller NAC has no photograph of
+ * reads as it always has — the part, its code and how many zones it handles —
+ * which tells the customer the truth.
+ */
+export function controllerImageFor(images = [], controller = {}) {
+  const assets = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const explicit = trimmed(controller.imageId);
+  if (explicit) {
+    const hit = assets.find(a => a.id === explicit);
+    // An id naming nothing publishable is not quietly replaced by a guess.
+    return hit ? publicPicture(hit) : null;
+  }
+
+  const name = wordKey(controller.name);
+  if (!name) return null;
+
+  let best = null;
+  for (const a of assets) {
+    let score = 0;
+    for (const m of a.equipmentModels) {
+      const k = wordKey(m);
+      if (k && k.length >= 4 && name.includes(k)) score += 3;
+    }
+    const brand = wordKey(a.equipmentBrand);
+    if (brand && brand.length >= 4 && name.includes(brand)) score += 2;
+    if (score <= 0) continue;
+    // Between two photographs of the same brand's control, the one tagged
+    // 'controller' wins: NAC's AirTouch library holds a console and a room
+    // sensor, and the console is the controller.
+    const isController = list(a.tags).some(t => wordKey(t) === 'controller'
+      || wordKey(t) === 'panel' || wordKey(t) === 'console');
+    if (isController) score += 1;
+    if (!best || score > best.score) best = { asset: a, score };
+  }
+  return best ? publicPicture(best.asset) : null;
+}
