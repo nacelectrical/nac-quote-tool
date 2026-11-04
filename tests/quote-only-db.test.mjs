@@ -353,3 +353,127 @@ test('the approval is frozen onto the issued offer, with a fingerprint of it',
     assert.match(stored.data.offerFingerprint, /^[0-9a-f]{16}$/,
       'The exact offer that was approved has to be identifiable afterwards.');
   });
+
+// ── SECTION 8: WHAT AN ISSUED OFFER IS PROOF AGAINST ────────────────────────
+//
+// Nick, 4 November 2026: "Freeze the exact offer at issue... Calculate totals
+// on the server from saved prices... Switching equipment must remove
+// incompatible upgrades and their charges... Later catalogue, job or content
+// changes must not change an issued offer."
+//
+// The screen already refuses these. These are about the SERVER refusing them,
+// because the screen is the half a customer can edit.
+
+test('switching system on the issued page drops an upgrade that does not fit it',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest();
+    t.after(() => stop());
+    const { draft } = await setup();
+    const h = await handlers();
+
+    const issued = await call(h.issue, { method: 'POST', headers: STAFF,
+      body: issueBody(draft) });
+    assert.equal(issued.status, 200, JSON.stringify(issued.body));
+    const token = issued.body.token;
+
+    // On the Daikin, with the Daikin-only AirTouch selected, the total is the
+    // issued one.
+    const onDaikin = await call(h.respond, { method: 'POST',
+      body: { token, action: 'options', chosenSystemId: 'sys-a',
+              selectedOptionIds: ['at5', { id: 'sensor', quantity: 4 }] } });
+    assert.equal(onDaikin.status, 200, JSON.stringify(onDaikin.body));
+    assert.equal(onDaikin.body.totalIncGst, 17817);
+
+    // Switch to the Braemar. The AirTouch and its sensors only fit a Daikin,
+    // so they come off — and so do their charges. Nobody pays $1,350 for a
+    // controller that cannot go on the system they chose.
+    const onBraemar = await call(h.respond, { method: 'POST',
+      body: { token, action: 'options', chosenSystemId: 'sys-b',
+              selectedOptionIds: ['at5', { id: 'sensor', quantity: 4 }] } });
+    assert.equal(onBraemar.status, 200, JSON.stringify(onBraemar.body));
+    assert.equal(onBraemar.body.totalIncGst, 14553,
+      'the Braemar price alone — the Daikin-only upgrades and their charges are gone');
+    assert.deepEqual(onBraemar.body.selectedOptionIds, [],
+      'an upgrade that cannot go on the chosen system is not carried along');
+
+    // And the record agrees: the server, not the page, decided this.
+    const rec = row("select data from public.nac_quote_issues where token = '"
+      + token + "'");
+    assert.equal(rec.data.chosenSystemId, 'sys-b');
+    assert.deepEqual(rec.data.selectedOptionIds, []);
+  });
+
+test('an accepted total cannot be dictated by the page',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest();
+    t.after(() => stop());
+    const { draft } = await setup();
+    const h = await handlers();
+    const issued = await call(h.issue, { method: 'POST', headers: STAFF,
+      body: issueBody(draft) });
+    const token = issued.body.token;
+
+    // A figure in the body is not an instruction. The server prices the
+    // selection from the frozen copy and ignores whatever the page sent.
+    const ignored = await call(h.respond, { method: 'POST',
+      body: { token, action: 'options', chosenSystemId: 'sys-a',
+              selectedOptionIds: ['at5', { id: 'sensor', quantity: 4 }],
+              totalIncGst: 1, priceIncGst: 1, deposit: 1 } });
+    assert.equal(ignored.status, 200, JSON.stringify(ignored.body));
+    assert.equal(ignored.body.totalIncGst, 17817,
+      'a total sent by the page was treated as the price');
+
+    // And where the page STATES the figure it is showing, a disagreement is
+    // refused rather than resolved in silence: a customer must not accept
+    // believing one number while another is recorded.
+    const stale = await call(h.respond, { method: 'POST',
+      body: { token, action: 'accept', customerName: 'Test Quote — do not send',
+              acknowledgedTerms: true, expectedTotalIncGst: 1 } });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.state, 'total_mismatch');
+    assert.equal(stale.body.totalIncGst, 17817,
+      'the server says what the figure actually is');
+
+    const rec = row("select status, data from public.nac_quote_issues where token = '"
+      + token + "'");
+    assert.equal(rec.status, 'issued', 'nothing was accepted');
+    assert.ok(!rec.data.acceptance, 'an acceptance was recorded anyway');
+  });
+
+test('changing the content library after issue does not change the issued offer',
+  { skip: !HAVE_PG && 'needs PostgreSQL' }, async (t) => {
+    const stop = await startRest();
+    t.after(() => stop());
+    const { draft } = await setup();
+    const h = await handlers();
+    const issued = await call(h.issue, { method: 'POST', headers: STAFF,
+      body: issueBody(draft) });
+    const token = issued.body.token;
+    const before = await call(h.view, { method: 'GET', query: { token } });
+    const beforeTotal = before.body.presentation.investment.totalIncGst;
+
+    // Nick doubles the price of an upgrade in the library and rewrites the
+    // terms. An offer already in a customer's hands is not touched by either.
+    const changed = {
+      ...CONTENT,
+      upgrades: UPGRADES.map(u => ({ ...u,
+        priceIncGst: u.priceIncGst ? u.priceIncGst * 2 : u.priceIncGst,
+        unitPriceIncGst: u.unitPriceIncGst ? u.unitPriceIncGst * 2 : u.unitPriceIncGst })),
+      termsAndConditions: { version: 'REWRITTEN', clauses: [] }
+    };
+    sql("update public.nac_presentation_content set data = $nacjson$"
+      + JSON.stringify(changed) + "$nacjson$::jsonb where key = 'library'");
+
+    const after = await call(h.view, { method: 'GET', query: { token } });
+    assert.equal(after.body.presentation.investment.totalIncGst, beforeTotal,
+      'a library edit reached a quote that had already gone out');
+    assert.ok(!JSON.stringify(after.body.presentation).includes('REWRITTEN'),
+      'the terms the customer is accepting were rewritten underneath them');
+
+    // And the figure they can still accept is the one they were issued.
+    const accepted = await call(h.respond, { method: 'POST',
+      body: { token, action: 'accept', customerName: 'Test Quote — do not send',
+              acknowledgedTerms: true } });
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.equal(accepted.body.acceptedTotal, beforeTotal);
+  });
