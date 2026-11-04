@@ -107,9 +107,16 @@ test('capacity, phase, warranty and the price are all on each option', () => {
 
 test('the controller and the zoning are on the page', () => {
   const { p, html } = present(quoteOnlyDraft());
-  assert.equal(p.zones.controller, 'AirTouch 5');
+  // The base zone control is the Siemens kit NAC's house rule sizes to the
+  // job; the AirTouch is the upgrade from it, offered beside the price.
+  assert.equal(p.zones.controller, 'Siemens Home zone control — 6 zone');
+  assert.equal(p.zones.controllerIncludedInSystem, true);
   assert.equal(p.zones.rows.length, 6, 'six zones were scoped, so six are shown');
-  assert.ok(html.includes('AirTouch 5'), 'the zone control has to be named');
+  assert.ok(html.includes('Siemens Home zone control'), 'the zone control has to be named');
+  assert.ok(html.includes('supplied with the system at no separate charge'),
+    'a customer needs to know whether the zone control is in the price');
+  assert.ok(html.includes('AirTouch 5 smart control'),
+    'the AirTouch has to be offered as the upgrade from it');
   assert.ok(html.includes('Living / Dining'), 'each zone names its rooms');
 });
 
@@ -248,4 +255,86 @@ test('a new quote cannot be issued at all until somebody prices it', () => {
   assert.deepEqual(source.systemOptions, []);
   assert.equal(source.priceFirmness.fixed, true,
     'an empty draft has no open items — the gate stops it, not the firmness');
+});
+
+// ── THE ZONE CONTROL: SIEMENS IN THE PRICE, AIRTOUCH AS THE OPTION ─────────
+//
+// Nick, 5 November 2026: "Test is missing Airtouch option / Or Siemens as an
+// option."
+//
+// The test quote named the AirTouch 5 as its zone control AND offered
+// "AirTouch 5 smart control" as a $1,350 upgrade beside it — the same
+// controller, included and charged. duplicateCharges() is built to catch
+// exactly that and it was sitting in the demonstration quote, because the
+// rule read `controller.includedInPrice` and the draft carried no such field.
+//
+// NAC's house rule is the Siemens kit sized to the zone count unless the job
+// is on an AirTouch, so the base is a Siemens and the AirTouch is what a
+// customer upgrades TO. Both are on the page: one in the price, one beside it.
+
+test('the base zone control is the Siemens kit, in the price', () => {
+  const { p } = present(quoteOnlyDraft());
+  assert.equal(p.zones.controller, 'Siemens Home zone control — 6 zone');
+  assert.equal(p.zones.controllerIncludedInSystem, true);
+  assert.equal(p.zones.controllerMaxZones, 6,
+    'the kit has to be sized to the zones actually scoped');
+});
+
+test('the AirTouch is offered as the upgrade from it, and charged once', async () => {
+  const { duplicateCharges } = await import('../designer/engines/option-pricing.mjs');
+  const draft = normaliseQuoteDraft(quoteOnlyDraft());
+
+  const at5 = present(draft).p.options.find(o => o.id === 'at5');
+  assert.ok(at5, 'the AirTouch is not offered at all');
+  assert.equal(at5.priceIncGst, 1350);
+
+  assert.deepEqual(duplicateCharges(draft, { upgrades: UPGRADES }), [],
+    'the quote charges something twice');
+});
+
+test('a quote that includes AND charges one controller is caught', async () => {
+  const { duplicateCharges } = await import('../designer/engines/option-pricing.mjs');
+  // The shape this fixture used to have: the AirTouch as the zone control,
+  // with the AirTouch upgrade ticked beside it.
+  const bad = normaliseQuoteDraft(quoteOnlyDraft({
+    controller: { name: 'AirTouch 5', zoneCount: 8 }
+  }));
+  const found = duplicateCharges(bad, { upgrades: UPGRADES });
+  assert.ok(found.some(f => f.code === 'UPGRADE_DUPLICATES_CONTROLLER'),
+    'the duplicate went unnoticed: ' + JSON.stringify(found));
+});
+
+test('the "charged twice" rule can actually fire on a real draft', async () => {
+  const { duplicateCharges } = await import('../designer/engines/option-pricing.mjs');
+  // It reads controller.includedInPrice and controller.priceIncGst. Neither
+  // was on the normalised draft, so the rule was dead against every real
+  // quote and only ever passed against a hand-built object in a test.
+  const draft = normaliseQuoteDraft(quoteOnlyDraft({
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, includedInPrice: true, priceIncGst: 420 }
+  }));
+  assert.equal(draft.controller.includedInPrice, true);
+  assert.equal(draft.controller.priceIncGst, 420);
+  const found = duplicateCharges(draft, { upgrades: UPGRADES });
+  assert.ok(found.some(f => f.code === 'CONTROLLER_CHARGED_TWICE'),
+    'a controller both included and charged was not flagged');
+});
+
+test('a controller that is NOT in the price says so rather than nothing', () => {
+  const { p } = present(quoteOnlyDraft({
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, includedInPrice: false }
+  }));
+  assert.equal(p.zones.controllerIncludedInSystem, false);
+});
+
+test('what NAC paid for the kit is nowhere on the page', () => {
+  const { p, html } = present(quoteOnlyDraft({
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, cost: 295, supplierCode: 'MMASEM6ZTPKIT' }
+  }));
+  const blob = JSON.stringify(p)
+    + html.replace(/data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+/g, '');
+  assert.ok(!/\b295\b/.test(blob), 'the supplier cost reached the customer page');
+  assert.ok(!/MMASEM/.test(blob), 'the supplier code reached the customer page');
 });

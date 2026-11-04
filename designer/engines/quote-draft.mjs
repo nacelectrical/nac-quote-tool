@@ -147,6 +147,23 @@ export function normaliseQuoteDraft(input = {}) {
       auto: bool(d.controller?.auto),
       name: trimmed(d.controller?.name),
       zoneCount: n(d.controller?.zoneCount),
+      /**
+       * IS THE ZONE CONTROL IN THE PRICE?
+       *
+       * On a quote-only job the system price is all-in, so a named controller
+       * is included unless somebody says otherwise — which is what a customer
+       * most wants to know about it and what the page had no way to say.
+       *
+       * It also made duplicateCharges()' first rule dead: that rule asks
+       * whether a controller is marked included AND carries its own charge,
+       * and the draft carried neither field, so it could never fire on a real
+       * quote. It can now.
+       */
+      includedInPrice: d.controller?.includedInPrice === false
+        ? false
+        : !!trimmed(d.controller?.name),
+      /** A separate charge, on the rare job where the kit is not in the price. */
+      priceIncGst: money(d.controller?.priceIncGst),
       note: trimmed(d.controller?.note)
     },
 
@@ -528,8 +545,14 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
       capacityKw: sys.capacityKw, phase: sys.phase
     } : null,
 
+    // What a customer may be told about the zone control: the part, how many
+    // zones it handles, and whether it is in the price. Never what NAC paid.
     controller: trimmed(d.controller.name)
-      ? { name: d.controller.name, maxZones: d.controller.zoneCount } : null,
+      ? { name: d.controller.name, maxZones: d.controller.zoneCount,
+          includedInSystem: d.controller.includedInPrice === true,
+          priceIncGst: d.controller.includedInPrice === true
+            ? null : d.controller.priceIncGst }
+      : null,
 
     commercials: sys && sys.priceIncGst !== null ? {
       sellPriceIncGst: sys.priceIncGst,

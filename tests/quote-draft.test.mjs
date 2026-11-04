@@ -718,7 +718,17 @@ test('the controller cost never leaves for the customer page', async () => {
     controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
                   zoneCount: 6, cost: 295 } });
   const src = draftToQuoteSource(d, { upgrades: UPGRADES });
-  assert.deepEqual(Object.keys(src.controller).sort(), ['maxZones', 'name']);
+  // The whole key set, pinned: anything new on this object is something new
+  // a customer's browser receives, and that has to be a decision.
+  assert.deepEqual(Object.keys(src.controller).sort(),
+    ['includedInSystem', 'maxZones', 'name', 'priceIncGst']);
+  // `priceIncGst` is what a CUSTOMER would be charged for the kit on the rare
+  // job where it is not in the system price — never the supplier cost, and
+  // null whenever it is included.
+  assert.equal(src.controller.includedInSystem, true);
+  assert.equal(src.controller.priceIncGst, null);
+  assert.ok(!('cost' in src.controller), 'the supplier cost travelled');
+  assert.ok(!('supplierCode' in src.controller));
   const built = build(d).presentation;
   const blob = JSON.stringify(built) + renderPresentationHtml(built, { token: 'T' });
   assert.ok(!/\b295\b/.test(blob.replace(/data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+/g, '')),

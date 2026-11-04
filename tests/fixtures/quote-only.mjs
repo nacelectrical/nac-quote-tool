@@ -47,7 +47,25 @@ export function quoteOnlyDraft(over = {}) {
       { id: 'sys-b', brand: 'Braemar', brandId: 'braemar', model: 'KDHV160D1S',
         capacityKw: 16.3, phase: '1Ph', priceIncGst: 14553, warrantyYears: 7 }
     ],
-    controller: { name: 'AirTouch 5', zoneCount: 8 },
+    // ── THE ZONE CONTROL IS THE HOUSE RULE'S, AND THE AIRTOUCH IS THE
+    //    UPGRADE FROM IT ──────────────────────────────────────────────────
+    //
+    // This fixture named the AirTouch 5 as the quote's zone control AND
+    // offered "AirTouch 5 smart control" as a $1,350 upgrade beside it — the
+    // same controller, included and charged. duplicateCharges() flags exactly
+    // that, and it was sitting in the demonstration quote.
+    //
+    // Nick, "siemens is used if not airtouch, this is on pricelist also": the
+    // base is a Siemens kit sized to the zone count, which is what
+    // selectZoneController() returns for six zones, and the AirTouch is what
+    // a customer upgrades TO. So the proposal now shows both — the Siemens in
+    // the price, the AirTouch as the option.
+    controller: {
+      id: 'siemens_z6',
+      name: 'Siemens Home zone control — 6 zone',
+      zoneCount: 6,
+      includedInPrice: true
+    },
     scope: {
       outletCount: 10, returnCount: 2, zoneCount: 6,
       summary: 'Ducted reverse-cycle throughout the single storey, six zones.',

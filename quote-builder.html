@@ -1005,6 +1005,32 @@ function drawControllerInner() {
         v => { draft.controller.name = v; })));
   }
 
+  // ── IS IT IN THE PRICE? ───────────────────────────────────────────────
+  //
+  // On a quote-only job the system price is all-in, so a named kit is
+  // included unless the estimator says otherwise — and the customer's page
+  // says which, because "is the controller extra?" is the question they
+  // actually ask. Untick it and the page stops saying it is included.
+  if (draft.controller.name || draft.controller.id) {
+    const inc = el('input', { type: 'checkbox', id: 'ctrlInc' });
+    inc.checked = draft.controller.includedInPrice !== false;
+    inc.addEventListener('change', () => {
+      draft.controller.includedInPrice = inc.checked;
+      if (inc.checked) draft.controller.priceIncGst = null;
+      mark(); drawController();
+    });
+    host.appendChild(el('label', { class: 'testbox' }, [inc,
+      el('span', { text: 'The zone control is included in the system price. '
+        + 'The customer page says so when this is ticked.' })]));
+    if (!inc.checked) {
+      host.appendChild(field('Charged separately, including GST',
+        input(draft.controller.priceIncGst,
+          { type: 'number', step: '1', min: '0', inputmode: 'decimal' },
+          v => { draft.controller.priceIncGst = numOrNull(v); }),
+        'What the CUSTOMER pays for the kit — never what NAC paid for it.'));
+    }
+  }
+
   const notes = [];
   if (resized) { notes.push(['warn', resized]); resized = ''; }
   if (pick.basis === 'nac_house_rule' && draft.controller.id === pick.recommended.id) {
