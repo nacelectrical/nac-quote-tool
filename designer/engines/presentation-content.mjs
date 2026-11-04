@@ -787,3 +787,206 @@ export function resolveUpgrades(library = [], capabilities = {}) {
   }
   return { offerable, withheld };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDARD SCOPE, AND NAC'S INSTALLATION ALLOWANCES
+//
+// Nick, 4 November 2026: "Allow me to manage... standard inclusions and
+// exclusions... equipment prices and installation allowances."
+//
+// Both of these were hard-coded. The standard inclusions and exclusions lived
+// as two arrays inside quote-builder.html, which meant Nick could not change a
+// word of what every NAC quote promises without somebody editing the
+// application. They are content, and they belong in the library.
+//
+// NOTHING HERE INVENTS A RATE. An allowance is a figure NAC set, with a name
+// and a note saying what it covers. An allowance with no price is carried as
+// an allowance with no price — it does not fall back to a typical figure, and
+// a quote carrying one is a provisional estimate rather than a fixed price.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NAC's own wording for what every quote includes and excludes.
+ *
+ * The shipped list is what quote-builder.html has been using since the quote
+ * workflow was built, so a library nobody has opened behaves exactly as the
+ * application did before. The moment Nick edits it, his wording wins outright.
+ */
+export const SHIPPED_STANDARD_SCOPE = Object.freeze({
+  inclusions: Object.freeze([
+    'Supply and install of the system above',
+    'All ductwork, supply outlets and return air grilles',
+    'Electrical connection to an existing suitable circuit',
+    'Commissioning, balancing and handover',
+    'Removal of all installation waste'
+  ]),
+  exclusions: Object.freeze([
+    'Switchboard or circuit upgrades, if the existing board cannot carry the system',
+    'Patching or painting beyond the installation openings',
+    'Asbestos handling of any kind',
+    'Structural alterations to accommodate the equipment or ductwork'
+  ])
+});
+
+const lines = (v) => (Array.isArray(v) ? v : [])
+  .map(x => String(x ?? '').trim()).filter(Boolean);
+
+/**
+ * The standard scope as stored, falling back to the shipped wording.
+ *
+ * An EMPTY stored list is a real answer — Nick deciding NAC's quotes carry no
+ * standard exclusions is a decision, not a blank to fill in — so the fallback
+ * only applies when the key is absent altogether.
+ */
+export function standardScope(stored = null) {
+  const s = stored || {};
+  return {
+    inclusions: Array.isArray(s.inclusions)
+      ? lines(s.inclusions) : [...SHIPPED_STANDARD_SCOPE.inclusions],
+    exclusions: Array.isArray(s.exclusions)
+      ? lines(s.exclusions) : [...SHIPPED_STANDARD_SCOPE.exclusions],
+    /** True while this is the wording the application shipped with. */
+    isShipped: !Array.isArray(s.inclusions) && !Array.isArray(s.exclusions)
+  };
+}
+
+/**
+ * One installation allowance: a named sum NAC carry for work whose extent is
+ * not known until somebody is on site.
+ *
+ * `priceIncGst` null is the honest state of an allowance nobody has costed.
+ * It is offered with no figure rather than with a guess.
+ */
+export function normaliseAllowance(input = {}, index = 0) {
+  const a = input || {};
+  const s = (v) => String(v ?? '').trim();
+  const num = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const x = Number(v);
+    return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : null;
+  };
+  return {
+    id: s(a.id) || ('allow-' + (index + 1)),
+    title: s(a.title),
+    /** What it covers, and what would take it past the allowance. */
+    covers: s(a.covers),
+    priceIncGst: num(a.priceIncGst),
+    /** Where it belongs by default: the scope, or an optional extra. */
+    kind: a.kind === 'optional' ? 'optional' : 'scope',
+    enabled: a.enabled !== false,
+    sortOrder: Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : index
+  };
+}
+
+/**
+ * Which allowances can be put on a quote, and which cannot — with the reason.
+ *
+ * Nick: "Never invent missing rates." An allowance with no price is WITHHELD
+ * rather than quoted at nothing, because a zero on a proposal reads as "no
+ * charge" and that is a promise NAC did not make.
+ */
+export function allowancesFor(stored = []) {
+  const all = (Array.isArray(stored) ? stored : [])
+    .map(normaliseAllowance)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const offerable = [];
+  const withheld = [];
+  for (const a of all) {
+    if (!a.enabled) continue;
+    if (!a.title) {
+      withheld.push({ ...a, reason: 'No name, so nobody could tell what it is for.' });
+    } else if (a.priceIncGst === null) {
+      withheld.push({ ...a,
+        reason: 'No figure set. An allowance with no price is not quoted at zero — '
+          + 'a zero on a proposal reads as "no charge".' });
+    } else {
+      offerable.push(a);
+    }
+  }
+  return { offerable, withheld };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANUFACTURER BROCHURES
+//
+// Nick, 4 November 2026: "equipment and controller images and brochures."
+//
+// A link to the manufacturer's OWN document, so a customer can read the real
+// specification rather than a summary of it. Nothing here writes a word about
+// a unit: no description, no feature list, no performance figure. A product
+// claim NAC did not make is exactly what must not appear on a proposal, and a
+// plausible-looking manufacturer URL nobody supplied is a fabricated one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Only a real, absolute https link to a document. Nothing is constructed. */
+function brochureUrl(v) {
+  const u = String(v ?? '').trim();
+  if (!u) return '';
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'https:' ? parsed.href : '';
+  } catch (e) { return ''; }
+}
+
+export function normaliseBrochure(input = {}, index = 0) {
+  const b = input || {};
+  const s = (v) => String(v ?? '').trim();
+  return {
+    id: s(b.id) || ('doc-' + (index + 1)),
+    /** What the link says. NAC's words. */
+    title: s(b.title),
+    url: brochureUrl(b.url),
+    /** Which unit it belongs to. Matched on the model, loosely on the brand. */
+    brandId: s(b.brandId).toLowerCase().replace(/[^a-z0-9]+/g, ''),
+    model: s(b.model),
+    enabled: b.enabled !== false,
+    sortOrder: Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : index
+  };
+}
+
+/**
+ * The brochures that belong to one unit, and the ones that cannot be used.
+ *
+ * A brochure with no link, or a link that is not https, is WITHHELD. A
+ * proposal that offers a customer a dead link is worse than one that offers
+ * none, and an http link on an https page simply will not open.
+ */
+export function brochuresFor(stored = [], unit = {}) {
+  const u = unit || {};
+  const model = String(u.model ?? '').trim().toLowerCase();
+  const outdoor = String(u.outdoorModel ?? '').trim().toLowerCase();
+  const brandId = String(u.brandId ?? u.brand ?? '').trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+  const all = (Array.isArray(stored) ? stored : [])
+    .map(normaliseBrochure)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const usable = [];
+  const withheld = [];
+  for (const b of all) {
+    if (!b.enabled) continue;
+    if (!b.title) {
+      withheld.push({ ...b, reason: 'No title, so the link would have nothing to say.' });
+      continue;
+    }
+    if (!b.url) {
+      withheld.push({ ...b,
+        reason: 'No https link. A proposal offering a customer a dead link is worse '
+          + 'than one offering none, and no URL is ever constructed from a model name.' });
+      continue;
+    }
+    usable.push(b);
+  }
+
+  // Which of the usable ones is about THIS unit. A brochure with no model
+  // named is a brand-wide document and matches on the brand alone.
+  const matched = usable.filter(b => {
+    const m = b.model.toLowerCase();
+    if (m) return !!m && (m === model || m === outdoor
+      || model.startsWith(m) || m.startsWith(model));
+    return !!b.brandId && b.brandId === brandId;
+  });
+
+  return { matched, usable, withheld };
+}

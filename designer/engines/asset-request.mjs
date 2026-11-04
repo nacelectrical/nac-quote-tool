@@ -289,6 +289,25 @@ export function assetRequest(content = {}, job = {}) {
       'Why choose NAC — the trust panel', 1, '/quote-presentation.html → About NAC'));
   }
 
+  // ── BROCHURES ─────────────────────────────────────────────────────────
+  //
+  // Nick, 4 November 2026: "equipment and controller images and brochures."
+  //
+  // Optional, and deliberately so: a proposal without a manufacturer's
+  // brochure is a complete proposal, and one with an invented product claim
+  // in place of a brochure is not. The page links the manufacturer's own
+  // document or it says nothing about the unit beyond what NAC entered.
+  if (!(c.brochures || []).some(b => trimmed(b && b.url) && trimmed(b && b.title))) {
+    needs.push(item(NEED.OPTIONAL, 'brochures',
+      'Manufacturer brochures for the units NAC quote',
+      'A link to the manufacturer\'s own document, so a customer can read the real '
+      + 'specification rather than a summary of it. Nothing is written about a unit '
+      + 'that NAC has not entered, and no brochure is linked that has not been '
+      + 'supplied — a plausible-looking manufacturer URL is a fabricated product claim.',
+      'Beside the system on the proposal', 1,
+      '/quote-presentation.html → Product images'));
+  }
+
   const essential = needs.filter(x => x.level === NEED.ESSENTIAL);
   return {
     ok: essential.length === 0,

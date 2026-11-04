@@ -297,6 +297,12 @@ details summary{cursor:pointer;font-weight:650;color:var(--navy);padding:8px 0;m
         <textarea id="excl"></textarea>
         <span class="hint"><button class="btn ghost" id="seedExcl" type="button"
           style="min-height:34px;padding:4px 10px;font-size:13px">Insert NAC's usual list</button></span></div>
+      <div class="f"><label>NAC's installation allowances</label>
+        <div class="bar" id="allowances"></div>
+        <span class="hint">Set in the content library. Adding one writes the line into
+        the inclusions — <b>the amount still has to go into the system price</b>, because
+        this tool will not move money around on its own. A quote carrying an allowance
+        goes out as a provisional estimate, and the customer's page says so.</span></div>
     </section>
 
     <section class="card">
@@ -393,7 +399,8 @@ import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
 import { selectZoneController } from '/designer/engines/equipment.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { presentationPrintHtml } from '/designer/ui/presentation-pdf.mjs';
-import { seedTermsAndConditions, seedTrust } from '/designer/engines/presentation-content.mjs';
+import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor }
+  from '/designer/engines/presentation-content.mjs';
 import { saveDesign, loadDesign, getJson, SETTINGS_KEYS, loadNacBrands }
   from '/designer/engines/store.mjs';
 import { planStep, roomsFromObservations } from '/designer/ui/plan-step.mjs';
@@ -426,19 +433,16 @@ const numOrNull = (v) => {
 // ── NAC'S USUAL LISTS ──────────────────────────────────────────────────────
 // Starting points the estimator edits, not boilerplate that goes out unread.
 // Every line is something NAC actually does or actually excludes.
-const USUAL_INCLUSIONS = [
-  'Supply and install of the system above',
-  'All ductwork, supply outlets and return air grilles',
-  'Electrical connection to an existing suitable circuit',
-  'Commissioning, balancing and handover',
-  'Removal of all installation waste'
-];
-const USUAL_EXCLUSIONS = [
-  'Switchboard or circuit upgrades, if the existing board cannot carry the system',
-  'Patching or painting beyond the installation openings',
-  'Asbestos handling of any kind',
-  'Structural alterations to accommodate the equipment or ductwork'
-];
+/**
+ * What every NAC quote starts from.
+ *
+ * NICK'S WORDING, OUT OF THE CONTENT LIBRARY. It used to be two arrays in this
+ * file, which meant he could not change a word of what every quote promises
+ * without somebody editing the application. standardScope() falls back to the
+ * wording this application shipped with while nobody has set any, so a library
+ * nobody has opened behaves exactly as this screen did before.
+ */
+const usualScope = () => standardScope(content.standardScope || null);
 
 const params = new URLSearchParams(location.search);
 let draft = createQuoteDraft({
@@ -763,6 +767,43 @@ function optionMoney(sys) {
     box.appendChild(el('p', { class: 'hint', text: d.priceBasis.message }));
   }
   return box;
+}
+
+/**
+ * NAC's own installation allowances, as buttons.
+ *
+ * An allowance with no figure is HELD BACK rather than offered at zero: a zero
+ * on a proposal reads as "no charge", and that is a promise NAC did not make.
+ * The held-back ones are named here so the estimator knows to go and price
+ * them rather than wondering where they went.
+ */
+function drawAllowanceButtons() {
+  const host = $('#allowances');
+  if (!host) return;
+  host.textContent = '';
+  const { offerable, withheld } = allowancesFor(content.installationAllowances || []);
+  if (!offerable.length && !withheld.length) {
+    host.appendChild(el('span', { class: 'hint',
+      text: 'None set up yet. Add them in the content library.' }));
+    return;
+  }
+  for (const a of offerable) {
+    const line = a.title + ' — allowance of ' + money(a.priceIncGst) + ' included'
+      + (a.covers ? ' (' + a.covers + ')' : '');
+    const on = draft.inclusions.includes(line);
+    host.appendChild(el('button', {
+      class: 'btn' + (on ? ' primary' : ''), type: 'button',
+      text: (on ? '✓ ' : '+ ') + a.title + ' ' + money(a.priceIncGst),
+      onclick: () => {
+        if (on) draft.inclusions = draft.inclusions.filter(x => x !== line);
+        else draft.inclusions = [...draft.inclusions, line];
+        mark(); draw();
+      } }));
+  }
+  for (const w of withheld) {
+    host.appendChild(el('span', { class: 'hint',
+      text: (w.title || 'An unnamed allowance') + ' — held back: ' + w.reason }));
+  }
 }
 
 /** Fixed price, or provisional estimate, and every reason it is the second. */
@@ -1129,7 +1170,7 @@ function draw() {
   $('#excl').value = draft.exclusions.join('\n');
   $('#intro').value = draft.intro || '';
   drawSystems(); drawRooms(); drawController(); drawUpgrades(); drawTotal();
-  drawFirmness(); drawChecks();
+  drawAllowanceButtons(); drawFirmness(); drawChecks();
   drawSteps();
 }
 
@@ -1188,10 +1229,10 @@ $('#addRoom').addEventListener('click', () => {
   draft.scope.conditionedRooms.push({}); mark(); draw();
 });
 $('#seedIncl').addEventListener('click', () => {
-  draft.inclusions = [...USUAL_INCLUSIONS]; mark(); draw();
+  draft.inclusions = [...usualScope().inclusions]; mark(); draw();
 });
 $('#seedExcl').addEventListener('click', () => {
-  draft.exclusions = [...USUAL_EXCLUSIONS]; mark(); draw();
+  draft.exclusions = [...usualScope().exclusions]; mark(); draw();
 });
 
 function flash(kind, text, extra) {

@@ -260,6 +260,14 @@ function systemHtml(p) {
             + '</ul>')
         + when(!!s.warranty, '<p class="sys-warranty">' + icon('shield')
             + '<span>' + esc(s.warranty) + '</span></p>')
+        // ── THE MANUFACTURER'S OWN DOCUMENT ──────────────────────────────
+        // Only a brochure NAC supplied and matched to this unit. The link
+        // text is NAC's; nothing here describes the unit, because a product
+        // claim NAC did not make has no business on NAC's proposal.
+        + when((s.brochures || []).length > 0,
+            '<ul class="sys-docs">' + (s.brochures || []).map(b =>
+              '<li><a href="' + esc(b.url) + '" target="_blank" rel="noopener noreferrer">'
+              + esc(b.title) + '</a></li>').join('') + '</ul>')
       + '</div>'
     + '</div>');
 }
@@ -1157,6 +1165,9 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
   padding:4px 10px;margin-top:2px}
 .syschoice .opt-h em{font-size:18px}
+.sys-docs{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
+.sys-docs a{color:var(--navy);font-size:14.5px;text-decoration:underline;
+  text-underline-offset:3px;overflow-wrap:anywhere}
 .sys-mark{flex:0 0 auto;font-size:17px;line-height:1.2;color:var(--navy)}
 /* Said to a screen reader, not shown. The glyph beside it is decorative. */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;

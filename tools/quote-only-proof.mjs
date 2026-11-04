@@ -54,7 +54,12 @@ function nacLogo() {
   } catch { return null; }
 }
 
-export function buildTestQuote() {
+/**
+ * @param {object} extraContent library fields to lay over NAC's own, so a
+ *   caller can prove something that needs content this fixture does not carry
+ *   — a manufacturer brochure, say. Everything else stays NAC's real content.
+ */
+export function buildTestQuote(extraContent = {}) {
   const draft = quoteOnlyDraft({ testQuote: true });
 
   // NAC's nine photographs, imported through tools/import-nac-photos.mjs:
@@ -71,7 +76,8 @@ export function buildTestQuote() {
     readFileSync(resolve(ROOT, 'designer/content/google-reviews.json'), 'utf8'));
   const reviews = reviewFile.reviews.map(r => ({ ...r, approved: true }));
 
-  const content = quoteOnlyContent({ logo: nacLogo(), images, reviews });
+  const content = quoteOnlyContent({ logo: nacLogo(), images, reviews,
+    ...extraContent });
   const gate = quoteDraftGate(draft, { upgrades: UPGRADES });
   const src = draftToQuoteSource(draft, { upgrades: UPGRADES });
 

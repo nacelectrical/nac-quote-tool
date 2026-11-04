@@ -135,7 +135,9 @@ import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { requireSignIn, currentSession } from '/designer/auth.mjs';
 import { assetRequest } from '/designer/engines/asset-request.mjs';
-import { seedTrust, seedTermsAndConditions } from '/designer/engines/presentation-content.mjs';
+import { seedTrust, seedTermsAndConditions, standardScope, normaliseAllowance,
+         allowancesFor, SHIPPED_STANDARD_SCOPE, normaliseBrochure, brochuresFor }
+  from '/designer/engines/presentation-content.mjs';
 
 // ── NAC ONLY ───────────────────────────────────────────────────────────────
 //
@@ -158,6 +160,9 @@ const SECTIONS = [
   ['reviews',      'Reviews'],
   ['installs',     'Past installations'],
   ['images',       'Product images'],
+  ['brochures',    'Manufacturer brochures'],
+  ['scope',        'Standard inclusions and exclusions'],
+  ['allowances',   'Installation allowances'],
   ['inclusions',   'Included-service cards'],
   ['upgrades',     'Optional upgrades'],
   ['payment',      'Payment terms'],
@@ -246,6 +251,12 @@ function normalise(c) {
     images: (c.images || []).map(normaliseImageAsset),
     upgrades: (c.upgrades || []).map(normaliseUpgrade),
     standardInclusions: c.standardInclusions || {},
+    // What every NAC quote promises, in Nick's words rather than in a constant
+    // inside the builder. standardScope() falls back to the shipped wording
+    // only while the key is absent, so an empty list Nick saved stays empty.
+    standardScope: c.standardScope ? standardScope(c.standardScope) : null,
+    installationAllowances: (c.installationAllowances || []).map(normaliseAllowance),
+    brochures: (c.brochures || []).map(normaliseBrochure),
     paymentTerms: c.paymentTerms || { stages: [] },
     aftercare: c.aftercare || {},
     termsAndConditions: seedTermsAndConditions(c.termsAndConditions || null,
@@ -315,7 +326,8 @@ function tagsField(label, tags, onChange, hint) {
 function drawAll() {
   drawGaps();
   drawBranding(); drawAbout(); drawLicences(); drawReviews(); drawInstalls();
-  drawImages(); drawInclusions(); drawUpgrades(); drawPayment(); drawValidity();
+  drawImages(); drawBrochures(); drawScope(); drawAllowances();
+  drawInclusions(); drawUpgrades(); drawPayment(); drawValidity();
   drawTerms(); drawEmail(); drawTemplates();
 }
 
@@ -940,6 +952,200 @@ async function migrateLegacy() {
   markDirty(); drawAll();
   setStatus(moved + ' of ' + legacy.length + ' moved into storage. Save the library to keep it.',
     moved === legacy.length ? 'ok' : 'err');
+}
+
+// ── MANUFACTURER BROCHURES ──────────────────────────────────────────────────
+//
+// Nick, 4 November 2026: "equipment and controller images and brochures."
+//
+// A link to the manufacturer's OWN document, so a customer can read the real
+// specification rather than a summary of it. NOTHING here writes a word about
+// a unit — no description, no feature list, no performance figure — and no URL
+// is ever constructed from a model name. A plausible-looking manufacturer link
+// nobody supplied is a fabricated product claim.
+function drawBrochures() {
+  const list = el('div');
+  const all = C.brochures;
+
+  all.forEach((b, i) => {
+    list.appendChild(el('div', { class: 'row' }, [
+      el('div', { class: 'rowhead' }, [
+        el('strong', { text: b.title || 'Untitled brochure' }),
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'btn', text: '↑', onclick: () => move(all, i, -1) }),
+        el('button', { class: 'btn', text: '↓', onclick: () => move(all, i, 1) }),
+        el('button', { class: 'btn danger', text: 'Remove', onclick: () => {
+          if (!confirm('Remove "' + (b.title || 'this brochure') + '"?')) return;
+          all.splice(i, 1); markDirty(); drawBrochures();
+        } })
+      ]),
+      field('Link text', b.title, v => { b.title = v; drawBrochures(); },
+        { hint: 'What the customer clicks. Your words, e.g. "Daikin FDYAN ducted — '
+          + 'manufacturer brochure (PDF)".' }),
+      field('Link', b.url, v => { b.url = v; drawBrochures(); },
+        { hint: 'The manufacturer’s own https link. Nothing else is accepted and no '
+          + 'link is ever guessed from a model name.' }),
+      field('Model it belongs to', b.model, v => { b.model = v; drawBrochures(); },
+        { hint: 'Leave it empty for a brand-wide document.' }),
+      field('Brand id', b.brandId, v => {
+        b.brandId = v.toLowerCase().replace(/[^a-z0-9]+/g, ''); drawBrochures();
+      }, { hint: 'daikin, braemar, mitsubishi… Used when no model is named.' }),
+      toggle('In use', b.enabled, x => { b.enabled = x; })
+    ]));
+  });
+
+  const { usable, withheld } = brochuresFor(all, {});
+  const status = el('div', { class: 'hint' }, [
+    el('strong', { text: usable.length + ' usable, ' + withheld.length + ' held back.' }),
+    ...withheld.map(w => el('p', { text: (w.title || 'An untitled brochure')
+      + ' — ' + w.reason }))
+  ]);
+
+  panel('brochures', 'Manufacturer brochures',
+    'Linked beside the system on the proposal when one matches the unit being quoted. '
+  + 'A proposal with no brochure is a complete proposal; one with an invented product '
+  + 'claim in place of a brochure is not. Nothing is written about a unit that you '
+  + 'have not entered.',
+    [status, list,
+     el('div', { class: 'bar' }, [
+       el('button', { class: 'btn primary', text: 'Add a brochure', onclick: () => {
+         all.push(normaliseBrochure({}, all.length));
+         markDirty(); drawBrochures();
+       } })
+     ])]);
+}
+
+// ── STANDARD INCLUSIONS AND EXCLUSIONS ──────────────────────────────────────
+//
+// Nick, 4 November 2026: "Allow me to manage... standard inclusions and
+// exclusions."
+//
+// These were two arrays inside quote-builder.html, which meant Nick could not
+// change a word of what every NAC quote promises without somebody editing the
+// application. They are content.
+//
+// Nothing here goes onto a quote by itself: the builder's "Insert NAC's usual
+// list" button seeds the estimator's own inclusions from this, and the
+// estimator then edits them for the job in front of them.
+function drawScope() {
+  const sc = C.standardScope || standardScope(null);
+
+  const editor = (title, key, hint) => {
+    const box = el('textarea', { rows: '8' });
+    box.value = sc[key].join('\n');
+    box.addEventListener('input', () => {
+      C.standardScope = {
+        ...(C.standardScope || standardScope(null)),
+        [key]: box.value.split('\n').map(x => x.trim()).filter(Boolean),
+        isShipped: false
+      };
+      // Both keys have to exist once either is edited, or standardScope()
+      // would hand the untouched one back as the shipped wording.
+      if (!Array.isArray(C.standardScope.inclusions)) {
+        C.standardScope.inclusions = [...sc.inclusions];
+      }
+      if (!Array.isArray(C.standardScope.exclusions)) {
+        C.standardScope.exclusions = [...sc.exclusions];
+      }
+      markDirty();
+    });
+    return el('div', { class: 'row' }, [
+      el('div', { class: 'rowhead' }, [el('strong', { text: title })]),
+      el('div', { class: 'note', text: hint }),
+      box
+    ]);
+  };
+
+  panel('scope', 'Standard inclusions and exclusions',
+    'What every NAC quote starts from — one line each. The estimator inserts these '
+  + 'on a quote with one button and then edits them for the job in front of them, so '
+  + 'changing the wording here changes the starting point and never a quote that has '
+  + 'already gone out.',
+    [sc.isShipped
+      ? el('div', { class: 'hint', text: 'This is the wording the application shipped '
+          + 'with. Edit either list and your wording replaces it everywhere.' })
+      : null,
+     editor('Included on every quote', 'inclusions',
+       'What the price covers. Said plainly, as you would say it on site.'),
+     editor('Not included on every quote', 'exclusions',
+       'What it does not cover. The exclusions are what stop an argument later, so '
+     + 'they are worth as much care as the inclusions.'),
+     el('div', { class: 'bar' }, [
+       el('button', { class: 'btn', text: 'Put back the shipped wording', onclick: () => {
+         if (!confirm('Replace both lists with the wording the application shipped with?')) return;
+         C.standardScope = {
+           inclusions: [...SHIPPED_STANDARD_SCOPE.inclusions],
+           exclusions: [...SHIPPED_STANDARD_SCOPE.exclusions],
+           isShipped: false
+         };
+         markDirty(); drawScope();
+       } })
+     ])]);
+}
+
+// ── INSTALLATION ALLOWANCES ─────────────────────────────────────────────────
+//
+// Nick: "equipment prices and installation allowances." An allowance is a
+// named sum NAC carry for work whose extent is not known until somebody is on
+// site — a switchboard upgrade, a long duct run, a difficult roof.
+//
+// AN ALLOWANCE WITH NO FIGURE IS NOT QUOTED AT ZERO. A zero on a proposal
+// reads as "no charge", and that is a promise NAC did not make, so it is
+// withheld with the reason instead.
+function drawAllowances() {
+  const list = el('div');
+  const all = C.installationAllowances;
+
+  all.forEach((a, i) => {
+    list.appendChild(el('div', { class: 'row' }, [
+      el('div', { class: 'rowhead' }, [
+        el('strong', { text: a.title || 'Unnamed allowance' }),
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'btn', text: '↑',
+          onclick: () => { move(all, i, -1); } }),
+        el('button', { class: 'btn', text: '↓',
+          onclick: () => { move(all, i, 1); } }),
+        el('button', { class: 'btn danger', text: 'Remove', onclick: () => {
+          if (!confirm('Remove "' + (a.title || 'this allowance') + '"?')) return;
+          all.splice(i, 1); markDirty(); drawAllowances();
+        } })
+      ]),
+      field('Name', a.title, v => { a.title = v; drawAllowances(); },
+        { hint: 'What a customer would see on the line.' }),
+      field('What it covers', a.covers, v => { a.covers = v; },
+        { rows: 2, hint: 'And what would take the job past it. This is what stops the '
+          + 'argument when the allowance is not enough.' }),
+      field('Amount including GST', a.priceIncGst, v => {
+        a.priceIncGst = v.trim() === '' ? null : Number(v);
+        drawAllowances();
+      }, { type: 'number', hint: 'NAC’s figure. Leave it empty and the allowance is '
+        + 'held back rather than quoted at nothing.' }),
+      toggle('Goes into the scope by default (otherwise it is an optional extra)',
+        a.kind !== 'optional', x => { a.kind = x ? 'scope' : 'optional'; }),
+      toggle('In use', a.enabled, x => { a.enabled = x; })
+    ]));
+  });
+
+  const { offerable, withheld } = allowancesFor(all);
+  const status = el('div', { class: 'hint' }, [
+    el('strong', { text: offerable.length + ' ready to quote, '
+      + withheld.length + ' held back.' }),
+    ...withheld.map(w => el('p', { text: (w.title || 'An unnamed allowance')
+      + ' — ' + w.reason }))
+  ]);
+
+  panel('allowances', 'Installation allowances',
+    'A named sum NAC carry for work whose extent is not known until somebody is on '
+  + 'site. An allowance in a quote’s scope makes it a PROVISIONAL ESTIMATE rather '
+  + 'than a fixed price, and the customer’s page says so — which is the honest way '
+  + 'round and the reason the distinction exists.',
+    [status, list,
+     el('div', { class: 'bar' }, [
+       el('button', { class: 'btn primary', text: 'Add an allowance', onclick: () => {
+         all.push(normaliseAllowance({ kind: 'scope' }, all.length));
+         markDirty(); drawAllowances();
+       } })
+     ])]);
 }
 
 function drawInclusions() {

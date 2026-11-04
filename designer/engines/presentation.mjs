@@ -32,7 +32,7 @@ export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   equipmentImagesFor, publicImageRef, publicImageSrcset,
-  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts
+  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor
 } from './presentation-content.mjs';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
@@ -654,7 +654,13 @@ function systemSection(d, ctx) {
     // Only a catalogue asset that was actually matched to this model. Nick:
     // "Never use an incorrect generic product image merely because it looks
     // similar." A null here renders a clean branded card instead.
-    image: ctx.productImage || null
+    image: ctx.productImage || null,
+    // ── THE MANUFACTURER'S OWN DOCUMENT ───────────────────────────────────
+    // Nick, 4 November 2026: "equipment and controller images and brochures."
+    // Only a brochure NAC supplied, matched to THIS model or to its brand. No
+    // URL is ever constructed from a model name: a plausible-looking
+    // manufacturer link nobody supplied is a fabricated product claim.
+    brochures: (ctx.brochures || []).map(b => ({ title: b.title, url: b.url }))
   };
 }
 
@@ -1125,10 +1131,21 @@ export function buildPresentation({
                    focalPoint: a.focalPoint } : null;
   })();
 
+  // The manufacturer's own documents for the unit being quoted — the ones NAC
+  // supplied, matched to this model or its brand, and nothing else.
+  const unitForDocs = chosenSystem
+    ? { model: chosenSystem.model, outdoorModel: chosenSystem.outdoorModel,
+        brandId: chosenSystem.brandId, brand: chosenSystem.brand }
+    : (d.selectedUnit || {});
+  const brochures = brochuresFor(content.brochures || [], {
+    model: unitForDocs.model, outdoorModel: unitForDocs.outdoorModel,
+    brandId: unitForDocs.brandId || unitForDocs.brandName || unitForDocs.brand
+  }).matched;
+
   const ctx = {
     customer, job, trust, evidence, privacy, intro, heroImage,
     testQuote: testQuote === true,
-    productImage: equipmentShot,
+    productImage: equipmentShot, brochures,
     proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
     selectedOptions, aftercare: content.aftercare || {},
     // ── THE DEPOSIT COMES FROM NAC'S CONFIRMED TERMS ──────────────────────
