@@ -21,6 +21,80 @@ import { h } from './dom.mjs';
 
 const focusable = 'button,input,select,textarea,[tabindex]:not([tabindex="-1"])';
 
+// ── THE DIALOG BRINGS ITS OWN LOOK ──────────────────────────────────────────
+//
+// These styles lived in the page, which meant a dialog opened from a page that
+// did not happen to carry them rendered as unstyled browser defaults: a 19px
+// button where a 48px touch target should be, on the iPad, in a dialog asking
+// whether to delete something. That is the exact failure the dialogs replaced
+// prompt() to avoid, reintroduced by a stylesheet living in the wrong place.
+//
+// A shared component carries its own appearance. Injected once, on first use.
+// Every colour goes through the page's own variable where the page has one, so
+// a dialog on the dark setup screen stays dark and a dialog on the light
+// builder stays light — with values that work on their own where it does not.
+const DIALOG_CSS = `
+.dlg-host{position:fixed;inset:0;z-index:2147483000;background:rgba(6,6,18,.72);
+  display:flex;align-items:center;justify-content:center;padding:16px;
+  font-family:inherit}
+.dlg-panel{width:100%;max-width:460px;max-height:calc(100dvh - 32px);display:flex;
+  flex-direction:column;background:var(--panel,#fff);
+  border:1px solid var(--line,#E4E7EF);border-radius:12px;overflow:hidden;
+  color:var(--ink,#161A27)}
+.dlg-panel.wide{max-width:680px}
+.dlg-head{padding:18px 20px 12px;border-bottom:1px solid var(--line,#E4E7EF)}
+.dlg-head h3{margin:0;font-size:16px;font-weight:800;color:var(--ink,#161A27)}
+.dlg-sub{margin:5px 0 0;font-size:12.5px;color:var(--ink-2,var(--muted,#6B7285))}
+.dlg-body{padding:16px 20px;overflow-y:auto}
+.dlg-text{margin:0 0 12px;font-size:14px;line-height:1.65;white-space:pre-wrap}
+.dlg-list{margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.7;
+  color:var(--ink-2,var(--body,#3D4458))}
+.dlg-foot{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;padding:14px 20px;
+  border-top:1px solid var(--line,#E4E7EF);background:var(--panel-2,var(--soft,#F6F8FC))}
+.dlg-btn{min-height:48px;padding:0 20px;border-radius:8px;
+  border:1px solid var(--line,#E4E7EF);background:var(--panel-2,#fff);
+  color:var(--ink,#161A27);font:600 14px/1 inherit;font-family:inherit;cursor:pointer}
+.dlg-btn.ghost{background:transparent;color:var(--ink-2,var(--muted,#6B7285))}
+.dlg-btn.primary{background:var(--yellow,var(--gold,#F5C200));
+  border-color:var(--yellow,var(--gold-d,#C79C00));color:#241C00}
+.dlg-btn.danger.primary{background:var(--bad,#B3261E);border-color:var(--bad,#B3261E);
+  color:#fff}
+/* 16px, so iOS does not zoom the page the moment a field is focused. */
+.dlg-body input,.dlg-body select,.dlg-body textarea{font-size:16px;font-family:inherit;
+  min-height:48px;width:100%;padding:10px 12px;border-radius:8px;
+  border:1px solid var(--line,#E4E7EF);background:var(--panel-2,#fff);
+  color:var(--ink,#161A27)}
+.dlg-body label{display:block;margin:0 0 12px;font-size:13px;
+  color:var(--ink-2,var(--muted,#6B7285))}
+.dlg-options{display:grid;gap:8px}
+.dlg-option{display:flex;gap:12px;align-items:center;justify-content:space-between;
+  width:100%;min-height:52px;text-align:left;padding:12px 14px;
+  border-radius:9px;border:1px solid var(--line,#E4E7EF);
+  background:var(--panel-2,#fff);color:var(--ink,#161A27);font:inherit;cursor:pointer}
+.dlg-option.on{border-color:var(--yellow,var(--gold-d,#C79C00));
+  box-shadow:inset 0 0 0 1px var(--yellow,var(--gold,#F5C200))}
+.dlg-option.disabled{opacity:.5;cursor:not-allowed}
+.dlg-option-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dlg-option-label{font-weight:650}
+.dlg-option-sub,.dlg-option-meta{font-size:12.5px;
+  color:var(--ink-2,var(--muted,#6B7285))}
+@media (max-width:560px){
+  .dlg-host{padding:0;align-items:flex-end}
+  .dlg-panel,.dlg-panel.wide{max-width:none;border-radius:12px 12px 0 0;max-height:92dvh}
+  .dlg-foot{flex-direction:column-reverse}
+  .dlg-btn{width:100%}
+}
+`;
+
+function ensureDialogCss() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('nac-dlg-css')) return;
+  const tag = document.createElement('style');
+  tag.id = 'nac-dlg-css';
+  tag.textContent = DIALOG_CSS;
+  document.head.appendChild(tag);
+}
+
 /**
  * The shell every dialog is built on.
  *
@@ -91,6 +165,7 @@ export function openDialog({ title, subtitle = null, body = [], buttons, cancelV
       }
     }, panel);
 
+    ensureDialogCss();
     document.body.appendChild(host);
     // AND THE GHOST CLICK CANNOT PRESS ANYTHING EITHER.
     //

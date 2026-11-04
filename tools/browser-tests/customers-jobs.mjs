@@ -1,9 +1,15 @@
-// P7 — CUSTOMER → JOB → HVAC DESIGN → QUOTE.
+// P7 — CUSTOMER → JOB → QUOTE.
 //
-// Drives the real designer against a stubbed database and checks the chain is
-// actually written: the customer and job rows, the links on the design and
-// quote rows, that a second design for the same person REUSES the record rather
-// than making another, and that NAC's existing customer detail survives.
+// Drives the real QUOTE BUILDER against a stubbed database and checks the
+// chain is actually written: the customer and job rows, the link on the quote
+// row, that a second quote for the same person REUSES the record rather than
+// making another, and that NAC's existing customer detail survives.
+//
+// It used to drive the duct designer's `window.nacDesigner.save()`, which went
+// with the designer — so this suite crashed on a global that no longer exists,
+// against a chain that is still very much live. The builder links the same two
+// records now, by the same rule /api/ops uses, so one house has one identity
+// whichever path opened the quote.
 //
 //   node tools/serve.mjs &   node tools/browser-tests/customers-jobs.mjs
 import { chromium } from 'playwright';
@@ -57,139 +63,103 @@ async function newPage(ctx) {
   return p;
 }
 
-/** Build a design in the designer for a given customer, and save it. */
-async function designFor(ctx, customer, jobDescription) {
+/**
+ * Fill the builder in for a customer and press Save, the way an estimator does.
+ *
+ * Through the REAL controls — not by poking the draft — so what this proves is
+ * the path a person actually takes.
+ */
+async function quoteFor(ctx, customer, note) {
   const p = await newPage(ctx);
   await p.goto('http://127.0.0.1:8777/quote-builder.html', { waitUntil: 'load' });
-  await p.waitForTimeout(1500);
-  // save() may raise a dialog when the design disagrees with the customer
-  // record, and it waits for an answer — so answer it, and record what it said.
-  const dialogs = [];
-  const answer = (async () => {
-    for (let i = 0; i < 3; i++) {
-      try { await p.locator('.dlg-host').waitFor({ state: 'visible', timeout: 4000 }); }
-      catch (e) { return; }
-      dialogs.push(await p.locator('.dlg-panel').innerText());
-      await p.locator('.dlg-btn.primary').first().click();
-      await p.waitForTimeout(300);
-    }
-  })();
-  await p.evaluate(async ({ customer, jobDescription }) => {
-    const app = window.nacDesigner;
-    app.design.customer = { ...customer };
-    app.design.job = { description: jobDescription };
-    await app.save('browser test');
-  }, { customer, jobDescription });
-  await answer;
-  await p.waitForTimeout(800);
-  const designId = await p.evaluate(() => ({
-    id: window.nacDesigner.design.id,
-    customerRef: window.nacDesigner.design.customerRef || null,
-    jobRef: window.nacDesigner.design.jobRef || null
+  await p.waitForTimeout(1200);
+
+  await p.fill('#cname', customer.name || '');
+  await p.fill('#cphone', customer.phone || '');
+  await p.fill('#cemail', customer.email || '');
+  await p.fill('#caddr', customer.address || '');
+  await p.fill('#pnum', note || '');
+
+  await p.click('#save');
+  await p.waitForTimeout(900);
+
+  const out = await p.evaluate(() => ({
+    id: (window.__lastSavedId || ''),
+    flash: (document.querySelector('.flash') || {}).textContent || ''
   }));
+  // The saved row is the authority, not anything still in the page.
+  const row = [...db.nac_designs.values()].pop() || null;
   await p.close();
-  return { ...designId, dialogs };
+  return { id: row ? row.id : null, customerRef: row ? row.customer_id : null,
+           jobRef: row ? row.job_ref : null, flash: out.flash };
 }
 
 const ctx = await b.newContext({ viewport: { width: 1180, height: 820 } });
 await signInContext(ctx);
 
-console.log('\n[1] A design for a new customer creates the customer and the job');
+console.log('\n[1] A quote for a new customer creates the customer and the job');
 const NICK = { name: 'John Smith', phone: '0400 111 222', email: 'john@example.com',
                address: '14 Wattlebird Drive, Springfield Lakes QLD 4300' };
-const d1 = await designFor(ctx, NICK, 'Ducted AC Supply & Install');
+const d1 = await quoteFor(ctx, NICK, 'NAC-TEST-0001');
 say('a customer record was written', db.nac_customers.size === 1,
   [...db.nac_customers.keys()].join(', ') || 'none');
-say('a job record was written', db.nac_jobs.size === 1, [...db.nac_jobs.keys()].join(', ') || 'none');
+say('a job record was written', db.nac_jobs.size === 1,
+  [...db.nac_jobs.keys()].join(', ') || 'none');
 const cust = [...db.nac_customers.values()][0];
 const job = [...db.nac_jobs.values()][0];
 say('the customer carries what the estimator typed',
-  cust && cust.name === 'John Smith' && cust.phone === '0400 111 222' && cust.email === 'john@example.com',
+  cust && cust.name === 'John Smith' && cust.phone === '0400 111 222'
+    && cust.email === 'john@example.com',
   cust ? JSON.stringify({ n: cust.name, p: cust.phone, e: cust.email }) : 'none');
-say('the job belongs to that customer', job && job.customer_id === cust.id, job && job.customer_id);
-say('the job carries the site address', job && /Wattlebird/.test(job.site_address || ''), job && job.site_address);
-say('the design row is linked to both',
+say('the job belongs to that customer', job && job.customer_id === cust.id,
+  job && job.customer_id);
+say('the job carries the site address',
+  job && /Wattlebird/.test(job.site_address || ''), job && job.site_address);
+say('the quote row is linked to both',
   d1.customerRef === cust.id && d1.jobRef === job.id,
   JSON.stringify({ c: d1.customerRef, j: d1.jobRef }));
-const designRow = db.nac_designs.get(d1.id);
-say('and the link is on the saved row, not just in memory',
-  designRow && designRow.customer_id === cust.id && designRow.job_ref === job.id,
-  designRow ? JSON.stringify({ c: designRow.customer_id, j: designRow.job_ref }) : 'no row');
 
-console.log('\n[2] A second design for the same customer REUSES the record');
-const d2 = await designFor(ctx, { ...NICK, phone: '' }, 'Add a second system');
-say('no second customer was created', db.nac_customers.size === 1, db.nac_customers.size + ' customer(s)');
-say('a different job description does NOT interrupt the estimator', d2.dialogs.length === 0,
-  d2.dialogs.join(' | ').slice(0, 80) || 'no dialog');
-say('the second design points at the same customer', d2.customerRef === cust.id, d2.customerRef);
+console.log('\n[2] A second quote for the same customer REUSES the record');
+const d2 = await quoteFor(ctx, { ...NICK, phone: '' }, 'NAC-TEST-0002');
+say('no second customer was created', db.nac_customers.size === 1,
+  db.nac_customers.size + ' customer(s)');
+say('the second quote points at the same customer', d2.customerRef === cust.id,
+  d2.customerRef);
 say('the same site is the same job', d2.jobRef === job.id,
   d2.jobRef + ' vs ' + job.id + ' (' + db.nac_jobs.size + ' job(s))');
+say('nothing interrupted the estimator', !/disagree/i.test(d2.flash),
+  d2.flash.slice(0, 80) || 'no notice');
 
 console.log('\n[3] The same customer at a DIFFERENT site gets a second job');
-const d3 = await designFor(ctx, { ...NICK, address: '7 Other Street, Buderim QLD' }, 'Investment property');
+const d3 = await quoteFor(ctx, { ...NICK, address: '7 Other Street, Buderim QLD' },
+  'NAC-TEST-0003');
 say('still one customer', db.nac_customers.size === 1, db.nac_customers.size + '');
 say('but now two jobs', db.nac_jobs.size === 2, db.nac_jobs.size + '');
-say('the new design is on the new job', d3.jobRef !== job.id && !!d3.jobRef, d3.jobRef);
-say('a second property is not reported as a customer problem', d3.dialogs.length === 0,
-  d3.dialogs.join(' | ').replace(/\n/g, ' ').slice(0, 90) || 'no dialog');
+say('the new quote is on the new job', d3.jobRef !== job.id && !!d3.jobRef, d3.jobRef);
 
 console.log('\n[4] A DIFFERENT person with the same name is not merged in');
-const d4 = await designFor(ctx, { name: 'John Smith', email: 'other.john@example.com',
-                                   address: '99 Elsewhere Road, Caloundra QLD' }, 'Ducted');
-say('a second John Smith gets his own record', db.nac_customers.size === 2, db.nac_customers.size + '');
+const d4 = await quoteFor(ctx, { name: 'John Smith', email: 'other.john@example.com',
+  address: '99 Elsewhere Road, Caloundra QLD' }, 'NAC-TEST-0004');
+say('a second John Smith gets his own record', db.nac_customers.size === 2,
+  db.nac_customers.size + '');
 say('and his own job', d4.customerRef !== cust.id, d4.customerRef);
 
-console.log('\n[5] Saving a design NEVER overwrites what the customer record already holds');
+console.log('\n[5] Saving a quote NEVER overwrites what the customer record holds');
 const before = { ...db.nac_customers.get(cust.id) };
-// A phone number that disagrees with the record IS worth stopping for.
-const d5 = await designFor(ctx, { name: 'John Smith', phone: '0499 888 777',
-                        email: 'john@example.com',
-                        address: '14 Wattlebird Drive, Springfield Lakes QLD 4300' }, 'Ducted');
+const d5 = await quoteFor(ctx, { name: 'John Smith', phone: '0499 888 777',
+  email: 'john@example.com',
+  address: '14 Wattlebird Drive, Springfield Lakes QLD 4300' }, 'NAC-TEST-0005');
 const after = db.nac_customers.get(cust.id);
 say('the phone NAC had is not replaced', after.phone === before.phone,
   'was "' + before.phone + '", now "' + after.phone + '"');
 say('the address NAC had is still there', after.address === before.address, after.address);
 say('the email NAC had is still there', after.email === before.email, after.email);
 say('and the estimator WAS told about the difference',
-  d5.dialogs.some(t => /differs from the customer record/i.test(t) && /0499 888 777/.test(t)),
-  d5.dialogs.join(' | ').replace(/\n/g, ' ').slice(0, 130) || 'no dialog');
+  /disagree/i.test(d5.flash) && /0499 888 777/.test(d5.flash),
+  d5.flash.replace(/\s+/g, ' ').slice(0, 140) || 'no notice');
+say('but was not BLOCKED by it — the quote saved',
+  /^Saved/.test(d5.flash.trim()), d5.flash.trim().slice(0, 40));
 
-console.log('\n[6] The quote carries the same customer and job');
-const p = await newPage(ctx);
-await p.goto('http://127.0.0.1:8777/quote-builder.html', { waitUntil: 'load' });
-await p.waitForTimeout(1500);
-const quote = await p.evaluate(async () => {
-  const app = window.nacDesigner;
-  const Store = await import('/designer/engines/store.mjs');
-  app.design.customer = { name: 'John Smith', phone: '0400 111 222', email: 'john@example.com',
-                          address: '14 Wattlebird Drive, Springfield Lakes QLD 4300' };
-  app.design.job = { description: 'Ducted AC Supply & Install' };
-  app.design.quoteLineItems = [{ label: 'Ducted system', price: 17016.54 }];
-  await app.save('browser test');
-  return await Store.pushDesignToQuote(app.design);
-});
-await p.waitForTimeout(600);
-const quoteRow = db.nac_quotes.get(quote.quoteId);
-say('the quote row was written', !!quoteRow, quote.quoteId);
-say('the quote is linked to the customer', quoteRow && quoteRow.customer_id === cust.id, quoteRow?.customer_id);
-say('the quote is linked to the job', quoteRow && quoteRow.job_ref === job.id, quoteRow?.job_ref);
-say('the quote still carries everything it always did',
-  quoteRow && quoteRow.client === 'John Smith' && !!quoteRow.line_items && quoteRow.accepted === false,
-  quoteRow ? quoteRow.client + ', accepted=' + quoteRow.accepted : '');
-
-console.log('\n[7] The whole chain joins up');
-const chain = (() => {
-  const q = db.nac_quotes.get(quote.quoteId);
-  const c = db.nac_customers.get(q?.customer_id);
-  const j = db.nac_jobs.get(q?.job_ref);
-  const designs = [...db.nac_designs.values()].filter(d => d.customer_id === c?.id);
-  return { customer: c?.name, job: j?.site_address, jobsCustomer: j?.customer_id, designs: designs.length };
-})();
-say('quote → customer → job → designs all resolve',
-  chain.customer === 'John Smith' && !!chain.job && chain.jobsCustomer === cust.id && chain.designs >= 3,
-  JSON.stringify(chain));
-
-await p.close();
-console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
+console.log(fail ? '\n' + fail + ' FAILED' : '\nALL PASSED');
 await b.close();
 process.exit(fail ? 1 : 0);

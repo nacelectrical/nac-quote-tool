@@ -266,6 +266,19 @@ export function normaliseQuoteDraft(input = {}) {
     jobType: d.jobType === 'replacement' ? 'replacement' : 'new_install',
 
     /**
+     * The customer and job records this quote belongs to.
+     *
+     * Section 11: "Stable customer, job, quote and revision identifiers that
+     * work across systems." The same two ids the operations surface uses, so a
+     * quote Nick types into the builder and a quote an assistant opens through
+     * /api/ops end up on the same customer and the same job. Null while NAC's
+     * CRM tables are not in the project, which is a supported state — the
+     * application has always worked without them.
+     */
+    customerRef: trimmed(d.customerRef) || null,
+    jobRef: trimmed(d.jobRef) || null,
+
+    /**
      * A PROVISIONAL ESTIMATE RATHER THAN A FIXED PRICE.
      *
      * Different promises, and a customer reading the second as the first is

@@ -78,6 +78,19 @@ await page.addInitScript(({ ups }) => {
       }
       return J([]);
     }
+    // ── NAC'S CUSTOMER AND JOB RECORDS ─────────────────────────────────
+    // The builder links a quote to them on save, the way /api/ops does, so
+    // the same house has one identity whichever path opened the quote.
+    if (u.includes('/rest/v1/nac_customers') || u.includes('/rest/v1/nac_jobs')) {
+      const table = u.includes('nac_customers') ? 'customers' : 'jobs';
+      window.__crm = window.__crm || { customers: [], jobs: [] };
+      if ((opts.method || 'GET') === 'POST') {
+        const row = JSON.parse(opts.body);
+        window.__crm[table] = [...window.__crm[table].filter(x => x.id !== row.id), row];
+        return new Response('', { status: 201 });
+      }
+      return J(window.__crm[table]);
+    }
     if (u.includes('/rest/v1/nac_settings')) {
       return J([{ value: JSON.stringify({ commercial: { terms: {
         depositPercent: 50, balanceDueEvent: 'completion', validityDays: 30,
@@ -420,6 +433,36 @@ await step('a save that never reached the database is NOT reported as saved', as
 // The page is RELOADED at ?id=, so this reads the row back out of the stubbed
 // database exactly as opening the quote tomorrow would — not out of anything
 // still in memory from the session that saved it.
+// ── ONE HOUSE, ONE IDENTITY ────────────────────────────────────────────────
+//
+// Nick, 4 November 2026 (§11): "Stable customer, job, quote and revision
+// identifiers that work across systems." A quote the assistant opens through
+// /api/ops gets a customer record and a job record. A quote typed into this
+// screen got neither, so the same house had an identity on one path and not
+// the other.
+await step('saving a quote finds or opens the customer and the job', async () => {
+  const crm = await page.evaluate(() => window.__crm || { customers: [], jobs: [] });
+  if (crm.customers.length !== 1) throw new Error('customers: ' + crm.customers.length);
+  if (crm.jobs.length !== 1) throw new Error('jobs: ' + crm.jobs.length);
+  if (!/^CUS-/.test(crm.customers[0].id)) throw new Error('customer id ' + crm.customers[0].id);
+  if (!/^JOB-/.test(crm.jobs[0].id)) throw new Error('job id ' + crm.jobs[0].id);
+  if (crm.jobs[0].customer_id !== crm.customers[0].id) {
+    throw new Error('the job is not on the customer');
+  }
+  // And the quote row points at both.
+  const row = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  if (row.customer_id !== crm.customers[0].id) throw new Error('quote not linked to customer');
+  if (row.job_ref !== crm.jobs[0].id) throw new Error('quote not linked to job');
+});
+
+await step('saving the same quote again does not open a second customer', async () => {
+  await show('#save'); await page.click('#save');
+  await page.waitForTimeout(500);
+  const crm = await page.evaluate(() => window.__crm);
+  if (crm.customers.length !== 1) throw new Error('customers: ' + crm.customers.length);
+  if (crm.jobs.length !== 1) throw new Error('jobs: ' + crm.jobs.length);
+});
+
 await step('reopening a saved quote brings all of it back', async () => {
   const id = await page.evaluate(() => window.__saved[window.__saved.length - 1].id);
   const before = await page.evaluate(

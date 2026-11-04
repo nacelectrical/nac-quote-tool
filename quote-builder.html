@@ -139,6 +139,7 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1;min-width:140px}
 .flash{border-radius:11px;padding:13px 15px;font-size:14px}
 .flash.ok{background:#E9F5EE;border:1px solid #C6E3D2;color:var(--ok)}
 .flash.bad{background:#FBECEB;border:1px solid #F3C9C6;color:var(--bad)}
+.flash.warn{background:#FFF8E6;border:1px solid #F0DCA8;color:var(--warn)}
 .link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
   overflow-wrap:anywhere;color:var(--navy)}
 .testbox{display:flex;gap:10px;align-items:flex-start;background:#FFF8E6;
@@ -403,6 +404,10 @@ import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor }
   from '/designer/engines/presentation-content.mjs';
 import { saveDesign, loadDesign, getJson, SETTINGS_KEYS, loadNacBrands }
   from '/designer/engines/store.mjs';
+import { listCustomers, listJobs, saveCustomer, saveJob }
+  from '/designer/engines/crm-store.mjs';
+import { findCustomer, findJob, customerId, jobId, customerIsEmpty,
+         mergeCustomer } from '/designer/engines/crm.mjs';
 import { planStep, roomsFromObservations } from '/designer/ui/plan-step.mjs';
 import { preliminarySizing, ESTIMATING_RULES } from '/designer/engines/plan-sizing.mjs';
 import { optionDetail, duplicateCharges, firmnessOf, replacementGaps, jobTypeLabel,
@@ -1257,12 +1262,84 @@ function flash(kind, text, extra) {
  * server reads this row to build the offer, so the row has to BE what is on
  * screen before the link is minted.
  */
+/**
+ * The customer and the job this quote belongs to, found or opened.
+ *
+ * Nick, 4 November 2026 (§11): "Stable customer, job, quote and revision
+ * identifiers that work across systems." A quote the assistant opens through
+ * /api/ops gets a customer record and a job record; a quote Nick types into
+ * this screen got neither, so the same house had an identity in one path and
+ * not in the other.
+ *
+ * It uses NAC's own matching (crm.mjs): an email or a phone number that
+ * AGREES settles it, one that disagrees settles it the other way, and a
+ * shared name only counts when nothing contradicts it. "There are a lot of
+ * people called John Smith."
+ *
+ * It never blocks a save. If the CRM tables are not in the project, or the
+ * lookup fails, the quote saves exactly as it did before and the link is
+ * simply absent — the estimator must never be stopped by bookkeeping.
+ */
+let crmNotice = null;
+async function linkCustomerAndJob() {
+  crmNotice = null;
+  if (customerIsEmpty(draft.customer)) return;
+  try {
+    const customers = await listCustomers({ limit: 500 });
+    const hit = findCustomer(customers, draft.customer);
+    let cid = hit ? hit.customer.id : null;
+    if (!cid) {
+      cid = customerId(draft.customer, customers.length + 1);
+      const saved = await saveCustomer({ ...draft.customer, id: cid });
+      if (!saved.ok) return;
+    } else {
+      // ── NOTHING NAC ALREADY HOLDS IS OVERWRITTEN ────────────────────
+      //
+      // mergeCustomer fills what the record is MISSING and keeps what it
+      // has. A phone number on this quote that disagrees with the one on
+      // file does not replace it — the record may well be the right one,
+      // and a quote is not the place that decision gets made silently.
+      //
+      // The disagreement is SAID, not asked: the estimator is mid-quote and
+      // must never be blocked by a dialog about bookkeeping.
+      const { customer, conflicts, changed } = mergeCustomer(hit.customer, draft.customer);
+      if (changed) await saveCustomer({ ...customer, id: cid });
+      if (conflicts.length) {
+        crmNotice = 'This quote and NAC\u2019s record of ' + (hit.customer.name || 'this customer')
+          + ' disagree: ' + conflicts.map(c => c.field + ' is "' + c.kept
+            + '" on file and "' + c.offered + '" here')
+            .join('; ') + '. The record was left as it is.';
+      }
+    }
+
+    const site = draft.siteAddress || draft.customer.address || '';
+    const jobs = await listJobs({ customerId: cid });
+    const existing = findJob(jobs, { customerId: cid, siteAddress: site });
+    let jid = existing ? (existing.job || existing).id : null;
+    if (!jid) {
+      jid = jobId({ siteAddress: site, description: 'Air conditioning' },
+        jobs.length + 1);
+      const saved = await saveJob({ id: jid, customerId: cid, siteAddress: site,
+        description: 'Air conditioning — quote ' + draft.id, status: 'quoted' });
+      if (!saved.ok) return;
+    }
+    draft.customerRef = cid;
+    draft.jobRef = jid;
+  } catch (e) {
+    // Bookkeeping never stops a quote being saved.
+  }
+}
+
 async function persist() {
   draft = normaliseQuoteDraft({ ...draft, updatedAt: new Date().toISOString() });
+  await linkCustomerAndJob();
   const r = await saveDesign({
     ...draft,
     // What the job list shows, and what the issue endpoint reads back.
     customer: draft.customer,
+    // The two nullable link columns, when a customer and job were found.
+    ...(draft.customerRef ? { customerRef: draft.customerRef } : {}),
+    ...(draft.jobRef ? { jobRef: draft.jobRef } : {}),
     status: draft.status || 'draft'
   });
   if (r.synced) { dirty = false; }
@@ -1278,7 +1355,13 @@ $('#save').addEventListener('click', async () => {
       dirty = false;
       $('#savedAt').textContent = 'Saved to ' + r.storage + ' at '
         + new Date().toLocaleTimeString('en-AU');
-      flash('ok', 'Saved. Reopen this quote at ?id=' + draft.id);
+      if (crmNotice) {
+        // Saved, and there is something about the customer record worth
+        // knowing. Said, not asked: nothing here blocks the quote.
+        flash('warn', 'Saved. ' + crmNotice);
+      } else {
+        flash('ok', 'Saved. Reopen this quote at ?id=' + draft.id);
+      }
     } else {
       // Saved on this device only. That is NOT saved, and saying so would be
       // the one lie that loses a job.

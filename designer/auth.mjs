@@ -164,6 +164,21 @@ export function requireSignIn({ pageName = 'this page' } = {}) {
         <div class="err" id="nac-err" role="alert"></div>
         <div class="foot">NAC Electrical Air &amp; Refrigeration</div>
       </form>`;
+    // ── NOTHING BEHIND THE GATE IS READABLE ───────────────────────────
+    //
+    // Nick: "An unauthenticated user attempting to open an NAC internal page
+    // should not gain access to customer, pricing or design information."
+    //
+    // The overlay covers the page on screen, but the page behind it was still
+    // in the accessibility tree and still in innerText — a screen reader on
+    // the sign-in screen read the whole shell out, and anything a page had
+    // already put in the DOM was there to be read. None of these pages loads
+    // data before this resolves, so what was exposed was labels; it is still
+    // the wrong default, and one rule fixes it for every screen at once.
+    const lock = document.createElement('style');
+    lock.id = 'nac-signin-lock';
+    lock.textContent = 'body > *:not(#nac-signin){visibility:hidden!important}';
+    document.head.appendChild(lock);
     document.body.appendChild(host);
 
     const form = host.querySelector('form');
@@ -177,7 +192,12 @@ export function requireSignIn({ pageName = 'this page' } = {}) {
       go.disabled = true; go.textContent = 'Signing in…';
       const r = await signIn(host.querySelector('#nac-email').value,
                             host.querySelector('#nac-pass').value);
-      if (r.ok) { host.remove(); resolve(currentSession()); return; }
+      if (r.ok) {
+        host.remove();
+        document.getElementById('nac-signin-lock')?.remove();
+        resolve(currentSession());
+        return;
+      }
       err.textContent = r.error;
       err.classList.add('on');
       go.disabled = false; go.textContent = 'Sign in';
