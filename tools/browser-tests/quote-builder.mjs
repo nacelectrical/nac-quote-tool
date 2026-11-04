@@ -100,6 +100,33 @@ const say = (n, c, x) => {
   console.log('  ' + (c ? 'PASS' : 'FAIL') + '  ' + n + (x ? '  — ' + x : ''));
   if (!c) fail++;
 };
+/**
+ * The workflow is stepped now, so the test walks it the way an estimator
+ * does — but it works out WHICH step a control is on rather than being told.
+ *
+ * Hard-coding "field X is on step 4" means every test breaks the next time a
+ * card moves, and the breakage looks like a product failure. `show()` asks
+ * the page which step contains the element and switches to it.
+ */
+async function show(sel) {
+  const n = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return null;
+    const body = el.closest('.stepbody');
+    return body ? Number(body.dataset.step) : null;
+  }, sel);
+  if (n === null) return;
+  const current = await page.evaluate(() =>
+    Number((document.querySelector('.steps button.on')?.textContent || '1').trim()[0]));
+  if (current === n) return;
+  await page.locator('.steps button').nth(n - 1).click();
+  await page.waitForTimeout(160);
+}
+const goStep = async (n) => {
+  await page.locator('.steps button').nth(n - 1).click();
+  await page.waitForTimeout(200);
+};
+
 const step = async (name, fn) => {
   try { await fn(); console.log('  PASS  ' + name); }
   catch (e) { console.log('  FAIL  ' + name + '  — ' + e.message); fail++; }
@@ -118,20 +145,25 @@ await step('an empty quote is blocked', async () => {
 });
 
 // ── fill it in ─────────────────────────────────────────────────────────────
-const fill = async (sel, v) => { await page.fill(sel, String(v)); };
+const fill = async (sel, v) => { await show(sel); await page.fill(sel, String(v)); };
+
+await goStep(1);
 await fill('#cname', 'Test Quote — do not send');
 await fill('#cemail', 'quotes@nacelectrical.com.au');
 await fill('#cphone', '0455 123 456');
 await fill('#caddr', '12 Boronia Street, Buderim QLD 4556');
 await fill('#pnum', 'NAC-TEST-0001');
-await page.check('#istest');
+await show('#istest'); await page.check('#istest');
+
+await goStep(4);
 await fill('#outlets', '10');
 await fill('#returns', '2');
 await fill('#zones', '6');
 await fill('#summary', 'Ducted reverse-cycle throughout the single storey, six zones.');
 
 const sysFields = async (i, vals) => {
-  const row = page.locator('#systems .row').nth(i);
+  await goStep(3);
+  await show('#systems'); const row = page.locator('#systems .row').nth(i);
   const inputs = row.locator('.f input');
   for (const [k, v] of Object.entries(vals)) await inputs.nth(Number(k)).fill(String(v));
 };
@@ -140,28 +172,29 @@ await sysFields(0, { 0: 'Daikin', 1: 'FDYAN160AV1', 2: 'RZA160C2V1', 3: '16', 4:
                      5: '16027' });
 
 await step('a price of zero is refused', async () => {
-  await page.locator('#systems .row').nth(0).locator('.f input').nth(5).fill('0');
+  await show('#systems'), await page.locator('#systems .row').nth(0).locator('.f input').nth(5).fill('0');
   await page.waitForTimeout(150);
   const c = await checks();
   if (!c.some(x => /priced at \$0|cannot go out at nothing/i.test(x))) {
     throw new Error('zero price passed: ' + c.join(' | '));
   }
-  await page.locator('#systems .row').nth(0).locator('.f input').nth(5).fill('16027');
+  await show('#systems'), await page.locator('#systems .row').nth(0).locator('.f input').nth(5).fill('16027');
 });
 
 // rooms
+await goStep(4);
 const roomRows = () => page.locator('#rooms .roomrow');
 const ROOMS = [['Living / Dining', 'Living', 3], ['Kitchen', 'Living', 1], ['Master', 'Master', 2],
                ['Bedroom 2', 'Bed 2', 1], ['Bedroom 3', 'Bed 3', 1], ['Bedroom 4', 'Bed 4', 1],
                ['Study', 'Study', 1]];
 for (let i = 0; i < ROOMS.length; i++) {
-  if (await roomRows().count() <= i) await page.click('#addRoom');
+  await show('#addRoom'); if (await roomRows().count() <= i) await page.click('#addRoom');
   const r = roomRows().nth(i);
   await r.locator('input').nth(0).fill(ROOMS[i][0]);
   await r.locator('input').nth(1).fill(ROOMS[i][1]);
   await r.locator('input').nth(2).fill(String(ROOMS[i][2]));
 }
-await page.click('#seedIncl');
+await show('#seedIncl'); await page.click('#seedIncl');
 await page.click('#seedExcl');
 await page.waitForTimeout(200);
 
@@ -179,27 +212,28 @@ await step('the typed inclusions and exclusions land in the draft', async () => 
 // costs, together with the house rule: Siemens unless the job is on an
 // AirTouch, sized to the job.
 await step('the zone control follows the zone count, per NAC\u2019s house rule', async () => {
-  const chosen = await page.inputValue('#ctrlSel');
+  await goStep(3);
+  const chosen = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (chosen !== 'siemens_z6') {
     throw new Error('6 zones offered ' + chosen + ', expected the Siemens 6-zone kit');
   }
-  const note = await page.textContent('#ctrlBox');
+  const note = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
   if (!/Siemens/i.test(note)) throw new Error('the house rule was not explained');
 });
 
 await step('a kit outgrown by the job is resized, and the change is announced', async () => {
-  await fill('#zones', '8');
+  await goStep(4); await fill('#zones', '8'); await goStep(3);
   await page.waitForTimeout(250);
-  const eight = await page.inputValue('#ctrlSel');
+  const eight = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (eight !== 'siemens_z8') throw new Error('8 zones offered ' + eight);
   await fill('#zones', '4');
   await page.waitForTimeout(250);
-  const four = await page.inputValue('#ctrlSel');
+  const four = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (four !== 'siemens_z4') throw new Error('4 zones offered ' + four);
   // Five zones take the next kit up, not the one that is two short.
   await fill('#zones', '5');
   await page.waitForTimeout(250);
-  const five = await page.inputValue('#ctrlSel');
+  const five = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (five !== 'siemens_z6') throw new Error('5 zones offered ' + five);
   await fill('#zones', '6');
   await page.waitForTimeout(250);
@@ -208,31 +242,32 @@ await step('a kit outgrown by the job is resized, and the change is announced', 
 await step('a kit the estimator picked is not resized under them', async () => {
   // Deliberately take the 8-zone kit on a 6-zone job. That is allowed — it is
   // their call — and the app must not quietly put it back to the 6.
-  await page.selectOption('#ctrlSel', 'siemens_z8');
+  await show('#ctrlSel'); await page.selectOption('#ctrlSel', 'siemens_z8');
   await page.waitForTimeout(250);
   await fill('#zones', '4');
   await page.waitForTimeout(250);
-  const kept = await page.inputValue('#ctrlSel');
+  const kept = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (kept !== 'siemens_z8') throw new Error('a deliberate choice was overridden: ' + kept);
   // But one that no longer COVERS the job is resized, because an impossible
   // part is not a choice worth respecting.
   await fill('#zones', '6');
   await page.waitForTimeout(250);
-  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await show('#ctrlSel'); await page.selectOption('#ctrlSel', 'siemens_z6');
   await page.waitForTimeout(250);
   await fill('#zones', '8');
   await page.waitForTimeout(300);
-  const grown = await page.inputValue('#ctrlSel');
+  const grown = (await show('#ctrlSel'), await page.inputValue('#ctrlSel'));
   if (grown !== 'siemens_z8') throw new Error('an outgrown kit was kept: ' + grown);
-  const said = await page.textContent('#ctrlBox');
+  const said = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
   if (!/resized/i.test(said)) throw new Error('the resize was silent');
   await fill('#zones', '6');
   await page.waitForTimeout(250);
-  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await show('#ctrlSel'); await page.selectOption('#ctrlSel', 'siemens_z6');
   await page.waitForTimeout(250);
 });
 
 await step('a kit too small for the job is offered but cannot be picked', async () => {
+  await show('#ctrlSel');
   const opts = await page.$$eval('#ctrlSel option',
     ns => ns.map(n => ({ v: n.value, d: n.disabled, t: n.textContent })));
   const small = opts.find(o => o.v === 'siemens_z4');
@@ -242,29 +277,30 @@ await step('a kit too small for the job is offered but cannot be picked', async 
 });
 
 await step('the AirTouch kit is on the list for a Daikin', async () => {
+  await show('#ctrlSel');
   const opts = await page.$$eval('#ctrlSel option', ns => ns.map(n => n.value));
   if (!opts.includes('at5_daikin')) throw new Error('no AirTouch kit: ' + opts.join(','));
 });
 
 await step('a controller can still be typed by hand', async () => {
-  await page.selectOption('#ctrlSel', '__other');
+  await show('#ctrlSel'); await page.selectOption('#ctrlSel', '__other');
   await page.waitForTimeout(250);
   const n = await page.locator('#ctrlBox input[placeholder*="Name the part"]').count();
   if (!n) throw new Error('no free-text fallback appeared');
   // Put the Siemens kit back for the rest of the run.
-  await page.selectOption('#ctrlSel', 'siemens_z6');
+  await show('#ctrlSel'); await page.selectOption('#ctrlSel', 'siemens_z6');
   await page.waitForTimeout(250);
 });
 
 await step('the kit\u2019s cost is shown to the estimator', async () => {
   // $295.00 is the Siemens 6-zone kit's MMEM cost. It belongs on this screen.
-  const internal = await page.textContent('#ctrlBox');
+  const internal = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
   if (!/295/.test(internal)) throw new Error('the cost is not shown: ' + internal.slice(0, 120));
 });
 
 // ── upgrades ───────────────────────────────────────────────────────────────
 await step('a Daikin-only upgrade is offerable on a Daikin quote', async () => {
-  const at5 = page.locator('#ups .up').nth(0);
+  await show('#ups'); const at5 = page.locator('#ups .up').nth(0);
   if (await at5.locator('input[type=checkbox]').isDisabled()) {
     throw new Error('the AirTouch was withheld from a Daikin quote');
   }
@@ -273,7 +309,7 @@ await step('a Daikin-only upgrade is offerable on a Daikin quote', async () => {
 });
 
 await step('a counted upgrade asks how many, and prices it', async () => {
-  const sensor = page.locator('#ups .up').nth(1);
+  await show('#ups'); const sensor = page.locator('#ups .up').nth(1);
   await sensor.locator('input[type=checkbox]').check();
   await page.waitForTimeout(150);
   const q = sensor.locator('.uq input');
@@ -285,11 +321,11 @@ await step('a counted upgrade asks how many, and prices it', async () => {
 });
 
 await step('removing an option removes its price', async () => {
-  await page.locator('#ups .up').nth(0).locator('input[type=checkbox]').uncheck();
+  await show('#ups'), await page.locator('#ups .up').nth(0).locator('input[type=checkbox]').uncheck();
   await page.waitForTimeout(200);
   const total = await page.textContent('#total strong');
   if (!/16,467/.test(total)) throw new Error('total reads ' + total + ', expected $16,467.00');
-  await page.locator('#ups .up').nth(0).locator('input[type=checkbox]').check();
+  await show('#ups'), await page.locator('#ups .up').nth(0).locator('input[type=checkbox]').check();
   await page.waitForTimeout(200);
 });
 
@@ -302,12 +338,12 @@ await step('the quote now passes its own checks', async () => {
 
 // ── an incompatible brand withholds the upgrade ────────────────────────────
 await step('adding a Braemar and quoting it withholds the Daikin-only kit', async () => {
-  await page.click('#addSys');
+  await show('#addSys'); await page.click('#addSys');
   await page.waitForTimeout(150);
   await sysFields(1, { 0: 'Braemar', 1: 'KDHV160D1S', 3: '16.3', 4: '1Ph', 5: '14553' });
-  await page.locator('#systems .row').nth(1).locator('button', { hasText: 'Quote this one' }).click();
+  await show('#systems'), await page.locator('#systems .row').nth(1).locator('button', { hasText: 'Quote this one' }).click();
   await page.waitForTimeout(250);
-  const at5 = page.locator('#ups .up').nth(0);
+  await show('#ups'); const at5 = page.locator('#ups .up').nth(0);
   if (!await at5.locator('input[type=checkbox]').isDisabled()) {
     throw new Error('the AirTouch is still offerable on a Braemar');
   }
@@ -318,7 +354,7 @@ await step('adding a Braemar and quoting it withholds the Daikin-only kit', asyn
 });
 
 await step('switching back to the Daikin clears the incompatibility', async () => {
-  await page.locator('#systems .row').nth(0).locator('button', { hasText: 'Quote this one' }).click();
+  await show('#systems'), await page.locator('#systems .row').nth(0).locator('button', { hasText: 'Quote this one' }).click();
   await page.waitForTimeout(250);
   const bad = (await checks()).filter(x => x.startsWith('bad'));
   if (bad.length) throw new Error(bad.join(' | '));
@@ -326,7 +362,7 @@ await step('switching back to the Daikin clears the incompatibility', async () =
 
 // ── the preview is the real page ───────────────────────────────────────────
 await step('the preview renders the real customer page', async () => {
-  await page.click('#preview');
+  await show('#preview'); await page.click('#preview');
   await page.waitForTimeout(900);
   const frame = page.frameLocator('#prevFrame');
   const cover = await frame.locator('.cover').count();
@@ -342,7 +378,7 @@ await step('the preview renders the real customer page', async () => {
 
 // ── saving ─────────────────────────────────────────────────────────────────
 await step('a save that reaches the database reports as saved', async () => {
-  await page.click('#save');
+  await show('#save'); await page.click('#save');
   await page.waitForTimeout(500);
   const f = await page.textContent('#flash');
   if (!/Saved\./.test(f)) throw new Error('save said: ' + f);
@@ -369,8 +405,8 @@ await step('a save that never reached the database is NOT reported as saved', as
       return prev(url, opts);
     };
   });
-  await page.fill('#summary', 'Edited after the connection dropped.');
-  await page.click('#save');
+  await show('#summary'); await page.fill('#summary', 'Edited after the connection dropped.');
+  await show('#save'); await page.click('#save');
   await page.waitForTimeout(600);
   const f = await page.textContent('#flash');
   if (!/NOT saved/i.test(f)) throw new Error('a failed save reported: ' + f);
@@ -400,7 +436,7 @@ await step('reopening a saved quote brings all of it back', async () => {
     pnum: await page.inputValue('#pnum'),
     outlets: await page.inputValue('#outlets'),
     zones: await page.inputValue('#zones'),
-    ctrl: await page.inputValue('#ctrlSel'),
+    ctrl: (await show('#ctrlSel'), await page.inputValue('#ctrlSel')),
     incl: await page.inputValue('#incl'),
     excl: await page.inputValue('#excl'),
     test: await page.isChecked('#istest'),

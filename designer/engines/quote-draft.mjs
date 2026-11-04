@@ -174,6 +174,64 @@ export function normaliseQuoteDraft(input = {}) {
         .map(([k, v]) => [trimmed(k), n(v)])
         .filter(([k, v]) => k && v !== null && v >= 0)),
 
+    // ── THE FLOOR PLAN, AND WHAT WAS READ OFF IT ───────────────────────────
+    //
+    // Nick, 4 November 2026: "Create enquiry → upload floor plan → review
+    // rooms and preliminary sizing."
+    //
+    // The plan FILE and the plan IMAGE are two different things and this
+    // draft carries both. `plan` is the working document the estimator reads
+    // rooms off — a PDF or a photograph, whatever they were sent — and it
+    // stays internal. `planImage` further down is the one a customer may see
+    // on the proposal, and only when it is approved.
+    plan: d.plan && (trimmed(d.plan.src) || trimmed(d.plan.name)) ? {
+      name: trimmed(d.plan.name),
+      mediaType: trimmed(d.plan.mediaType),
+      src: trimmed(d.plan.src),
+      page: n(d.plan.page) ?? 1,
+      pageCount: n(d.plan.pageCount),
+      widthPx: n(d.plan.widthPx),
+      heightPx: n(d.plan.heightPx),
+      /** When the reader last ran over it, and what it reported. */
+      readAt: trimmed(d.plan.readAt),
+      notes: list(d.plan.notes).map(trimmed).filter(Boolean),
+      /** The printed under-roof area, when the sheet states one. */
+      printedFloorAreaSqM: n(d.plan.printedFloorAreaSqM),
+      /**
+       * How the scale came to be known. Only a source in
+       * VERIFIED_SCALE_SOURCES may stand behind a fixed price — never one
+       * guessed off a car, a bed or a kitchen bench.
+       */
+      calibration: d.plan.calibration || null
+    } : null,
+
+    /**
+     * THE ROOMS, as read and then as corrected.
+     *
+     * Each is a room record from rooms.mjs: a label, a measurement with the
+     * source it came from, and whether it is conditioned. The estimator
+     * corrects any of it, and `buildRoom()` keeps the original beside the
+     * correction rather than overwriting it.
+     */
+    rooms: list(d.rooms),
+
+    /**
+     * The sizing decision. The CALCULATION is not stored — it is derived from
+     * the rooms every time by preliminarySizing(), so it can never go stale
+     * against a room that was corrected afterwards. What is stored is the
+     * method chosen and any override, because those are decisions.
+     */
+    sizing: {
+      method: trimmed(d.sizing?.method) || 'per_room',
+      ceilingHeightMm: n(d.sizing?.ceilingHeightMm),
+      override: d.sizing?.override && n(d.sizing.override.designKw) ? {
+        designKw: n(d.sizing.override.designKw),
+        reason: trimmed(d.sizing.override.reason),
+        by: trimmed(d.sizing.override.by),
+        at: trimmed(d.sizing.override.at)
+      } : null
+    },
+
     /** An approved plan image, when one has been supplied. Never invented. */
     planImage: d.planImage && trimmed(d.planImage.src)
       ? { src: trimmed(d.planImage.src), alt: trimmed(d.planImage.alt),
