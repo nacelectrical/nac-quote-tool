@@ -1095,6 +1095,8 @@ export function upgradeImageFor(images = [], upgrade = {}) {
 
   const title = wordKey([upgrade.title, upgrade.description].filter(Boolean).join(' '));
   if (!title) return null;
+  const words = [upgrade.title, upgrade.description].filter(Boolean).join(' ')
+    .split(/[^A-Za-z0-9]+/).map(w => w.toLowerCase()).filter(Boolean);
 
   let best = null;
   for (const a of assets) {
@@ -1110,10 +1112,14 @@ export function upgradeImageFor(images = [], upgrade = {}) {
     for (const t of list(a.tags)) {
       const k = wordKey(t);
       if (k.length < 4) continue;
-      // Either way round: a "controller" tag matches a title saying "control".
-      if (title.includes(k) || k.includes(wordKey(trimmed(upgrade.title).split(/\s+/)
-            .find(w => w.length >= 5) || '\u0000'))) score += 1;
-      else unmatched += 1;
+      // EITHER WAY ROUND. A "controller" tag belongs to an upgrade whose
+      // title says "control", and `title.includes('controller')` is false
+      // there — so the tag scored nothing, the AirTouch console lost to a
+      // photograph of a sensor, and the sensor photograph ended up on both
+      // lines. Every word of the title is tried, not just the first long one.
+      const hit = title.includes(k)
+        || words.some(w => w.length >= 5 && k.includes(w));
+      if (hit) score += 1; else unmatched += 1;
     }
     if (score <= 0) continue;
     if (!best || score > best.score

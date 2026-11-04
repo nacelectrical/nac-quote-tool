@@ -121,6 +121,14 @@ export async function importPhotos({ check = false } = {}) {
       //
       // The role is what a picture is FOR. This is whose work it is.
       ownWork: p.ownWork !== false,
+      // ── WHERE THE SUBJECT IS ─────────────────────────────────────────
+      //
+      // The page crops a photograph to a square beside an upgrade and to 4:3
+      // in the gallery, and object-fit takes the MIDDLE unless told
+      // otherwise. A sensor on the left of a wide kitchen shot is cropped
+      // straight out of its own thumbnail, which is how a picture of a sensor
+      // becomes a picture of a kitchen.
+      ...(p.focalPoint ? { focalPoint: p.focalPoint } : {}),
       // The approval is a person's, and the record says whose and why.
       approved: true,
       approvedBy: 'nick@nacelectrical.com.au',

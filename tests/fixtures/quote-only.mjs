@@ -16,10 +16,14 @@ import { NAC_TRUST, seedTermsAndConditions } from '../../designer/engines/presen
 
 /** The upgrade library, as the content store holds it. */
 export const UPGRADES = [
+  // `imageId` mirrors designer/content/nac-upgrades.json: the pairing Nick
+  // asked for by name, stated rather than left to the title matcher.
   { id: 'at5', title: 'AirTouch 5 smart control', priceIncGst: 1350,
+    imageId: 'airtouch-console-4-zone',
     description: 'Colour touchscreen, phone app control, each zone to its own temperature.',
     requires: ['has_zoning', 'daikin_system'], enabled: true, sortOrder: 1 },
   { id: 'sensor', title: 'Room temperature sensors', unitPriceIncGst: 110,
+    imageId: 'airtouch-room-sensor',
     unitLabel: 'each', maxQuantity: 8, defaultQuantity: 0,
     description: 'A sensor in the rooms you choose, so the system holds that room to its '
       + 'setpoint rather than the hallway’s.',

@@ -32,11 +32,14 @@ const SENSORS = { id: 'sensor', title: 'Room temperature sensors',
 
 // ── PICTURES OF NAC'S OWN WORK ──────────────────────────────────────────────
 
-test('NAC’s nine photographs are marked as NAC’s own work', () => {
-  assert.equal(IMAGES.length, 9);
-  for (const i of IMAGES) {
-    assert.equal(normaliseImageAsset(i).ownWork, true,
-      i.id + ' is a photograph of a job NAC did and is not marked as one');
+test('NAC’s own photographs are marked as NAC’s own work', () => {
+  // Nine of NAC's own, and one manufacturer product image of the room sensor.
+  assert.equal(IMAGES.length, 10);
+  const own = IMAGES.filter(i => normaliseImageAsset(i).ownWork === true);
+  assert.equal(own.length, 9);
+  for (const i of own) {
+    assert.ok(/outdoor|console|controller/.test(i.id),
+      i.id + ' is marked as NAC’s work and does not look like a job photograph');
   }
 });
 
@@ -108,13 +111,54 @@ test('the AirTouch upgrade gets the AirTouch console', () => {
   assert.match(img.alt, /AirTouch wall console/);
 });
 
-test('the sensors upgrade gets the console showing sensors, not the other one', () => {
+test('the sensors upgrade gets the sensor, not a console', () => {
+  // Nick, 5 November 2026: "Just need Airtouch sensor pic replaced." The
+  // sensors line showed a photograph of a wall console that happens to have
+  // sensors configured on it. It shows the sensor now.
   const img = upgradeImageFor(IMAGES, SENSORS);
   assert.ok(img, 'no picture was matched at all');
-  assert.equal(img.id, 'airtouch-console-5-zone-sensors',
-    'the sensors line took the console with no sensors on it');
+  assert.equal(img.id, 'airtouch-room-sensor');
   assert.notEqual(img.id, upgradeImageFor(IMAGES, AIRTOUCH).id,
     'both upgrades took the same photograph');
+});
+
+test('a tag matches a title that says the shorter word', () => {
+  // A "controller" tag belongs to an upgrade titled "…smart control", and a
+  // plain substring test gets that backwards: `'airtouchcontrol'.includes(
+  // 'controller')` is false. The tag scored nothing, the AirTouch console lost
+  // to a photograph of a sensor, and the sensor photograph took BOTH lines.
+  const img = upgradeImageFor(IMAGES, AIRTOUCH);
+  assert.equal(img.id, 'airtouch-console-4-zone',
+    'the console lost its own line to another photograph');
+});
+
+test('the sensor photograph is not in the installations gallery', () => {
+  // It is a manufacturer product image — the temperatures float over a styled
+  // interior — so it is the right picture of the sensor and the wrong picture
+  // for a gallery headed "Recent NAC installations".
+  const sensor = IMAGES.find(i => i.id === 'airtouch-room-sensor');
+  assert.ok(sensor, 'the sensor photograph is not in the library');
+  assert.equal(normaliseImageAsset(sensor).ownWork, false);
+  assert.ok(!ownWorkGallery(IMAGES, { max: 20 }).some(g => g.id === 'airtouch-room-sensor'),
+    'a manufacturer image reached the gallery of NAC’s own work');
+});
+
+test('the sensor photograph is cropped to the sensor, not to the kitchen', () => {
+  // The page crops it to a square beside the upgrade and object-fit takes the
+  // middle unless told otherwise. The sensor is on the left of a wide shot, so
+  // the middle is a picture of somebody else's kitchen.
+  const sensor = normaliseImageAsset(IMAGES.find(i => i.id === 'airtouch-room-sensor'));
+  assert.ok(sensor.focalPoint.x < 0.4,
+    'the focal point is at ' + sensor.focalPoint.x + ', which crops the sensor out');
+  // And the asset itself is cropped square, because a square thumbnail is the
+  // only place it is ever used.
+  const d = sensor.derivatives[0];
+  assert.ok(d.width >= 400 && d.height >= 400,
+    'the sensor photograph is ' + d.width + '×' + d.height
+    + ', which is too small for the page to use');
+  assert.ok(Math.abs(d.width - d.height) < 20,
+    'the sensor photograph is ' + d.width + '×' + d.height
+    + ' — a wide shot squeezed into a square box is a picture of the kitchen');
 });
 
 test('an upgrade NAC has no picture of gets none, rather than the nearest thing', () => {
@@ -202,7 +246,7 @@ test('both options carry their own unit picture on the page', () => {
 test('both upgrades carry their own picture on the page', () => {
   const byId = Object.fromEntries(P.options.map(o => [o.id, o]));
   assert.equal(byId.at5.image.id, 'airtouch-console-4-zone');
-  assert.equal(byId.sensor.image.id, 'airtouch-console-5-zone-sensors');
+  assert.equal(byId.sensor.image.id, 'airtouch-room-sensor');
   assert.equal((HTML.match(/class="opt-img"/g) || []).length, 2);
   // Decorative: the title beside it already says what it is, and a screen
   // reader should not say it twice.
