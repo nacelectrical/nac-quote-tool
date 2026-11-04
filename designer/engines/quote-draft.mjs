@@ -40,6 +40,7 @@ const bool = (v) => v === true || v === 'true' || v === 1;
 const money = (v) => { const x = n(v); return x === null ? null : Math.round(x * 100) / 100; };
 
 import { firmnessOf } from './option-pricing.mjs';
+import { ZONE_CONTROLLERS } from './catalogue.mjs';
 
 export const QUOTE_DRAFT_SCHEMA = 'nac.quote.draft.v1';
 
@@ -165,17 +166,25 @@ export function normaliseQuoteDraft(input = {}) {
       /** A separate charge, on the rare job where the kit is not in the price. */
       priceIncGst: money(d.controller?.priceIncGst),
       /**
-       * THE PICTURE OF THIS PART, PICKED BY HAND.
+       * THE PICTURE OF THIS PART.
        *
-       * Nick, 5 November 2026, sending a Zonemaster six-zone wall panel.
+       * Nick, 5 November 2026, sending a Zonemaster six-zone wall panel, then
+       * "Just put it in the pic for siemens."
        *
-       * There is no automatic match worth having here. Every zone controller
+       * There is no automatic MATCH worth having here. Every zone controller
        * is named with the words "zone" and "control", so a matcher scoring on
        * them would put any panel in the library beside any kit — a Zonemaster
        * photograph on a Siemens line, under its price, on the page a customer
-       * signs. So the picture is NAC's to choose, by id, and the only match
-       * made without one is a controller whose own name carries the brand of
-       * the photograph.
+       * signs. The link between the Siemens kits and the Zonemaster plate is
+       * not something a matcher could ever have worked out: the kit is badged
+       * Siemens and the plate is badged Zonemaster. It is a FACT NAC STATED,
+       * and it is recorded against the part, in the catalogue.
+       *
+       * So three states, and the estimator controls all of them:
+       *
+       *   ''            the part's own picture, out of the catalogue
+       *   NO_PICTURE    this quote shows none, deliberately
+       *   '<id>'        this picture, on this quote
        */
       imageId: trimmed(d.controller?.imageId),
       note: trimmed(d.controller?.note)
@@ -522,6 +531,32 @@ export function draftSelectedOptions(draft, { upgrades = [] } = {}) {
   });
 }
 
+/**
+ * "This quote shows no picture of the zone control."
+ *
+ * A blank means "whatever the part's own picture is", which is what an
+ * estimator who never touched the field wants. So saying NO picture needs a
+ * value of its own, or there would be no way back from a catalogue default.
+ */
+export const NO_PICTURE = 'none';
+
+/**
+ * Which photograph goes beside the zone control: the one chosen on this quote,
+ * or the one recorded against the part NAC buys.
+ *
+ * The catalogue lookup is a LOOKUP, not a match — `siemens_z6` is the id of
+ * the kit the estimator selected, and the picture is the one NAC recorded
+ * against that id. A controller typed by hand has no catalogue id and so gets
+ * nothing unless somebody picks a picture for it.
+ */
+export function controllerImageId(controller = {}) {
+  const chosen = trimmed(controller.imageId);
+  if (chosen === NO_PICTURE) return null;
+  if (chosen) return chosen;
+  const part = ZONE_CONTROLLERS.find(c => c.id === trimmed(controller.id));
+  return (part && part.imageId) || null;
+}
+
 export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
   const d = normaliseQuoteDraft(draft);
   const sys = chosenSystem(d);
@@ -566,10 +601,10 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
           includedInSystem: d.controller.includedInPrice === true,
           priceIncGst: d.controller.includedInPrice === true
             ? null : d.controller.priceIncGst,
-          // The photograph NAC picked for this part, by id. The presentation
-          // resolves it against the approved library; an id naming nothing
-          // publishable shows no picture rather than the nearest lookalike.
-          imageId: trimmed(d.controller.imageId) || null }
+          // The photograph for this part. The presentation resolves it
+          // against the approved library; an id naming nothing publishable
+          // shows no picture rather than the nearest lookalike.
+          imageId: controllerImageId(d.controller) }
       : null,
 
     commercials: sys && sys.priceIncGst !== null ? {

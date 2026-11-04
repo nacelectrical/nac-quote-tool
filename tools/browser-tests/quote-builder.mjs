@@ -331,42 +331,45 @@ await step('a controller can still be typed by hand', async () => {
 // ── THE PICTURE OF THE ZONE CONTROL ────────────────────────────────────────
 //
 // Nick, 5 November 2026, sending a photograph of a Zonemaster six-zone wall
-// panel. The quote's control is a SIEMENS kit, so the check that matters is
-// the one that proves nothing was matched to it on its own.
-await step('a Siemens kit is given no picture by itself', async () => {
+// panel, then "Just put it in the pic for siemens." The plate is recorded
+// against the Siemens kits in the catalogue, so the estimator gets it without
+// doing anything — and can still override it or turn it off per quote.
+await step('the Siemens kit brings its own plate with it', async () => {
   const box = (await show('#ctrlBox'), await page.textContent('#ctrlBox'));
   if (!/Picture of the zone control/.test(box)) {
     throw new Error('the picture chooser is not on the controller card');
   }
+  // Blank means "the kit's own picture", and the option says which.
   if (await page.locator('#ctrlPic').inputValue() !== '') {
-    throw new Error('a picture was matched to a Siemens kit without being chosen');
+    throw new Error('the kit default is not the selected state');
   }
-  if (await page.locator('#ctrlBox img').count()) {
-    throw new Error('a photograph is shown beside a kit nobody paired it with');
+  if (!/the kit.s own picture/i.test(box)) {
+    throw new Error('the card does not say the kit has its own picture: ' + box.slice(0, 200));
   }
-});
-
-await step('the estimator picks the picture, and sees the one the customer will', async () => {
-  await show('#ctrlPic');
-  await page.selectOption('#ctrlPic', 'zonemaster-6-zone-wall-panel');
-  await page.waitForTimeout(250);
   if (await page.locator('#ctrlBox img').count() !== 1) {
-    throw new Error('the chosen photograph is not shown back');
+    throw new Error('the kit\u2019s own photograph is not shown back');
   }
   const alt = await page.locator('#ctrlBox img').getAttribute('alt');
   if (!/Zonemaster/.test(String(alt))) throw new Error('wrong picture shown: ' + alt);
-  // The choice is LEFT IN for the rest of the run, so the save and the reopen
-  // below carry it and the round trip is proved rather than assumed.
 });
 
-await step('clearing the picture clears it', async () => {
+await step('the estimator can turn the picture off for one quote', async () => {
   await show('#ctrlPic');
-  await page.selectOption('#ctrlPic', '');
+  await page.selectOption('#ctrlPic', 'none');
   await page.waitForTimeout(250);
-  if (await page.locator('#ctrlBox img').count()) throw new Error('the picture did not clear');
-  // Back on, for the save and reopen checks.
-  await page.selectOption('#ctrlPic', 'zonemaster-6-zone-wall-panel');
+  if (await page.locator('#ctrlBox img').count()) {
+    throw new Error('the picture is still shown after being turned off');
+  }
+});
+
+await step('and override it with another', async () => {
+  await show('#ctrlPic');
+  await page.selectOption('#ctrlPic', 'airtouch-console-4-zone');
   await page.waitForTimeout(250);
+  const alt = await page.locator('#ctrlBox img').getAttribute('alt');
+  if (!/AirTouch/.test(String(alt))) throw new Error('the override did not take: ' + alt);
+  // Left in, so the save and the reopen below carry it and the round trip is
+  // proved rather than assumed.
 });
 
 await step('the kit\u2019s cost is shown to the estimator', async () => {

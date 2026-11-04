@@ -403,7 +403,7 @@ details summary{cursor:pointer;font-weight:650;color:var(--navy);padding:8px 0;m
 import { requireSignIn, currentSession } from '/designer/auth.mjs';
 import {
   createQuoteDraft, normaliseQuoteDraft, quoteDraftGate, draftToQuoteSource,
-  draftSelectedOptions, chosenSystem
+  draftSelectedOptions, chosenSystem, controllerImageId, NO_PICTURE
 } from '/designer/engines/quote-draft.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
@@ -1034,20 +1034,30 @@ function drawControllerInner() {
 
   // ── THE PICTURE OF THE PART ───────────────────────────────────────────
   //
-  // Nick, 5 November 2026, sending a photograph of a six-zone wall panel.
+  // Nick, 5 November 2026, sending a photograph of a six-zone wall panel, then
+  // "Just put it in the pic for siemens."
   //
-  // CHOSEN BY HAND, and that is the point rather than a shortcut. Every zone
-  // controller ever made is named with the words "zone" and "control", so a
-  // matcher scoring on them would put any panel in the library beside any
-  // kit — a Zonemaster photograph on a Siemens line, under its price, on the
-  // page a customer signs. The only automatic match is a photograph whose own
-  // brand is in the controller's name, so a kit NAC has a picture of but has
-  // not paired gets this list and no guess.
+  // The picture is never MATCHED to the controller. Every zone controller ever
+  // made is named with the words "zone" and "control", so a matcher scoring on
+  // them would put any panel in the library beside any kit — a Zonemaster
+  // photograph on a Siemens line, under its price, on the page a customer
+  // signs. The Siemens-to-Zonemaster link is a fact NAC stated, recorded
+  // against the part in the catalogue, and this field is the override.
   if (draft.controller.name || draft.controller.id) {
     const pics = (content.images || [])
       .filter(a => a && a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+    const part = ZONE_CONTROLLERS.find(c => c.id === draft.controller.id) || null;
+    const partPic = part && part.imageId
+      ? pics.find(a => a.id === part.imageId) || null : null;
     const psel = el('select', { id: 'ctrlPic' });
-    psel.appendChild(el('option', { value: '', text: '\u2014 no picture \u2014' }));
+    psel.appendChild(el('option', { value: '',
+      text: partPic
+        ? '\u2014 the kit\u2019s own picture (' + (partPic.equipmentBrand || partPic.id) + ') \u2014'
+        : '\u2014 none on file for this part \u2014' }));
+    // A separate value, because a blank means "the part's own picture" and
+    // there has to be a way back from that on a job where it is wrong.
+    psel.appendChild(el('option', { value: NO_PICTURE,
+      text: '\u2014 show no picture on this quote \u2014' }));
     for (const a of pics) {
       psel.appendChild(el('option', { value: a.id,
         text: (a.equipmentBrand ? a.equipmentBrand + ' \u2014 ' : '')
@@ -1059,18 +1069,21 @@ function drawControllerInner() {
       draft.controller.imageId = psel.value;
       mark(); drawController();
     });
-    // What the customer page will actually show, resolved by the SAME function
-    // the proposal uses — so a chosen id that turns out not to be publishable
-    // reads as "no picture" here rather than looking fine until it is issued.
-    const shown = controllerImageFor(content.images || [],
-      { name: draft.controller.name, imageId: draft.controller.imageId });
-    const hint = draft.controller.imageId && !shown
+    // What the customer page will actually show, resolved through the SAME two
+    // functions the proposal uses — so a picture that turns out not to be
+    // publishable reads as "no picture" HERE rather than at issue time.
+    const effective = controllerImageId(draft.controller);
+    const shown = effective
+      ? controllerImageFor(content.images || [],
+          { name: draft.controller.name, imageId: effective })
+      : null;
+    const hint = effective && !shown
       ? 'That picture is not publishable, so the customer page will show none. '
         + 'Approve it on the Images panel or choose another.'
       : (shown
           ? 'Shown beside the zone control on the customer page.'
-          : 'Optional. Without one the page names the part and shows no picture, '
-            + 'which is better than a photograph of somebody else\u2019s.');
+          : 'The page will name the part and show no picture, which is better '
+            + 'than a photograph of somebody else\u2019s.');
     const picField = field('Picture of the zone control', psel, hint);
     if (shown && shown.src) {
       const img = el('img', { src: shown.src, alt: shown.alt || '',

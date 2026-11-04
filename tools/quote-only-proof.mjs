@@ -136,7 +136,8 @@ if (import.meta.url === 'file://' + process.argv[1]) {
     + ownCount + ' of NAC’s own work, ' + (imageCount - ownCount) + ' supplied), '
     + (p.system.image ? 'one matched to the Daikin' : 'none matched'));
   console.log('  zone ctrl  ' + (p.zones && p.zones.controllerImage
-    ? 'picture paired by hand' : 'no picture — none is paired with this kit'));
+    ? 'showing ' + p.zones.controllerImage.id
+    : 'no picture — none is recorded against this kit'));
   console.log('  reviews    ' + reviewCount + ' approved, '
     + p.reviews.filter(r => r.rating === null).length + ' with no star rating recorded');
   console.log('  labelled   ' + (p.testQuote ? 'TEST QUOTE' : 'NOT LABELLED'));

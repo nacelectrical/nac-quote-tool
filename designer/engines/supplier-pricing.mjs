@@ -134,9 +134,21 @@ export const MMEM_ZONE_CONTROLS = [
   { id: 'me_z8_240',    code: 'PAC-ZC80H-E',  name: 'Mitsubishi 8-zone controller (240V)',  cost: 585.00,  maxZones: 8,  brandLock: 'me' },
   { id: 'fj_zone',      code: 'UTY-CDRXZC',   name: 'Fujitsu 24V zone control interface',   cost: 480.00,  maxZones: 8,  brandLock: 'fujitsu' },
   { id: 'fj_anywair',   code: 'UTY-ANY2',     name: 'Fujitsu ducted anywAiR controller',    cost: 1327.50, maxZones: 8,  brandLock: 'fujitsu' },
-  { id: 'siemens_z4',   code: 'MMASEM4ZTPKIT', name: 'Siemens Home zone control — 4 zone',  cost: 250.00,  maxZones: 4 },
-  { id: 'siemens_z6',   code: 'MMASEM6ZTPKIT', name: 'Siemens Home zone control — 6 zone',  cost: 295.00,  maxZones: 6 },
-  { id: 'siemens_z8',   code: 'MMASEM8ZTPKIT', name: 'Siemens Home zone control — 8 zone',  cost: 320.00,  maxZones: 8 }
+  // ── THE WALL PLATE NAC'S SIEMENS KITS SHIP WITH ────────────────────────
+  //
+  // Nick, 5 November 2026: "Just put it in the pic for siemens." The library
+  // could never have worked this out — the kits are recorded as Siemens and
+  // the plate is badged Zonemaster, so there was no evidence linking them.
+  // It is here because NAC say so, against the part they buy, which is where
+  // a fact about the part belongs.
+  //
+  // NOTE THE BUTTON COUNT. The photograph shows a SIX-button panel, so it is
+  // right for the 6-zone kit and shows two switches too few on an 8-zone job
+  // and two too many on a 4-zone one. It is paired on all three because Nick
+  // asked for it; a 4-zone and an 8-zone photograph would make it exact.
+  { id: 'siemens_z4',   code: 'MMASEM4ZTPKIT', name: 'Siemens Home zone control — 4 zone',  cost: 250.00,  maxZones: 4, imageId: 'zonemaster-6-zone-wall-panel' },
+  { id: 'siemens_z6',   code: 'MMASEM6ZTPKIT', name: 'Siemens Home zone control — 6 zone',  cost: 295.00,  maxZones: 6, imageId: 'zonemaster-6-zone-wall-panel' },
+  { id: 'siemens_z8',   code: 'MMASEM8ZTPKIT', name: 'Siemens Home zone control — 8 zone',  cost: 320.00,  maxZones: 8, imageId: 'zonemaster-6-zone-wall-panel' }
 ];
 
 /**

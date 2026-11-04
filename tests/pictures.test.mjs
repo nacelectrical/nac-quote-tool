@@ -19,6 +19,8 @@ import { ownWorkGallery, upgradeImageFor, optionImageFor, normaliseImageAsset,
          controllerImageFor }
   from '../designer/engines/presentation-content.mjs';
 import { readFileSync } from 'node:fs';
+import { ZONE_CONTROLLERS } from '../designer/engines/catalogue.mjs';
+import { controllerImageId, NO_PICTURE } from '../designer/engines/quote-draft.mjs';
 import { loadNacImages } from '../tools/import-nac-photos.mjs';
 import { buildTestQuote } from '../tools/quote-only-proof.mjs';
 import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
@@ -453,15 +455,65 @@ test('the chosen picture reaches the customer page, with its description', () =>
     'the panel is lazy-loaded in a document nobody scrolls');
 });
 
-test('the shipped test quote shows NO zone-control picture, because none is paired', () => {
-  // Deliberate, and worth pinning so nobody "fixes" it later. The fixture's
-  // zone control is a Siemens kit and NAC has no photograph of one. Until Nick
-  // confirms which plate ships with his Siemens kits, the proposal names the
-  // part and shows nothing — which is the truth.
-  assert.equal(P.zones.controllerImage, null);
+// ── AND THEN NAC TOLD US ────────────────────────────────────────────────────
+//
+// Nick, 5 November 2026: "Just put it in the pic for siemens." The Zonemaster
+// plate is what ships with NAC's Siemens kits. Nothing in the data could have
+// told us that — the kit is badged Siemens and the plate is badged Zonemaster
+// — so it is recorded against the PART, in the catalogue, where a fact about
+// a part belongs, and not as a rule in a matcher.
+
+test('a Siemens kit now carries its own plate, out of the catalogue', () => {
+  // The shipped test quote, unmodified: the fixture's zone control is the
+  // Siemens 6-zone kit and nobody picked a picture for it.
+  assert.ok(P.zones.controllerImage, 'the Siemens kit has no picture');
+  assert.equal(P.zones.controllerImage.id, 'zonemaster-6-zone-wall-panel');
   const zones = WEB_MARKUP.slice(WEB_MARKUP.indexOf('id="zones"'),
     WEB_MARKUP.indexOf('id="coverage"'));
-  assert.ok(!/ctrl-img/.test(zones), 'a zone-control picture appeared unpaired');
-  assert.ok(!/zonemaster/i.test(WEB_MARKUP),
-    'the Zonemaster panel reached a Siemens quote');
+  assert.match(zones, /class="ctrl-img"/);
+  assert.match(zones, /alt="A Zonemaster six-zone wall panel/);
+  // The part is still NAMED as what it is. The picture does not rename it.
+  assert.match(zones, /Siemens Home zone control/);
+});
+
+test('every Siemens kit carries it, and nothing else does', () => {
+  const siemens = ZONE_CONTROLLERS.filter(c => /^siemens_/.test(c.id));
+  assert.equal(siemens.length, 3);
+  for (const c of siemens) {
+    assert.equal(c.imageId, 'zonemaster-6-zone-wall-panel', c.id + ' lost its plate');
+  }
+  // Not spread to the Daikin, Mitsubishi or Fujitsu controllers on the same
+  // list: those are other manufacturers' parts and NAC has said nothing about
+  // what they look like.
+  for (const c of ZONE_CONTROLLERS.filter(c => !/^siemens_/.test(c.id))) {
+    assert.ok(!c.imageId, c.id + ' was given the Siemens plate');
+  }
+});
+
+test('a controller typed by hand still gets nothing', () => {
+  // No catalogue id, so no lookup, and the matcher will not guess from a name
+  // every zone controller shares.
+  assert.equal(controllerImageId({ name: 'Some other brand 6 zone control' }), null);
+  assert.equal(controllerImageId({}), null);
+});
+
+test('the estimator can still say this quote shows no picture', () => {
+  // A blank means "the part's own picture", so saying NO picture needs a value
+  // of its own — otherwise there is no way back from a catalogue default.
+  assert.equal(controllerImageId({ id: 'siemens_z6', imageId: NO_PICTURE }), null);
+
+  const { built } = buildTestQuote({}, {
+    controller: { id: 'siemens_z6', name: 'Siemens Home zone control — 6 zone',
+                  zoneCount: 6, includedInPrice: true, imageId: NO_PICTURE }
+  });
+  assert.equal(built.presentation.zones.controllerImage, null);
+  const html = markup(renderPresentationHtml(built.presentation, { token: 'T' }));
+  const zones = html.slice(html.indexOf('id="zones"'), html.indexOf('id="coverage"'));
+  assert.ok(!/ctrl-img/.test(zones), 'the picture was shown anyway');
+  assert.match(zones, /Siemens Home zone control/, 'the part stopped being named');
+});
+
+test('a picture chosen on the quote beats the part\u2019s own', () => {
+  assert.equal(controllerImageId({ id: 'siemens_z6', imageId: 'airtouch-console-4-zone' }),
+    'airtouch-console-4-zone');
 });

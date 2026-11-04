@@ -173,15 +173,25 @@ Three places a photograph appears on a proposal, and all three come from the
   the **Optional upgrades** tab instead, and the panel shows you which
   photograph has been matched before a customer sees it.
 
-- **The picture beside the zone control.** This one is **chosen by hand**, on
-  the Zone control card in the quote builder, and it is deliberate. Every zone
-  controller ever made is named with the words "zone" and "control", so a
-  matcher scoring on those words would put any panel in your library beside
-  any kit — a Zonemaster photograph on a Siemens line, under its price, on the
-  page the customer signs. The only match made without you is a photograph
-  whose own brand is in the controller's name. Pick one and the card shows you
-  the picture the customer will see; pick none and the page names the part and
-  shows no picture.
+- **The picture beside the zone control.** This one is **never matched** —
+  every zone controller ever made is named with the words "zone" and
+  "control", so a matcher scoring on those words would put any panel in your
+  library beside any kit, under its price, on the page the customer signs.
+  Instead the picture is recorded **against the part you buy**. Your Siemens
+  kits (MMASEM4ZTPKIT / MMASEM6ZTPKIT / MMASEM8ZTPKIT) carry the Zonemaster
+  wall plate, because you told us that is what ships with them — nothing in
+  the data could have worked it out, since the kit is badged Siemens and the
+  plate is badged Zonemaster.
+
+  The **Picture of the zone control** field on the Zone control card has three
+  settings: leave it blank for the kit's own picture, pick another photograph
+  to override it on this quote, or choose *show no picture on this quote*. The
+  card shows you the picture the customer will get before they get it.
+
+  One thing to know: the Zonemaster photograph on file has **six** buttons, so
+  it is exact for the 6-zone kit and shows two switches too few on an 8-zone
+  job and two too many on a 4-zone one. Send a 4-zone and an 8-zone shot and
+  each kit gets its own.
 
 Two rules the library enforces:
 
