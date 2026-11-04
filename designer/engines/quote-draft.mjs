@@ -39,6 +39,8 @@ const n = (v) => {
 const bool = (v) => v === true || v === 'true' || v === 1;
 const money = (v) => { const x = n(v); return x === null ? null : Math.round(x * 100) / 100; };
 
+import { firmnessOf } from './option-pricing.mjs';
+
 export const QUOTE_DRAFT_SCHEMA = 'nac.quote.draft.v1';
 
 /** What a quote can be missing, and whether it stops the quote going out. */
@@ -81,6 +83,20 @@ export function normaliseDraftSystem(input = {}, index = 0) {
     phase: trimmed(u.phase) || '1Ph',
     /** GST-inclusive, as NAC quotes. */
     priceIncGst: money(u.priceIncGst),
+    /**
+     * WHAT NAC PAY, ex GST unless told otherwise. Internal, and never carried
+     * into a customer document — draftToQuoteSource() does not pass it on.
+     *
+     * Left null the figure is taken off NAC's MMEM trade list by model, and if
+     * it is not on that list either then the margin on this option is UNKNOWN.
+     * It is not estimated. designer/engines/option-pricing.mjs does that work.
+     */
+    supplierCost: n(u.supplierCost),
+    supplierCostIncGst: bool(u.supplierCostIncGst),
+    /** A picture of this unit, when NAC hold one. Never invented. */
+    image: u.image && trimmed(u.image.src)
+      ? { src: trimmed(u.image.src), alt: trimmed(u.image.alt) }
+      : null,
     warrantyYears: n(u.warrantyYears),
     recommended: bool(u.recommended),
     note: trimmed(u.note)
@@ -237,6 +253,29 @@ export function normaliseQuoteDraft(input = {}) {
       ? { src: trimmed(d.planImage.src), alt: trimmed(d.planImage.alt),
           approved: bool(d.planImage.approved) }
       : null,
+
+    /**
+     * A NEW INSTALLATION OR A REPLACEMENT.
+     *
+     * Not the same job: a replacement has to deal with the old system, and
+     * quoting one as the other is how the old unit ends up still on the roof
+     * with nobody paid to take it away. option-pricing.mjs says what a
+     * replacement's scope is missing; it never prices those lines, because
+     * what a licensed de-gas costs on a given roof is NAC's to say.
+     */
+    jobType: d.jobType === 'replacement' ? 'replacement' : 'new_install',
+
+    /**
+     * A PROVISIONAL ESTIMATE RATHER THAN A FIXED PRICE.
+     *
+     * Different promises, and a customer reading the second as the first is
+     * how a job is argued about at invoice time. The estimator can say so
+     * themselves and it wins outright — they know something about the job that
+     * nothing here does. firmnessOf() also decides it on its own when
+     * something is still open.
+     */
+    provisional: bool(d.provisional),
+    provisionalReason: trimmed(d.provisionalReason),
 
     intro: trimmed(d.intro),
     /**
@@ -507,12 +546,42 @@ export function draftToQuoteSource(draft, { upgrades = [] } = {}) {
     upgradeQuantities: { ...d.upgradeQuantities },
     testQuote: d.testQuote,
 
+    // ── WHAT A CUSTOMER MAY SEE OF AN OPTION ────────────────────────────
+    // The exact indoor and outdoor pair, the capacity, the phase, the picture
+    // and the price. NOT `supplierCost`: what NAC pay is not on this list and
+    // must never be, because this object is what the proposal is built from.
     systemOptions: d.systems.map(s => ({
       id: s.id, brand: s.brand, brandId: s.brandId, model: s.model,
+      outdoorModel: s.outdoorModel,
+      image: s.image ? { ...s.image } : null,
       capacityKw: s.capacityKw, phase: s.phase, priceIncGst: s.priceIncGst,
       warrantyYears: s.warrantyYears, recommended: s.recommended, note: s.note
     })),
     chosenSystemId: d.chosenSystemId,
+
+    /** A new installation or a replacement, for the scope the page prints. */
+    jobType: d.jobType,
+
+    /**
+     * FIXED PRICE OR PROVISIONAL ESTIMATE, for the customer's page.
+     *
+     * The LABEL and the NOTE only. The reasons behind a provisional estimate
+     * are the estimator's working — "nothing in the scope mentions removing
+     * the old units" is a note to NAC, not a sentence to put in front of a
+     * customer. What the customer is told is which of the two this is, and,
+     * where the estimator wrote one, what still has to be confirmed in their
+     * own words.
+     */
+    priceFirmness: (() => {
+      const f = firmnessOf(d);
+      return {
+        fixed: f.fixed,
+        label: f.customerLabel,
+        note: f.customerNote,
+        confirmWhat: d.provisional ? trimmed(d.provisionalReason) : ''
+      };
+    })(),
+
     intro: d.intro
   };
 }

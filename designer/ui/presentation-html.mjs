@@ -501,6 +501,15 @@ function systemChoiceHtml(p) {
           + esc([o.capacityKw ? o.capacityKw + ' kW' : '', o.phase].filter(Boolean).join(' · '))
           + when(!!o.note, ' — ' + esc(o.note))
         + '</span>'
+        // ── THE EXACT PAIR ───────────────────────────────────────────
+        // Both halves, so a customer can check what they were quoted
+        // against what turns up on the day. Only when there IS an outdoor
+        // model: repeating the indoor model under its own name adds nothing.
+        + when(!!o.outdoorModel,
+            '<span class="sys-pair">' + esc(o.modelPair || o.model) + '</span>')
+        + when(!!(o.image && o.image.src),
+            '<img class="sys-img" src="' + esc(o.image && o.image.src) + '" alt="'
+            + esc((o.image && o.image.alt) || (o.label + ' unit')) + '" loading="lazy">')
         + when(o.warrantyYears > 0,
             '<span class="sys-warr">' + esc(String(o.warrantyYears))
             + '-year manufacturer warranty</span>')
@@ -603,8 +612,18 @@ function investmentHtml(p) {
         + esc(inv.proposalPrice ? 'Proposal price' : 'Total investment') + '</span>'
         + '<strong data-total>' + esc(moneyRound(inv.totalIncGst)) + '</strong>'
         + '<small>including GST</small></p>'
-      // Directly under the number, where somebody reading only the number sees
-      // it. A price that can move says so beside itself, not in the terms.
+      // ── WHICH PROMISE THIS PRICE IS ─────────────────────────────────
+      // Directly under the number, where somebody reading only the number
+      // sees it. A price that can move says so beside itself, not in the
+      // terms and not in a footnote.
+      + when(!!inv.firmness,
+          '<p class="inv-firm' + (inv.firmness && inv.firmness.fixed ? ' is-fixed' : '')
+          + '"><strong>' + esc(inv.firmness && inv.firmness.label) + '.</strong> '
+          + esc(inv.firmness && inv.firmness.note)
+          + when(!!(inv.firmness && inv.firmness.confirmWhat),
+              ' <span class="inv-confirm">' + esc(inv.firmness && inv.firmness.confirmWhat)
+              + '</span>')
+          + '</p>')
       + when(!!inv.proposalNote,
           '<p class="inv-prov"><strong>Not a fixed price.</strong> '
           + esc(inv.proposalNote) + '</p>')
@@ -1104,12 +1123,24 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
   padding:4px 10px;margin-top:2px}
 .syschoice .opt-h em{font-size:18px}
+.sys-pair{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+.sys-img{display:block;margin-top:9px;width:100%;max-width:190px;height:auto;
+  border-radius:9px;border:1px solid var(--line)}
 
 /* ── investment ─────────────────────────────────────────────────────── */
 .inv-prov{margin-top:12px;padding:12px 14px;border-radius:10px;
   background:#FFF7E0;border:1px solid var(--gold-d);color:var(--ink);
   font-size:14px;line-height:1.5;
   -webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* Fixed price or provisional estimate. The provisional one is the warning
+   colour, because it is the one a customer must not read as the other. */
+.inv-firm{margin-top:12px;padding:12px 14px;border-radius:10px;
+  background:#FFF7E0;border:1px solid var(--gold-d);color:var(--ink);
+  font-size:14px;line-height:1.5;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.inv-firm.is-fixed{background:#EEF6F0;border-color:#C6E3D2}
+.inv-confirm{display:block;margin-top:6px;font-style:italic}
 .inv{display:grid;gap:26px}
 @media(min-width:900px){.inv{grid-template-columns:1fr 1fr;gap:40px;align-items:start}}
 .inv-b{display:flex;flex-direction:column}

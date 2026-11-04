@@ -864,9 +864,31 @@ function investmentSection(d, ctx) {
   // Not in a footnote and not in the terms. A customer reading a number and a
   // signature box is entitled to know whether the number can move.
   const isProposal = c.proposalPrice === true;
+
+  // ── FIXED PRICE, OR PROVISIONAL ESTIMATE ────────────────────────────────
+  //
+  // Nick, 4 November 2026: "Keep fixed quotes and provisional estimates
+  // clearly distinct." They are different promises, and a customer reading the
+  // second as the first is how a job is argued about at invoice time. So it is
+  // stated beside the price, in words, on the page — not in the terms and not
+  // in a footnote.
+  //
+  // draftToQuoteSource() works it out (option-pricing.mjs firmnessOf) and
+  // passes the LABEL and the NOTE only. The reasons behind it are the
+  // estimator's working, not a sentence to put in front of a customer.
+  const firm = d.priceFirmness && d.priceFirmness.label
+    ? { fixed: d.priceFirmness.fixed === true,
+        label: str(d.priceFirmness.label),
+        note: str(d.priceFirmness.note),
+        confirmWhat: str(d.priceFirmness.confirmWhat) || null }
+    : null;
+  const provisional = isProposal || (firm !== null && firm.fixed === false);
+
   return {
     proposalPrice: isProposal,
-    priceLabel: isProposal ? 'Proposal price' : 'Your investment',
+    /** Non-null on every quote-only proposal: which promise this price is. */
+    firmness: firm,
+    priceLabel: provisional ? 'Proposal price' : 'Your investment',
     proposalNote: isProposal
       ? 'This is a proposal price, not a fixed price. The ductwork is carried at NAC\'s '
         + 'standard installation allowance because the duct design for your home has not '
@@ -1175,6 +1197,7 @@ export function buildPresentation({
       chosenId: chosenSystem ? chosenSystem.id : null,
       options: optionStatus.options.map(o => ({
         id: o.id, label: o.label, brand: o.brand, model: o.model,
+        outdoorModel: o.outdoorModel, modelPair: o.modelPair, image: o.image,
         capacityKw: o.capacityKw, phase: o.phase, note: o.note,
         recommended: o.recommended,
         warrantyYears: o.warrantyYears,
