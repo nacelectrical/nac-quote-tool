@@ -120,6 +120,18 @@ const STAFF = { Authorization: 'Bearer test-staff-token' };
 async function setup() {
   reset();
   process.env.SUPABASE_KEY = 'test-service-key';
+  // ── THE BOOKING KEY IS THE TEST'S, NOT THE MACHINE'S ────────────────────
+  //
+  // These assert that an acceptance survives ServiceM8 being unavailable, and
+  // they read the reason it gave. That reason depended on SERVICEM8_API_KEY
+  // being ABSENT from the environment — true on the machine they were written
+  // on, and false the moment a key was configured here, at which point two
+  // suites started failing on an assertion about a booking system rather than
+  // about anything they are testing.
+  //
+  // The absence is now the test's own doing, restored afterwards so a suite
+  // that does want the real key still sees it.
+  delete process.env.SERVICEM8_API_KEY;
 
   // Supabase's AUTH endpoint is not the database. It is the one thing stood in
   // for here, and only so the issue endpoint sees a signed-in estimator.

@@ -229,8 +229,12 @@ test('the accepted total is the one that was accepted', () => {
 
 test('an accepted revision cannot be accepted, declined or revoked again', () => {
   const a = accepted();
+  // `now` inside the issued window, like every other call in this file. Left
+  // to default it took the wall clock, so this passed until 22 October 2026
+  // and has failed every day since — the quote it is acting on expires then,
+  // and the answer became 'expired' rather than 'already_answered'.
   const again = acceptPresentation(a, { customerName: 'Sarah Whitlock',
-    acknowledgedTerms: true, totalIncGst: 1 });
+    acknowledgedTerms: true, totalIncGst: 1, now: '2026-09-25T00:00:00Z' });
   assert.equal(again.ok, false);
   assert.equal(again.reason, 'already_answered');
   assert.equal(again.issue.acceptance.totalIncGst, P.investment.totalIncGst);
