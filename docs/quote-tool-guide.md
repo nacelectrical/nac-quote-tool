@@ -249,6 +249,17 @@ Four things worth knowing before you rely on it:
 - **A customer's proposal link is not this.** If a customer adds their quote to
   their own home screen they get a bookmark to that proposal, not NAC's tool.
 
+**You never have to delete it and add it again to get a fix.** The icon is a
+link to the live site, not a copy of it, so updates arrive on their own. If
+something still looks wrong after a fix has gone out, swipe the app away from
+the app switcher and open it again — that is the closest thing a home-screen
+app has to a hard reload.
+
+The one thing that is fixed at the moment you install is the **icon, the name
+under it, and the page it opens on**. Those come from the manifest as it was
+that day. If you ever want a different start page or the icon changes, that is
+when you delete it and add it back.
+
 ## What the tool will not do
 
 Worth knowing, because each of these is deliberate:
