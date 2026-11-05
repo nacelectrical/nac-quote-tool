@@ -218,6 +218,37 @@ Equipment prices live in the existing **Prices** screen, as they always have.
 
 ---
 
+## Putting it on your home screen
+
+It installs as an app on an iPad, an iPhone or an Android phone. There is
+nothing to download and no App Store.
+
+**iPhone / iPad.** Open the quotes portal in **Safari** — it has to be Safari,
+Chrome on iOS cannot install it. Tap the **Share** button, scroll down,
+**Add to Home Screen**, then **Add**. You get NAC's mark on the home screen
+labelled **NAC Quotes**, and it opens with no address bar and no tab strip.
+
+**Android.** Open it in Chrome, menu, **Install app** (or *Add to Home
+screen*).
+
+**Long-press the icon** for a shortcut straight to a new quote.
+
+Four things worth knowing before you rely on it:
+
+- **You sign in once, inside the app.** iOS keeps the app's storage separate
+  from Safari's, so being signed in in a Safari tab does not sign you in here.
+  After that it stays signed in — the session renews itself in the background,
+  when you come back to the app, and when the signal comes back.
+- **It still needs signal.** There is no offline mode. Quotes are saved to
+  NAC's database, not to the iPad, so in a roof space with no reception the app
+  will not open and a save will not land. Say the word and I will cache the
+  screens so it at least opens and tells you plainly that it cannot save yet.
+- **Printing happens inside the app.** There is no second window to open from
+  a home-screen app, so **Print preview** shows the printable proposal over the
+  page with its own **Print or save as PDF** button.
+- **A customer's proposal link is not this.** If a customer adds their quote to
+  their own home screen they get a bookmark to that proposal, not NAC's tool.
+
 ## What the tool will not do
 
 Worth knowing, because each of these is deliberate:

@@ -6,7 +6,10 @@ const ROOT = '/home/user/nac-quote-tool';
 // and a UTF-8 page of em dashes and m² renders as mojibake.
 const TYPES = { '.html':'text/html; charset=utf-8', '.mjs':'text/javascript; charset=utf-8',
   '.js':'text/javascript; charset=utf-8',
-  '.css':'text/css', '.json':'application/json', '.jpg':'image/jpeg', '.png':'image/png', '.sql':'text/plain' };
+  '.css':'text/css', '.json':'application/json', '.jpg':'image/jpeg', '.png':'image/png', '.sql':'text/plain',
+  // The manifest MUST be served as JSON or the browser ignores it and the app
+  // installs as a bookmark with a screenshot for an icon.
+  '.webmanifest':'application/manifest+json' };
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
   const file = path.join(ROOT, url === '/' ? 'quotes.html' : url);

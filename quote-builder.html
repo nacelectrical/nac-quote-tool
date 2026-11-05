@@ -30,6 +30,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Quote only — NAC</title>
+<!-- ── ADD TO HOME SCREEN ──────────────────────────────────────────────────
+     Nick, 5 November 2026: "Can I work with this and add to Home Screen?"
+     Without these, iOS gives the icon a blurry screenshot of the page and
+     opens it in a browser tab. With them it is an app: NAC's own mark, the
+     name under it, and no address bar. /manifest.webmanifest. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NAC Quotes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0c0c24">
+
 <style>
 :root{
   --navy:#16204A;--navy-2:#202C61;--ink:#161A27;--body:#3D4458;--muted:#6B7285;
@@ -83,6 +97,12 @@ header .sub{font-size:13px;color:rgba(255,255,255,.7);flex:1;min-width:140px}
 .row.chosen{border-color:var(--gold-d);background:#FFFCF0}
 .rowh{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
 .rowh strong{font-size:15px;color:var(--ink);flex:1;min-width:100px}
+.printwrap{position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;
+  flex-direction:column;padding-top:env(safe-area-inset-top)}
+.printwrap .printbar{display:flex;gap:10px;align-items:center;padding:10px 14px;
+  background:#0c0c24;color:#fff;flex:0 0 auto}
+.printwrap .printbar strong{flex:1 1 auto;font-size:14px}
+.printwrap iframe{flex:1 1 auto;width:100%;border:0;background:#fff}
 .roomrow{display:grid;gap:9px;grid-template-columns:1fr 1fr 92px auto;align-items:end}
 .zonerow{display:grid;gap:9px;grid-template-columns:1fr 1.4fr auto;align-items:end}
 .zonerow .in{align-self:end;padding-bottom:10px}
@@ -1714,13 +1734,55 @@ $('#issue2').addEventListener('click', () => $('#issue').click());
  * Same presentation object, print stylesheet, straight to the browser's own
  * Print — which is also how a customer gets a PDF of it.
  */
+/**
+ * ── ON A HOME SCREEN THERE IS NO SECOND WINDOW ──────────────────────────
+ *
+ * Nick, 5 November 2026: "Can I work with this and add to Home Screen?"
+ *
+ * Launched from the home screen, iOS runs this with no browser around it, and
+ * window.open() there does nothing or throws you out into Safari. The print
+ * button was the one place that relied on it — so on an iPad, in the app, the
+ * printable proposal was a dead button and a message about allowing pop-ups
+ * that could not be acted on.
+ *
+ * So the document is shown INSIDE the app, in an iframe over the page, with
+ * its own Print button. The same fallback catches an ordinary browser that
+ * blocks the pop-up, which turns that dead end into a working one.
+ */
+const inApp = () => {
+  try {
+    return window.navigator.standalone === true
+      || window.matchMedia('(display-mode: standalone)').matches
+      || window.matchMedia('(display-mode: fullscreen)').matches;
+  } catch (e) { return false; }
+};
+
+function showPrintable(html) {
+  const host = el('div', { class: 'printwrap' });
+  const bar = el('div', { class: 'printbar' }, [
+    el('strong', { text: 'Printable proposal' }),
+    el('button', { class: 'btn', type: 'button', text: 'Print or save as PDF',
+      onclick: () => { try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+                       catch (e) { flash('bad', 'The browser would not open Print.'); } } }),
+    el('button', { class: 'btn danger', type: 'button', text: 'Close',
+      onclick: () => host.remove() })
+  ]);
+  const frame = el('iframe', { title: 'Printable proposal' });
+  host.appendChild(bar); host.appendChild(frame);
+  document.body.appendChild(host);
+  // srcdoc rather than document.write: the iframe is same-origin either way,
+  // and srcdoc is the one that works when the page has a strict sandbox.
+  frame.srcdoc = html;
+}
+
 $('#printPrev').addEventListener('click', async () => {
   const built = buildCustomerPreview();
   if (!built) return;
   const html = presentationPrintHtml(built);
-  const w = window.open('', '_blank');
-  if (!w) { flash('bad', 'The browser blocked the print window. Allow pop-ups for this site.');
-            return; }
+  if (inApp()) { showPrintable(html); return; }
+  let w = null;
+  try { w = window.open('', '_blank'); } catch (e) { w = null; }
+  if (!w) { showPrintable(html); return; }
   w.document.write(html);
   w.document.close();
 });

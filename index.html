@@ -1,4 +1,18 @@
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title><style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>NAC Electrical - Ducted Quote Tool</title>
+<!-- ── ADD TO HOME SCREEN ──────────────────────────────────────────────────
+     Nick, 5 November 2026: "Can I work with this and add to Home Screen?"
+     Without these, iOS gives the icon a blurry screenshot of the page and
+     opens it in a browser tab. With them it is an app: NAC's own mark, the
+     name under it, and no address bar. /manifest.webmanifest. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NAC Quotes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0c0c24">
+<style>*{box-sizing:border-box}body{margin:0;background:#0c0c24;font-family:-apple-system,sans-serif;color:#fff}input,select,textarea,button{font-family:inherit}select{-webkit-appearance:none}#root{min-height:100vh}@media print{button{display:none!important}body{background:#fff}}</style></head><body>
 <script>
 // Runs synchronously, ahead of the application script, so no database call can
 // be issued before the sign-in gate exists. A module would be deferred and the
