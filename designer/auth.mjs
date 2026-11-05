@@ -105,29 +105,76 @@ function secondsLeft(s) {
  * RLS, which is a visible failure. A request carrying a token the server has
  * already forgotten is the same failure wearing a signed-in costume.
  */
-export function refreshSession() {
+export function refreshSession({ force = false } = {}) {
   if (renewing) return renewing;
   const s = storedSession();
   if (!s || !s.refresh_token) return Promise.resolve(null);
 
+  // ── SOMEBODY ELSE MAY HAVE DONE IT ALREADY ─────────────────────────────
+  //
+  // The portal and the builder are two pages. Open both and they are two
+  // JavaScript contexts, each with its own single-flight guard and its own
+  // timer, reading and writing ONE session in localStorage.
+  //
+  // Supabase rotates refresh tokens: spending one invalidates it. So two tabs
+  // waking together — which is exactly what "New quote" from the portal does —
+  // meant the second tab presenting a token the first had already spent, and
+  // being told no. Signed out, mid-quote, by its own sibling.
+  //
+  // So a renewal that is not needed is not made. The tab that wakes second
+  // reads what the first one stored and goes back to sleep.
+  if (!force && secondsLeft(s) > RENEW_LEAD_SECONDS) return Promise.resolve(s);
+
   renewing = (async () => {
     let res;
+    // ── A REQUEST THAT NEVER ANSWERS IS NOT A REQUEST ──────────────────
+    //
+    // fetch has no timeout. A connection that is accepted and then goes quiet
+    // — which is what a phone on one bar does — leaves this promise pending
+    // for as long as the page is open, and `renewing` pending with it. The
+    // single-flight guard then refuses every later renewal, so ONE hung
+    // request killed renewal for the rest of the session, silently.
+    const stop = new AbortController();
+    const bell = setTimeout(() => stop.abort(), 15000);
     try {
       res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=refresh_token', {
         method: 'POST',
         headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: s.refresh_token })
+        body: JSON.stringify({ refresh_token: s.refresh_token }),
+        signal: stop.signal
       });
     } catch (e) {
-      // No signal. The session is NOT cleared: it may still be good, and
-      // throwing somebody out of a half-typed quote because the roof space has
-      // no reception would be the application inventing a problem.
+      // No signal, or no answer. The session is NOT cleared: it may still be
+      // good, and throwing somebody out of a half-typed quote because the roof
+      // space has no reception would be the application inventing a problem.
       return null;
-    }
+    } finally { clearTimeout(bell); }
     let body = null;
     try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+
     if (!res.ok || !body?.access_token) {
-      // The server has refused this refresh token. It will not start working.
+      // ── A REFUSAL AND A BAD DAY ARE NOT THE SAME THING ───────────────
+      //
+      // This cleared the session on ANY response that was not a success,
+      // which put Supabase being rate limited, or briefly down, or a gateway
+      // hiccup, in the same bucket as "your sign-in is no longer valid" — and
+      // signed the estimator out over a 500 that would have been gone by the
+      // next attempt.
+      //
+      // Only 400 and 401 mean the credential itself was refused. Everything
+      // else is the service having a moment: the session is left alone and
+      // the next wake-up tries again.
+      const refused = res.status === 400 || res.status === 401;
+      if (!refused) return null;
+
+      // Even a refusal is not the end of it. Between this request going out
+      // and its answer coming back, the OTHER tab may have renewed and stored
+      // a working session — in which case this refusal is about a token that
+      // is already history, and clearing would throw away a good session to
+      // punish a dead one.
+      const now = storedSession();
+      if (now && now.refresh_token !== s.refresh_token) return now;
+
       clearSession();
       try { window.dispatchEvent(new CustomEvent('nac-signed-out')); } catch (e) { /* ignore */ }
       return null;
@@ -159,7 +206,7 @@ export function refreshSession() {
 export async function ensureFreshSession() {
   const s = storedSession();
   if (s && secondsLeft(s) > RENEW_LEAD_SECONDS) return s;
-  return (await refreshSession()) || currentSession();
+  return (await refreshSession({ force: true })) || currentSession();
 }
 
 /** Keep renewing for as long as this page is open. Safe to call repeatedly. */
@@ -171,7 +218,14 @@ export function keepSessionAlive() {
   const left = secondsLeft(s);
   // Four fifths of what is left, floored at ten seconds so a session that is
   // already past due renews now rather than scheduling itself into the past.
-  const wait = Math.max(10, Math.min(left - RENEW_LEAD_SECONDS, left * 0.8));
+  //
+  // AND CEILINGED, which is not tidiness. secondsLeft() returns Infinity for a
+  // session carrying no expiry, setTimeout turns a delay of Infinity into
+  // zero, and the callback reschedules itself — so one session with a missing
+  // expires_at turned this into a loop firing renewals at Supabase as fast as
+  // the network would carry them.
+  const planned = Math.min(left - RENEW_LEAD_SECONDS, left * 0.8);
+  const wait = Math.min(Math.max(10, Number.isFinite(planned) ? planned : 600), 1800);
   renewTimer = setTimeout(async () => {
     await refreshSession();
     keepSessionAlive();
@@ -189,6 +243,12 @@ export function keepSessionAlive() {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('online', wake);
     window.addEventListener('pageshow', wake);
+    // The other tab renewed. Take its word for it and re-time against the
+    // session it stored, rather than running a clock against one that is gone.
+    window.addEventListener('storage', (e) => {
+      if (e && e.key && e.key !== SESSION_KEY) return;
+      keepSessionAlive();
+    });
   }
 }
 
@@ -265,6 +325,21 @@ export async function signOut() {
  * signed in. The guarded page's own scripts run after that, so an unsigned
  * visitor never sees customer, pricing or design information.
  */
+/**
+ * How long the app may sit on a blank screen waiting for a renewal.
+ *
+ * It waited forever. index.html and admin.html hide the page until this
+ * resolves, and quotes.html and quote-builder.html await it before they load
+ * anything — so a renewal against a network that accepted the connection and
+ * then said nothing (a phone on one bar, a café access point, a roof space on
+ * the edge of reception) left the app showing NOTHING, with no sign-in screen,
+ * no message, and no way forward. fetch has no timeout of its own.
+ *
+ * Eight seconds: long enough for a slow mobile connection to answer, short
+ * enough that a person does not conclude the app is broken.
+ */
+const SIGNIN_WAIT_MS = 8000;
+
 export function requireSignIn({ pageName = 'this page' } = {}) {
   if (isSignedIn()) { keepSessionAlive(); return Promise.resolve(currentSession()); }
 
@@ -274,15 +349,24 @@ export function requireSignIn({ pageName = 'this page' } = {}) {
   // app and typing a password every morning.
   const held = storedSession();
   if (held && held.refresh_token) {
-    return refreshSession().then((fresh) => {
-      if (fresh) { keepSessionAlive(); return fresh; }
-      return signInScreen({ pageName });
+    const pending = refreshSession();
+    const TOO_LONG = Symbol('too long');
+    return Promise.race([
+      pending,
+      new Promise((r) => setTimeout(() => r(TOO_LONG), SIGNIN_WAIT_MS))
+    ]).then((first) => {
+      if (first && first !== TOO_LONG) { keepSessionAlive(); return first; }
+      // Refused, or taking too long to keep a blank page up for. Either way
+      // the person gets a screen. If the slow renewal then succeeds behind the
+      // sign-in screen, it takes the screen away again rather than making them
+      // type a password they did not need.
+      return signInScreen({ pageName, pending: first === TOO_LONG ? pending : null });
     });
   }
   return signInScreen({ pageName });
 }
 
-function signInScreen({ pageName }) {
+function signInScreen({ pageName, pending = null }) {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.id = 'nac-signin';
@@ -346,19 +430,30 @@ function signInScreen({ pageName }) {
     const go = host.querySelector('#nac-go');
     host.querySelector('#nac-email').focus();
 
+    /** Take the screen away. Idempotent: the slow renewal and the typed
+     *  password can arrive in either order, and have. */
+    let done = false;
+    const finish = (session) => {
+      if (done) return;
+      done = true;
+      host.remove();
+      document.getElementById('nac-signin-lock')?.remove();
+      keepSessionAlive();
+      resolve(session);
+    };
+
+    // The renewal that was too slow to wait on, still running.
+    if (pending) {
+      pending.then((fresh) => { if (fresh) finish(fresh); }).catch(() => { /* ignore */ });
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       err.classList.remove('on');
       go.disabled = true; go.textContent = 'Signing in…';
       const r = await signIn(host.querySelector('#nac-email').value,
                             host.querySelector('#nac-pass').value);
-      if (r.ok) {
-        host.remove();
-        document.getElementById('nac-signin-lock')?.remove();
-        keepSessionAlive();
-        resolve(currentSession());
-        return;
-      }
+      if (r.ok) { finish(currentSession()); return; }
       err.textContent = r.error;
       err.classList.add('on');
       go.disabled = false; go.textContent = 'Sign in';
