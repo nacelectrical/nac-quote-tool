@@ -220,6 +220,29 @@ export function bestMeasurement(candidates, fallbackAreaSqM = null) {
  */
 export function scoreMeasurement(m, opts = {}) {
   const settings = opts.settings || DEFAULT_SETTINGS;
+
+  // ── A ROOM NOBODY HAS MEASURED YET ──────────────────────────────────────
+  //
+  // This read `m.source` straight off its argument and threw on a room with
+  // no measurement at all. That is not an edge case: it is the state EVERY
+  // room is in for the moment between the plan reader naming it and somebody
+  // measuring it, which is exactly the screen Nick asked for — "identify
+  // rooms, readable dimensions and conditioned areas" and then let him
+  // correct them.
+  //
+  // No measurement scores zero and says why. It is not an error and it is not
+  // a 50; the engines downstream already refuse to size from a room whose
+  // source is not good enough, and `none` is not good enough.
+  if (!m || !m.source) {
+    return {
+      score: 0,
+      band: confidenceBand(0, settings),
+      source: 'none',
+      factors: [{ reason: 'No dimension has been read or entered for this room.',
+                  delta: 0, running: 0 }]
+    };
+  }
+
   const base = settings.confidence.sourceScores[m.source] ?? 50;
   let score = base;
   const factors = [{ reason: SOURCE_LABELS[m.source], delta: 0, running: base }];
@@ -339,7 +362,11 @@ export function buildRoom(input, opts = {}) {
     // it was verified on has gone.
     if (measurementRec?.incomplete) status = 'Needs a dimension';
     if (!status) {
-      if (measurementRec.source === 'manual') status = 'Manual';
+      // A room with no measurement at all reads the same way as one with an
+      // incomplete measurement, because to an estimator it is the same job:
+      // somebody has to put a dimension on it.
+      if (!measurementRec || !measurementRec.source) status = 'Needs a dimension';
+      else if (measurementRec.source === 'manual') status = 'Manual';
       else status = 'Review';
     }
   }
@@ -360,9 +387,12 @@ export function buildRoom(input, opts = {}) {
     openPlanGroup: input.openPlanGroup || null,
     ceilingHeightMm: input.ceilingHeightMm ?? settings.load.defaultCeilingHeightMm,
     measurement: measurementRec,
-    widthMm: measurementRec.widthMm,
-    lengthMm: measurementRec.lengthMm,
-    areaSqM: measurementRec.areaSqM,
+    // Absent rather than zero. A room nobody has measured has no width, and
+    // zero would read as a measurement of nothing — which sizing would happily
+    // add up.
+    widthMm: measurementRec?.widthMm ?? null,
+    lengthMm: measurementRec?.lengthMm ?? null,
+    areaSqM: measurementRec?.areaSqM ?? null,
     confidence: conf.score,
     confidenceBand: conf.band,
     confidenceFactors: conf.factors,
@@ -541,7 +571,7 @@ export function incompleteRooms(rooms) {
   return (rooms || []).filter(r => isConditionedRoom(r) && r.measurement?.incomplete)
     .map(r => ({ id: r.id, label: r.label,
                  missing: r.measurement.missingDimension,
-                 knownMm: r.measurement.widthMm ?? r.measurement.lengthMm ?? null }));
+                 knownMm: r.measurement?.widthMm ?? r.measurement?.lengthMm ?? null }));
 }
 
 /**

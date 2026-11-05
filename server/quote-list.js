@@ -96,6 +96,26 @@ function summarise(row) {
     supersedes: str(d.supersedes) || null,
     supersededBy: str(d.supersededBy) || null,
 
+    // ── WHAT NAC DID ABOUT IT ───────────────────────────────────────────
+    // A copied link and a sent message are different facts, and the portal
+    // has to be able to show which one happened. Written by
+    // /api/quote-outreach; absent on every quote issued before it existed,
+    // which reads as "nothing recorded" rather than as "never sent".
+    outreach: d.outreach ? {
+      state: str(d.outreach.state) || 'none',
+      linkCopiedAt: d.outreach.linkCopiedAt || null,
+      sentAt: d.outreach.sentAt || null,
+      sentBy: str(d.outreach.sentBy) || null,
+      channel: str(d.outreach.channel) || null,
+      paused: d.outreach.paused === true,
+      pausedReason: str(d.outreach.pausedReason) || null,
+      lastFollowUpAt: d.outreach.lastFollowUpAt || null,
+      followUpCount: n(d.outreach.followUpCount) ?? 0,
+      events: Array.isArray(d.outreach.events) ? d.outreach.events : []
+    } : null,
+    customerPhone: str(c.phone) || null,
+    customerEmail: str(c.email) || null,
+
     // Whether the booking actually reached ServiceM8, said plainly, because
     // "accepted" and "in the calendar" are different facts.
     servicem8: sm8 ? {

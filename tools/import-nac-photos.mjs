@@ -110,11 +110,45 @@ export async function importPhotos({ check = false } = {}) {
       tags: p.tags || [],
       equipmentBrand: p.equipmentBrand || '',
       equipmentModels: p.equipmentModels || [],
+      // ── NAC'S OWN WORK ─────────────────────────────────────────────
+      //
+      // Every one of these is a machine NAC put on a wall — "installed
+      // against a rendered wall", "on a plant deck, with the conduit run" —
+      // and the approval note below says so in as many words. They were
+      // marked `role: equipment` and nothing else, so they fed the single
+      // system card and never the gallery: Nick had nine photographs of his
+      // own installations in the library and no proposal showed one.
+      //
+      // The role is what a picture is FOR. This is whose work it is.
+      ownWork: p.ownWork !== false,
+      // The picture to put on this brand's equipment option.
+      ...(p.optionImage ? { optionImage: true } : {}),
+      // ── WHERE THE SUBJECT IS ─────────────────────────────────────────
+      //
+      // The page crops a photograph to a square beside an upgrade and to 4:3
+      // in the gallery, and object-fit takes the MIDDLE unless told
+      // otherwise. A sensor on the left of a wide kitchen shot is cropped
+      // straight out of its own thumbnail, which is how a picture of a sensor
+      // becomes a picture of a kitchen.
+      ...(p.focalPoint ? { focalPoint: p.focalPoint } : {}),
       // The approval is a person's, and the record says whose and why.
       approved: true,
       approvedBy: 'nick@nacelectrical.com.au',
-      approvalNote: 'NAC’s own photographs of NAC’s own work, supplied by Nick '
-        + 'on 15–16 October 2026 for use on customer proposals.',
+      // ── WHOSE PICTURE IT IS, PER PICTURE ───────────────────────────
+      //
+      // This note used to read "NAC's own photographs of NAC's own work,
+      // supplied by Nick on 15–16 October 2026" on EVERY record. It was true
+      // of the nine installation photographs and false of the seven
+      // manufacturer product images added since — a false provenance stamped
+      // on the approval of a picture that goes in front of a customer, which
+      // is exactly the record somebody would rely on later.
+      //
+      // The manifest already carries `_provenance` on each of those, written
+      // when it was imported. That is what the approval note says now; the
+      // blanket sentence is kept only for the photographs it is true of.
+      approvalNote: p._provenance
+        || 'NAC’s own photograph of NAC’s own work, supplied by Nick '
+           + 'on 15–16 October 2026 for use on customer proposals.',
       // Measured on the re-encoded bytes by scanMetadata(), not asserted.
       exifStripped: true,
       gpsRemoved: true,

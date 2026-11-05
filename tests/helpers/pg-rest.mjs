@@ -192,9 +192,21 @@ const q = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 /** A JSON literal Postgres will accept whatever is inside it. */
 const jsonLit = (v) => '$nacjson$' + JSON.stringify(v) + '$nacjson$';
 
+// The tables the endpoints reach for. A table not in here answers 404 with
+// PostgREST's own "not in the schema cache" message, which is what a project
+// that has not had a migration applied actually says — so a suite can prove
+// the endpoint handles that rather than only the happy path.
 const TABLES = new Set(['nac_designs', 'nac_quote_issues', 'nac_presentation_content',
-                        'nac_settings']);
-const JSONB = { nac_quote_issues: new Set(['data']), nac_presentation_content: new Set(['data']) };
+                        'nac_settings', 'nac_customers', 'nac_jobs',
+                        'nac_integration_calls']);
+const JSONB = {
+  nac_quote_issues: new Set(['data']),
+  nac_presentation_content: new Set(['data']),
+  nac_integration_calls: new Set(['result', 'refusals'])
+};
+/** What `Prefer: resolution=merge-duplicates` conflicts on, per table. */
+const PK = { nac_quote_issues: 'token', nac_designs: 'id', nac_customers: 'id',
+             nac_jobs: 'id', nac_integration_calls: 'id' };
 
 function parseFilters(params) {
   const where = [];
@@ -224,13 +236,32 @@ function handle(req, body, done) {
   const limit = url.searchParams.get('limit');
   const limitSql = limit ? ' limit ' + (parseInt(limit, 10) || 1) : '';
 
+  // ── `order` IS NOT OPTIONAL TO IMPLEMENT ───────────────────────────────
+  //
+  // This shim skipped it, so a suite asserting "newest first" passed on
+  // insertion order and would have passed just as well against an endpoint
+  // that never asked for an order at all. A harness that silently ignores a
+  // query parameter hides exactly the bug it is there to catch.
+  const order = url.searchParams.get('order');
+  let orderSql = '';
+  if (order) {
+    const parts = order.split(',').map(x => x.trim()).filter(Boolean).map(part => {
+      const [col, ...mods] = part.split('.');
+      const dir = mods.includes('desc') ? 'desc' : 'asc';
+      const nulls = mods.includes('nullsfirst') ? ' nulls first'
+        : mods.includes('nullslast') ? ' nulls last' : '';
+      return '"' + col.replace(/"/g, '') + '" ' + dir + nulls;
+    });
+    if (parts.length) orderSql = ' order by ' + parts.join(', ');
+  }
+
   try {
     if (req.method === 'GET') {
       const sel = url.searchParams.get('select') || '*';
       const cols = sel === '*' ? '*'
         : sel.split(',').map(c => '"' + c.trim().replace(/"/g, '') + '"').join(', ');
       const text = 'select coalesce(json_agg(t), \'[]\'::json) from (select ' + cols
-        + ' from public.' + table + whereSql + limitSql + ') t';
+        + ' from public.' + table + whereSql + orderSql + limitSql + ') t';
       return done(200, JSON.parse(sql(text).trim() || '[]'));
     }
 
@@ -250,8 +281,7 @@ function handle(req, body, done) {
         }).join(', ');
         let text = 'insert into public.' + table + ' (' + cols + ') values (' + vals + ')';
         if (/merge-duplicates/.test(prefer)) {
-          const pk = table === 'nac_quote_issues' ? 'token'
-            : (table === 'nac_designs' ? 'id' : 'key');
+          const pk = PK[table] || 'key';
           const sets = keys.filter(k => k !== pk)
             .map(k => '"' + k + '" = excluded."' + k + '"').join(', ');
           text += ' on conflict (' + pk + ') do update set ' + sets;

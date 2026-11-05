@@ -1,6 +1,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NAC — production setup</title>
+<!-- ── ADD TO HOME SCREEN ──────────────────────────────────────────────────
+     Nick, 5 November 2026: "Can I work with this and add to Home Screen?"
+     Without these, iOS gives the icon a blurry screenshot of the page and
+     opens it in a browser tab. With them it is an app: NAC's own mark, the
+     name under it, and no address bar. /manifest.webmanifest. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NAC Quotes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0c0c24">
+
 <style>
   :root{--bg:#0c0c24;--panel:#16162e;--panel-2:#0f0f26;--line:#252545;--ink:#fff;--ink-2:#8080b0;
         --ink-3:#5a5a80;--yellow:#F5C200;--blue:#2B6CB8;--ok:#3fbf6f;--warn:#F5C200;--bad:#ff5f5f}

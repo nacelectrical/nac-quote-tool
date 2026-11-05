@@ -15,6 +15,14 @@ export const DEFAULT_SETTINGS = {
     // legacySizing() and the existing intake flow use. Left exactly as it is.
     baseWattsPerM2: 145,
 
+    // NAC's other rule of thumb: 50 L/s of air per kW of capacity. It is a
+    // sanity check and a way of talking about the system, NOT a duct
+    // calculation — nothing is sized from it and nothing is any more. It is
+    // here so it is configurable rather than typed into a screen, and
+    // ruleAirflowLs() in plan-sizing.mjs labels every figure it produces as
+    // the estimating rule it is.
+    litresPerSecondPerKw: 50,
+
     // The detailed engine splits that all-in figure into its parts, so the
     // fabric base below is deliberately LOWER than 145 - glazing, occupancy and
     // appliances are added on top of it. The defaults are calibrated so a

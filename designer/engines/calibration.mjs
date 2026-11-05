@@ -361,3 +361,139 @@ export function scaleTrust(calibration) {
       + (Number.isFinite(spread) ? ', agreeing to ' + round(spread, 1) + '%' : '') + '.'
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WHERE A SCALE IS ALLOWED TO COME FROM
+//
+// Moved here from design-stage.mjs when the duct designer was removed. That
+// file held two unrelated things: the stage gate that decided when routing
+// could run, which has gone with the routing, and this — which is about
+// READING A PLAN and is needed by every quote.
+//
+// Nick, 4 November 2026: "Use printed dimensions or an installer-confirmed
+// scale. Never derive scale from cars, furniture or guessed objects."
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How a plan's scale came to be known. Only some of these are good enough. */
+export const SCALE_SOURCE = Object.freeze({
+  /** A dimension printed on the plan and read from it. */
+  PRINTED_DIMENSION: 'printed_dimension',
+  /** A real distance the estimator measured and entered. */
+  MEASURED: 'measured',
+  /** A scale bar or ratio note on the drawing. */
+  SCALE_BAR: 'scale_bar',
+  /** Guessed from the size of something drawn on the plan. NEVER sufficient. */
+  DRAWN_OBJECT: 'drawn_object',
+  /** Nothing. */
+  NONE: 'none'
+});
+
+/**
+ * The sources that may stand behind a fixed price.
+ *
+ * `drawn_object` is deliberately absent. A car, a bed, a sofa and a kitchen
+ * bench on a builder's marketing plan are illustrations at whatever size the
+ * renderer liked; they are not survey control.
+ */
+export const VERIFIED_SCALE_SOURCES = Object.freeze([
+  SCALE_SOURCE.PRINTED_DIMENSION, SCALE_SOURCE.MEASURED, SCALE_SOURCE.SCALE_BAR
+]);
+
+export const ROOM_STATUS_PROVISIONAL = 'PROVISIONAL \u2014 SCALE REQUIRED';
+
+// `round` comes from units.mjs at the top of this file. These two travelled
+// with recordCalibration() from design-stage.mjs, which had its own copies.
+const str = (v) => (v === null || v === undefined) ? '' : String(v);
+const num = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+};
+
+/**
+ * Record a scale the estimator established from one known distance.
+ *
+ * Everything needed to defend the number later is stored with it: the two
+ * points clicked, the real distance typed, the derived scale, who did it, when,
+ * and where the measurement came from. A calibration nobody can trace is a
+ * calibration nobody can check.
+ */
+export function recordCalibration({ points, realDistanceMm, source, measuredBy,
+                                    note = '', at = null, imageWidthPx = null,
+                                    imageHeightPx = null } = {}) {
+  const p = Array.isArray(points) ? points : [];
+  const reasons = [];
+
+  if (p.length !== 2 || ![p[0], p[1]].every(q => q && num(q.x) !== null && num(q.y) !== null)) {
+    reasons.push('Two calibration points are required.');
+  }
+  const real = num(realDistanceMm);
+  if (real === null || real <= 0) reasons.push('A real distance is required.');
+  if (!VERIFIED_SCALE_SOURCES.includes(source)) {
+    reasons.push(source === SCALE_SOURCE.DRAWN_OBJECT
+      ? 'A distance scaled off something drawn on the plan is not a measurement. Enter a '
+        + 'dimension printed on the drawing, a scale bar, or a distance measured on site.'
+      : 'A measurement source is required.');
+  }
+  if (!str(measuredBy).trim()) reasons.push('Record who took the measurement.');
+
+  if (reasons.length) return { ok: false, reasons, calibration: null };
+
+  const dx = num(p[1].x) - num(p[0].x);
+  const dy = num(p[1].y) - num(p[0].y);
+  const pixels = Math.sqrt(dx * dx + dy * dy);
+  if (!(pixels > 0)) {
+    return { ok: false, reasons: ['The two calibration points are the same point.'],
+             calibration: null };
+  }
+
+  const pixelsPerMm = pixels / real;
+  return {
+    ok: true,
+    reasons: [],
+    calibration: {
+      pixelsPerMm,
+      mmPerPixel: 1 / pixelsPerMm,
+      pixelsPerMetre: Math.round(pixelsPerMm * 1000 * 100) / 100,
+      verified: true,
+      source,
+      points: [{ x: num(p[0].x), y: num(p[0].y) }, { x: num(p[1].x), y: num(p[1].y) }],
+      pixelDistance: Math.round(pixels * 100) / 100,
+      realDistanceMm: real,
+      measuredBy: str(measuredBy).trim(),
+      measuredAt: at || new Date().toISOString(),
+      note: str(note).trim() || null,
+      imageWidthPx: num(imageWidthPx),
+      imageHeightPx: num(imageHeightPx)
+    }
+  };
+}
+
+/**
+ * Is this design's scale good enough to price from?
+ *
+ * A declared scale with `verified !== true`, or one whose source is a drawn
+ * object, is explicitly NOT.
+ */
+/**
+ * Room measurements that do NOT depend on the plan scale.
+ *
+ * A room sized from a dimension printed on the drawing, reconstructed from a
+ * dimension chain, or typed in by the estimator is a real measurement. When a
+ * job's conditioned rooms are measured this way, the scale is corroborated by
+ * the drawing itself and needs no separate declaration — which is how every
+ * existing job in the system was already working before scale had to be stated.
+ */
+const SCALE_INDEPENDENT_SOURCES = new Set([
+  'verified_architectural', 'dimension_chain', 'chain_plus_wall_geometry', 'manual'
+]);
+
+function corroboratedByPrintedDimensions(design) {
+  const rooms = (design?.rooms || []).filter(r => r && r.conditioned);
+  if (!rooms.length) return false;
+  const measured = rooms.filter(r => !r.measurement?.incomplete
+    && SCALE_INDEPENDENT_SOURCES.has(r.measurement?.source));
+  // A majority, so one hand-typed room on an otherwise unscaled plan does not
+  // quietly promote the whole job.
+  return measured.length >= Math.ceil(rooms.length / 2);
+}

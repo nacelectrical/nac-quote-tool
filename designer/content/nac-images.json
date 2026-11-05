@@ -4,7 +4,7 @@
   "_notes": [
     "No INSTALLATION photographs are publishable. A photograph of a customer’s house needs their suburb and their consent recorded against it before it goes on a proposal, and none of these has either. The gallery is left out rather than filled with equipment shots.",
     "There is no COVER photograph. Every one of these is portrait, and a cover wants a landscape shot of a finished job. The cover falls back to the brand panel until one is supplied.",
-    "9 of 9 photographs carry a brand but no model number — the compliance plate is not legible. They are matched to a quote by brand, which is what Nick asked for; a model number recorded later only makes the match sharper."
+    "16 of 16 photographs carry a brand but no model number — the compliance plate is not legible. They are matched to a quote by brand, which is what Nick asked for; a model number recorded later only makes the match sharper."
   ],
   "images": [
     {
@@ -19,9 +19,10 @@
       ],
       "equipmentBrand": "Fujitsu",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -58,9 +59,10 @@
       ],
       "equipmentBrand": "Daikin",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -96,9 +98,10 @@
       ],
       "equipmentBrand": "Daikin",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -134,9 +137,10 @@
       ],
       "equipmentBrand": "Daikin",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -171,9 +175,10 @@
       ],
       "equipmentBrand": "Braemar",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -208,9 +213,10 @@
       ],
       "equipmentBrand": "Braemar",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -245,9 +251,10 @@
       ],
       "equipmentBrand": "AirTouch",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -283,9 +290,10 @@
       ],
       "equipmentBrand": "AirTouch",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -321,9 +329,10 @@
       ],
       "equipmentBrand": "Fujitsu",
       "equipmentModels": [],
+      "ownWork": true,
       "approved": true,
       "approvedBy": "nick@nacelectrical.com.au",
-      "approvalNote": "NAC’s own photographs of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
+      "approvalNote": "NAC’s own photograph of NAC’s own work, supplied by Nick on 15–16 October 2026 for use on customer proposals.",
       "exifStripped": true,
       "gpsRemoved": true,
       "metadataBefore": [
@@ -346,6 +355,291 @@
         "height": 2576
       },
       "seen": "Fujitsu Airstage wired wall controller — Mode Heat, Set Temp 24.0 degrees, Fan Med — with a lit zone switch panel beneath showing Kitchen, Living and Bed 2."
+    },
+    {
+      "id": "airtouch-room-sensor",
+      "role": "equipment",
+      "alt": "An AirTouch room temperature sensor on the wall of an open-plan kitchen and living area",
+      "tags": [
+        "airtouch",
+        "sensor",
+        "sensors",
+        "zoning",
+        "temperature"
+      ],
+      "equipmentBrand": "AirTouch",
+      "equipmentModels": [],
+      "ownWork": false,
+      "focalPoint": {
+        "x": 0.25,
+        "y": 0.5
+      },
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Supplied by Nick on 5 November 2026 to replace the console photograph on the room-sensor upgrade. A manufacturer product image, cropped to the sensor: the source was a wide shot of a kitchen with the sensor at one edge, which a square thumbnail crops straight out. Nothing in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "IPTC",
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/airtouch-room-sensor.jpg",
+          "width": 430,
+          "height": 430,
+          "format": "jpg",
+          "bytes": 11910
+        }
+      ],
+      "sourceFile": "photos/airtouch-room-sensor.jpg",
+      "sourceSize": {
+        "width": 430,
+        "height": 430
+      },
+      "seen": "A flat white AirTouch wall sensor with a pale blue square on its face, mounted on the wall of an open-plan kitchen and dining area. Temperatures for two zones are shown as figures over the room."
+    },
+    {
+      "id": "mitsubishi-heavy-ducted-set",
+      "role": "equipment",
+      "alt": "A Mitsubishi Heavy Industries ducted system — the indoor fan coil, the outdoor unit and the wired wall controller",
+      "tags": [
+        "mitsubishi",
+        "heavy industries",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Mitsubishi Heavy Industries",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/mitsubishi-heavy-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 46065
+        }
+      ],
+      "sourceFile": "photos/mitsubishi-heavy-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged MITSUBISHI HEAVY INDUSTRIES with the three-diamond mark, and a wired wall controller showing Set temp 23.0 degrees."
+    },
+    {
+      "id": "mitsubishi-electric-ducted-set",
+      "role": "equipment",
+      "alt": "A Mitsubishi Electric ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "mitsubishi",
+        "electric",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Mitsubishi Electric",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renderA '5 YEARS WARRANTY' roundel was removed, because the warranty NAC states on the option is the one that binds NAC — a badge in a picture that disagrees with the line beside it is what gets argued about later. Nothing else in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/mitsubishi-electric-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 36865
+        }
+      ],
+      "sourceFile": "photos/mitsubishi-electric-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: two views of a ducted indoor fan coil, a twin-fan outdoor unit badged Mitsubishi Electric carrying an R32 label, and a wall controller showing 20.5 degrees."
+    },
+    {
+      "id": "braemar-ducted-set",
+      "role": "equipment",
+      "alt": "A Braemar ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "braemar",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Braemar",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/braemar-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 36420
+        }
+      ],
+      "sourceFile": "photos/braemar-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged Braemar, and a black wall controller showing 24 degrees."
+    },
+    {
+      "id": "daikin-ducted-set",
+      "role": "equipment",
+      "alt": "A Daikin ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "daikin",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Daikin",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renderA '5 YEARS WARRANTY' roundel was removed, because the warranty NAC states on the option is the one that binds NAC — a badge in a picture that disagrees with the line beside it is what gets argued about later. Nothing else in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/daikin-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 41881
+        }
+      ],
+      "sourceFile": "photos/daikin-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged DAIKIN INVERTER carrying an R32 label, and a wall controller showing 27 degrees."
+    },
+    {
+      "id": "fujitsu-airstage-ducted-set",
+      "role": "equipment",
+      "alt": "A Fujitsu Airstage ducted system — the indoor fan coil, the outdoor unit and the wall controller",
+      "tags": [
+        "fujitsu",
+        "airstage",
+        "ducted",
+        "outdoor",
+        "controller",
+        "set"
+      ],
+      "equipmentBrand": "Fujitsu",
+      "equipmentModels": [],
+      "ownWork": false,
+      "optionImage": true,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Manufacturer product set supplied by Nick on 5 November 2026 for the equipment options. Cropped only: the surrounding white was trimmed and the image was fitted to the 4:3 box the option renders in. Nothing in it was altered.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/fujitsu-airstage-ducted-set.jpg",
+          "width": 1000,
+          "height": 750,
+          "format": "jpg",
+          "bytes": 47763
+        }
+      ],
+      "sourceFile": "photos/fujitsu-airstage-ducted-set.jpg",
+      "sourceSize": {
+        "width": 1000,
+        "height": 750
+      },
+      "seen": "A product set on a white background: a ducted indoor fan coil, a twin-fan outdoor unit badged FUJITSU AIRSTAGE, and a wall controller."
+    },
+    {
+      "id": "zonemaster-6-zone-wall-panel",
+      "role": "equipment",
+      "alt": "A Zonemaster six-zone wall panel, with a labelled switch for each zone",
+      "tags": [
+        "zonemaster",
+        "zone",
+        "zoning",
+        "switch",
+        "switches",
+        "panel",
+        "6 zone",
+        "wall"
+      ],
+      "equipmentBrand": "Zonemaster",
+      "equipmentModels": [],
+      "ownWork": false,
+      "approved": true,
+      "approvedBy": "nick@nacelectrical.com.au",
+      "approvalNote": "Supplied by Nick on 5 November 2026. A product image of a Zonemaster wall panel. Cropped only: the image was cropped to the panel itself (the supplied file was 527x527 with the panel occupying a 247x376 box) and then centred on white in a 600x600 square, which is the shape the page renders it in. Nothing in it was retouched. WHAT IT IS OF, ON NICK'S WORD: this is the wall plate that ships with NAC's Siemens zone kits (MMASEM4ZTPKIT / MMASEM6ZTPKIT / MMASEM8ZTPKIT). Nick, 5 November 2026: 'Just put it in the pic for siemens.' Nothing in the data could have established that — the kit is badged Siemens and the plate is badged Zonemaster — so the pairing is recorded against the part in designer/engines/supplier-pricing.mjs, not inferred by any matcher. NOTE the panel in this photograph has SIX buttons, so it is exact for the 6-zone kit and shows two switches too few on an 8-zone job and two too many on a 4-zone one; a 4-zone and an 8-zone photograph would make it exact.",
+      "exifStripped": true,
+      "gpsRemoved": true,
+      "metadataBefore": [
+        "EXIF"
+      ],
+      "metadataAfter": [],
+      "derivatives": [
+        {
+          "file": "images/zonemaster-6-zone-wall-panel.jpg",
+          "width": 600,
+          "height": 600,
+          "format": "jpg",
+          "bytes": 21067
+        }
+      ],
+      "sourceFile": "photos/zonemaster-6-zone-wall-panel.jpg",
+      "sourceSize": {
+        "width": 600,
+        "height": 600
+      },
+      "seen": "A white wall plate badged Zonemaster at the bottom right, carrying six labelled buttons in a column with a round illuminated switch beside each. The labels read FAMILY, LOUNGE, MASTER, BEDROOM 2, BEDROOM 3 and STUDY. Five of the rings are lit blue; the one beside BEDROOM 2 is pale, so that zone is off."
     }
   ],
   "refused": []

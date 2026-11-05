@@ -29,6 +29,7 @@ import { draftToQuoteSource, draftSelectedOptions, quoteDraftGate }
   from '../designer/engines/quote-draft.mjs';
 import { buildPresentation } from '../designer/engines/presentation.mjs';
 import { renderPresentationHtml } from '../designer/ui/presentation-html.mjs';
+import { presentationPrintHtml, pdfOptions } from '../designer/ui/presentation-pdf.mjs';
 import { loadNacImages } from './import-nac-photos.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +54,16 @@ function nacLogo() {
   } catch { return null; }
 }
 
-export function buildTestQuote() {
-  const draft = quoteOnlyDraft({ testQuote: true });
+/**
+ * @param {object} extraContent library fields to lay over NAC's own, so a
+ *   caller can prove something that needs content this fixture does not carry
+ *   — a manufacturer brochure, say. Everything else stays NAC's real content.
+ * @param {object} draftOver draft fields to lay over the fixture's, for the
+ *   same reason: a check that needs a zone control paired with a picture, say.
+ *   Shallow, so a replaced section is replaced whole.
+ */
+export function buildTestQuote(extraContent = {}, draftOver = {}) {
+  const draft = quoteOnlyDraft({ testQuote: true, ...draftOver });
 
   // NAC's nine photographs, imported through tools/import-nac-photos.mjs:
   // re-encoded in Chromium and verified clean by scanMetadata().
@@ -70,7 +79,8 @@ export function buildTestQuote() {
     readFileSync(resolve(ROOT, 'designer/content/google-reviews.json'), 'utf8'));
   const reviews = reviewFile.reviews.map(r => ({ ...r, approved: true }));
 
-  const content = quoteOnlyContent({ logo: nacLogo(), images, reviews });
+  const content = quoteOnlyContent({ logo: nacLogo(), images, reviews,
+    ...extraContent });
   const gate = quoteDraftGate(draft, { upgrades: UPGRADES });
   const src = draftToQuoteSource(draft, { upgrades: UPGRADES });
 
@@ -91,11 +101,12 @@ export function buildTestQuote() {
   });
 
   return { draft, content, gate, built, reviewCount: reviews.length,
-           imageCount: images.length };
+           imageCount: images.length,
+           ownCount: images.filter(i => i.ownWork === true).length };
 }
 
 if (import.meta.url === 'file://' + process.argv[1]) {
-  const { draft, gate, built, reviewCount, imageCount } = buildTestQuote();
+  const { draft, gate, built, reviewCount, imageCount, ownCount } = buildTestQuote();
 
   console.log('draft gate: ' + (gate.ok ? 'passes' : 'BLOCKED'));
   for (const b of gate.blockers) console.log('   BLOCK ' + b.code + ' — ' + b.message);
@@ -118,8 +129,15 @@ if (import.meta.url === 'file://' + process.argv[1]) {
   console.log('  of which   $' + p.investment.totalGst.toFixed(2) + ' GST');
   console.log('  deposit    $' + p.investment.deposit.amount.toFixed(2)
     + ' (' + p.investment.deposit.percent + '%)');
-  console.log('  photos     ' + imageCount + ' of NAC’s own, '
+  // "16 of NAC's own" was true when the library held only NAC's own work and
+  // false the moment manufacturer product images were added to it. The split
+  // is reported, because the difference is the whole basis of the gallery.
+  console.log('  photos     ' + imageCount + ' in the library ('
+    + ownCount + ' of NAC’s own work, ' + (imageCount - ownCount) + ' supplied), '
     + (p.system.image ? 'one matched to the Daikin' : 'none matched'));
+  console.log('  zone ctrl  ' + (p.zones && p.zones.controllerImage
+    ? 'showing ' + p.zones.controllerImage.id
+    : 'no picture — none is recorded against this kit'));
   console.log('  reviews    ' + reviewCount + ' approved, '
     + p.reviews.filter(r => r.rating === null).length + ' with no star rating recorded');
   console.log('  labelled   ' + (p.testQuote ? 'TEST QUOTE' : 'NOT LABELLED'));
@@ -146,5 +164,36 @@ if (import.meta.url === 'file://' + process.argv[1]) {
       + (errs.length ? '   ERRORS: ' + errs.join(' | ') : '   no js errors'));
     await page.close();
   }
+
+  // ── THE PRINTABLE VERSION, FROM THE SAME OFFER ────────────────────────
+  //
+  // Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+  // same offer data." The same presentation object the web page was rendered
+  // from, so the paper copy cannot be a different offer — and it is produced
+  // here so it can be LOOKED AT rather than assumed.
+  const printFile = resolve(OUT, 'test-quote-print.html');
+  writeFileSync(printFile, presentationPrintHtml(p));
+  const pp = await browser.newPage({ viewport: { width: 1240, height: 1754 } });
+  await pp.goto('file://' + printFile, { waitUntil: 'load' });
+  await pp.emulateMedia({ media: 'print' });
+  await pp.waitForTimeout(400);
+  const pdfFile = resolve(OUT, 'test-quote.pdf');
+  const pdf = await pp.pdf(pdfOptions(p));
+  writeFileSync(pdfFile, pdf);
+  await pp.screenshot({ path: resolve(OUT, 'test-quote-print.png'), fullPage: true });
+
+  // What must NOT be on paper: the interactive furniture, and anything
+  // internal. The leak sweep in tests/ checks the figures; this checks the
+  // document a customer would actually hold.
+  const printed = presentationPrintHtml(p);
+  const strays = ['data-print', 'class="nav"', 'class="sticky"', 'id="acceptBtn"',
+                  'supplierCost', 'markupPct', 'marginPct', 'grossProfit', 'MMEM']
+    .filter(x => printed.includes(x));
+  console.log('\n  printable  ' + printFile);
+  console.log('  pdf        ' + pdfFile + '  ('
+    + Math.round(pdf.length / 1024) + ' kB)');
+  console.log('  clean      ' + (strays.length
+    ? 'NO — found ' + strays.join(', ') : 'yes — no controls and nothing internal'));
+  await pp.close();
   await browser.close();
 }

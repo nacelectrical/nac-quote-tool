@@ -20,7 +20,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { zoneAccessoryFor, selectEquipment } from '../designer/engines/equipment.mjs';
 import { ZONE_CONTROLLERS, ZONE_ACCESSORIES, buildCatalogue } from '../designer/engines/catalogue.mjs';
-import { buildBillOfMaterials } from '../designer/engines/bom.mjs';
 import { presentationGate, upgradeCapabilities } from '../designer/engines/presentation.mjs';
 import { resolveUpgrades } from '../designer/engines/presentation-content.mjs';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
@@ -67,30 +66,12 @@ test('a count is a whole number of sensors', () => {
 
 // ── The bill of materials ────────────────────────────────────────────────────
 
-const bomWith = (zoneAccessory) => buildBillOfMaterials({
-  selectedUnit: null, controller: airtouch, zoneAccessory,
-  outlets: null, zones: null, network: null
-}, { settings: DEFAULT_SETTINGS });
-
-test('the sensors reach the bill of materials at the count that was set', () => {
-  const line = bomWith(zoneAccessoryFor(airtouch, ZONE_ACCESSORIES, 6))
-    .items.find(i => i.key === 'zone_sensor');
-  assert.ok(line, 'no sensor line — an AirTouch job is short by every sensor in it');
-  assert.equal(line.quantity, 6);
-  assert.equal(line.unitCost, 92);
-  assert.equal(line.totalCost, 552);
-  assert.equal(line.supplierCode, 'MMAAT5S');
-  assert.equal(line.priced, true);
-});
-
-test('no sensors, no line — and an unanswered count never invents one', () => {
-  for (const count of [0, undefined, null]) {
-    const items = bomWith(zoneAccessoryFor(airtouch, ZONE_ACCESSORIES, count)).items;
-    assert.equal(items.filter(i => i.key === 'zone_sensor').length, 0,
-      'a line appeared for a count of ' + JSON.stringify(count));
-  }
-  assert.equal(bomWith(null).items.filter(i => i.key === 'zone_sensor').length, 0);
-});
+// The two tests that stood here asserted the sensor count reaching a BILL OF
+// MATERIALS line at $92 each. There is no bill of materials on a quote any
+// more, and the same guarantee — the count the estimator set is the count the
+// customer is charged for, and no count never invents one — is held by
+// tests/quote-draft.test.mjs against the offer itself, which is where the
+// money actually is.
 
 // ── The gate ─────────────────────────────────────────────────────────────────
 

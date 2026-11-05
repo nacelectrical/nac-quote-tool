@@ -1,0 +1,31 @@
+{
+  "name": "NAC Quotes",
+  "short_name": "NAC Quotes",
+  "description": "NAC Electrical Air & Refrigeration — raise, issue and track ducted air conditioning quotes.",
+  "id": "/quotes.html",
+  "start_url": "/quotes.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c0c24",
+  "theme_color": "#0c0c24",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "New quote",
+      "short_name": "New quote",
+      "url": "/quote-builder.html",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Quotes portal",
+      "short_name": "Portal",
+      "url": "/quotes.html",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

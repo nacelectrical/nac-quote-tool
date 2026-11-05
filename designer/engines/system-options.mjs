@@ -40,6 +40,21 @@ export function normaliseSystemOption(input = {}, index = 0) {
     /** The catalogue's own brand id, so a brand-locked upgrade can be matched. */
     brandId: trimmed(input.brandId) || trimmed(brand).toLowerCase().replace(/[^a-z0-9]+/g, '') || null,
     model,
+    /**
+     * THE OUTDOOR HALF OF THE PAIR.
+     *
+     * Nick, 4 November 2026: each option must show "the exact indoor and
+     * outdoor model pair". A customer given only "FDYAN100AV1" has half the
+     * system, and cannot check what they were quoted against what turns up.
+     */
+    outdoorModel: trimmed(input.outdoorModel ?? input.outdoor),
+    /** Both halves, as a customer should see them named. */
+    modelPair: [model, trimmed(input.outdoorModel ?? input.outdoor)]
+      .filter(Boolean).join(' / ') || model,
+    /** A picture of this unit, when NAC hold one. Never invented. */
+    image: input.image && trimmed(input.image.src)
+      ? { src: trimmed(input.image.src), alt: trimmed(input.image.alt) || null }
+      : null,
     label: [brand, model].filter(Boolean).join(' ') || trimmed(input.label),
     capacityKw: n(input.capacityKw ?? input.kw),
     phase: trimmed(input.phase),

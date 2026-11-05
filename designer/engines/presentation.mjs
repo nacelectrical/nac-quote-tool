@@ -32,7 +32,8 @@ export { looksUnfilled };
 import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   equipmentImagesFor, publicImageRef, publicImageSrcset,
-  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts
+  resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor,
+  ownWorkGallery, upgradeImageFor, optionImageFor, controllerImageFor
 } from './presentation-content.mjs';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
@@ -654,7 +655,13 @@ function systemSection(d, ctx) {
     // Only a catalogue asset that was actually matched to this model. Nick:
     // "Never use an incorrect generic product image merely because it looks
     // similar." A null here renders a clean branded card instead.
-    image: ctx.productImage || null
+    image: ctx.productImage || null,
+    // ── THE MANUFACTURER'S OWN DOCUMENT ───────────────────────────────────
+    // Nick, 4 November 2026: "equipment and controller images and brochures."
+    // Only a brochure NAC supplied, matched to THIS model or to its brand. No
+    // URL is ever constructed from a model name: a plausible-looking
+    // manufacturer link nobody supplied is a fabricated product claim.
+    brochures: (ctx.brochures || []).map(b => ({ title: b.title, url: b.url }))
   };
 }
 
@@ -729,7 +736,7 @@ function listSentence(items) {
   return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
 }
 
-function zonesSection(d) {
+function zonesSection(d, images = []) {
   const zs = rows(d.zones?.zones);
   if (!zs.length) return null;
   const c = d.controller || {};
@@ -742,6 +749,19 @@ function zonesSection(d) {
     controllerSku: trimmed(c.supplierCode || c.sku) || null,
     controllerMaxZones: n(c.maxZones),
     controllerIncludedInSystem: c.includedInSystem === true,
+    // ── THE PART, NOT A LOOKALIKE ───────────────────────────────────────
+    //
+    // Nick, 5 November 2026, sending a Zonemaster six-zone wall panel. The
+    // zones section named the controller and showed nothing, so a customer
+    // reading "Siemens Home zone control — 6 zone" had no idea what was
+    // going on their wall.
+    //
+    // controllerImageFor() will only put a picture here when NAC picked it
+    // by id, or when the photograph's own brand is in the controller's name.
+    // Not a score over the words "zone" and "control", which every zone
+    // controller ever made has in its name and which would therefore put any
+    // panel in the library beside any kit.
+    controllerImage: controllerImageFor(images, c),
     // NO PRICE. `controllerPriceIncGst` carried `c.cost` — MMEM's ex-GST
     // SUPPLIER cost, on a payload that is stored against the issued quote and
     // served to the customer's browser. Nothing rendered it, so it leaked
@@ -864,9 +884,31 @@ function investmentSection(d, ctx) {
   // Not in a footnote and not in the terms. A customer reading a number and a
   // signature box is entitled to know whether the number can move.
   const isProposal = c.proposalPrice === true;
+
+  // ── FIXED PRICE, OR PROVISIONAL ESTIMATE ────────────────────────────────
+  //
+  // Nick, 4 November 2026: "Keep fixed quotes and provisional estimates
+  // clearly distinct." They are different promises, and a customer reading the
+  // second as the first is how a job is argued about at invoice time. So it is
+  // stated beside the price, in words, on the page — not in the terms and not
+  // in a footnote.
+  //
+  // draftToQuoteSource() works it out (option-pricing.mjs firmnessOf) and
+  // passes the LABEL and the NOTE only. The reasons behind it are the
+  // estimator's working, not a sentence to put in front of a customer.
+  const firm = d.priceFirmness && d.priceFirmness.label
+    ? { fixed: d.priceFirmness.fixed === true,
+        label: str(d.priceFirmness.label),
+        note: str(d.priceFirmness.note),
+        confirmWhat: str(d.priceFirmness.confirmWhat) || null }
+    : null;
+  const provisional = isProposal || (firm !== null && firm.fixed === false);
+
   return {
     proposalPrice: isProposal,
-    priceLabel: isProposal ? 'Proposal price' : 'Your investment',
+    /** Non-null on every quote-only proposal: which promise this price is. */
+    firmness: firm,
+    priceLabel: provisional ? 'Proposal price' : 'Your investment',
     proposalNote: isProposal
       ? 'This is a proposal price, not a fixed price. The ductwork is carried at NAC\'s '
         + 'standard installation allowance because the duct design for your home has not '
@@ -1066,7 +1108,28 @@ export function buildPresentation({
     ...selectionCtx,
     selectedIds: content.selectedInstallationIds, excludedIds: content.excludedInstallationIds
   });
-  const installations = selectedInstallSources.map(i => publicInstallation(i, imagesById));
+  let installations = selectedInstallSources.map(i => publicInstallation(i, imagesById));
+
+  // ── PICTURES OF NAC'S OWN WORK ────────────────────────────────────────
+  //
+  // Nick, 5 November 2026: "I want to have pictures of our installs in."
+  //
+  // The records above are case studies — a suburb, a description, consent —
+  // and they win wherever NAC has written them. Where there are none, the
+  // gallery is drawn from the photographs themselves: every approved image
+  // Nick marked as his own work, captioned with the description already
+  // written for it. He had nine of them in the library and no proposal
+  // showed one, because the gallery could only read a record nobody had
+  // made.
+  const fromPhotos = installations.length
+    ? []
+    : ownWorkGallery(content.images || [], { max: 6 }).map(g => ({
+        id: g.id, location: null, description: g.caption, brand: g.brand,
+        capacityKw: null, zoneCount: null, cover: g.cover, images: [g.cover],
+        /** Drawn from a photograph rather than from a case-study record. */
+        fromPhoto: true
+      }));
+  installations = installations.length ? installations : fromPhotos;
 
   // THE GATE RUNS HERE, once the reviews and installations that would actually
   // be published are known. Asking before they are resolved would be asking
@@ -1103,10 +1166,21 @@ export function buildPresentation({
                    focalPoint: a.focalPoint } : null;
   })();
 
+  // The manufacturer's own documents for the unit being quoted — the ones NAC
+  // supplied, matched to this model or its brand, and nothing else.
+  const unitForDocs = chosenSystem
+    ? { model: chosenSystem.model, outdoorModel: chosenSystem.outdoorModel,
+        brandId: chosenSystem.brandId, brand: chosenSystem.brand }
+    : (d.selectedUnit || {});
+  const brochures = brochuresFor(content.brochures || [], {
+    model: unitForDocs.model, outdoorModel: unitForDocs.outdoorModel,
+    brandId: unitForDocs.brandId || unitForDocs.brandName || unitForDocs.brand
+  }).matched;
+
   const ctx = {
     customer, job, trust, evidence, privacy, intro, heroImage,
     testQuote: testQuote === true,
-    productImage: equipmentShot,
+    productImage: equipmentShot, brochures,
     proposalNumber, preparedAt, expiresAt, expired, chosenSystem,
     selectedOptions, aftercare: content.aftercare || {},
     // ── THE DEPOSIT COMES FROM NAC'S CONFIRMED TERMS ──────────────────────
@@ -1175,6 +1249,14 @@ export function buildPresentation({
       chosenId: chosenSystem ? chosenSystem.id : null,
       options: optionStatus.options.map(o => ({
         id: o.id, label: o.label, brand: o.brand, model: o.model,
+        outdoorModel: o.outdoorModel, modelPair: o.modelPair,
+        // ── THE UNIT, BESIDE THE OPTION ───────────────────────────────
+        // Nick, 5 November 2026: "unit pic next to each option." The same
+        // matcher the single system card uses, per option, so somebody
+        // choosing between a Daikin and a Braemar can see both. An option
+        // NAC has no photograph of gets none — a lookalike beside a price
+        // is a product claim.
+        image: optionImageFor(content.images || [], o),
         capacityKw: o.capacityKw, phase: o.phase, note: o.note,
         recommended: o.recommended,
         warrantyYears: o.warrantyYears,
@@ -1186,7 +1268,7 @@ export function buildPresentation({
     inclusions: resolveInclusions(evidence),
     /** The estimator's own inclusions and exclusions. Null when none were typed. */
     scopeOfWork: scopeSection(d),
-    zones: zonesSection(d),
+    zones: zonesSection(d, content.images || []),
     coverage: coverageSection(d),
     installations,
     reviews,
@@ -1214,6 +1296,12 @@ export function buildPresentation({
       return {
         id: o.id, title: o.title, description: o.description,
         forSystemIds,
+        // ── THE PICTURE BESIDE THE UPGRADE ────────────────────────────
+        // Nick, 5 November 2026: "Airtouch pictures next to Airtouch
+        // option, sensor next to sensor option." NAC's own photograph of
+        // the thing, matched to the upgrade by what the photograph says it
+        // shows. An upgrade NAC has no picture of gets none.
+        image: upgradeImageFor(content.images || [], o),
         priceIncGst: o.priceIncGst, group: o.group,
         // Counted upgrades carry what one costs and how many may be had.
         unitPriceIncGst: o.unitPriceIncGst, unitLabel: o.unitLabel,

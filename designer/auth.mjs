@@ -45,6 +45,151 @@ function store(session) {
 
 export function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+  stopKeepAlive();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KEEPING THE SESSION ALIVE
+//
+// Nick, 5 November 2026: "Can I work with this and add to Home Screen?"
+//
+// A Supabase access token lasts ONE HOUR. The refresh token that renews it was
+// being stored and never used — so an estimator who signed in at the kerb was
+// signed out again before they had finished walking the house, and on a
+// home-screen app, where there is no address bar to glance at, the first sign
+// of it is a save that will not land.
+//
+// Three things wake the renewal, because any one of them alone has a hole:
+//
+//   · a TIMER at four fifths of the token's life, for a page left open;
+//   · VISIBILITY, for an iPad that went in the van and came out an hour later
+//     with the timer long since fired into a suspended tab;
+//   · ONLINE, for a roof space with no signal, where the renewal that was due
+//     could not have reached anybody.
+//
+// Renewal is SINGLE-FLIGHT. Returning to the app fires visibility and online
+// together, and two refreshes racing means the second presents a refresh token
+// the first has already spent — which, on a server that rotates them, logs you
+// out rather than keeping you in.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Renew this long before the token actually dies. */
+const RENEW_LEAD_SECONDS = 300;
+let renewing = null;
+let renewTimer = null;
+
+function stopKeepAlive() {
+  if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+}
+
+/** The stored session WITHOUT the expiry test — what refreshing works from. */
+function storedSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    const s = raw ? JSON.parse(raw) : null;
+    return s && s.access_token ? s : null;
+  } catch (e) { return null; }
+}
+
+function secondsLeft(s) {
+  return s && s.expires_at ? (s.expires_at - Date.now() / 1000) : Infinity;
+}
+
+/**
+ * Renew the access token from the refresh token.
+ *
+ * Returns the fresh session, or null when there is nothing to renew from or
+ * the server refused. A refusal CLEARS the stored session rather than leaving
+ * a dead token in place: `dbHeaders()` falls back to the anonymous key when
+ * there is no session, and a request that is openly anonymous is refused by
+ * RLS, which is a visible failure. A request carrying a token the server has
+ * already forgotten is the same failure wearing a signed-in costume.
+ */
+export function refreshSession() {
+  if (renewing) return renewing;
+  const s = storedSession();
+  if (!s || !s.refresh_token) return Promise.resolve(null);
+
+  renewing = (async () => {
+    let res;
+    try {
+      res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { apikey: ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: s.refresh_token })
+      });
+    } catch (e) {
+      // No signal. The session is NOT cleared: it may still be good, and
+      // throwing somebody out of a half-typed quote because the roof space has
+      // no reception would be the application inventing a problem.
+      return null;
+    }
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+    if (!res.ok || !body?.access_token) {
+      // The server has refused this refresh token. It will not start working.
+      clearSession();
+      try { window.dispatchEvent(new CustomEvent('nac-signed-out')); } catch (e) { /* ignore */ }
+      return null;
+    }
+    const next = {
+      access_token: body.access_token,
+      refresh_token: body.refresh_token || s.refresh_token,
+      expires_at: body.expires_at
+        || (Math.floor(Date.now() / 1000) + (body.expires_in || 3600)),
+      user: body.user ? { id: body.user.id || null, email: body.user.email || s.user?.email }
+                      : s.user
+    };
+    store(next);
+    return next;
+  })().finally(() => { renewing = null; });
+
+  return renewing;
+}
+
+/**
+ * The session, renewed first if it is close to expiry.
+ *
+ * Everything on these pages reads the session SYNCHRONOUSLY through
+ * dbHeaders(), so this cannot be made to run before each request without
+ * rewriting every call site. It does not need to: keepSessionAlive() renews
+ * well ahead of time, and this is here for a caller that wants to be certain
+ * before doing something that must not fail — issuing a quote, say.
+ */
+export async function ensureFreshSession() {
+  const s = storedSession();
+  if (s && secondsLeft(s) > RENEW_LEAD_SECONDS) return s;
+  return (await refreshSession()) || currentSession();
+}
+
+/** Keep renewing for as long as this page is open. Safe to call repeatedly. */
+export function keepSessionAlive() {
+  stopKeepAlive();
+  const s = storedSession();
+  if (!s || !s.refresh_token) return;
+
+  const left = secondsLeft(s);
+  // Four fifths of what is left, floored at ten seconds so a session that is
+  // already past due renews now rather than scheduling itself into the past.
+  const wait = Math.max(10, Math.min(left - RENEW_LEAD_SECONDS, left * 0.8));
+  renewTimer = setTimeout(async () => {
+    await refreshSession();
+    keepSessionAlive();
+  }, wait * 1000);
+
+  if (!keepSessionAlive._wired) {
+    keepSessionAlive._wired = true;
+    const wake = async () => {
+      if (document.visibilityState === 'hidden') return;
+      const held = storedSession();
+      if (!held) return;
+      if (secondsLeft(held) <= RENEW_LEAD_SECONDS) await refreshSession();
+      keepSessionAlive();
+    };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
+    window.addEventListener('pageshow', wake);
+  }
 }
 
 /**
@@ -121,8 +266,23 @@ export async function signOut() {
  * visitor never sees customer, pricing or design information.
  */
 export function requireSignIn({ pageName = 'this page' } = {}) {
-  if (isSignedIn()) return Promise.resolve(currentSession());
+  if (isSignedIn()) { keepSessionAlive(); return Promise.resolve(currentSession()); }
 
+  // Expired on the way in, but renewable: an iPad opened the next morning has
+  // an hour-old access token and a refresh token that is still good. Renewing
+  // before putting the sign-in screen up is the difference between opening the
+  // app and typing a password every morning.
+  const held = storedSession();
+  if (held && held.refresh_token) {
+    return refreshSession().then((fresh) => {
+      if (fresh) { keepSessionAlive(); return fresh; }
+      return signInScreen({ pageName });
+    });
+  }
+  return signInScreen({ pageName });
+}
+
+function signInScreen({ pageName }) {
   return new Promise((resolve) => {
     const host = document.createElement('div');
     host.id = 'nac-signin';
@@ -164,6 +324,21 @@ export function requireSignIn({ pageName = 'this page' } = {}) {
         <div class="err" id="nac-err" role="alert"></div>
         <div class="foot">NAC Electrical Air &amp; Refrigeration</div>
       </form>`;
+    // ── NOTHING BEHIND THE GATE IS READABLE ───────────────────────────
+    //
+    // Nick: "An unauthenticated user attempting to open an NAC internal page
+    // should not gain access to customer, pricing or design information."
+    //
+    // The overlay covers the page on screen, but the page behind it was still
+    // in the accessibility tree and still in innerText — a screen reader on
+    // the sign-in screen read the whole shell out, and anything a page had
+    // already put in the DOM was there to be read. None of these pages loads
+    // data before this resolves, so what was exposed was labels; it is still
+    // the wrong default, and one rule fixes it for every screen at once.
+    const lock = document.createElement('style');
+    lock.id = 'nac-signin-lock';
+    lock.textContent = 'body > *:not(#nac-signin){visibility:hidden!important}';
+    document.head.appendChild(lock);
     document.body.appendChild(host);
 
     const form = host.querySelector('form');
@@ -177,7 +352,13 @@ export function requireSignIn({ pageName = 'this page' } = {}) {
       go.disabled = true; go.textContent = 'Signing in…';
       const r = await signIn(host.querySelector('#nac-email').value,
                             host.querySelector('#nac-pass').value);
-      if (r.ok) { host.remove(); resolve(currentSession()); return; }
+      if (r.ok) {
+        host.remove();
+        document.getElementById('nac-signin-lock')?.remove();
+        keepSessionAlive();
+        resolve(currentSession());
+        return;
+      }
       err.textContent = r.error;
       err.classList.add('on');
       go.disabled = false; go.textContent = 'Sign in';

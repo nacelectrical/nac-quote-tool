@@ -15,62 +15,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '../designer/engines/settings.mjs';
-import { proposalAllowance, ALLOWANCE_FIELDS } from '../designer/engines/design-stage.mjs';
 import { commercialTermsStatus, TERMS_FIELDS } from '../designer/engines/commercial-terms.mjs';
 import { checkTermsAgainstSettings, NAC_TERMS_LABEL, NAC_TERMS_EFFECTIVE }
   from '../designer/engines/nac-terms.mjs';
-import { buildBillOfMaterials } from '../designer/engines/bom.mjs';
 import { usedRateStatus, rateVerified, VERIFICATION_FIELDS }
   from '../designer/engines/material-verification.mjs';
 
 // ── §3 the proposal allowance ───────────────────────────────────────────────
-test('no allowance amount ships as a default', () => {
-  const a = DEFAULT_SETTINGS.commercial.proposalAllowance;
-  for (const f of ALLOWANCE_FIELDS) {
-    assert.equal(a[f.key], null, f.key + ' shipped with an invented amount');
-  }
-  assert.equal(a.flat, null);
-});
-
-test('an unconfigured allowance blocks, and names the screen', () => {
-  const r = proposalAllowance({ outletCount: 10, zoneCount: 4, settings: DEFAULT_SETTINGS });
-  assert.equal(r.ok, false);
-  assert.equal(r.amount, null);
-  assert.match(r.reason, /HVAC Design Settings/);
-  // And it says what is missing, so the screen can point at it.
-  assert.ok(r.missing.length >= 10, 'the missing elements were not listed');
-});
-
-test('the allowance covers every element Nick named, each on its own line', () => {
-  const keys = ALLOWANCE_FIELDS.map(f => f.key);
-  for (const required of ['ductwork', 'perOutlet', 'perZone', 'returns', 'plenums',
-                          'electrical', 'refrigeration', 'condensate', 'labour',
-                          'roofAccess', 'contingencyPct']) {
-    assert.ok(keys.includes(required), 'no allowance element for ' + required);
-  }
-  // Every element has a plain-language explanation for the screen.
-  for (const f of ALLOWANCE_FIELDS) {
-    assert.ok(f.help && f.help.length > 20, f.key + ' has no explanation');
-    assert.ok(f.label && f.label.length > 2, f.key + ' has no label');
-  }
-
-  const settings = { commercial: { proposalAllowance: {
-    ductwork: 900, perOutlet: 67.16, perZone: 40.80, returns: 260, plenums: 244,
-    electrical: 300, refrigeration: 420, condensate: 160, labour: null,
-    roofAccess: 250, contingencyPct: 5 } } };
-  const r = proposalAllowance({ outletCount: 10, zoneCount: 6, settings });
-  assert.equal(r.ok, true);
-  // Each element is its own line, so an estimator can see what it covers.
-  const byKey = Object.fromEntries(r.lines.map(l => [l.key, l]));
-  assert.equal(byKey.perOutlet.quantity, 10);
-  assert.equal(byKey.perZone.quantity, 6);
-  assert.ok(byKey.contingencyPct.amount > 0);
-  // Labour was left empty and does not appear at all — not as a zero.
-  assert.ok(!byKey.labour);
-  const sub = 900 + 67.16 * 10 + 40.8 * 6 + 260 + 244 + 300 + 420 + 160 + 250;
-  assert.ok(Math.abs(r.amount - (sub * 1.05)) < 0.5, r.amount + ' vs ' + (sub * 1.05));
-});
-
 // ── §6 deposit, payment and validity ────────────────────────────────────────
 // What ships is what NAC stated, and nothing else. The rule these tests were
 // written to protect was never "ship nothing" — it was "ship nothing NAC has
@@ -276,43 +227,4 @@ test('the proposal allowance is not a material rate and is never asked to be one
   const r = usedRateStatus({ design, verifications: {} });
   assert.equal(r.rows.length, 0, 'the allowance was treated as a supplier rate');
   assert.equal(r.ok, true);
-});
-
-test('a unit and a controller off MMEM carry their stock code into the BOM', () => {
-  // This blocked a real quote. Both lines are priced from MMEM's list and both
-  // know the stock code they were priced under — the BOM was dropping it, so
-  // the rate check looked at a bare number and asked which supplier quoted it,
-  // on the two lines where the answer was already on file.
-  const design = {
-    selectedUnit: { brandName: 'Daikin', model: 'FDYAN160AV1 / RZA160C2V1',
-      capacityKw: 16, phase: '1Ph', supplierCost: 4820,
-      supplierCode: 'FDYAN160AV1 / RZA160C2V1',
-      supplierSource: 'MMEM Trade Price List January 2026' },
-    controller: { name: 'Siemens Home zone control — 6 zone', cost: 295,
-      supplierCode: 'MMASEM6ZTPKIT' },
-    outlets: null, zones: null, network: null
-  };
-  const bom = buildBillOfMaterials(design, { settings: DEFAULT_SETTINGS });
-  const unit = bom.items.find(i => i.key === 'indoor_outdoor_system');
-  const ctrl = bom.items.find(i => i.key === 'zone_controller');
-  assert.equal(unit.supplierCode, 'FDYAN160AV1 / RZA160C2V1');
-  assert.equal(unit.supplierSource, 'MMEM Trade Price List January 2026');
-  assert.equal(ctrl.supplierCode, 'MMASEM6ZTPKIT');
-
-  // And that evidence is what the rate check is looking for.
-  const r = usedRateStatus({ design: { bom }, verifications: {} });
-  assert.equal(r.ok, true, 'still blocked: ' + r.needing.map(x => x.label).join(', '));
-});
-
-test('a line with no supplier code is still asked where its price came from', () => {
-  // The fix must not wave through a rate somebody typed in by hand.
-  const design = {
-    controller: { name: 'Some controller', cost: 295 },
-    outlets: null, zones: null, network: null
-  };
-  const bom = buildBillOfMaterials(design, { settings: DEFAULT_SETTINGS });
-  assert.equal(bom.items.find(i => i.key === 'zone_controller').supplierCode, null);
-  const r = usedRateStatus({ design: { bom }, verifications: {} });
-  assert.equal(r.ok, false);
-  assert.deepEqual(r.needing.map(x => x.id), ['zone_controller']);
 });

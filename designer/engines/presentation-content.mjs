@@ -330,7 +330,38 @@ export function normaliseImageAsset(input = {}) {
     // is never offered as a photograph of one.
     role: ROLES.includes(trimmed(input.role)) ? trimmed(input.role) : 'installation',
     equipmentModels: list(input.equipmentModels).map(trimmed).filter(Boolean),
-    equipmentBrand: trimmed(input.equipmentBrand) || null
+    equipmentBrand: trimmed(input.equipmentBrand) || null,
+    /**
+     * NAC'S OWN WORK.
+     *
+     * Nick, 5 November 2026: "I want to have pictures of our installs in."
+     *
+     * A photograph can be two things at once, and NAC's are: a picture OF a
+     * Daikin outdoor unit, and a picture of a job NAC did. The `role` says
+     * what it is for; this says whose work it is. It is the difference
+     * between a manufacturer's stock shot and a machine NAC put on a wall,
+     * and only the second belongs in a gallery headed "our installations".
+     *
+     * Never inferred. A photograph is NAC's work because somebody said so.
+     */
+    ownWork: bool(input.ownWork),
+    /**
+     * THE PICTURE FOR THIS BRAND'S EQUIPMENT OPTION.
+     *
+     * Nick, 5 November 2026: "Put these in the options for each brand",
+     * sending a product set for each — the indoor fan coil, the outdoor unit
+     * and the controller, on white.
+     *
+     * NAC's own photographs of finished work are the right thing in the
+     * gallery and a poor thing beside a price: an outdoor unit against a
+     * rendered wall does not show a customer what they are buying. A brand's
+     * set image does. This marks which one to put on the option, and it beats
+     * the brand match rather than competing with it.
+     *
+     * It does NOT touch the system card: that card is a portrait crop, and a
+     * wide product set squeezed into it loses both ends.
+     */
+    optionImage: bool(input.optionImage)
   };
 }
 
@@ -744,6 +775,16 @@ export function normaliseUpgrade(input = {}) {
     // has always been, and Number(null) being 0 must not turn it into a free
     // one somebody can order a hundred of.
     unitPriceIncGst: num(input.unitPriceIncGst),
+    /**
+     * The photograph that goes beside this upgrade on the page.
+     *
+     * Nick, 5 November 2026: "Airtouch pictures next to Airtouch option,
+     * sensor next to sensor option." Left empty, upgradeImageFor() matches
+     * the library against this upgrade's own title. Set, it wins outright —
+     * and if the id names nothing publishable, the upgrade gets NO picture
+     * rather than a substitute, because NAC asked for that one.
+     */
+    imageId: trimmed(input.imageId) || null,
     unitLabel: trimmed(input.unitLabel) || 'each',
     maxQuantity: num(input.maxQuantity),
     defaultQuantity: num(input.defaultQuantity) ?? 0,
@@ -786,4 +827,436 @@ export function resolveUpgrades(library = [], capabilities = {}) {
     offerable.push(u);
   }
   return { offerable, withheld };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDARD SCOPE, AND NAC'S INSTALLATION ALLOWANCES
+//
+// Nick, 4 November 2026: "Allow me to manage... standard inclusions and
+// exclusions... equipment prices and installation allowances."
+//
+// Both of these were hard-coded. The standard inclusions and exclusions lived
+// as two arrays inside quote-builder.html, which meant Nick could not change a
+// word of what every NAC quote promises without somebody editing the
+// application. They are content, and they belong in the library.
+//
+// NOTHING HERE INVENTS A RATE. An allowance is a figure NAC set, with a name
+// and a note saying what it covers. An allowance with no price is carried as
+// an allowance with no price — it does not fall back to a typical figure, and
+// a quote carrying one is a provisional estimate rather than a fixed price.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NAC's own wording for what every quote includes and excludes.
+ *
+ * The shipped list is what quote-builder.html has been using since the quote
+ * workflow was built, so a library nobody has opened behaves exactly as the
+ * application did before. The moment Nick edits it, his wording wins outright.
+ */
+export const SHIPPED_STANDARD_SCOPE = Object.freeze({
+  inclusions: Object.freeze([
+    'Supply and install of the system above',
+    'All ductwork, supply outlets and return air grilles',
+    'Electrical connection to an existing suitable circuit',
+    'Commissioning, balancing and handover',
+    'Removal of all installation waste'
+  ]),
+  exclusions: Object.freeze([
+    'Switchboard or circuit upgrades, if the existing board cannot carry the system',
+    'Patching or painting beyond the installation openings',
+    'Asbestos handling of any kind',
+    'Structural alterations to accommodate the equipment or ductwork'
+  ])
+});
+
+const lines = (v) => (Array.isArray(v) ? v : [])
+  .map(x => String(x ?? '').trim()).filter(Boolean);
+
+/**
+ * The standard scope as stored, falling back to the shipped wording.
+ *
+ * An EMPTY stored list is a real answer — Nick deciding NAC's quotes carry no
+ * standard exclusions is a decision, not a blank to fill in — so the fallback
+ * only applies when the key is absent altogether.
+ */
+export function standardScope(stored = null) {
+  const s = stored || {};
+  return {
+    inclusions: Array.isArray(s.inclusions)
+      ? lines(s.inclusions) : [...SHIPPED_STANDARD_SCOPE.inclusions],
+    exclusions: Array.isArray(s.exclusions)
+      ? lines(s.exclusions) : [...SHIPPED_STANDARD_SCOPE.exclusions],
+    /** True while this is the wording the application shipped with. */
+    isShipped: !Array.isArray(s.inclusions) && !Array.isArray(s.exclusions)
+  };
+}
+
+/**
+ * One installation allowance: a named sum NAC carry for work whose extent is
+ * not known until somebody is on site.
+ *
+ * `priceIncGst` null is the honest state of an allowance nobody has costed.
+ * It is offered with no figure rather than with a guess.
+ */
+export function normaliseAllowance(input = {}, index = 0) {
+  const a = input || {};
+  const s = (v) => String(v ?? '').trim();
+  const num = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const x = Number(v);
+    return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : null;
+  };
+  return {
+    id: s(a.id) || ('allow-' + (index + 1)),
+    title: s(a.title),
+    /** What it covers, and what would take it past the allowance. */
+    covers: s(a.covers),
+    priceIncGst: num(a.priceIncGst),
+    /** Where it belongs by default: the scope, or an optional extra. */
+    kind: a.kind === 'optional' ? 'optional' : 'scope',
+    enabled: a.enabled !== false,
+    sortOrder: Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : index
+  };
+}
+
+/**
+ * Which allowances can be put on a quote, and which cannot — with the reason.
+ *
+ * Nick: "Never invent missing rates." An allowance with no price is WITHHELD
+ * rather than quoted at nothing, because a zero on a proposal reads as "no
+ * charge" and that is a promise NAC did not make.
+ */
+export function allowancesFor(stored = []) {
+  const all = (Array.isArray(stored) ? stored : [])
+    .map(normaliseAllowance)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const offerable = [];
+  const withheld = [];
+  for (const a of all) {
+    if (!a.enabled) continue;
+    if (!a.title) {
+      withheld.push({ ...a, reason: 'No name, so nobody could tell what it is for.' });
+    } else if (a.priceIncGst === null) {
+      withheld.push({ ...a,
+        reason: 'No figure set. An allowance with no price is not quoted at zero — '
+          + 'a zero on a proposal reads as "no charge".' });
+    } else {
+      offerable.push(a);
+    }
+  }
+  return { offerable, withheld };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANUFACTURER BROCHURES
+//
+// Nick, 4 November 2026: "equipment and controller images and brochures."
+//
+// A link to the manufacturer's OWN document, so a customer can read the real
+// specification rather than a summary of it. Nothing here writes a word about
+// a unit: no description, no feature list, no performance figure. A product
+// claim NAC did not make is exactly what must not appear on a proposal, and a
+// plausible-looking manufacturer URL nobody supplied is a fabricated one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Only a real, absolute https link to a document. Nothing is constructed. */
+function brochureUrl(v) {
+  const u = String(v ?? '').trim();
+  if (!u) return '';
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'https:' ? parsed.href : '';
+  } catch (e) { return ''; }
+}
+
+export function normaliseBrochure(input = {}, index = 0) {
+  const b = input || {};
+  const s = (v) => String(v ?? '').trim();
+  return {
+    id: s(b.id) || ('doc-' + (index + 1)),
+    /** What the link says. NAC's words. */
+    title: s(b.title),
+    url: brochureUrl(b.url),
+    /** Which unit it belongs to. Matched on the model, loosely on the brand. */
+    brandId: s(b.brandId).toLowerCase().replace(/[^a-z0-9]+/g, ''),
+    model: s(b.model),
+    enabled: b.enabled !== false,
+    sortOrder: Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : index
+  };
+}
+
+/**
+ * The brochures that belong to one unit, and the ones that cannot be used.
+ *
+ * A brochure with no link, or a link that is not https, is WITHHELD. A
+ * proposal that offers a customer a dead link is worse than one that offers
+ * none, and an http link on an https page simply will not open.
+ */
+export function brochuresFor(stored = [], unit = {}) {
+  const u = unit || {};
+  const model = String(u.model ?? '').trim().toLowerCase();
+  const outdoor = String(u.outdoorModel ?? '').trim().toLowerCase();
+  const brandId = String(u.brandId ?? u.brand ?? '').trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+  const all = (Array.isArray(stored) ? stored : [])
+    .map(normaliseBrochure)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const usable = [];
+  const withheld = [];
+  for (const b of all) {
+    if (!b.enabled) continue;
+    if (!b.title) {
+      withheld.push({ ...b, reason: 'No title, so the link would have nothing to say.' });
+      continue;
+    }
+    if (!b.url) {
+      withheld.push({ ...b,
+        reason: 'No https link. A proposal offering a customer a dead link is worse '
+          + 'than one offering none, and no URL is ever constructed from a model name.' });
+      continue;
+    }
+    usable.push(b);
+  }
+
+  // Which of the usable ones is about THIS unit. A brochure with no model
+  // named is a brand-wide document and matches on the brand alone.
+  const matched = usable.filter(b => {
+    const m = b.model.toLowerCase();
+    if (m) return !!m && (m === model || m === outdoor
+      || model.startsWith(m) || m.startsWith(model));
+    return !!b.brandId && b.brandId === brandId;
+  });
+
+  return { matched, usable, withheld };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PICTURES OF NAC'S OWN WORK, AND PICTURES BESIDE WHAT THEY ARE OF
+//
+// Nick, 5 November 2026: "I want to have pictures of our installs in also as
+// well as unit pic next to each option. And Airtouch pictures next to Airtouch
+// option, sensor next to sensor option."
+//
+// Three separate asks, and they are three separate things:
+//
+//   · a GALLERY of jobs NAC has done — proof of the work;
+//   · the UNIT on each equipment option — so a customer comparing two systems
+//     can see both of them;
+//   · the right photograph beside each UPGRADE — the AirTouch console beside
+//     the AirTouch, the sensors beside the sensors.
+//
+// Nothing here invents a match. An option or an upgrade with no photograph NAC
+// has approved and labelled gets no photograph: a lookalike beside a price is
+// a product claim, and Nick's rule has always been that an incorrect generic
+// product image is worse than none.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NAC's own installations, from the image library.
+ *
+ * The richer `installations` records — a suburb, a description, consent — are
+ * case studies and take precedence wherever NAC has written them. This is the
+ * path for the ordinary case: Nick approves a photograph of a job and says it
+ * is his own work, and it appears. Nothing more is asked of him.
+ *
+ * The caption is the photograph's own alt text, because that is already a
+ * description of what is in it written by a person.
+ */
+export function ownWorkGallery(images = [], { max = 6 } = {}) {
+  const usable = list(images).map(normaliseImageAsset)
+    .filter(a => a.ownWork === true && imagePublishable(a).ok)
+    .filter(a => a.role !== IMAGE_ROLES.LOGO && a.role !== IMAGE_ROLES.HERO);
+
+  return usable.slice(0, Math.max(0, max)).map(a => ({
+    id: a.id,
+    cover: { src: publicImageRef(a), alt: trimmed(a.alt),
+             srcset: publicImageSrcset(a), focalPoint: a.focalPoint },
+    // What it is of, in NAC's own words. Never generated.
+    caption: trimmed(a.alt),
+    brand: trimmed(a.equipmentBrand) || null
+  })).filter(g => !!g.cover.src);
+}
+
+const wordKey = (v) => trimmed(v).toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/**
+ * The photograph that belongs beside one upgrade.
+ *
+ * `imageId` on the upgrade wins outright — NAC saying "this picture, this
+ * option" is the end of it. Otherwise the library is scored against the
+ * upgrade's own title, and only POSITIVE evidence can select a photograph:
+ *
+ *   a model the photograph names, appearing in the title   +3
+ *   the photograph's brand, appearing in the title         +2
+ *   a tag on the photograph, appearing in the title        +1
+ *
+ * Nothing scoring zero is offered, so an upgrade NAC has no picture of gets
+ * none rather than the nearest thing. Where two photographs score the same,
+ * the one with fewer tags the title does NOT mention wins: between an AirTouch
+ * console and an AirTouch console showing room sensors, "AirTouch 5 smart
+ * control" takes the first and "Room temperature sensors" takes the second.
+ */
+export function upgradeImageFor(images = [], upgrade = {}) {
+  const assets = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const explicit = trimmed(upgrade.imageId);
+  if (explicit) {
+    const hit = assets.find(a => a.id === explicit);
+    // An explicit id that names nothing publishable is NOT quietly replaced by
+    // a guess: NAC asked for that picture and it is not available.
+    return hit ? publicPicture(hit) : null;
+  }
+
+  const title = wordKey([upgrade.title, upgrade.description].filter(Boolean).join(' '));
+  if (!title) return null;
+  const words = [upgrade.title, upgrade.description].filter(Boolean).join(' ')
+    .split(/[^A-Za-z0-9]+/).map(w => w.toLowerCase()).filter(Boolean);
+
+  let best = null;
+  for (const a of assets) {
+    let score = 0;
+    for (const m of a.equipmentModels) {
+      const k = wordKey(m);
+      if (k && title.includes(k)) score += 3;
+    }
+    const brand = wordKey(a.equipmentBrand);
+    if (brand && title.includes(brand)) score += 2;
+
+    let unmatched = 0;
+    for (const t of list(a.tags)) {
+      const k = wordKey(t);
+      if (k.length < 4) continue;
+      // EITHER WAY ROUND. A "controller" tag belongs to an upgrade whose
+      // title says "control", and `title.includes('controller')` is false
+      // there — so the tag scored nothing, the AirTouch console lost to a
+      // photograph of a sensor, and the sensor photograph ended up on both
+      // lines. Every word of the title is tried, not just the first long one.
+      const hit = title.includes(k)
+        || words.some(w => w.length >= 5 && k.includes(w));
+      if (hit) score += 1; else unmatched += 1;
+    }
+    if (score <= 0) continue;
+    if (!best || score > best.score
+        || (score === best.score && unmatched < best.unmatched)) {
+      best = { asset: a, score, unmatched };
+    }
+  }
+  return best ? publicPicture(best.asset) : null;
+}
+
+/** One asset, in the shape a page renders. */
+function publicPicture(a) {
+  const src = publicImageRef(a);
+  if (!src) return null;
+  return { src, alt: trimmed(a.alt), srcset: publicImageSrcset(a),
+           focalPoint: a.focalPoint, id: a.id };
+}
+
+/**
+ * The photograph that belongs on one equipment option.
+ *
+ * The same matcher the single system card already uses, per option, so a
+ * customer choosing between a Daikin and a Braemar sees both of them. An
+ * option carrying its own `image` keeps it — that is NAC being explicit.
+ */
+export function optionImageFor(images = [], option = {}) {
+  // An explicit src still has to be one a customer page will load: https, or
+  // a data URI. The renderer refuses anything else silently, so refusing it
+  // here as well means the absence is visible to the gate and the checks
+  // rather than only at the moment the page is drawn.
+  if (option && option.image && allowedRef(option.image.src)) {
+    return { src: trimmed(option.image.src), alt: trimmed(option.image.alt) || null,
+             srcset: list(option.image.srcset), focalPoint: option.image.focalPoint };
+  }
+
+  // ── THE BRAND'S OWN SET IMAGE, WHERE NAC HAS ONE ────────────────────────
+  //
+  // Matched on the brand EXACTLY as the brand is named. "Mitsubishi Electric"
+  // and "Mitsubishi Heavy Industries" are two different companies, and a
+  // customer quoted one of them must never be shown a photograph of the
+  // other's machine — so a loose "mitsubishi" match is worse than no match at
+  // all, and there is none.
+  const wantBrand = brandKey(option.brand ?? option.brandName ?? option.brandId);
+  if (wantBrand) {
+    const set = list(images).map(normaliseImageAsset)
+      .filter(a => a.optionImage === true && imagePublishable(a).ok)
+      .find(a => brandKey(a.equipmentBrand) === wantBrand);
+    if (set) return publicPicture(set);
+  }
+  const matched = equipmentImagesFor(images, {
+    model: option.model, outdoorModel: option.outdoorModel,
+    brandName: option.brand, brandId: option.brandId
+  }, { max: 1 });
+  return matched.length ? publicPicture(matched[0]) : null;
+}
+
+/**
+ * The photograph that belongs beside the ZONE CONTROLLER.
+ *
+ * Nick, 5 November 2026: a Zonemaster six-zone wall panel, sent on its own,
+ * straight after the exchange that made Siemens the zone control in the price
+ * and AirTouch the upgrade.
+ *
+ * This matcher is DELIBERATELY STRICTER than the upgrade one, and it is worth
+ * saying why rather than leaving it to look like an oversight.
+ *
+ * Every zone controller ever made is named with the words "zone" and
+ * "control". Score a library on those and a Zonemaster panel matches "Siemens
+ * Home zone control — 6 zone" with room to spare, and a customer buying a
+ * Siemens kit is shown a photograph of somebody else's part, beside its price,
+ * on a document they are being asked to sign. That is the same error as
+ * putting a Mitsubishi Electric machine on a Mitsubishi Heavy Industries
+ * quote, and no amount of scoring fixes it, because the evidence genuinely
+ * is not there.
+ *
+ * So only two things select a picture here:
+ *
+ *   1. `controller.imageId` — NAC naming the picture for this part outright.
+ *   2. The asset's own `equipmentBrand` appearing in the controller's name —
+ *      an AirTouch console on a controller called "AirTouch 5", a Zonemaster
+ *      panel on a controller called "Zonemaster 6 zone".
+ *
+ * A model the photograph names, appearing in the controller's name, counts as
+ * the brand does: it is the part identifying itself.
+ *
+ * Anything else gets no picture. A zone controller NAC has no photograph of
+ * reads as it always has — the part, its code and how many zones it handles —
+ * which tells the customer the truth.
+ */
+export function controllerImageFor(images = [], controller = {}) {
+  const assets = list(images).map(normaliseImageAsset)
+    .filter(a => a.role === IMAGE_ROLES.EQUIPMENT && imagePublishable(a).ok);
+
+  const explicit = trimmed(controller.imageId);
+  if (explicit) {
+    const hit = assets.find(a => a.id === explicit);
+    // An id naming nothing publishable is not quietly replaced by a guess.
+    return hit ? publicPicture(hit) : null;
+  }
+
+  const name = wordKey(controller.name);
+  if (!name) return null;
+
+  let best = null;
+  for (const a of assets) {
+    let score = 0;
+    for (const m of a.equipmentModels) {
+      const k = wordKey(m);
+      if (k && k.length >= 4 && name.includes(k)) score += 3;
+    }
+    const brand = wordKey(a.equipmentBrand);
+    if (brand && brand.length >= 4 && name.includes(brand)) score += 2;
+    if (score <= 0) continue;
+    // Between two photographs of the same brand's control, the one tagged
+    // 'controller' wins: NAC's AirTouch library holds a console and a room
+    // sensor, and the console is the controller.
+    const isController = list(a.tags).some(t => wordKey(t) === 'controller'
+      || wordKey(t) === 'panel' || wordKey(t) === 'console');
+    if (isController) score += 1;
+    if (!best || score > best.score) best = { asset: a, score };
+  }
+  return best ? publicPicture(best.asset) : null;
 }

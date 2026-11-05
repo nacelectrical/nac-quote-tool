@@ -16,10 +16,14 @@ import { NAC_TRUST, seedTermsAndConditions } from '../../designer/engines/presen
 
 /** The upgrade library, as the content store holds it. */
 export const UPGRADES = [
+  // `imageId` mirrors designer/content/nac-upgrades.json: the pairing Nick
+  // asked for by name, stated rather than left to the title matcher.
   { id: 'at5', title: 'AirTouch 5 smart control', priceIncGst: 1350,
+    imageId: 'airtouch-console-4-zone',
     description: 'Colour touchscreen, phone app control, each zone to its own temperature.',
     requires: ['has_zoning', 'daikin_system'], enabled: true, sortOrder: 1 },
   { id: 'sensor', title: 'Room temperature sensors', unitPriceIncGst: 110,
+    imageId: 'airtouch-room-sensor',
     unitLabel: 'each', maxQuantity: 8, defaultQuantity: 0,
     description: 'A sensor in the rooms you choose, so the system holds that room to its '
       + 'setpoint rather than the hallway’s.',
@@ -43,10 +47,36 @@ export function quoteOnlyDraft(over = {}) {
       { id: 'sys-b', brand: 'Braemar', brandId: 'braemar', model: 'KDHV160D1S',
         capacityKw: 16.3, phase: '1Ph', priceIncGst: 14553, warrantyYears: 7 }
     ],
-    controller: { name: 'AirTouch 5', zoneCount: 8 },
+    // ── THE ZONE CONTROL IS THE HOUSE RULE'S, AND THE AIRTOUCH IS THE
+    //    UPGRADE FROM IT ──────────────────────────────────────────────────
+    //
+    // This fixture named the AirTouch 5 as the quote's zone control AND
+    // offered "AirTouch 5 smart control" as a $1,350 upgrade beside it — the
+    // same controller, included and charged. duplicateCharges() flags exactly
+    // that, and it was sitting in the demonstration quote.
+    //
+    // Nick, "siemens is used if not airtouch, this is on pricelist also": the
+    // base is a Siemens kit sized to the zone count, which is what
+    // selectZoneController() returns for six zones, and the AirTouch is what
+    // a customer upgrades TO. So the proposal now shows both — the Siemens in
+    // the price, the AirTouch as the option.
+    controller: {
+      id: 'siemens_z6',
+      name: 'Siemens Home zone control — 6 zone',
+      zoneCount: 6,
+      includedInPrice: true
+    },
     scope: {
       outletCount: 10, returnCount: 2, zoneCount: 6,
       summary: 'Ducted reverse-cycle throughout the single storey, six zones.',
+      // ── THE ZONES, CHOSEN ─────────────────────────────────────────────
+      //
+      // Nick, 5 November 2026: "Want to be able to choose the zones." A zone
+      // is a thing the estimator makes and names, in their own order, and the
+      // rooms point at one. The count follows this list, so the two can no
+      // longer contradict each other on the customer's page.
+      zonesChosen: true,
+      zones: ['Living', 'Master', 'Bed 2', 'Bed 3', 'Bed 4', 'Study'],
       conditionedRooms: [
         { label: 'Living / Dining', zone: 'Living', outlets: 3 },
         { label: 'Kitchen', zone: 'Living', outlets: 1 },

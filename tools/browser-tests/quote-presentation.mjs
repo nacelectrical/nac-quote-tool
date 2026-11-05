@@ -16,6 +16,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 import { buildPresentation } from '../../designer/engines/presentation.mjs';
+import { buildTestQuote } from '../quote-only-proof.mjs';
 import { renderPresentationHtml } from '../../designer/ui/presentation-html.mjs';
 import { presentationPrintHtml, renderPresentationPdf } from '../../designer/ui/presentation-pdf.mjs';
 import { buildDemoDesign, DEMO_CONTENT, DEMO_IMAGES } from '../../tests/fixtures/demo-presentation.mjs';
@@ -121,6 +122,31 @@ for (const status of ['issued', 'accepted', 'sent']) {
 const P = built.presentation;
 const HTML = renderPresentationHtml(P);
 
+// ── A DRAFT HAS NOTHING TO ACCEPT ───────────────────────────────────────────
+//
+// P above is a DEMONSTRATION built at status 'draft', which is what makes it
+// safe to render here: the builder refuses to issue, accept or send
+// demonstration content, and the refusal is asserted above.
+//
+// That also means it carries no acceptance form and no sticky accept bar —
+// correctly, because there is nothing on a draft to accept. The checks that
+// drive those controls therefore need a quote that CAN be accepted, so they
+// use the labelled test quote: NAC's own content, a real price, issued, and
+// banner-labelled TEST QUOTE on every surface.
+const { built: liveBuilt } = buildTestQuote();
+if (!liveBuilt.ok) {
+  console.error('the test quote did not build:',
+    (liveBuilt.blockers || []).map(b => b.code).join(', '));
+  process.exit(1);
+}
+const LIVE = liveBuilt.presentation;
+const LIVE_HTML = renderPresentationHtml(LIVE);
+if (!LIVE.acceptance || LIVE.acceptance.canAccept !== true) {
+  console.error('the test quote cannot be accepted, so the acceptance checks below '
+    + 'would prove nothing');
+  process.exit(1);
+}
+
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
 
 // ── 1. layout at every viewport Nick named ──────────────────────────────────
@@ -214,7 +240,14 @@ console.log('\nTouch');
   ok(await page.locator('.opt-in').first().isChecked() !== before,
      'an upgrade toggles when the whole card is tapped');
 
-  // The sticky bar keeps the total and the accept action in reach.
+  // A DRAFT has nothing to accept, so it carries no sticky accept bar.
+  ok(!(await page.locator('#sticky').count()),
+     'a draft shows no accept bar, because there is nothing on it to accept');
+
+  // On a quote that CAN be accepted, the bar keeps the total and the action in
+  // reach without scrolling back.
+  await page.setContent(LIVE_HTML, { waitUntil: 'load' });
+  await page.waitForTimeout(200);
   ok(await page.locator('#sticky .sticky-btn').isVisible(),
      'the sticky total and accept action stay on screen');
   await ctx.close();
@@ -226,7 +259,8 @@ console.log('\nAcceptance');
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 },
     hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
-  await page.setContent(HTML, { waitUntil: 'load' });
+  // The test quote, not the demonstration: a draft has no acceptance form.
+  await page.setContent(LIVE_HTML, { waitUntil: 'load' });
   await page.evaluate(() => {
     window.__calls = [];
     window.NACQuote = { accept: (p) => window.__calls.push(p) };

@@ -34,16 +34,54 @@ const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DOC = JSON.parse(readFileSync(ROOT + '/designer/content/nac-photos.json', 'utf8'));
 
 test('every photograph in the manifest is actually in the repository', () => {
-  assert.equal(DOC.photos.length, 9);
+  // Nine of NAC's own work, plus seven manufacturer images supplied by Nick on
+  // 5 November 2026: the room sensor, a ducted set for each of five brands,
+  // and the Zonemaster six-zone wall panel.
+  assert.equal(DOC.photos.length, 16);
   for (const p of DOC.photos) {
     const full = ROOT + '/designer/content/' + p.file;
     assert.ok(existsSync(full), p.file + ' is listed and not present');
-    assert.ok(statSync(full).size > 50000, p.file + ' is too small to be a photograph');
+    // ── BYTES ARE A POOR PROXY FOR "IS THIS A PHOTOGRAPH" ──────────────
+    //
+    // A wide shot of a roof space is hundreds of kilobytes. A tight crop of a
+    // flat white sensor on a white wall compresses to twelve, because there
+    // is almost nothing in it to encode — and it is still a photograph of the
+    // thing a customer is buying.
+    //
+    // So this floor only catches a file that is empty or truncated. Whether
+    // the image is big enough to put on a page is checked where the imported
+    // record can be read, against its actual pixel dimensions.
+    assert.ok(statSync(full).size > 4000, p.file + ' is too small to be a photograph');
     assert.ok(p.alt && p.alt.length > 25, p.file + ' has no usable alt text');
     // `seen` is what is actually visible in the frame. It is the evidence for
     // the alt text and the brand, and it is how somebody checks this later.
     assert.ok(p.seen && p.seen.length > 40, p.file + ' records nothing about what is in it');
   }
+});
+
+test('whose work each photograph is, is recorded and not inferred', () => {
+  // A photograph can be a picture OF a machine and a picture of a job NAC
+  // did. The second is what puts it in the gallery headed "Recent NAC
+  // installations", so a manufacturer's product image has to be marked as
+  // one — and the manifest has to say where it came from.
+  const own = DOC.photos.filter(p => p.ownWork !== false);
+  const supplied = DOC.photos.filter(p => p.ownWork === false);
+  assert.equal(own.length, 9);
+  assert.equal(supplied.length, 7);
+  for (const p of supplied) {
+    assert.ok(p._provenance && p._provenance.length > 40,
+      p.file + ' is not NAC’s own work and does not say where it came from');
+  }
+});
+
+test('a photograph whose subject is off-centre records where it is', () => {
+  // The page crops to a square beside an upgrade and to 4:3 in the gallery,
+  // and object-fit takes the middle. A sensor on the left of a wide kitchen
+  // shot is cropped straight out of its own thumbnail.
+  const sensor = DOC.photos.find(p => /room-sensor/.test(p.file));
+  assert.ok(sensor, 'the room sensor photograph is not in the manifest');
+  assert.ok(sensor.focalPoint && sensor.focalPoint.x < 0.4,
+    'the sensor is left of centre and nothing says so');
 });
 
 test('not one model number was guessed, and the brands are off the badge', () => {
@@ -124,11 +162,13 @@ test('a Braemar quote gets a Braemar, now that one has arrived', () => {
 test('every brand NAC quotes has a photograph of its own', () => {
   const lib = assets();
   const brands = [...new Set(DOC.photos.map(p => p.equipmentBrand))];
-  assert.deepEqual(brands.sort(), ['AirTouch', 'Braemar', 'Daikin', 'Fujitsu']);
+  assert.deepEqual(brands.sort(), ['AirTouch', 'Braemar', 'Daikin', 'Fujitsu',
+    'Mitsubishi Electric', 'Mitsubishi Heavy Industries', 'Zonemaster']);
 
-  // The three a system is quoted under. AirTouch is a controller brand and
+  // The brands a system is quoted under. AirTouch is a controller brand and
   // never appears as "your recommended system", which is why it is not here.
-  for (const brand of ['Daikin', 'Fujitsu', 'Braemar']) {
+  for (const brand of ['Daikin', 'Fujitsu', 'Braemar', 'Mitsubishi Electric',
+                       'Mitsubishi Heavy Industries']) {
     const got = equipmentImagesFor(lib, { brandName: brand });
     assert.ok(got.length >= 1, brand + ' has no photograph on file');
     for (const a of got) {
@@ -136,7 +176,12 @@ test('every brand NAC quotes has a photograph of its own', () => {
     }
   }
 
-  // A brand NAC does not stock gets none, rather than the nearest thing.
+  // ── A BARE "MITSUBISHI" IS NOT A BRAND ────────────────────────────────
+  //
+  // Mitsubishi Electric and Mitsubishi Heavy Industries are two different
+  // companies, and the library now holds a photograph of each. A loose match
+  // would show a customer the other one's machine, so there is none: no
+  // picture is the safe answer, a coin flip between two manufacturers is not.
   assert.deepEqual(equipmentImagesFor(lib, { brandName: 'Mitsubishi' }), []);
 });
 

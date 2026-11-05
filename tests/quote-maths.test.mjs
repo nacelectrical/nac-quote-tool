@@ -186,3 +186,112 @@ test('no price at all is reported rather than guessed', () => {
   assert.equal(r.grossMarginPct, null);
   assert.ok(r.warnings.some(w => w.code === 'NO_SELL_PRICE'));
 });
+
+// ── LINES NAC CHARGE A SET PRICE FOR ────────────────────────────────────────
+//
+// These two were lost when the duct designer came out, because the bill of
+// materials that used to build them went with it. The RULES did not go with
+// it: `calculateCommercials` still takes a `fixedSellTotal`, every quote that
+// carries a sundry line at a price Nick set still goes through it, and both of
+// these are the kind of mistake nobody spots on a screen.
+//
+// Nick set a price for six sundry lines and said they are what NAC CHARGE, not
+// what NAC pay. So they are not in the job cost — nothing recorded a cost for
+// them — and they are added to the customer's price AFTER the job fee.
+//
+// A fixed-sell line is built here as a plain object rather than through a
+// builder, which is what the engine has always consumed: `fixedSellTotal` is
+// the ex-GST total of those lines and `fixedSellLabels` is what they are.
+
+const withFixed = (total, labels) =>
+  bom(5000, 3000, { fixedSellTotal: total, fixedSellLabels: labels });
+
+test('the job fee is worked out over the cost, never over the sell lines', () => {
+  const labels = ['Condensate pump', 'Roof penetration flashing'];
+  const r = calculateCommercials({ bom: withFixed(900, labels), labour: flatFee(6000) });
+
+  // The fee base is the JOB COST and nothing else: 5000 + 3000.
+  assert.equal(r.totalJobCost, 8000);
+  assert.equal(r.pricingBasis.feeBaseExGst, 8000,
+    'the fee must be worked out over the cost, not over the cost plus the sell lines');
+  assert.equal(r.pricingBasis.feeAppliedExGst, 6000);
+  assert.equal(r.pricingBasis.fixedSellExGst, 900);
+
+  // 8000 cost + 6000 fee + 900 charged = 14,900 ex GST → 16,390 inc GST,
+  // worked out by hand.
+  assert.equal(r.sellPriceExGst, 14900);
+  assert.equal(r.sellPriceIncGst, Math.round(14900 * GST * 100) / 100);
+
+  // ── THE DOUBLE CHARGE THIS PREVENTS ───────────────────────────────────
+  // Rolling the sell lines into the fee base would price the job at
+  // (8000 + 900) + 6000 + 900 = 15,800 ex GST — $900 more than NAC's own
+  // pricing says, charging margin on those lines twice: once in the price
+  // Nick set, and again as their share of the fee.
+  assert.notEqual(r.sellPriceExGst, 15800);
+  assert.equal(r.pricingBasis.label, 'Job cost + flat fee, plus fixed-price lines');
+});
+
+test('a quote with no fixed-sell lines prices exactly as it always did', () => {
+  // The guard on the test above: adding fixed-sell handling must not move the
+  // figure on a job that has none.
+  const plain = calculateCommercials({ bom: bom(5000, 3000), labour: flatFee(6000) });
+  const zero = calculateCommercials({ bom: withFixed(0, []), labour: flatFee(6000) });
+  assert.equal(zero.sellPriceIncGst, plain.sellPriceIncGst);
+  assert.equal(zero.sellPriceExGst, 14000);
+  assert.equal(zero.pricingBasis.label, 'Job cost + flat fee');
+  assert.equal(zero.marginExcludesCostOf, null);
+});
+
+test('the margin says what it does not know', () => {
+  const labels = ['Condensate pump', 'Roof penetration flashing'];
+  const r = calculateCommercials({ bom: withFixed(900, labels), labour: flatFee(6000) });
+
+  // Sell ex GST minus RECORDED cost: 14,900 − 8,000. Every dollar of the
+  // fixed-price lines reads as profit, and some of it is what NAC paid the
+  // supplier.
+  assert.equal(r.grossProfit, 6900);
+
+  // So the figure is stated with what is unknown beside it, rather than
+  // quietly overstated. This is the whole point of the test: a $6,900 gross
+  // profit on a $6,000 fee is not a $900 windfall, it is $900 of lines whose
+  // cost nobody recorded.
+  assert.ok(r.marginExcludesCostOf, 'the overstated margin must declare itself');
+  assert.equal(r.marginExcludesCostOf.fixedSellExGst, 900);
+  assert.deepEqual(r.marginExcludesCostOf.lines, labels,
+    'it has to name the lines, so the estimator knows where to look');
+  assert.match(r.marginExcludesCostOf.note, /not recorded/);
+  assert.match(r.marginExcludesCostOf.note, /true margin is lower/);
+
+  // And it does not also raise the "margin is not the fee" alarm, because the
+  // difference is explained: the fee plus the fixed-price lines is exactly it.
+  assert.ok(!r.warnings.some(w => w.code === 'MARGIN_NOT_EQUAL_TO_FEE'),
+    'the expected profit includes the fixed-price lines, so there is nothing to flag');
+});
+
+test('on job cost plus fee, gross profit is the fee plus the sell lines and nothing else', () => {
+  // The load-bearing identity, extended: whatever the costs are, gross profit
+  // is the fee plus the fixed-price lines. If it ever drifts, something is
+  // being counted twice or lost.
+  for (const [equip, mats, fee, fixed] of [
+    [5000, 3000, 6000, 900], [0, 0, 6000, 0], [12345.67, 8901.23, 7500, 1234.56],
+    [250000, 180000, 60000, 5000]
+  ]) {
+    const r = calculateCommercials({
+      bom: bom(equip, mats, { fixedSellTotal: fixed, fixedSellLabels: ['A line'] }),
+      labour: flatFee(fee)
+    });
+    assert.equal(r.grossProfit, Math.round((fee + fixed) * 100) / 100,
+      'gross profit drifted on ' + [equip, mats, fee, fixed].join('/'));
+  }
+});
+
+test('a fixed-price line is still charged when the estimator types their own price', () => {
+  // An override is the whole price, so the sell lines are inside it — adding
+  // them again would charge the customer twice for the same pump.
+  const r = calculateCommercials({ bom: withFixed(900, ['Condensate pump']),
+    labour: flatFee(6000), sellOverride: 18000 });
+  assert.equal(r.sellPriceIncGst, 18000);
+  assert.equal(r.pricingBasis.key, 'override');
+  // The margin note still applies: the cost of that pump is still not recorded.
+  assert.ok(r.marginExcludesCostOf, 'an override does not make an unknown cost known');
+});

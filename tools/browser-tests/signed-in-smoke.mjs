@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
 let fail=0; const say=(n,c,x)=>{console.log(`  ${c?'PASS':'FAIL'}  ${n}${x?'  — '+x:''}`); if(!c)fail++;};
-for (const page of ['index.html','admin.html','designer.html']) {
+for (const page of ['index.html','admin.html','quote-builder.html']) {
   const ctx=await b.newContext({viewport:{width:1400,height:1000}});
   await ctx.route('**/rest/v1/**', r=>r.fulfill({status:200,contentType:'application/json',body:'[]'}));
   const p=await ctx.newPage();

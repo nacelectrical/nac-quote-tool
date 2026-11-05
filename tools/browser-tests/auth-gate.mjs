@@ -26,7 +26,7 @@ async function ctxWith({signedIn=false}={}){
   });
   if(signedIn){
     const p=await ctx.newPage();
-    await p.goto('http://127.0.0.1:8777/designer.html');
+    await p.goto('http://127.0.0.1:8777/quote-builder.html');
     await p.evaluate(()=>localStorage.setItem('nac_session_v1', JSON.stringify({
       access_token:'STAFF-TOKEN-123', expires_at:Math.floor(Date.now()/1000)+3600,
       user:{email:'nick@nacelectrical.com.au'}})));
@@ -36,7 +36,7 @@ async function ctxWith({signedIn=false}={}){
 }
 
 console.log('\n[1] UNAUTHENTICATED visitor opens each internal page');
-for (const page of ['designer.html','admin.html','index.html']) {
+for (const page of ['quote-builder.html','admin.html','index.html']) {
   const {ctx, dbAuth}=await ctxWith();
   const p=await ctx.newPage();
   p.on('pageerror',e=>console.log('   [pageerror]',e.message.slice(0,110)));
@@ -83,7 +83,7 @@ console.log('\n[2] Wrong password is refused');
 {
   const {ctx}=await ctxWith();
   const p=await ctx.newPage();
-  await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1500);
+  await p.goto('http://127.0.0.1:8777/quote-builder.html',{waitUntil:'load'}); await p.waitForTimeout(1500);
   await p.fill('#nac-email','nick@nacelectrical.com.au');
   await p.fill('#nac-pass','WRONG');
   await p.click('#nac-go'); await p.waitForTimeout(1200);
@@ -98,21 +98,27 @@ console.log('\n[3] Correct password signs in, and the token reaches the database
 {
   const {ctx, dbAuth}=await ctxWith();
   const p=await ctx.newPage();
-  await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(1500);
+  await p.goto('http://127.0.0.1:8777/quote-builder.html',{waitUntil:'load'}); await p.waitForTimeout(1500);
   await p.fill('#nac-email','nick@nacelectrical.com.au');
   await p.fill('#nac-pass','correct-horse');
   await p.click('#nac-go'); await p.waitForTimeout(3000);
   const gone=await p.evaluate(()=>!document.getElementById('nac-signin'));
-  // What "the designer renders" actually means: the shell is up and the
+  // What "the builder renders" actually means: the shell is up and the
   // estimator has somewhere to start. A raw character count was a proxy for
-  // that, and QUICK QUOTE MODE's first screen is deliberately short.
+  // that, and the first screen is deliberately short.
+  //
+  // THE SELECTORS ARE THE ONES THE PAGE HAS. They were the duct designer's —
+  // `.brand h1`, `.steps .step`, a file input in `.main` — and quote-builder
+  // has none of them, so this read as "the page is broken" on a page that was
+  // fine. A check looking for furniture that does not exist teaches you to
+  // ignore the check.
   const shell=await p.evaluate(()=>({
-    brand: !!document.querySelector('.brand h1'),
-    steps: document.querySelectorAll('.steps .step').length,
-    upload: !!document.querySelector('.main input[type=file]')
+    brand: !!document.querySelector('header h1'),
+    steps: document.querySelectorAll('.steps button').length,
+    firstStep: !!document.querySelector('.stepbody[data-step="1"] input')
   }));
   say('  the gate is removed', gone);
-  say('  the designer renders', shell.brand && shell.steps>0 && shell.upload,
+  say('  the builder renders', shell.brand && shell.steps>0 && shell.firstStep,
     JSON.stringify(shell));
   const withToken=dbAuth.filter(a=>/STAFF-TOKEN-123/.test(a)).length;
   say('  db requests carry the STAFF token, not the anon key', withToken>0 && dbAuth.every(a=>/STAFF-TOKEN-123/.test(a)),
@@ -124,7 +130,7 @@ console.log('\n[4] The session survives a reload (no re-login every page)');
 {
   const {ctx}=await ctxWith({signedIn:true});
   const p=await ctx.newPage();
-  await p.goto('http://127.0.0.1:8777/designer.html',{waitUntil:'load'}); await p.waitForTimeout(2000);
+  await p.goto('http://127.0.0.1:8777/quote-builder.html',{waitUntil:'load'}); await p.waitForTimeout(2000);
   say('  no sign-in screen for an already-signed-in user',
       await p.evaluate(()=>!document.getElementById('nac-signin')));
   await ctx.close();
@@ -134,7 +140,7 @@ console.log('\n[5] An EXPIRED session is not accepted');
 {
   const {ctx}=await ctxWith();
   const p=await ctx.newPage();
-  await p.goto('http://127.0.0.1:8777/designer.html');
+  await p.goto('http://127.0.0.1:8777/quote-builder.html');
   await p.evaluate(()=>localStorage.setItem('nac_session_v1', JSON.stringify({
     access_token:'OLD', expires_at:Math.floor(Date.now()/1000)-60, user:{email:'x@y.z'}})));
   await p.reload({waitUntil:'load'}); await p.waitForTimeout(2000);

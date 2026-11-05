@@ -75,6 +75,24 @@ say('the page says TEST QUOTE before anything else',
   && /TEST QUOTE/.test(await page.locator('.test-banner').innerText()));
 
 // ── THE IMAGES LOAD ─────────────────────────────────────────────────────────
+//
+// Every picture on the page is `loading="lazy"`, so one below the first
+// screen has not been fetched until somebody scrolls to it. Reading the whole
+// page is what a customer does, and it is what this has to do before it can
+// say whether the pictures load — otherwise it reports the installation
+// gallery as broken for behaving exactly as intended.
+await page.evaluate(async () => {
+  const step = window.innerHeight;
+  for (let y = 0; y < document.body.scrollHeight; y += step) {
+    window.scrollTo(0, y);
+    await new Promise(r => setTimeout(r, 90));
+  }
+  window.scrollTo(0, 0);
+});
+await page.waitForFunction(
+  () => [...document.querySelectorAll('img:not(#lbImg)')]
+    .every(n => n.complete), null, { timeout: 15000 }).catch(() => {});
+
 // The lightbox image is deliberately empty until a gallery photograph is
 // opened, so it is not one of the page's pictures.
 const imgs = await page.$$eval('img:not(#lbImg)', ns => ns.map(n => ({
@@ -198,6 +216,53 @@ say('the customer can ask a question',
   (await page.locator('text=Ask a question').count()) > 0);
 say('the customer can decline',
   (await page.locator('#declineBtn').count()) > 0);
+
+// ── TAKING A COPY AWAY ──────────────────────────────────────────────────────
+//
+// Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+// same offer data." The same document, not a second one: a separate print
+// render could disagree with the screen, which is exactly the failure that put
+// a static artifact in front of a customer in September.
+
+say('there is a way to take a copy away',
+  (await page.locator('[data-print]').count()) > 0);
+
+const webTotal = (await page.textContent('.inv-total strong')).trim();
+
+// What printing actually produces, asked of the browser itself rather than
+// assumed from the stylesheet.
+await page.emulateMedia({ media: 'print' });
+const hiddenWhenPrinted = await page.evaluate(() => {
+  const vis = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return 'absent';
+    return getComputedStyle(el).display === 'none' ? 'hidden' : 'shown';
+  };
+  return { nav: vis('.nav'), sticky: vis('.sticky'), accept: vis('.accept'),
+           upgrades: vis('#options'), chooser: vis('#choose'),
+           printbar: vis('.printbar'),
+           // What MUST still print.
+           total: vis('.inv-total'), firmness: vis('.inv-firm'),
+           scope: vis('#scope'), warranty: vis('#warranty'),
+           system: vis('#system') };
+});
+for (const [what, state] of Object.entries(hiddenWhenPrinted)) {
+  // The system chooser stays on paper: it shows both systems, their prices and
+  // which one is selected, and the dedicated print render keeps it too.
+  const mustGo = ['nav', 'sticky', 'accept', 'upgrades', 'printbar'].includes(what);
+  // Nothing in the offer itself may vanish on paper.
+  if (mustGo) {
+    say('printing drops the ' + what, state === 'hidden' || state === 'absent', state);
+  } else {
+    say('printing keeps the ' + what, state === 'shown', state);
+  }
+}
+
+// The money on paper is the money on screen.
+const printTotal = (await page.textContent('.inv-total strong')).trim();
+say('the printed total is the total on screen', printTotal === webTotal,
+  printTotal + ' vs ' + webTotal);
+await page.emulateMedia({ media: 'screen' });
 
 const real = errs.filter(e => !/favicon/.test(e));
 say('no javascript errors on the page', real.length === 0, real.join(' | '));

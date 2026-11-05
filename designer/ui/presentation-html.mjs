@@ -260,6 +260,14 @@ function systemHtml(p) {
             + '</ul>')
         + when(!!s.warranty, '<p class="sys-warranty">' + icon('shield')
             + '<span>' + esc(s.warranty) + '</span></p>')
+        // ── THE MANUFACTURER'S OWN DOCUMENT ──────────────────────────────
+        // Only a brochure NAC supplied and matched to this unit. The link
+        // text is NAC's; nothing here describes the unit, because a product
+        // claim NAC did not make has no business on NAC's proposal.
+        + when((s.brochures || []).length > 0,
+            '<ul class="sys-docs">' + (s.brochures || []).map(b =>
+              '<li><a href="' + esc(b.url) + '" target="_blank" rel="noopener noreferrer">'
+              + esc(b.title) + '</a></li>').join('') + '</ul>')
       + '</div>'
     + '</div>');
 }
@@ -338,18 +346,35 @@ function zonesHtml(p) {
   // One markup, two presentations: a real table on wide screens, and the same
   // rows as cards under 720px. Nick: "avoid horizontal tables; convert
   // schedules into cards."
+  // ── THE CONTROL, WITH ITS PICTURE ───────────────────────────────────────
+  //
+  // Nick, 5 November 2026, sending a photograph of a six-zone wall panel. The
+  // section named the part and showed nothing, so the one component the
+  // customer actually touches every day was the one thing on the proposal
+  // they could not picture.
+  //
+  // Alt text, NOT aria-hidden: unlike the upgrade thumbnails, nothing beside
+  // this says what the panel looks like, so the description is the only way a
+  // screen reader conveys it.
+  const ctrlLine = when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller)
+    + when(!!z.controllerSku, ' (' + esc(z.controllerSku) + ')')
+    + when(z.controllerMaxZones > 0, ', which handles up to ' + esc(z.controllerMaxZones)
+        + ' zones')
+    + '.'
+    + when(z.controllerIncludedInSystem === true,
+        ' It is supplied with the system at no separate charge.')
+    + '</p>');
+  const ctrlPic = z.controllerImage && z.controllerImage.src
+    ? '<figure class="ctrl-img">'
+      + picture(z.controllerImage, { ratio: '1 / 1', sizes: '(max-width:560px) 40vw, 180px' })
+      + '</figure>'
+    : '';
+
   return sect('zones', 'Your zones',
     // The actual part, its supplier code and what it costs. "Controlled by the
     // Brand Standard Controller" named nothing a customer could look up and
     // nothing anybody had priced.
-    when(!!z.controller, '<p class="lede">Controlled by the ' + esc(z.controller)
-      + when(!!z.controllerSku, ' (' + esc(z.controllerSku) + ')')
-      + when(z.controllerMaxZones > 0, ', which handles up to ' + esc(z.controllerMaxZones)
-          + ' zones')
-      + '.'
-      + when(z.controllerIncludedInSystem === true,
-          ' It is supplied with the system at no separate charge.')
-      + '</p>')
+    (ctrlPic ? '<div class="ctrl-row">' + ctrlPic + '<div>' + ctrlLine + '</div></div>' : ctrlLine)
     + '<div class="tablewrap"><table class="grid">'
     + '<thead><tr><th>Zone</th>' + when(z.showRooms, '<th>Rooms</th>')
       + '<th>Control</th></tr></thead><tbody>'
@@ -386,7 +411,7 @@ function coverageHtml(p) {
     + when(c.provisional, '<p class="note">' + esc(c.provisionalNote) + '</p>'));
 }
 
-function galleryHtml(p) {
+function galleryHtml(p, print = false) {
   const gs = p.installations || [];
   if (!gs.length) return '';
   return sect('work', 'Recent NAC installations',
@@ -395,13 +420,26 @@ function galleryHtml(p) {
         g.brand, g.capacityKw ? g.capacityKw + ' kW' : '',
         g.zoneCount ? g.zoneCount + ' zones' : ''
       ].filter(Boolean).join(' · ');
+      // ── A PHOTOGRAPH IS NOT ALWAYS A CASE STUDY ──────────────────────
+      //
+      // A case-study record carries a suburb and leads with it. A gallery
+      // drawn from the photographs themselves has no suburb, and printing
+      // an empty heading — or the word "undefined" — above each one is
+      // worse than leading with what the picture actually shows.
+      const heading = str(g.location).trim();
+      const shot = picture(g.cover,
+        { ratio: '4 / 3', sizes: '(min-width:900px) 320px, 45vw' });
       return '<li class="shot">'
-        + '<button type="button" class="shot-btn" data-gallery="' + i + '"'
-        + ' aria-label="View larger image of the ' + esc(g.location) + ' installation">'
-        + picture(g.cover, { ratio: '4 / 3', sizes: '(min-width:900px) 320px, 45vw' })
-        + '</button>'
+        // A lightbox button is a control nobody can press on paper, and the
+        // printed document carries none at all.
+        + (print ? shot
+          : '<button type="button" class="shot-btn" data-gallery="' + i + '"'
+            + ' aria-label="View a larger image of '
+            + esc(heading ? 'the ' + heading + ' installation'
+                          : (g.description || 'this installation')) + '">'
+            + shot + '</button>')
         + '<div class="shot-body">'
-          + '<h3>' + esc(g.location) + '</h3>'
+          + when(!!heading, '<h3>' + esc(heading) + '</h3>')
           + when(!!facts, '<p class="shot-facts">' + esc(facts) + '</p>')
           + when(!!g.description, '<p>' + esc(g.description) + '</p>')
         + '</div></li>';
@@ -482,18 +520,29 @@ function trustHtml(p) {
  * Drawn only when there IS a choice. A single-system quote shows the system
  * where it always did and no chooser at all.
  */
-function systemChoiceHtml(p) {
+function systemChoiceHtml(p, print = false) {
   const sc = p.systemChoice;
   if (!sc || !sc.offersChoice || !sc.options?.length) return '';
-  return sect('choose', 'Choose your system',
-    '<p class="lede">Two ways to do the same job. Whichever you choose is the price '
-    + 'below — the installation, the ductwork and the workmanship warranty are the '
-    + 'same either way.</p>'
+  return sect('choose', print ? 'Your system' : 'Choose your system',
+    '<p class="lede">' + (print
+      ? 'Two ways to do the same job, and the one marked below is the price on this '
+        + 'proposal. The installation, the ductwork and the workmanship warranty are '
+        + 'the same either way.'
+      : 'Two ways to do the same job. Whichever you choose is the price '
+        + 'below — the installation, the ductwork and the workmanship warranty are the '
+        + 'same either way.') + '</p>'
     + '<ul class="opts syschoice">' + sc.options.map(o =>
       '<li><label class="opt sys">'
-      + '<input type="radio" name="sys" class="sys-in" value="' + esc(o.id) + '"'
-      + ' data-sys-price="' + esc(String(o.priceIncGst)) + '"'
-      + (o.chosen ? ' checked' : '') + '>'
+      // ── NOTHING TO PRESS ON PAPER ────────────────────────────────────
+      // A radio button in a printed document is a control nobody can use.
+      // The printed version marks the chosen system with a glyph instead,
+      // which says the same thing and is not an input.
+      + (print
+        ? '<span class="sys-mark" aria-hidden="true">' + (o.chosen ? '●' : '○') + '</span>'
+          + '<span class="sr-only">' + (o.chosen ? 'Selected' : 'Not selected') + '</span>'
+        : '<input type="radio" name="sys" class="sys-in" value="' + esc(o.id) + '"'
+          + ' data-sys-price="' + esc(String(o.priceIncGst)) + '"'
+          + (o.chosen ? ' checked' : '') + '>')
       + '<span class="opt-body">'
         + '<span class="opt-h"><strong>' + esc(o.label) + '</strong>'
         + '<em>' + esc(moneyRound(o.priceIncGst)) + '</em></span>'
@@ -501,11 +550,41 @@ function systemChoiceHtml(p) {
           + esc([o.capacityKw ? o.capacityKw + ' kW' : '', o.phase].filter(Boolean).join(' · '))
           + when(!!o.note, ' — ' + esc(o.note))
         + '</span>'
+        // ── THE EXACT PAIR ───────────────────────────────────────────
+        // Both halves, so a customer can check what they were quoted
+        // against what turns up on the day. Only when there IS an outdoor
+        // model: repeating the indoor model under its own name adds nothing.
+        + when(!!o.outdoorModel,
+            '<span class="sys-pair">' + esc(o.modelPair || o.model) + '</span>')
+        // The unit itself, beside the price, so a customer comparing two
+        // systems can see both. Through picture() so it carries the srcset
+        // and the focal point rather than loading a full-width photograph
+        // into a 190px box on a phone.
+        + when(!!(o.image && o.image.src),
+            '<span class="sys-img">' + picture(o.image,
+              { ratio: '4 / 3', sizes: '(min-width:900px) 220px, 40vw' }) + '</span>')
         + when(o.warrantyYears > 0,
             '<span class="sys-warr">' + esc(String(o.warrantyYears))
             + '-year manufacturer warranty</span>')
         + when(o.recommended === true, '<span class="sys-rec">Our recommendation</span>')
       + '</span></label></li>').join('') + '</ul>');
+}
+
+/**
+ * The picture beside one upgrade.
+ *
+ * Nick, 5 November 2026: "Airtouch pictures next to Airtouch option, sensor
+ * next to sensor option." Small and first, so the words still lead and the
+ * price is still the thing being read — it is there to say WHICH thing this
+ * is, not to sell it.
+ *
+ * `aria-hidden`, because the title beside it already says what it is and a
+ * screen reader reading the alt text as well would say it twice.
+ */
+function upgradeThumb(o) {
+  if (!o.image || !o.image.src) return '';
+  return '<span class="opt-img" aria-hidden="true">'
+    + picture(o.image, { ratio: '1 / 1', sizes: '92px' }) + '</span>';
 }
 
 function optionsHtml(p) {
@@ -527,6 +606,7 @@ function optionsHtml(p) {
         const sysAttr = o.forSystemIds
           ? ' data-opt-systems="' + esc(o.forSystemIds.join(' ')) + '"' : '';
         return '<li class="opt-li"' + sysAttr + '><div class="opt opt-qty">'
+          + upgradeThumb(o)
           + '<span class="opt-body">'
             + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
             + '<em>' + esc(money(o.unitPriceIncGst)) + ' ' + esc(o.unitLabel || 'each') + '</em></span>'
@@ -549,6 +629,7 @@ function optionsHtml(p) {
         + '<input type="checkbox" class="opt-in" value="' + esc(o.id) + '"'
         + ' data-opt-price="' + esc(String(o.priceIncGst ?? 0)) + '"'
         + (o.selected ? ' checked' : '') + (o.group ? ' data-group="' + esc(o.group) + '"' : '') + '>'
+        + upgradeThumb(o)
         + '<span class="opt-body">'
           + '<span class="opt-h"><strong>' + esc(o.title) + '</strong>'
           + '<em>' + esc(money(o.priceIncGst)) + '</em></span>'
@@ -603,8 +684,18 @@ function investmentHtml(p) {
         + esc(inv.proposalPrice ? 'Proposal price' : 'Total investment') + '</span>'
         + '<strong data-total>' + esc(moneyRound(inv.totalIncGst)) + '</strong>'
         + '<small>including GST</small></p>'
-      // Directly under the number, where somebody reading only the number sees
-      // it. A price that can move says so beside itself, not in the terms.
+      // ── WHICH PROMISE THIS PRICE IS ─────────────────────────────────
+      // Directly under the number, where somebody reading only the number
+      // sees it. A price that can move says so beside itself, not in the
+      // terms and not in a footnote.
+      + when(!!inv.firmness,
+          '<p class="inv-firm' + (inv.firmness && inv.firmness.fixed ? ' is-fixed' : '')
+          + '"><strong>' + esc(inv.firmness && inv.firmness.label) + '.</strong> '
+          + esc(inv.firmness && inv.firmness.note)
+          + when(!!(inv.firmness && inv.firmness.confirmWhat),
+              ' <span class="inv-confirm">' + esc(inv.firmness && inv.firmness.confirmWhat)
+              + '</span>')
+          + '</p>')
       + when(!!inv.proposalNote,
           '<p class="inv-prov"><strong>Not a fixed price.</strong> '
           + esc(inv.proposalNote) + '</p>')
@@ -726,6 +817,27 @@ function navHtml(p) {
     + '</ul></nav>';
 }
 
+/**
+ * A way to take a copy away.
+ *
+ * Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+ * same offer data." A customer who wants it on paper, or as a PDF to send to
+ * their partner, should not have to find Cmd-P — and "we will send you a PDF"
+ * is not a feature.
+ *
+ * It prints THIS document, with the interactive furniture dropped by
+ * WEB_PRINT_HIDE, so the paper copy cannot be a different offer from the one
+ * on screen. Save-as-PDF is the same button in every browser's print dialog.
+ */
+function printBarHtml(p) {
+  if (!p.investment) return '';
+  return '<div class="printbar">'
+    + '<button type="button" class="btn ghost printbtn" data-print>'
+    + 'Save or print a copy</button>'
+    + '<span>Prints as a clean document — the choices you have made are included.</span>'
+    + '</div>';
+}
+
 function stickyHtml(p) {
   if (!p.investment || !p.acceptance.canAccept) return '';
   return '<div class="sticky" id="sticky">'
@@ -764,17 +876,33 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + scopeHtml(p)
     + zonesHtml(p)
     + coverageHtml(p)
-    + galleryHtml(p)
+    + galleryHtml(p, print)
     + reviewsHtml(p)
     + trustHtml(p)
-    + systemChoiceHtml(p)
+    + systemChoiceHtml(p, print)
     + investmentHtml(p)
     + when(!print, optionsHtml(p))
     + warrantyHtml(p)
     + when(!print, acceptHtml(p))
+    + when(!print, printBarHtml(p))
     + footerHtml(p);
 
-  return '<!DOCTYPE html>\n<html lang="en-AU"><head>'
+  // ── ON PAPER THERE IS NO FOLD ───────────────────────────────────────
+  //
+  // Every photograph on the page is `loading="lazy"`, which is right for a
+  // customer scrolling a web page and wrong for a document being printed:
+  // the browser renders the PDF without ever scrolling, so anything below
+  // the first screen is still unloaded when the page is captured. Four
+  // installation photographs came out as four empty boxes.
+  //
+  // The print build asks for all of them up front. It is done here rather
+  // than threaded through every picture() call because it is true of the
+  // whole document and of nothing else.
+  const page = (html) => print
+    ? html.replace(/loading="lazy"/g, 'loading="eager"')
+    : html;
+
+  return page('<!DOCTYPE html>\n<html lang="en-AU"><head>'
     + '<meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
     + '<meta name="robots" content="noindex,nofollow">'
@@ -784,7 +912,8 @@ export function renderPresentationHtml(presentation, opts = {}) {
     // Print rules apply unconditionally in print mode, and inside @media print
     // for the web build — so Cmd-P from the customer's own link produces the
     // same document the PDF does, not a screenshot of a web page.
-    + '<style>' + CSS + (print ? PRINT_ONLY : '@media print{' + PRINT_ONLY + '}') + '</style>'
+    + '<style>' + CSS + (print ? PRINT_ONLY
+        : '@media print{' + PRINT_ONLY + WEB_PRINT_HIDE + '}') + '</style>'
     + '</head><body class="' + (print ? 'print' : 'web')
         + (p.demonstration ? ' demo' : '')
         + (p.testQuote ? ' testq' : '') + '">'
@@ -812,7 +941,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
         + 'aria-label="Installation photograph"><button class="lb-close" id="lbClose" '
         + 'aria-label="Close">&times;</button><img id="lbImg" alt=""></div>')
     + when(!print, '<script>' + SCRIPT + '</script>')
-    + '</body></html>';
+    + '</body></html>');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1104,12 +1233,49 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
   text-transform:uppercase;color:var(--navy);background:#EEF3FB;border-radius:999px;
   padding:4px 10px;margin-top:2px}
 .syschoice .opt-h em{font-size:18px}
+.sys-docs{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
+.sys-docs a{color:var(--navy);font-size:14.5px;text-decoration:underline;
+  text-underline-offset:3px;overflow-wrap:anywhere}
+.sys-mark{flex:0 0 auto;font-size:17px;line-height:1.2;color:var(--navy)}
+/* Said to a screen reader, not shown. The glyph beside it is decorative. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.sys-pair{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+.sys-img{display:block;margin-top:10px;width:100%;max-width:220px}
+.sys-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
+/* The picture beside an upgrade: small, so the words still lead. */
+.opt-img{flex:0 0 auto;width:92px;margin-right:2px}
+.ctrl-row{display:flex;gap:16px;align-items:flex-start}
+.ctrl-row > div{flex:1 1 auto;min-width:0}
+.ctrl-row .lede{margin-top:0}
+.ctrl-img{flex:0 0 auto;width:180px;margin:0}
+.ctrl-img .imgbox{border-radius:10px;border:1px solid var(--line);overflow:hidden;background:#fff}
+/* On a phone a 40vw picture beside the sentence left the text in a 186px
+   gutter, four words to the line. The picture goes above it instead. */
+@media(max-width:560px){.ctrl-row{display:block}.ctrl-img{width:150px;margin-bottom:12px}}
+.opt-img .imgbox{border-radius:9px;border:1px solid var(--line);overflow:hidden}
+@media(max-width:560px){.opt-img{width:70px}}
+
+/* ── take a copy away ───────────────────────────────────────────────── */
+.printbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;
+  padding:18px 0 4px;border-top:1px solid var(--line);margin-top:8px}
+.printbar span{color:var(--muted);font-size:14px;flex:1;min-width:200px}
+.printbtn{min-height:48px}
 
 /* ── investment ─────────────────────────────────────────────────────── */
 .inv-prov{margin-top:12px;padding:12px 14px;border-radius:10px;
   background:#FFF7E0;border:1px solid var(--gold-d);color:var(--ink);
   font-size:14px;line-height:1.5;
   -webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* Fixed price or provisional estimate. The provisional one is the warning
+   colour, because it is the one a customer must not read as the other. */
+.inv-firm{margin-top:12px;padding:12px 14px;border-radius:10px;
+  background:#FFF7E0;border:1px solid var(--gold-d);color:var(--ink);
+  font-size:14px;line-height:1.5;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.inv-firm.is-fixed{background:#EEF6F0;border-color:#C6E3D2}
+.inv-confirm{display:block;margin-top:6px;font-style:italic}
 .inv{display:grid;gap:26px}
 @media(min-width:900px){.inv{grid-template-columns:1fr 1fr;gap:40px;align-items:start}}
 .inv-b{display:flex;flex-direction:column}
@@ -1248,6 +1414,34 @@ p{margin:0 0 1em}p:last-child{margin-bottom:0}
 `;
 
 /** Print rules. Applied for mode:'print' and also inside @media print for web. */
+/**
+ * What the WEB document drops when the customer prints it.
+ *
+ * Nick, 4 November 2026: "Provide a clean printable or PDF version using the
+ * same offer data."
+ *
+ * The same document, not a second one. A separate print route would be a
+ * second rendering of the offer, and two renderings can disagree — which is
+ * exactly the failure that put a static artifact in front of a customer in
+ * September. So the printable version IS this page, with its interactive
+ * furniture removed: the section nav, the sticky total bar, the radio
+ * chooser, the upgrade tick-list and the acceptance form are all things you
+ * cannot do on paper.
+ *
+ * What the customer chose is still printed, because the investment lines
+ * carry the selected options and the chosen system's price.
+ *
+ * The SYSTEM CHOOSER stays. It is the one "interactive" block that is worth
+ * having on paper — it shows both systems, their prices and which one is
+ * selected — and the dedicated print render (mode: 'print') keeps it too. The
+ * two renderings must agree about what is in the document, because two
+ * renderings that disagree is the failure this is all guarding against.
+ */
+const WEB_PRINT_HIDE = `
+.nav,.sticky,.accept,.printbar,.lightbox{display:none!important}
+#options{display:none!important}
+`;
+
 const PRINT_ONLY = `
 @page{size:A4;margin:14mm 12mm}
 /* The demonstration mark has to be on every printed page, not only the first,
@@ -1284,6 +1478,11 @@ body{font-size:11pt;background:#fff}
 const SCRIPT = `
 (function(){
   "use strict";
+  // Save or print a copy. The browser's own dialog, printing this document
+  // with the interactive furniture hidden, so the paper copy is the same
+  // offer as the screen rather than a second rendering of it.
+  var pb=document.querySelector('[data-print]');
+  if(pb) pb.addEventListener('click',function(){ window.print(); });
   var lb=document.getElementById('lightbox'),lbImg=document.getElementById('lbImg'),
       lbClose=document.getElementById('lbClose'),last=null;
   function openLb(src,alt){ if(!lb)return; last=document.activeElement;
