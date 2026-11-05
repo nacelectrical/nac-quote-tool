@@ -237,6 +237,101 @@ await step('the rooms can always be typed instead', async () => {
   if (after !== before + 1) throw new Error('Add a room did nothing: ' + before + ' -> ' + after);
 });
 
+// ── A PDF, WHICH IS WHAT A BUILDER ACTUALLY SENDS ──────────────────────────
+//
+// Nick, 5 November 2026: "The plan could not be read: Load failed." — Safari's
+// words for a fetch that never completed. The builder was posting the uploaded
+// file WHOLE as base64 in a JSON body, with none of the preparation in
+// image.mjs, and a serverless request body is capped around 4.5 MB.
+//
+// And the plan itself showed as a BLACK RECTANGLE on his phone, because iOS
+// will not render a PDF in an iframe from a data URL.
+await step('a PDF is rendered to a picture the estimator can see', async () => {
+  await page.locator('#planMount button', { hasText: /remove the plan/i }).click();
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#planFile', resolve(HERE, 'fixtures/plan.pdf'));
+  // pdf.js has to load and render.
+  await page.waitForTimeout(3000);
+
+  const shown = await page.evaluate(() => {
+    const img = document.querySelector('#planMount img.planview');
+    const frame = document.querySelector('#planMount iframe.planview');
+    return { img: !!img, frame: !!frame,
+             src: img ? String(img.src).slice(0, 24) : null,
+             w: img ? img.naturalWidth : 0, h: img ? img.naturalHeight : 0 };
+  });
+  if (!shown.img) {
+    throw new Error('a PDF still shows in an iframe, which is blank on iOS: '
+      + JSON.stringify(shown));
+  }
+  if (!/^data:image\//.test(String(shown.src))) {
+    throw new Error('the preview is not an image: ' + shown.src);
+  }
+  if (shown.w < 200 || shown.h < 200) {
+    throw new Error('the rendered page is ' + shown.w + 'x' + shown.h);
+  }
+});
+
+await step('what gets POSTED is a prepared image, not the whole file', async () => {
+  await page.evaluate(() => { window.__readBody = null; });
+  await page.locator('#planMount button', { hasText: /read the rooms/i }).click();
+  await page.waitForTimeout(2500);
+
+  const sent = await page.evaluate(() => window.__readBody);
+  if (!sent) throw new Error('/api/plan-read was never called');
+
+  // A PDF goes up as a rendered page, because the reader is being asked to
+  // look at a drawing, not to open a document.
+  if (!/^image\//.test(String(sent.mediaType))) {
+    throw new Error('the PDF was posted as ' + sent.mediaType);
+  }
+  if (!(sent.imageWidthPx > 0) || !(sent.imageHeightPx > 0)) {
+    throw new Error('no image size was sent: ' + JSON.stringify({
+      w: sent.imageWidthPx, h: sent.imageHeightPx }));
+  }
+  // THE ONE THAT WOULD HAVE CAUGHT "Load failed". A serverless request body is
+  // capped around 4.5 MB and base64 adds a third again.
+  const mb = sent.imageBase64.length / (1024 * 1024);
+  if (mb > 3.5) throw new Error('the request body is ' + mb.toFixed(1) + ' MB');
+  if (mb < 0.001) throw new Error('nothing was sent: ' + mb);
+  // And the longest edge is capped, so a 2480px sheet does not go up whole.
+  if (Math.max(sent.imageWidthPx, sent.imageHeightPx) > 1700) {
+    throw new Error('the page was not downscaled: '
+      + sent.imageWidthPx + 'x' + sent.imageHeightPx);
+  }
+});
+
+await step('the rooms off the PDF are listed and sized', async () => {
+  const t = await mountText();
+  for (const room of ['Bed 4', 'Garage']) {
+    if (!t.includes(room)) throw new Error(room + ' is missing: ' + t.slice(0, 200));
+  }
+  if (/Recommended capacity\s*0 kW/.test(t)) throw new Error('a read PDF sized at nothing');
+});
+
+await step('a dropped connection says something an estimator can act on', async () => {
+  // "Load failed" is Safari's wording and is the whole of what used to be
+  // shown. It names no cause and offers no way forward.
+  await page.evaluate(() => {
+    window.__realFetch = window.fetch;
+    window.fetch = async (u, o = {}) => {
+      if (String(u).includes('/api/plan-read')) throw new TypeError('Load failed');
+      return window.__realFetch(u, o);
+    };
+  });
+  await page.locator('#planMount button', { hasText: /read the rooms/i }).click();
+  await page.waitForTimeout(2500);
+  const flash = await page.evaluate(() =>
+    (document.querySelector('#flash')?.innerText || '').trim());
+  await page.evaluate(() => { window.fetch = window.__realFetch; });
+  if (/load failed/i.test(flash)) {
+    throw new Error('it still just repeats the browser at them: ' + flash);
+  }
+  if (!/connection|too large|by hand/i.test(flash)) {
+    throw new Error('no usable explanation: ' + JSON.stringify(flash));
+  }
+});
+
 await step('no javascript errors through any of it', async () => {
   if (errs.length) throw new Error(errs.slice(0, 3).join(' | '));
 });
