@@ -8,6 +8,24 @@ export function h(tag, attrs = {}, ...children) {
     if (k === 'class') el.className = v;
     else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
     else if (k === 'html') el.innerHTML = v;
+    // ── `text` IS CONTENT, NOT AN ATTRIBUTE ────────────────────────────────
+    //
+    // quote-builder.html has its own el() helper that takes { text: 'Add a
+    // room' } and sets textContent. This one did not, so a `text` key fell
+    // through to the generic branch below and became an HTML ATTRIBUTE:
+    //
+    //   <button class="btn" type="button" text="Add a room"></button>
+    //
+    // Valid HTML, no error, nothing thrown, nothing logged — and an empty
+    // button. plan-step.mjs was written against the other convention in 37
+    // places, which is the whole of the Floor plan and rooms step: every
+    // label, every radio option, every <option>, the Add a room button and
+    // the warning about not scaling from a car. All blank, on the step where
+    // the plan gets sized.
+    //
+    // Supported here rather than rewritten there, so the two helpers agree
+    // and the next person to mix them gets what they meant.
+    else if (k === 'text') el.textContent = v;
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'dataset') Object.assign(el.dataset, v);
     else if (v === true) el.setAttribute(k, '');
