@@ -334,12 +334,36 @@ export function planStep(ctx) {
   draft.rooms = Array.isArray(draft.rooms) ? draft.rooms : [];
 
   const plan = draft.plan || null;
-  const viewer = plan && plan.src
-    ? (String(plan.mediaType).includes('pdf')
-        ? h('iframe', { src: plan.src, class: 'planview', title: 'Floor plan' })
-        : h('img', { src: plan.src, class: 'planview', alt: 'Floor plan' }))
-    : h('div', { class: 'empty', text: 'No plan uploaded. You can still quote this job by '
-        + 'entering the rooms below.' });
+  // ── SHOWING A PDF ON AN iPAD ──────────────────────────────────────────
+  //
+  // Nick, 5 November 2026: the plan showed as a black rectangle on his phone.
+  // iOS will not render a PDF in an iframe from a data URL — it paints the
+  // frame and nothing else — so the estimator could not see the plan they had
+  // just uploaded, on the device they quote from.
+  //
+  // `preview` is page one rendered to an image, put there by the upload
+  // handler. The iframe stays as the fallback for a PDF that could not be
+  // rendered, because a desktop browser does show those.
+  const viewer = (() => {
+    if (!(plan && plan.src)) {
+      return h('div', { class: 'empty', text: 'No plan uploaded. You can still quote '
+        + 'this job by entering the rooms below.' });
+    }
+    // Page one, rendered to a picture by the upload handler.
+    if (plan.preview) {
+      return h('img', { src: plan.preview, class: 'planview', alt: 'Floor plan' });
+    }
+    if (!String(plan.mediaType || '').includes('pdf')) {
+      return h('img', { src: plan.src, class: 'planview', alt: 'Floor plan' });
+    }
+    // A PDF that could not be rendered falls back to the iframe, which a
+    // desktop browser does show. It is NOT used as the waiting state: a PDF
+    // inside a data: URL has no storage access and throws into the console on
+    // every draw for as long as it is on the page.
+    return plan.previewFailed
+      ? h('iframe', { src: plan.src, class: 'planview', title: 'Floor plan' })
+      : h('div', { class: 'empty', text: 'Opening page 1 of the plan\u2026' });
+  })();
 
   const file = h('input', { type: 'file', id: 'planFile',
                             accept: PLAN_TYPES.join(',') + ',image/*' });
@@ -349,8 +373,26 @@ export function planStep(ctx) {
     if (!planTypeOk(f.type)) { ctx.flash('bad', 'That is not a plan NAC can read. '
       + 'Use a PDF or a photograph.'); return; }
     const got = await readFileAsDataUri(f);
-    draft.plan = { ...(draft.plan || {}), ...got, page: 1 };
+    draft.plan = { ...(draft.plan || {}), ...got, page: 1,
+                   preview: null, previewFailed: false };
     onChange();
+
+    // Render page one of a PDF so it can be SEEN. Done after onChange() so the
+    // plan appears immediately and the picture catches up, and failure is not
+    // fatal: the viewer falls back to the iframe and the reader prepares its
+    // own copy regardless.
+    if (String(got.mediaType || '').includes('pdf')) {
+      try {
+        const { planToReadableImage } = await import('./image.mjs');
+        const shot = await planToReadableImage({ ...got, page: 1 });
+        draft.plan.preview = shot.dataUrl;
+        onChange();
+      } catch (e) {
+        // Rendering failed. Show the iframe instead of waiting forever.
+        draft.plan.previewFailed = true;
+        onChange();
+      }
+    }
   });
 
   return h('div', { class: 'col' }, [

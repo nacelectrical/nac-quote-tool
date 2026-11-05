@@ -445,6 +445,7 @@ import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
 import { selectZoneController } from '/designer/engines/equipment.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
+import { planToReadableImage } from '/designer/ui/image.mjs';
 import { presentationPrintHtml } from '/designer/ui/presentation-pdf.mjs';
 import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor,
          controllerImageFor, imagePublishable, IMAGE_ROLES }
@@ -611,26 +612,6 @@ function drawPlanStep() {
 }
 
 /**
- * How many pixels across the uploaded plan is.
- *
- * Measured off the image the browser has already decoded. A PDF has no pixel
- * size until it is rendered, so it reports none rather than a number somebody
- * could rely on — and the endpoint simply skips the bounds check, as it did
- * for everything before today.
- */
-function planPixelSize(plan) {
-  return new Promise((resolve, reject) => {
-    if (!plan || !plan.src || String(plan.mediaType || '').includes('pdf')) {
-      reject(new Error('no pixel size')); return;
-    }
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => reject(new Error('could not measure the plan'));
-    img.src = plan.src;
-  });
-}
-
-/**
  * Read the rooms off the uploaded plan.
  *
  * /api/plan-read is a pair of eyes: it reports the text it can see and where,
@@ -642,8 +623,37 @@ async function readPlan() {
   if (!draft.plan || !draft.plan.src) return;
   flash('ok', 'Reading the plan\u2026');
   try {
-    const [meta, b64] = draft.plan.src.split(',');
-    const mediaType = (meta.match(/data:([^;]+)/) || [])[1] || draft.plan.mediaType;
+    // ── PREPARE IT BEFORE POSTING IT ──────────────────────────────────────
+    //
+    // This posted the uploaded file WHOLE, as base64 inside a JSON body, with
+    // none of the preparation in designer/ui/image.mjs — which exists for
+    // exactly this and was sitting unused. base64 adds a third again, a plan
+    // photographed on a phone or exported as a builder's PDF is several
+    // megabytes before that, and a serverless request body is capped around
+    // four and a half. The request died at the edge and Safari reported it as
+    // "Load failed", which tells an estimator nothing at all.
+    //
+    // A PDF also becomes a rendered page here. iOS will not show one in an
+    // iframe from a data URL, which is why the plan appeared as a black
+    // rectangle; rendering page one fixes the picture and the request at once.
+    let ready;
+    try {
+      ready = await planToReadableImage(draft.plan);
+    } catch (e) {
+      flash('bad', 'That plan could not be prepared for reading: ' + e.message
+        + '. You can still enter the rooms by hand.');
+      return;
+    }
+
+    // Refuse here, with a figure and a way forward, rather than letting the
+    // network fail with a word nobody can act on.
+    const MB = 1024 * 1024;
+    if (ready.bytes > 3.5 * MB) {
+      flash('bad', 'That plan is still ' + (ready.bytes / MB).toFixed(1) + ' MB after '
+        + 'being prepared, and the reader takes about 3.5 MB. Crop it to the floor '
+        + 'plan itself, or enter the rooms by hand.');
+      return;
+    }
 
     // ── TELL THE READER HOW BIG THE IMAGE IS ──────────────────────────────
     //
@@ -653,14 +663,14 @@ async function readPlan() {
     // supplied" and the endpoint could not check a single box. A room label
     // whose box came back missing or wild was then dropped server-side — and a
     // dropped room label is a room that silently never existed.
-    const size = await planPixelSize(draft.plan).catch(() => null);
+    const b64 = ready.dataUrl.split(',')[1];
 
     const r = await fetch('/api/plan-read', {
       method: 'POST',
       headers: staffHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ imageBase64: b64, mediaType, page: draft.plan.page || 1,
-                             ...(size ? { imageWidthPx: size.width,
-                                          imageHeightPx: size.height } : {}) })
+      body: JSON.stringify({ imageBase64: b64, mediaType: ready.mediaType,
+                             page: draft.plan.page || 1,
+                             imageWidthPx: ready.width, imageHeightPx: ready.height })
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -689,8 +699,16 @@ async function readPlan() {
     }
     mark(); drawPlanStep(); syncRoomsIntoScope();
   } catch (e) {
-    flash('bad', 'The plan could not be read: ' + e.message
-      + '. You can still enter the rooms by hand.');
+    // "Load failed" is Safari's wording for a fetch that never completed, and
+    // it is the whole of what the estimator used to be told. Say what it
+    // actually means and what to do about it.
+    const network = /load failed|failed to fetch|networkerror/i.test(String(e.message));
+    flash('bad', network
+      ? 'The plan could not be sent — the connection dropped or the file was '
+        + 'refused as too large. Try again on a better signal, or enter the rooms '
+        + 'by hand.'
+      : 'The plan could not be read: ' + e.message
+        + '. You can still enter the rooms by hand.');
   }
 }
 

@@ -19,16 +19,21 @@ export const READ_MAX_EDGE = 1600;
  * @returns {Promise<{dataUrl:string, width:number, height:number, scale:number}>}
  *          `scale` multiplies a returned coordinate back to the original image.
  */
-export function downscaleDataUrl(dataUrl, maxEdge = READ_MAX_EDGE) {
+export function downscaleDataUrl(dataUrl, maxEdge = READ_MAX_EDGE, { force = false } = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const w = img.naturalWidth, h = img.naturalHeight;
       if (!w || !h) return reject(new Error('the image has no dimensions'));
       const longest = Math.max(w, h);
-      if (longest <= maxEdge) return resolve({ dataUrl, width: w, height: h, scale: 1 });
+      // `force` re-encodes even an image that is already small enough, which
+      // is what a HEIC off an iPhone needs: the size is fine, the format is
+      // one the reader will not take.
+      if (longest <= maxEdge && !force) {
+        return resolve({ dataUrl, width: w, height: h, scale: 1 });
+      }
 
-      const factor = maxEdge / longest;
+      const factor = Math.min(1, maxEdge / longest);
       const cw = Math.max(1, Math.round(w * factor));
       const ch = Math.max(1, Math.round(h * factor));
       const canvas = document.createElement('canvas');
@@ -308,4 +313,128 @@ export async function preparePlanImage(dataUrl, opts = {}) {
   }
   return { dataUrl: out, width: tw, height: th,
            sourceWidth: w, sourceHeight: h, downscaled: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GETTING A PLAN INTO SOMETHING THE READER CAN ACTUALLY BE SENT
+//
+// Nick, 5 November 2026: "The plan could not be read: Load failed."
+//
+// "Load failed" is Safari's words for a fetch that never completed. The quote
+// builder was posting the uploaded file WHOLE, as base64 inside a JSON body —
+// no downscale, none of the preparation in this very module — and base64 adds
+// a third again on top. A plan photographed on a phone, or a builder's PDF, is
+// several megabytes before that. A serverless request body is capped at about
+// four and a half, so the request died at the edge and the browser reported a
+// network failure with nothing useful in it.
+//
+// A PDF had a second problem of its own: iOS will not render one in an iframe
+// from a data URL, which is why the plan showed as a black rectangle on Nick's
+// phone. Rendering page one to an image fixes the preview and the request
+// together, and pdf.js has been sitting vendored and unused in this repository
+// since the designer was removed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where the vendored pdf.js lives, served straight from the static site. */
+const PDFJS_SRC = '/designer/vendor/pdf.min.js';
+const PDFJS_WORKER = '/designer/vendor/pdf.worker.min.js';
+
+let pdfjsPromise = null;
+function loadPdfJs() {
+  if (pdfjsPromise) return pdfjsPromise;
+  pdfjsPromise = new Promise((resolve, reject) => {
+    if (window.pdfjsLib) return resolve(window.pdfjsLib);
+    const s = document.createElement('script');
+    s.src = PDFJS_SRC;
+    s.onload = () => {
+      const lib = window.pdfjsLib;
+      if (!lib) return reject(new Error('pdf.js loaded but exported nothing'));
+      try { lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; } catch (e) { /* ignore */ }
+      resolve(lib);
+    };
+    s.onerror = () => reject(new Error('pdf.js could not be loaded'));
+    document.head.appendChild(s);
+  }).catch((e) => { pdfjsPromise = null; throw e; });
+  return pdfjsPromise;
+}
+
+const base64Of = (dataUrl) => String(dataUrl || '').split(',')[1] || '';
+
+/**
+ * Render one page of a PDF to a JPEG data URL, at most `maxEdge` across.
+ *
+ * @returns {Promise<{dataUrl:string,width:number,height:number,pages:number}>}
+ */
+export async function renderPdfPage(dataUrl, page = 1, maxEdge = READ_MAX_EDGE) {
+  const lib = await loadPdfJs();
+  const bytes = Uint8Array.from(atob(base64Of(dataUrl)), c => c.charCodeAt(0));
+  const doc = await lib.getDocument({ data: bytes }).promise;
+  const n = Math.min(Math.max(1, Math.round(page) || 1), doc.numPages);
+  const pg = await doc.getPage(n);
+
+  const base = pg.getViewport({ scale: 1 });
+  // Render AT the size it will be sent, rather than rendering large and
+  // shrinking: a plan is line work, and resampling thin lines twice is how
+  // printed dimension text stops being legible.
+  const scale = Math.min(4, maxEdge / Math.max(base.width, base.height));
+  const viewport = pg.getViewport({ scale: scale > 0 ? scale : 1 });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  const ctx = canvas.getContext('2d');
+  // A PDF page is transparent where nothing is drawn. Without this the plan
+  // reads as black lines on black.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await pg.render({ canvasContext: ctx, viewport }).promise;
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.92),
+           width: canvas.width, height: canvas.height, pages: doc.numPages };
+}
+
+/**
+ * The copy of a plan that gets SENT: an image, small enough to post.
+ *
+ * A PDF becomes a rendered page. An image is downscaled. Anything already
+ * small enough is left alone, because re-encoding a plan that did not need it
+ * only costs legibility.
+ *
+ * @returns {Promise<{dataUrl, mediaType, width, height, pages, fromPdf, bytes}>}
+ */
+export async function planToReadableImage(plan, { maxEdge = READ_MAX_EDGE } = {}) {
+  const src = plan && plan.src;
+  if (!src) throw new Error('there is no plan to read');
+  const isPdf = String(plan.mediaType || '').toLowerCase().includes('pdf')
+    || /^data:application\/pdf/i.test(src);
+
+  // HEIC is what an iPhone hands over by default and is not a format the
+  // reader accepts, so it is re-encoded even when it is already small. The
+  // browser can decode it — it is Apple's own device — and a canvas only ever
+  // writes PNG or JPEG back out.
+  const heic = /^data:image\/hei[cf]/i.test(src)
+    || /hei[cf]/i.test(String(plan.mediaType || ''));
+  const out = isPdf
+    ? await renderPdfPage(src, plan.page || 1, maxEdge)
+    : await downscaleDataUrl(src, heic ? Math.min(maxEdge, READ_MAX_EDGE) : maxEdge,
+                             { force: heic });
+
+  // The media type is read off the result rather than asserted: downscaleDataUrl
+  // returns the ORIGINAL untouched when it is already small enough, and
+  // claiming image/jpeg for a PNG — or worse, for the HEIC an iPhone hands
+  // over, which the reader cannot accept at all — is how a request that was
+  // the right size gets rejected for the wrong reason.
+  const declared = (String(out.dataUrl).match(/^data:([^;,]+)/) || [])[1] || 'image/jpeg';
+
+  return {
+    dataUrl: out.dataUrl,
+    mediaType: declared,
+    width: out.width,
+    height: out.height,
+    pages: out.pages || 1,
+    fromPdf: isPdf,
+    // What the request body will actually weigh, so a caller can refuse
+    // BEFORE the network does and say something useful about it.
+    bytes: base64Of(out.dataUrl).length
+  };
 }
