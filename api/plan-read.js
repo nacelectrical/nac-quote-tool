@@ -135,7 +135,20 @@ function sanitise(raw, { imageWidthPx, imageHeightPx }) {
         ? r.dimensionText.trim().slice(0, 32) : null,
       box: box(r.box)
     }))
-    .filter(r => r.text && r.box && inImage(r.box))
+    // ── A ROOM IS ITS NAME, NOT ITS BOX ────────────────────────────────
+    //
+    // This required a valid box, so a room the reader named and sized
+    // correctly — "BED 4", "3.63 X 3.0m" — was DISCARDED when the box came
+    // back missing or malformed. Dropped silently, server-side, leaving the
+    // screen to say nothing on the plan could be read as a room.
+    //
+    // The box is for drawing the overlay. The room list does not need one, and
+    // throwing away a legible room because its rectangle was not reported is
+    // losing the thing the estimator came for to keep a decoration. A box that
+    // IS present still has to be inside the image; one that is not is nulled,
+    // and the overlay skips it.
+    .map(r => ({ ...r, box: r.box && inImage(r.box) ? r.box : null }))
+    .filter(r => r.text)
     .slice(0, 80);
 
   const quality = ['good', 'fair', 'poor'].includes(raw.quality) ? raw.quality : 'fair';

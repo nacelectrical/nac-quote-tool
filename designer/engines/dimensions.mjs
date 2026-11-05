@@ -60,6 +60,56 @@ export function parseDimensionText(text) {
   return { mm: n, printed: raw, unit: 'mm' };
 }
 
+/**
+ * A ROOM SIZE PRINTED AS A PAIR: "3.63 X 3.0m", "3700 x 4200", "4.3 x 7.1m".
+ *
+ * Nick, 5 November 2026, with a screenshot of a plan whose rooms are labelled
+ * exactly this way: "Won't size plan."
+ *
+ * /api/plan-read reports this string VERBATIM in roomLabels[].dimensionText,
+ * because that endpoint is forbidden from doing arithmetic. Nothing then
+ * parsed it. The screen read roomLabels[].widthMm and lengthMm — fields that
+ * endpoint has never sent and was never asked to send — so every room arrived
+ * with no size, and a plan covered in printed dimensions sized at 0 kW.
+ *
+ * WHAT IT WILL NOT DO
+ *
+ * Return a number it is not sure of. Each side goes through
+ * parseDimensionText(), which already knows the Australian conventions ("3.4"
+ * is metres, "3400" is millimetres, "12" is a room number and not a length),
+ * and both sides must land inside a range a room can actually be. Anything
+ * else returns null, the room keeps its name and no dimension, and the screen
+ * says so. A room nobody has measured is a visible gap; a room measured wrong
+ * is a wrong price nobody can see.
+ *
+ * @returns {{widthMm:number, lengthMm:number, printed:string}|null}
+ */
+export function parsePrintedRoomSize(text) {
+  if (text === null || text === undefined) return null;
+  const raw = String(text).trim();
+  if (!raw) return null;
+
+  // The separator as plans print it: x, X, by, or the multiplication sign.
+  const parts = raw.split(/\s*(?:[xX\u00d7\u2715]|\bby\b)\s*/);
+  if (parts.length !== 2) return null;
+
+  // "3.63 X 3.0m" carries its unit on the SECOND half only, which is how these
+  // are written. parseDimensionText reads a bare "3.63" as metres because it
+  // is a small decimal, so the pair comes out right without the unit being
+  // copied across — and a pair that needs that assumption to work is a pair
+  // this refuses rather than guesses at.
+  const a = parseDimensionText(parts[0]);
+  const b = parseDimensionText(parts[1]);
+  if (!a || !b) return null;
+
+  // A room is between half a metre and thirty metres on a side. Outside that
+  // the text was not a room size — a scale ratio, a date, a product code.
+  const ok = (mm) => Number.isFinite(mm) && mm >= 500 && mm <= 30000;
+  if (!ok(a.mm) || !ok(b.mm)) return null;
+
+  return { widthMm: Math.round(a.mm), lengthMm: Math.round(b.mm), printed: raw };
+}
+
 function boxCentre(box) {
   return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
 }

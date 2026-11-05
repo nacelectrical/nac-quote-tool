@@ -611,6 +611,26 @@ function drawPlanStep() {
 }
 
 /**
+ * How many pixels across the uploaded plan is.
+ *
+ * Measured off the image the browser has already decoded. A PDF has no pixel
+ * size until it is rendered, so it reports none rather than a number somebody
+ * could rely on — and the endpoint simply skips the bounds check, as it did
+ * for everything before today.
+ */
+function planPixelSize(plan) {
+  return new Promise((resolve, reject) => {
+    if (!plan || !plan.src || String(plan.mediaType || '').includes('pdf')) {
+      reject(new Error('no pixel size')); return;
+    }
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => reject(new Error('could not measure the plan'));
+    img.src = plan.src;
+  });
+}
+
+/**
  * Read the rooms off the uploaded plan.
  *
  * /api/plan-read is a pair of eyes: it reports the text it can see and where,
@@ -624,10 +644,23 @@ async function readPlan() {
   try {
     const [meta, b64] = draft.plan.src.split(',');
     const mediaType = (meta.match(/data:([^;]+)/) || [])[1] || draft.plan.mediaType;
+
+    // ── TELL THE READER HOW BIG THE IMAGE IS ──────────────────────────────
+    //
+    // /api/plan-read asks for every box in the pixel coordinates of the image
+    // it was given, and validates that each one lands inside those bounds. It
+    // was never told the bounds, so the prompt fell back to "the image as
+    // supplied" and the endpoint could not check a single box. A room label
+    // whose box came back missing or wild was then dropped server-side — and a
+    // dropped room label is a room that silently never existed.
+    const size = await planPixelSize(draft.plan).catch(() => null);
+
     const r = await fetch('/api/plan-read', {
       method: 'POST',
       headers: staffHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ imageBase64: b64, mediaType, page: draft.plan.page || 1 })
+      body: JSON.stringify({ imageBase64: b64, mediaType, page: draft.plan.page || 1,
+                             ...(size ? { imageWidthPx: size.width,
+                                          imageHeightPx: size.height } : {}) })
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) {
