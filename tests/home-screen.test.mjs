@@ -155,13 +155,18 @@ function fakeBrowser() {
   globalThis.CustomEvent = class { constructor(type) { this.type = type; } };
 
   const reply = [];
-  globalThis.fetch = async (url, opts) => {
+  const realFetch = async (url, opts) => {
     calls.push({ url: String(url), body: JSON.parse(opts.body) });
     const next = reply.shift();
     if (!next) throw new Error('no reply queued');
     if (next.throw) throw new Error('offline');
-    return { ok: next.ok !== false, json: async () => next.body };
+    return {
+      ok: next.ok !== false,
+      status: next.status || (next.ok === false ? 400 : 200),
+      json: async () => next.body
+    };
   };
+  globalThis.fetch = realFetch;
 
   return {
     calls, reply,
@@ -169,7 +174,8 @@ function fakeBrowser() {
       for (const fn of listeners.get(type) || []) await fn();
     },
     session: () => JSON.parse(store.get('nac_session_v1') || 'null'),
-    put: (s) => store.set('nac_session_v1', JSON.stringify(s))
+    put: (s) => store.set('nac_session_v1', JSON.stringify(s)),
+    restoreFetch: () => { globalThis.fetch = realFetch; }
   };
 }
 
@@ -273,6 +279,88 @@ test('the printable proposal does not need a second window', () => {
   // than on a message about allowing pop-ups.
   assert.ok(!/Allow pop-ups for this site/.test(html),
     'the dead end is still there');
+});
+
+// ── WHAT ONLY GOES WRONG IN PRODUCTION ─────────────────────────────────────
+//
+// The first cut of this renewed correctly against a server that was up and a
+// browser with one tab open. Neither is a safe assumption, and none of the
+// checks above would have caught either.
+
+test('Supabase having a bad minute does not sign the estimator out', async () => {
+  // This cleared the session on ANY response that was not a success, which put
+  // rate limiting and a gateway hiccup in the same bucket as "your sign-in is
+  // no longer valid" — and signed somebody out over a 500 that would have been
+  // gone by the next attempt.
+  for (const status of [429, 500, 502, 503]) {
+    B.put({ ...soon(-10), refresh_token: 'rt-keep' });
+    B.reply.push({ ok: false, status, body: { msg: 'upstream' } });
+    const r = await auth.refreshSession();
+    assert.equal(r, null, 'HTTP ' + status + ' was treated as a renewal');
+    assert.ok(B.session(), 'HTTP ' + status + ' signed the estimator out');
+    assert.equal(B.session().refresh_token, 'rt-keep');
+  }
+});
+
+test('a credential the server refuses IS cleared', async () => {
+  for (const status of [400, 401]) {
+    B.put({ ...soon(-10), refresh_token: 'rt-dead' });
+    B.reply.push({ ok: false, status, body: { error: 'invalid_grant' } });
+    assert.equal(await auth.refreshSession(), null);
+    assert.equal(B.session(), null, 'HTTP ' + status + ' left a dead token in place');
+  }
+});
+
+test('the second tab does not spend a token the first one already spent', async () => {
+  // The portal and the builder are two pages, two JavaScript contexts, one
+  // session in localStorage. Supabase ROTATES refresh tokens, so two tabs
+  // waking together — which is what "New quote" from the portal does — meant
+  // the second presenting a token the first had spent, and being told no.
+  B.put({ ...soon(-10), refresh_token: 'rt-a' });
+  B.reply.push({ ok: true, body: { access_token: 'first', refresh_token: 'rt-b',
+                                   expires_in: 3600 } });
+  await auth.refreshSession();                 // the first tab renews
+
+  // The second tab wakes and finds the session already fresh. No request: a
+  // queued reply would be left over, and the next test would get it.
+  B.calls.length = 0;
+  const again = await auth.refreshSession();
+  assert.equal(again.access_token, 'first');
+  assert.equal(B.calls.filter(c => c.url).length, 0, 'it renewed a session that was fine');
+});
+
+test('a refusal about a token another tab has already replaced is ignored', async () => {
+  // Between the request going out and the answer coming back, the other tab
+  // renewed and stored a working session. Clearing here would throw away a
+  // good session to punish a dead one.
+  B.put({ ...soon(-10), refresh_token: 'rt-old' });
+  globalThis.fetch = async () => {
+    B.put({ ...soon(3600), access_token: 'from-the-other-tab', refresh_token: 'rt-new' });
+    return { ok: false, status: 400, json: async () => ({ error: 'invalid_grant' }) };
+  };
+  const r = await auth.refreshSession();
+  assert.ok(B.session(), 'the good session the other tab stored was thrown away');
+  assert.equal(B.session().access_token, 'from-the-other-tab');
+  assert.equal(r.access_token, 'from-the-other-tab');
+  B.restoreFetch();
+});
+
+test('a session with no expiry does not renew in a tight loop', async () => {
+  // secondsLeft() is Infinity for a session carrying no expires_at, setTimeout
+  // turns a delay of Infinity into ZERO, and the callback reschedules itself —
+  // so one malformed session turned the keep-alive into a loop firing
+  // renewals at Supabase as fast as the network would carry them.
+  const delays = [];
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => { delays.push(ms); return 0; };
+  try {
+    B.put({ access_token: 'a', refresh_token: 'rt', user: {} });   // no expires_at
+    auth.keepSessionAlive();
+  } finally { globalThis.setTimeout = realTimeout; }
+  assert.equal(delays.length, 1);
+  assert.ok(Number.isFinite(delays[0]), 'the delay is ' + delays[0]);
+  assert.ok(delays[0] >= 10000, 'it would fire immediately and reschedule itself');
+  assert.ok(delays[0] <= 1800000, 'the delay is ' + delays[0] + 'ms');
 });
 
 test('the renewal timer does not outlive the session', () => {

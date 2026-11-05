@@ -149,6 +149,50 @@ console.log('\n[5] An EXPIRED session is not accepted');
   await ctx.close();
 }
 
+// ── [5b] A RENEWAL THAT NEVER ANSWERS ──────────────────────────────────────
+//
+// index.html and admin.html HIDE THE PAGE until the sign-in gate resolves, and
+// quotes.html and quote-builder.html await it before loading anything. So when
+// the renewal added for the home-screen app went out over a connection that
+// accepted it and then said nothing — a phone on one bar, a roof space on the
+// edge of reception — the app sat on a blank screen with no sign-in form, no
+// message and no way forward. fetch has no timeout of its own.
+console.log('\n[5b] A RENEWAL THAT HANGS still lets the estimator in');
+for (const page of ['quote-builder.html', 'index.html']) {
+  const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 } });
+  // The token endpoint accepts the request and never answers.
+  await ctx.route('**/auth/v1/token**', () => { /* no fulfil, ever */ });
+  await ctx.route('**/rest/v1/**', r =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  const p = await ctx.newPage();
+  await p.goto('http://127.0.0.1:8777/' + page, { waitUntil: 'load' });
+  // An expired access token WITH a refresh token: the renewal path.
+  await p.evaluate(() => localStorage.setItem('nac_session_v1', JSON.stringify({
+    access_token: 'OLD', refresh_token: 'STILL-GOOD',
+    expires_at: Math.floor(Date.now() / 1000) - 60,
+    user: { email: 'nick@nacelectrical.com.au' } })));
+  await p.reload({ waitUntil: 'load' });
+  // Longer than the eight seconds the app will wait, and no longer.
+  await p.waitForTimeout(11000);
+  const state = await p.evaluate(() => {
+    const g = document.getElementById('nac-signin');
+    return { gate: !!g,
+             usable: !!g && getComputedStyle(g).visibility === 'visible'
+                     && g.getBoundingClientRect().height > 100,
+             // index.html hides #root behind .nac-locked, the others hide
+             // body > * behind #nac-signin-lock. Either way the APP must
+             // still be hidden: a renewal timing out is not a way in.
+             appHidden: document.documentElement.classList.contains('nac-locked')
+                        || !!document.getElementById('nac-signin-lock'),
+             text: (document.body.innerText || '').trim().length };
+  });
+  say('  ' + page + ' does not sit on a blank screen', state.text > 40,
+      state.text + ' chars on screen');
+  say('  ' + page + ' offers a sign-in instead', state.gate && state.usable);
+  say('  ' + page + ' still hides the app behind it', state.appHidden);
+  await ctx.close();
+}
+
 console.log('\n[6] CUSTOMER pages still work with no account');
 for (const page of ['sign.html?q=TEST','intake.html','next.html']) {
   const {ctx}=await ctxWith();
