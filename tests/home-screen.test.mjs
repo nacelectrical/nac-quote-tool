@@ -371,3 +371,55 @@ test('the renewal timer does not outlive the session', () => {
   auth.clearSession();
   assert.equal(auth.currentSession(), null);
 });
+
+// ── A FIX HAS TO BE ABLE TO REACH AN INSTALLED APP ─────────────────────────
+//
+// Nick, 5 November 2026: "Can I go into my Home Screen save or do I have to
+// delete and save again?"
+//
+// The answer has to be no, always. A home-screen app has no address bar and
+// no reload button, so one stale .mjs is a bug the estimator cannot clear and
+// cannot see — and the blank Floor plan step was caused by exactly one .mjs.
+
+const VERCEL = JSON.parse(read('vercel.json'));
+const headerFor = (source) =>
+  (VERCEL.headers || []).find(h => h.source === source);
+const valueOf = (rule, key) =>
+  ((rule && rule.headers) || []).find(h => h.key === key)?.value || '';
+
+test('the app’s code is re-checked on every load', () => {
+  for (const source of ['/(.*).html', '/(.*).mjs', '/designer/content/(.*)']) {
+    const rule = headerFor(source);
+    assert.ok(rule, 'nothing governs the cache for ' + source);
+    const cc = valueOf(rule, 'Cache-Control');
+    assert.match(cc, /max-age=0/, source + ' may be served from cache: ' + cc);
+    assert.match(cc, /must-revalidate/, source + ' is not revalidated: ' + cc);
+    // must-revalidate still allows a 304 — the file is re-CHECKED, not re-sent.
+    assert.ok(!/immutable/.test(cc), source + ' is marked immutable');
+  }
+});
+
+test('nothing here makes an API response cacheable', () => {
+  // /api/* responses carry customer, pricing and design information and set
+  // their own `no-store`. A "public" Cache-Control forced on them from
+  // vercel.json would undo that, from a file nobody reads when thinking about
+  // what the server returns.
+  for (const rule of VERCEL.headers || []) {
+    const touchesApi = /^\/api\b/.test(rule.source) || rule.source === '/(.*)';
+    if (!touchesApi) continue;
+    const cc = valueOf(rule, 'Cache-Control');
+    assert.ok(!/public/.test(cc),
+      rule.source + ' makes an API response publicly cacheable: ' + cc);
+  }
+  // And the rules that ARE public reach only static things.
+  for (const rule of VERCEL.headers || []) {
+    if (!/public/.test(valueOf(rule, 'Cache-Control'))) continue;
+    assert.ok(/\.html|\.mjs|\/icons\/|designer\/content|manifest/.test(rule.source),
+      'a public cache rule on something unexpected: ' + rule.source);
+  }
+});
+
+test('the icons may sit in the cache, because they do not change', () => {
+  const cc = valueOf(headerFor('/icons/(.*)'), 'Cache-Control');
+  assert.match(cc, /max-age=\d{4,}/, 'the icons are re-fetched constantly: ' + cc);
+});
