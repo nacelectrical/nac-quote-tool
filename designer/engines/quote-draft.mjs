@@ -445,11 +445,33 @@ export function quoteDraftGate(draft, { upgrades = [] } = {}) {
     block(DRAFT_BLOCK.NO_EQUIPMENT,
       'No system has been entered, so there is nothing to quote.');
   }
-  for (const s of d.systems) {
-    const label = trimmed(s.brand) + ' ' + trimmed(s.model) || s.id;
+  d.systems.forEach((s, i) => {
+    // ── NAMING A SYSTEM THAT HAS NO NAME ────────────────────────────────
+    //
+    // This was:
+    //
+    //     const label = trimmed(s.brand) + ' ' + trimmed(s.model) || s.id;
+    //
+    // `+` binds tighter than `||`, so the whole concatenation is evaluated
+    // first — and for a system with neither brand nor model that is ' ', a
+    // single space, which is TRUTHY. The fallback to s.id could never run.
+    // On the first row of a new quote, which has no id either, the checks
+    // panel then read:
+    //
+    //     A system on this quote has no brand or model: .
+    //     has no price.
+    //
+    // A list of problems that cannot say which thing has the problem is a
+    // list somebody stops reading.
+    const named = [trimmed(s.brand), trimmed(s.model)].filter(Boolean).join(' ');
+    // "System 1", not "sys-1": the id is this application's bookkeeping and
+    // means nothing to the person reading the panel.
+    const label = named || ('System ' + (i + 1));
     if (!trimmed(s.brand) || !trimmed(s.model)) {
-      block(DRAFT_BLOCK.NO_EQUIPMENT,
-        'A system on this quote has no brand or model: ' + (label || s.id) + '.');
+      block(DRAFT_BLOCK.NO_EQUIPMENT, named
+        // Half-named: say which half is missing, and which system it is.
+        ? named + ' is missing its ' + (trimmed(s.brand) ? 'model' : 'brand') + '.'
+        : label + ' has no brand or model yet.');
     }
     if (s.priceIncGst === null) {
       block(DRAFT_BLOCK.NO_PRICE, label + ' has no price.');
@@ -458,7 +480,7 @@ export function quoteDraftGate(draft, { upgrades = [] } = {}) {
       block(DRAFT_BLOCK.BAD_PRICE, label + ' is priced at $' + s.priceIncGst.toFixed(2)
         + '. A quote cannot go out at nothing.');
     }
-  }
+  });
 
   if (!trimmed(d.customer.name)) {
     block(DRAFT_BLOCK.NO_CUSTOMER, 'The customer has no name on this quote.');

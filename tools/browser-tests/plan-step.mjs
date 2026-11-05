@@ -44,10 +44,23 @@ await ctx.addInitScript(() => {
     user: { email: 'nick@nacelectrical.com.au' },
     expires_at: Math.floor(Date.now() / 1000) + 86400 }));
   window.__readCalls = 0;
+  // ── THE SHAPE /api/plan-read ACTUALLY SENDS ──────────────────────────────
+  //
+  // This stub used to read { label, widthMm, lengthMm } — the shape the SCREEN
+  // expected. That is why this suite passed while the live app could not size
+  // a plan: both ends were tested against each other's imagination, and the
+  // stub was agreeing with the bug.
+  //
+  // It is now the endpoint's own documented contract: the room's name in
+  // `text`, and the size printed on the drawing copied out verbatim in
+  // `dimensionText`, because that endpoint is forbidden from doing arithmetic.
   window.__readReply = { ok: true, body: { observations: { roomLabels: [
-    { label: 'Bed 4', widthMm: 3630, lengthMm: 3000, dimensionText: '3.63 X 3.0m' },
-    { label: 'Garage', widthMm: 7610, lengthMm: 5710, dimensionText: '7.61 X 5.71m' },
-    { label: 'Study' }
+    { id: 'r1', text: 'Bed 4', dimensionText: '3.63 X 3.0m',
+      box: { x: 10, y: 10, w: 80, h: 20 } },
+    { id: 'r2', text: 'Garage', dimensionText: '7.61 X 5.71m',
+      box: { x: 10, y: 60, w: 80, h: 20 } },
+    // Named, with nothing printed against it. Stays a room with no dimension.
+    { id: 'r3', text: 'Study', box: { x: 10, y: 110, w: 80, h: 20 } }
   ] }, notes: [] } };
   const real = window.fetch;
   window.fetch = async (u, o = {}) => {
@@ -56,6 +69,7 @@ await ctx.addInitScript(() => {
       { status: st, headers: { 'Content-Type': 'application/json' } });
     if (s.includes('/api/plan-read')) {
       window.__readCalls++;
+      try { window.__readBody = JSON.parse(o.body); } catch (e) { window.__readBody = null; }
       const r = window.__readReply;
       return J(r.body, r.ok ? 200 : (r.status || 500));
     }
@@ -164,6 +178,19 @@ await step('reading the plan puts the rooms on the screen and sizes it', async (
     throw new Error('the rooms were read and it still sizes at nothing');
   }
   if (!/kW/.test(after)) throw new Error('no capacity at all');
+});
+
+await step('the reader is told how big the image is', async () => {
+  // /api/plan-read asks for boxes in the pixel coordinates of the image it was
+  // given, and checks each one lands inside those bounds. It was never told
+  // the bounds — so it could not check a single box, and a room whose box came
+  // back missing or wild was dropped server-side. A dropped room label is a
+  // room that silently never existed.
+  const sent = await page.evaluate(() => window.__readBody || null);
+  if (!sent) throw new Error('nothing recorded');
+  if (!(sent.imageWidthPx > 0) || !(sent.imageHeightPx > 0)) {
+    throw new Error('the image size was not sent: ' + JSON.stringify(sent));
+  }
 });
 
 await step('a room with no dimension stays a room with no dimension', async () => {

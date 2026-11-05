@@ -30,6 +30,7 @@ import { buildRoom, manualMeasurement, applyRoomOverride } from '../engines/room
 import { SCALE_SOURCE, VERIFIED_SCALE_SOURCES } from '../engines/calibration.mjs';
 import { preliminarySizing, sizingReadiness, ESTIMATING_RULES }
   from '../engines/plan-sizing.mjs';
+import { parsePrintedRoomSize } from '../engines/dimensions.mjs';
 
 const num = (v) => {
   const t = String(v === null || v === undefined ? '' : v).trim();
@@ -71,18 +72,44 @@ export function roomsFromObservations(observations, opts = {}) {
   const o = observations || {};
   const labels = Array.isArray(o.roomLabels) ? o.roomLabels : [];
   return labels.map((r, i) => {
+    // ── THE NAME, FROM WHERE THE READER ACTUALLY PUTS IT ────────────────
+    //
+    // /api/plan-read reports a room as { id, text, dimensionText, box }. This
+    // read r.label — a field that endpoint has never sent — so every room off
+    // a plan arrived called "Room". `label` is still accepted because a draft
+    // saved before today, and the ops API, both use it.
+    const name = String(r.text ?? r.label ?? '').trim();
+
+    // ── AND THE SIZE, WHICH NOTHING PARSED ──────────────────────────────
+    //
+    // Nick, 5 November 2026: "Won't size plan." The reader is forbidden from
+    // doing arithmetic, so it reports the printed size VERBATIM — "3.63 X
+    // 3.0m" — in dimensionText. This read widthMm and lengthMm, which that
+    // endpoint has never sent and was never asked to send. So a plan covered
+    // in printed room sizes produced rooms with no dimension at all, and sized
+    // at 0 kW with a message saying no room had a measurement good enough.
+    //
+    // Numbers already in millimetres win, because a stored draft carries the
+    // figures the estimator may have corrected by hand.
     const w = num(r.widthMm), l = num(r.lengthMm);
-    const measurement = (w && l)
+    const printed = (!w || !l) ? parsePrintedRoomSize(r.dimensionText) : null;
+    const widthMm = w || (printed && printed.widthMm) || null;
+    const lengthMm = l || (printed && printed.lengthMm) || null;
+
+    const measurement = (widthMm && lengthMm)
       // A dimension printed against the room is the best source there is, and
-      // it is the only one this function will ever claim.
-      ? { source: 'verified_architectural', widthMm: w, lengthMm: l,
-          areaSqM: Math.round((w / 1000) * (l / 1000) * 100) / 100,
+      // it is the only one this function will ever claim. Where the printed
+      // text could not be read cleanly, parsePrintedRoomSize returns null and
+      // the room keeps its name and no dimension — which is the honest answer
+      // and the one the screen already knows how to show.
+      ? { source: 'verified_architectural', widthMm, lengthMm,
+          areaSqM: Math.round((widthMm / 1000) * (lengthMm / 1000) * 100) / 100,
           printedText: String(r.dimensionText || '').trim() || null }
       : null;
     return buildRoom({
-      id: 'r' + (i + 1) + '-' + String(r.label || 'room').toLowerCase()
+      id: 'r' + (i + 1) + '-' + (name || 'room').toLowerCase()
         .replace(/[^a-z0-9]+/g, '-').replace(/-+$/, ''),
-      label: String(r.label || 'Room').trim(),
+      label: name || 'Room',
       measurement
     }, opts);
   });
