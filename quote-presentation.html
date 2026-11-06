@@ -128,7 +128,8 @@ import {
   normaliseImageAsset, imagePublishable, normaliseTrust, normaliseUpgrade,
   PERMISSION, CONSENT, REVIEW_SOURCES, INCLUSION_CATALOGUE
 } from '/designer/engines/presentation-content.mjs';
-import { makeDerivatives, scanMetadata } from '/designer/engines/image-privacy.mjs';
+import { makeDerivatives, scanMetadata, stripMetadata }
+  from '/designer/engines/image-privacy.mjs';
 import { LIMITS, legacyAssets, librarySizeReport, isDataUriRef }
   from '/designer/engines/media-store.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
@@ -866,17 +867,39 @@ async function uploadOne(file, opts = {}) {
 
     const derivatives = [];
     for (const d of made.derivatives) {
-      const buf = new Uint8Array(await d.blob.arrayBuffer());
-      // A courtesy check so a problem is named before a round trip. The record
-      // is built from the SERVER's scan, not this one.
-      if (!scanMetadata(buf).clean) {
-        setStatus('That image still carried metadata after re-encoding and was not '
-          + 'uploaded. Try exporting it from Photos first.', 'err');
+      let buf = new Uint8Array(await d.blob.arrayBuffer());
+
+      // ── IF ANYTHING SURVIVED THE RE-ENCODE, REMOVE IT ─────────────────
+      //
+      // Nick, 6 November 2026, putting NAC's logo on the Branding tab: "That
+      // image still carried metadata after re-encoding and was not uploaded.
+      // Try exporting it from Photos first."
+      //
+      // Re-encoding through a canvas is what normally strips metadata, and on
+      // most browsers it does — but a browser is free to write its own
+      // segments into an export, and this refused the upload and sent a
+      // person off to re-export the file on their phone to work around their
+      // browser. The application was asking somebody to do by hand something
+      // it can do exactly, on bytes it is holding.
+      //
+      // Safe here, and only here: these bytes came out of a canvas, so the
+      // orientation is already in the pixels and removing EXIF cannot turn
+      // the picture on its side.
+      if (!scanMetadata(buf).clean) buf = stripMetadata(buf);
+
+      // The rule has not softened. If something still survives THAT, the
+      // image does not go up — but now it is a genuine oddity rather than a
+      // browser's colour profile.
+      const scan = scanMetadata(buf);
+      if (!scan.clean) {
+        setStatus('That image still carries metadata that could not be removed ('
+          + scan.markers.join(', ') + ') and was not uploaded. Try exporting it '
+          + 'from Photos first.', 'err');
         return null;
       }
       derivatives.push({ width: d.width, height: d.height,
         contentType: 'image/' + (d.format === 'jpg' ? 'jpeg' : d.format),
-        data: await toBase64(d.blob) });
+        data: await toBase64(new Blob([buf], { type: d.blob.type })) });
     }
 
     // Keep the original unless it is enormous, in which case the largest web

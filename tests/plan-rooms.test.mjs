@@ -177,3 +177,82 @@ test('it does not re-interpret what parseDimensionText already settled', () => {
   assert.equal(pair.widthMm, 3400);
   assert.equal(pair.lengthMm, 3400);
 });
+
+// ── ASKING FOR MORE THAN IS USED COST THE ROOMS ────────────────────────────
+//
+// Nick, 6 November 2026, on a real estate floor plan whose every room is
+// printed with its size: "Nothing on that plan could be read as a room."
+// Three attempts, two networks, same answer.
+//
+// The full prompt asks for EVERY number-like piece of text on the sheet with
+// a bounding box, plus every opening and every wall. On a builder's plan that
+// is hundreds of entries at roughly a hundred characters of JSON each. It
+// overran max_tokens, the answer was cut off mid-structure, JSON.parse failed
+// — and the handler discarded the WHOLE reply, including the room labels the
+// reader had already written before it ran out of room.
+
+test('the rooms-only prompt asks for rooms, and not for everything else', () => {
+  const api = readFileSync(ROOT + '/api/plan-read.js', 'utf8');
+  const start = api.indexOf('const ROOMS_SYSTEM');
+  assert.ok(start > 0, 'there is no rooms-only prompt');
+  const prompt = api.slice(start, api.indexOf('`;', start));
+
+  // It still asks for the two things the screen reads.
+  assert.match(prompt, /"roomLabels"/);
+  assert.match(prompt, /dimensionText/);
+  // And not for the three nothing reads, which are what blew the budget.
+  for (const field of ['"detections"', '"openings"', '"walls"']) {
+    assert.ok(!prompt.includes(field),
+      'the rooms-only prompt still asks for ' + field);
+  }
+  // The rules that make the reader safe are not dropped along with them.
+  assert.match(prompt, /Do NOT add numbers together/);
+  assert.match(prompt, /EXACTLY/);
+  assert.match(prompt, /never multiply it out/);
+  // A room with no size still gets reported, rather than being left out.
+  assert.match(prompt, /A named room with no size is useful/);
+});
+
+test('the quote builder asks for rooms only', () => {
+  const html = readFileSync(ROOT + '/quote-builder.html', 'utf8');
+  const call = html.slice(html.indexOf("fetch('/api/plan-read'"),
+                          html.indexOf("fetch('/api/plan-read'") + 1400);
+  assert.match(call, /want: 'rooms'/,
+    'it still asks for the full read, which is what truncated');
+});
+
+test('the endpoint honours it, and keeps the full reader for anything else', () => {
+  const api = readFileSync(ROOT + '/api/plan-read.js', 'utf8');
+  assert.match(api, /roomsOnly\s*=\s*String\(want/);
+  assert.match(api, /system:\s*roomsOnly \? ROOMS_SYSTEM : SYSTEM/);
+  // A smaller ask needs a smaller budget, not the same one.
+  assert.match(api, /max_tokens:\s*roomsOnly \?/);
+});
+
+test('when the reader comes back empty, WHAT IT SAID is shown', () => {
+  // The endpoint explains itself: the answer was cut off, the image is
+  // illegible, the reply was malformed. All of it was being thrown away in
+  // favour of one generic sentence, so the estimator was told the plan was
+  // unreadable when the reader had actually said to crop the sheet and
+  // try again.
+  const html = readFileSync(ROOT + '/quote-builder.html', 'utf8');
+  const i = html.indexOf('if (!found.length)');
+  assert.ok(i > 0);
+  const branch = html.slice(i, i + 900);
+  assert.match(branch, /out\.notes/, 'the reader\u2019s own explanation is still discarded');
+  assert.match(branch, /by hand/, 'it no longer says the rooms can be typed');
+});
+
+test('the printed floor area is read from where the endpoint puts it', () => {
+  // The screen read `printedFloorAreaSqM`, which the endpoint has never sent:
+  // it reports the area schedule verbatim as floorAreas[{label,text}] and does
+  // no arithmetic. The same silent mismatch as the room fields.
+  const api = readFileSync(ROOT + '/api/plan-read.js', 'utf8');
+  assert.match(api, /floorAreas:/, 'the endpoint no longer reports floor areas');
+  assert.ok(!/printedFloorAreaSqM/.test(api),
+    'the endpoint now sends printedFloorAreaSqM; the screen should read it');
+
+  const html = readFileSync(ROOT + '/quote-builder.html', 'utf8');
+  assert.match(html, /observations\.floorAreas/,
+    'the screen still reads a field the endpoint does not send');
+});
