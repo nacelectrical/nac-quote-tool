@@ -670,7 +670,18 @@ async function readPlan() {
       headers: staffHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ imageBase64: b64, mediaType: ready.mediaType,
                              page: draft.plan.page || 1,
-                             imageWidthPx: ready.width, imageHeightPx: ready.height })
+                             imageWidthPx: ready.width, imageHeightPx: ready.height,
+                             // ── ASK FOR WHAT IS ACTUALLY USED ────────────
+                             // This screen reads room labels and nothing else.
+                             // The full reader also returns every number on
+                             // the sheet with a bounding box, plus every wall
+                             // and opening — hundreds of entries that overran
+                             // the token limit on a detailed plan, cut the
+                             // answer off mid-JSON, and got the WHOLE reply
+                             // discarded, rooms included. That is why this
+                             // said "nothing could be read as a room" every
+                             // time, on any network.
+                             want: 'rooms' })
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -680,8 +691,19 @@ async function readPlan() {
     }
     const found = roomsFromObservations(out.observations, { settings });
     if (!found.length) {
-      flash('bad', 'Nothing on that plan could be read as a room. Enter them by hand \u2014 '
-        + 'a room you type is always trusted.');
+      // ── SAY WHAT THE READER SAID ──────────────────────────────────────
+      //
+      // The endpoint explains itself when it comes back empty — the answer
+      // was cut off, the image is illegible, the reply was malformed — and
+      // all of it was being thrown away in favour of one generic sentence.
+      // The estimator was told the plan was unreadable when the reader had
+      // actually said it ran out of room and to crop the sheet.
+      const said = (Array.isArray(out.notes) ? out.notes : [])
+        .map(n => String(n).trim()).filter(Boolean);
+      flash('bad', (said.length
+        ? said.join(' ') + ' '
+        : 'Nothing on that plan could be read as a room. ')
+        + 'You can enter the rooms by hand \u2014 a room you type is always trusted.');
     } else {
       // Added to what is there rather than replacing it, so a second read of
       // page two does not throw away page one.
@@ -694,9 +716,18 @@ async function readPlan() {
     }
     draft.plan.readAt = new Date().toISOString();
     draft.plan.notes = Array.isArray(out.notes) ? out.notes : [];
-    if (out.observations && out.observations.printedFloorAreaSqM) {
-      draft.plan.printedFloorAreaSqM = Number(out.observations.printedFloorAreaSqM);
-    }
+    // ── THE PRINTED FLOOR AREA ────────────────────────────────────────────
+    //
+    // This read `printedFloorAreaSqM`, which the endpoint has never sent: it
+    // reports the area SCHEDULE verbatim, as floorAreas[{label, text}], and
+    // does no arithmetic. The same class of mismatch as the room fields, and
+    // just as silent — the figure simply never arrived.
+    const areas = (out.observations && Array.isArray(out.observations.floorAreas))
+      ? out.observations.floorAreas : [];
+    const residence = areas.find(a => /residence|living|house|internal/i.test(a.label))
+      || areas.find(a => /total/i.test(a.label)) || areas[0];
+    const m2 = residence && Number(String(residence.text).replace(/[^0-9.]/g, ''));
+    draft.plan.printedFloorAreaSqM = (m2 > 0 && m2 < 2000) ? m2 : null;
     mark(); drawPlanStep(); syncRoomsIntoScope();
   } catch (e) {
     // "Load failed" is Safari's wording for a fetch that never completed, and

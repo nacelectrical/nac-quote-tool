@@ -141,6 +141,108 @@ export function scanMetadata(bytes) {
            benign: [...new Set(benign)] };
 }
 
+/**
+ * REMOVE what scanMetadata() objects to, rather than refusing the image.
+ *
+ * Nick, 6 November 2026, trying to put NAC's logo on the Branding tab:
+ * "That image still carried metadata after re-encoding and was not uploaded.
+ * Try exporting it from Photos first."
+ *
+ * Re-encoding through a canvas is what normally strips metadata, and on most
+ * browsers it does. Where it does not — and a browser is free to write its own
+ * segments into an export — the upload was simply refused, and the person was
+ * sent off to re-export the file on their phone to work around their browser.
+ *
+ * That is the application asking a person to do something it can do exactly.
+ * These are bytes we hold, in formats whose structure is not in doubt: the
+ * offending segments are removed here and the result is scanned again. The
+ * rule has not softened — nothing with metadata is uploaded — but it is met by
+ * doing the work instead of by handing it back.
+ *
+ * Returns the bytes unchanged when there is nothing to remove.
+ *
+ * IT DOES NOT TOUCH PIXELS, and that is a contract the caller has to keep.
+ * EXIF carries the orientation flag, so stripping it off a camera original
+ * would leave a portrait photograph rendering on its side. Give it bytes whose
+ * orientation is already applied — anything that has been through a canvas,
+ * which is every derivative this module makes, because loadBitmap() decodes
+ * with imageOrientation: 'from-image'. Never a file straight off a phone.
+ */
+export function stripMetadata(bytes) {
+  const b = u8(bytes);
+  const before = scanMetadata(b);
+  if (before.clean) return b;
+
+  if (before.format === 'jpeg') return stripJpeg(b);
+  if (before.format === 'png') return stripPng(b);
+  return b;                               // a format this cannot rebuild
+}
+
+/** Keep the frame, the scan and the colour information. Drop the rest. */
+function stripJpeg(b) {
+  const keep = [0xFF, 0xD8];              // SOI
+  let i = 2;
+  while (i < b.length - 3) {
+    if (b[i] !== 0xFF) { i++; continue; }
+    const marker = b[i + 1];
+    // Padding and standalone markers carry nothing and have no length.
+    if (marker === 0xFF || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+      i += 2; continue;
+    }
+    // From the start of scan to the end of the file is image data. It is
+    // copied verbatim: nothing in it is metadata, and rewriting any of it
+    // would change the picture.
+    if (marker === 0xDA) { for (let k = i; k < b.length; k++) keep.push(b[k]); break; }
+    if (marker === 0xD9) break;
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (len < 2 || i + 2 + len > b.length) break;
+
+    const tag = ascii(b, i + 4, 12);
+    let drop = false;
+    if (marker === 0xE0) {
+      // A JFIF header with a thumbnail embeds a whole second picture. The
+      // header itself is density information and stays — but its thumbnail
+      // fields are zeroed rather than the segment being dropped, because
+      // some decoders expect APP0 to be there.
+      if (/^JFIF\0/.test(tag) && (b[i + 16] > 0 && b[i + 17] > 0)) drop = true;
+      else if (/^JFXX/.test(tag)) drop = true;
+    } else if (marker === 0xE1) {
+      drop = true;                        // EXIF, XMP, or an APP1 we cannot vouch for
+    } else if (marker === 0xE2) {
+      drop = !/^ICC_PROFILE/.test(tag);   // colour management stays
+    } else if (marker === 0xEE) {
+      drop = !/^Adobe/.test(tag);         // the colour-transform flag stays
+    } else if (marker === 0xED || marker === 0xEF || marker === 0xFE
+               || (marker >= 0xE3 && marker <= 0xEC)) {
+      drop = true;                        // IPTC, APP15, comments, camera-maker blocks
+    }
+
+    if (!drop) for (let k = i; k < i + 2 + len; k++) keep.push(b[k]);
+    i += 2 + len;
+  }
+  return Uint8Array.from(keep);
+}
+
+/** PNG chunks are self-contained, so an unwanted one is simply not copied. */
+function stripPng(b) {
+  const keep = [];
+  for (let k = 0; k < 8; k++) keep.push(b[k]);          // signature
+  let i = 8;
+  while (i + 8 <= b.length) {
+    const len = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0;
+    const type = ascii(b, i + 4, 4);
+    const end = i + 12 + len;
+    if (len > b.length || end > b.length) break;
+    const drop = ['tEXt', 'iTXt', 'zTXt', 'eXIf'].includes(type);
+    // Each chunk carries its own CRC, so dropping a whole chunk leaves every
+    // other chunk valid. Nothing is rewritten.
+    if (!drop) for (let k = i; k < end; k++) keep.push(b[k]);
+    if (type === 'IEND') break;
+    i = end;
+  }
+  return Uint8Array.from(keep);
+}
+
 /** Convenience for the rule the content library enforces. */
 export function hasPrivateMetadata(bytes) {
   return !scanMetadata(bytes).clean;

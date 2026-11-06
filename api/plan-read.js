@@ -79,6 +79,56 @@ Respond with JSON only, no prose, matching this shape exactly:
  "floorAreas":[{"label":"RESIDENCE","text":"139.0 m2"}],
  "quality":"good","notes":["..."]}`;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// READING THE ROOMS ONLY
+//
+// Nick, 6 November 2026: "Nothing on that plan could be read as a room", on a
+// real estate floor plan whose every room is printed with its size, on three
+// separate attempts, on two different networks.
+//
+// The full prompt above asks for EVERY number-like piece of text on the sheet
+// with a bounding box, plus every opening and every wall. On a builder's plan
+// that is hundreds of entries at roughly a hundred characters of JSON each. It
+// overruns max_tokens, the answer is cut off mid-structure, JSON.parse fails —
+// and the handler then discards the WHOLE response, including the room labels
+// the reader had already written out before it ran out of room.
+//
+// The quote builder uses roomLabels. Nothing else. Not one detection, opening
+// or wall is read by anything that calls this endpoint. So it stops asking for
+// them: a tenth of the output, no truncation, and the rooms arrive.
+//
+// The full reader is kept for a caller that wants the dimension chains.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROOMS_SYSTEM = `You are a plan-reading assistant for NAC Electrical Air & Refrigeration.
+
+Report the ROOMS on this Australian residential floor plan, and nothing else.
+You are a pair of eyes, not an engineer.
+
+ABSOLUTE RULES
+1. Report only what you can actually see. Never infer, complete or tidy up.
+2. Do NOT add numbers together. Do NOT compute areas, totals or capacities.
+3. Copy the room's printed size EXACTLY as it appears, as ONE string, including
+   the separator and any unit: "3.63 X 3.0m" stays "3.63 X 3.0m", "3700 x 4200"
+   stays "3700 x 4200". Never convert it, never multiply it out, never split it.
+4. A room with no size printed against it still gets reported — give its name
+   and leave dimensionText out. A named room with no size is useful. An invented
+   size is not.
+5. If a digit is genuinely ambiguous, leave dimensionText out for that room and
+   say so in notes. A missing size is obvious and fixable; a wrong one is not.
+6. Report EVERY room label you can see, including garage, alfresco, porch,
+   entry, bathroom, ensuite and laundry. The application decides which are
+   conditioned; that is not your decision to make.
+7. Boxes are optional. If you can judge where the label sits, give its box in
+   pixels of the image you were given, origin top-left. If you cannot, omit the
+   box — do not guess one.
+
+Respond with JSON only, no prose, matching this shape exactly:
+{"roomLabels":[{"id":"r1","text":"BED 2","dimensionText":"3.0 x 3.4m","box":{"x":0,"y":0,"w":0,"h":0}}],
+ "floorAreas":[{"label":"RESIDENCE","text":"139.0 m2"}],
+ "scaleLabelText":"SCALE 1:100 @ A3",
+ "quality":"good","notes":["..."]}`;
+
 function box(v) {
   if (!v || typeof v !== 'object') return null;
   const n = (x) => (typeof x === 'number' && isFinite(x) ? x : null);
@@ -186,8 +236,12 @@ export default async function handler(req, res) {
   const KEY = process.env.ANTHROPIC_API_KEY;
   if (!KEY) return res.status(500).json({ error: 'Anthropic API key not configured' });
 
-  const { imageBase64, mediaType, imageWidthPx, imageHeightPx } = req.body || {};
+  const { imageBase64, mediaType, imageWidthPx, imageHeightPx, want } = req.body || {};
   if (!imageBase64) return res.status(400).json({ error: 'imageBase64 required' });
+
+  // The caller says what it needs. 'rooms' is a tenth of the output and does
+  // not overrun the token limit on a detailed sheet.
+  const roomsOnly = String(want || '').toLowerCase() === 'rooms';
 
   const isPdf = String(mediaType || '').includes('pdf');
   const planBlock = isPdf
@@ -216,10 +270,12 @@ export default async function handler(req, res) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 16000,
-        system: SYSTEM,
+        max_tokens: roomsOnly ? 8000 : 16000,
+        system: roomsOnly ? ROOMS_SYSTEM : SYSTEM,
         messages: [{ role: 'user', content: [planBlock,
-          { type: 'text', text: sizeNote + regionNote + '\n\nRead this plan now. JSON only.' }] }]
+          { type: 'text', text: sizeNote + regionNote
+            + (roomsOnly ? '\n\nList the rooms on this plan now. JSON only.'
+                         : '\n\nRead this plan now. JSON only.') }] }]
       })
     });
 
