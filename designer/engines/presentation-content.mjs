@@ -854,20 +854,95 @@ export function resolveUpgrades(library = [], capabilities = {}) {
  * application did before. The moment Nick edits it, his wording wins outright.
  */
 export const SHIPPED_STANDARD_SCOPE = Object.freeze({
+  // ── NAC'S OWN WORDING, OFF NAC'S OWN QUOTE ──────────────────────────────
+  //
+  // Nick, 7 November 2026, sending quotation NAC-2611-LEW: "I need these
+  // inclusions on here and layout to be similar to these so I don't have to
+  // include everyone."
+  //
+  // What shipped before was five lines I wrote as a placeholder — true as far
+  // as it went, and nothing like the scope NAC actually quotes. Every line
+  // below is lifted from that quotation, in Nick's words, with only the parts
+  // that belonged to THAT house taken out: the office, the courtyard, the duct
+  // run to the far wing, the number five. A standard list carrying one
+  // customer's floor plan is not a standard list.
+  //
+  // The exclusions matter at least as much as the inclusions. What is NOT in
+  // the price is where a job turns into an argument six weeks later, and a
+  // customer who read it on the proposal they signed is not surprised by it.
   inclusions: Object.freeze([
-    'Supply and install of the system above',
-    'All ductwork, supply outlets and return air grilles',
-    'Electrical connection to an existing suitable circuit',
-    'Commissioning, balancing and handover',
-    'Removal of all installation waste'
+    'Supply and installation of the ducted system for your chosen option, indoor and outdoor',
+    'Complete new ductwork throughout, sized and set out for the system',
+    'New supply outlets and diffusers to every zone',
+    'Return air grille and return ductwork',
+    'Zone motors and dampers to each zone',
+    'Wall controller, supplied and commissioned',
+    'Refrigeration pipework and interconnecting control wiring',
+    'Condensate drainage to an approved discharge point',
+    'Weatherproof isolating switch to the outdoor unit',
+    'Wall bracket or ground stand for the outdoor unit, on level hard standing',
+    'Making good of all wall and ceiling penetrations, sealed and weatherproofed',
+    'Nitrogen pressure test, vacuum, charge, commissioning and performance check',
+    'ARCtick licensed refrigerant handling throughout',
+    'Manufacturer warranty registration completed on your behalf',
+    'Handover walkthrough, controller setup and removal of all packaging'
   ]),
   exclusions: Object.freeze([
-    'Switchboard or circuit upgrades, if the existing board cannot carry the system',
-    'Patching or painting beyond the installation openings',
-    'Asbestos handling of any kind',
-    'Structural alterations to accommodate the equipment or ductwork'
+    'Bathroom, ensuite, WC, laundry and linen',
+    'Any conditioning of the deck, pool area or other outdoor space',
+    'Zoning beyond the zones quoted',
+    'Asbestos identification, handling or removal',
+    'Creating ceiling access hatches, or structural or truss alterations',
+    'Painting, cornice, plaster or tile repairs beyond making good the penetrations',
+    'Electrical supply upgrades or switchboard work',
+    'Concrete slabs or pads for outdoor unit mounting',
+    'Any work not expressly listed above'
   ])
 });
+
+/**
+ * The qualifications NAC puts on a quotation, off the same quotation.
+ *
+ * These are not scope — they are the conditions the price is given under, and
+ * on NAC-2611-LEW they have a section of their own beside the warranty and
+ * payment terms. Each one closes a hole that otherwise opens on site: a model
+ * that is out of stock, a capacity that the site measure changes, a roof space
+ * the duct will not go through, a zone layout drawn off a floor plan.
+ *
+ * Offered on the Proposal step, as the inclusions are. NAC's words, NAC's call
+ * whether a given quote carries them.
+ */
+export const SHIPPED_QUALIFICATIONS = Object.freeze([
+  Object.freeze({
+    id: 'model_numbers',
+    heading: 'Model numbers',
+    body: 'Exact model numbers are confirmed at order and may vary with current stock. '
+      + 'Any substitute will meet or exceed the capacity and unit type quoted, at no '
+      + 'additional cost to you.'
+  }),
+  Object.freeze({
+    id: 'sizing',
+    heading: 'Sizing',
+    body: 'Capacity is confirmed at site measure against ceiling height, insulation, '
+      + 'glazing and orientation before anything is ordered. If that measure shows a '
+      + 'different size will suit the house better, we will discuss it with you first.'
+  }),
+  Object.freeze({
+    id: 'zones_layout',
+    heading: 'Zones and layout',
+    body: 'The zone grouping set out above is taken from your floor plan and is '
+      + 'indicative. Final zone layout, outlet positions, the duct route and the outdoor '
+      + 'unit location are confirmed with you at site measure before any work starts.'
+  }),
+  Object.freeze({
+    id: 'roof_access',
+    heading: 'Roof access',
+    body: 'The price assumes continuous roof space access with sufficient height to run '
+      + 'full-size duct to every zone. If site measure shows a run cannot be made that '
+      + 'way, we will discuss the options with you before anything is ordered rather '
+      + 'than compromise the airflow to that zone.'
+  })
+]);
 
 const lines = (v) => (Array.isArray(v) ? v : [])
   .map(x => String(x ?? '').trim()).filter(Boolean);

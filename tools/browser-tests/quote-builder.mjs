@@ -243,7 +243,11 @@ await page.waitForTimeout(200);
 await step('the typed inclusions and exclusions land in the draft', async () => {
   const inc = await page.inputValue('#incl');
   const exc = await page.inputValue('#excl');
-  if (!/Removal of all installation waste/.test(inc)) throw new Error('no inclusions');
+  // NAC's own wording, off NAC's own quotation (NAC-2611-LEW), which is what
+  // "Insert NAC's usual list" now seeds.
+  if (!/ARCtick licensed refrigerant handling/.test(inc)) {
+    throw new Error('no inclusions: ' + inc.slice(0, 120));
+  }
   if (!/Asbestos/.test(exc)) throw new Error('no exclusions');
 });
 
@@ -548,7 +552,7 @@ await step('the preview renders the real customer page', async () => {
   if (!cover) throw new Error('no cover in the preview');
   const body = await frame.locator('body').innerText();
   for (const want of ['12 Boronia Street, Buderim QLD 4556', 'Not included',
-                      'Asbestos handling of any kind', '$17,817', 'TEST QUOTE']) {
+                      'Asbestos identification, handling or removal', '$17,817', 'TEST QUOTE']) {
     if (!body.includes(want)) throw new Error('the preview is missing: ' + want);
   }
   if (process.argv[3]) await page.screenshot({ path: process.argv[3], fullPage: false });
@@ -568,7 +572,14 @@ await step('a save that reaches the database reports as saved', async () => {
   if (row.testQuote !== true) throw new Error('the test-quote flag was not saved');
   if (row.systems[0].priceIncGst !== 16027) throw new Error('the price was not saved');
   if (row.upgradeQuantities.sensor !== 4) throw new Error('the sensor count was not saved');
-  if (row.exclusions.length !== 4) throw new Error('the exclusions were not saved');
+  // However many NAC's standard list carries — pinned by the engine's own
+  // tests, not duplicated here, so changing the wording does not break this.
+  if (row.exclusions.length < 8) {
+    throw new Error('the exclusions were not saved: ' + row.exclusions.length);
+  }
+  if (!row.exclusions.some(x => /asbestos/i.test(x))) {
+    throw new Error('the standard exclusions are not what was saved');
+  }
 });
 
 await step('a save that never reached the database is NOT reported as saved', async () => {
