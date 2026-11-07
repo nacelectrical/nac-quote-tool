@@ -723,6 +723,7 @@ function drawImages() {
        { multiple: true }),
      el('button', { class: 'btn', text: 'Import NAC\u2019s photographs',
                     onclick: importNacPhotos }),
+     approveAllButton(),
      el('div', { class: 'tools' }, [
        el('button', { class: 'btn', text: 'Move inline images into storage',
          onclick: migrateLegacy })
@@ -742,6 +743,36 @@ function drawImages() {
  * these photographs, and equipmentImagesFor() matches on the model and only
  * on the model. A guess would put the wrong machine beside a customer's quote.
  */
+/**
+ * ── APPROVING THE BATCH ───────────────────────────────────────────────────
+ *
+ * Nothing in this library reaches a customer unapproved, and nothing approves
+ * itself: imported photographs land unapproved exactly as an upload does.
+ *
+ * But the only way to approve them was one tick at a time, so importing
+ * sixteen photographs produced a library of sixteen pictures that appeared on
+ * nothing, with no count anywhere saying why. The judgement is a person's.
+ * The repetition is not.
+ */
+function approveAllButton() {
+  const waiting = C.images.filter(i => i && !i.approved);
+  if (!waiting.length) return null;
+  return el('button', {
+    class: 'btn primary',
+    text: 'Approve all ' + waiting.length + ' for use on proposals',
+    onclick: () => {
+      const who = (window.nacUser || 'NAC');
+      for (const i of waiting) {
+        i.approved = true;
+        i.approvedBy = who;
+        i.approvedAt = new Date().toISOString();
+      }
+      setStatus(waiting.length + ' photograph(s) approved. Save the library to keep it.', 'ok');
+      drawAll();
+    }
+  });
+}
+
 async function importNacPhotos() {
   setStatus('Reading NAC\u2019s photographs…');
   let doc;
@@ -778,7 +809,33 @@ async function importNacPhotos() {
       // Blank, deliberately. See the comment above.
       asset.equipmentModels = [];
       asset.tags = Array.isArray(spec.tags) ? spec.tags.slice() : [];
-      // Approval stays NAC's, as it does for anything else in here.
+
+      // ── THE FIELDS THAT DECIDE WHERE A PHOTOGRAPH APPEARS ─────────────
+      //
+      // Nick, 7 November 2026: "The proposal now shows no pictures of
+      // anything."
+      //
+      // The manifest records three things beyond the brand, and this import
+      // dropped all three on the floor:
+      //
+      //   ownWork      the gallery of NAC's own installations is built from
+      //                it, and from nothing else — without it that section
+      //                has no entries and is left out of every proposal;
+      //   optionImage  the product set that goes beside each brand's price;
+      //   focalPoint   where the subject is, so a square crop beside an
+      //                upgrade does not cut the sensor out of its own
+      //                thumbnail.
+      //
+      // So the pictures went in, and then matched nothing, appeared nowhere,
+      // and said nothing about why.
+      asset.ownWork = spec.ownWork !== false;
+      if (spec.optionImage) asset.optionImage = true;
+      if (spec.focalPoint) asset.focalPoint = spec.focalPoint;
+      // What is visible in the frame, in the words of whoever supplied it.
+      if (spec.seen) asset.seen = spec.seen;
+      if (spec._provenance) asset.approvalNote = spec._provenance;
+      // Approval stays NAC's, as it does for anything else in here. The panel
+      // offers to approve the batch in one go; nothing approves itself.
       asset.approved = false;
       C.images.push(asset);
       have.add(String(asset.alt).trim());

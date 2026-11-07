@@ -282,6 +282,22 @@ export function normaliseQuoteDraft(input = {}) {
     inclusions: list(d.inclusions).map(trimmed).filter(Boolean),
     exclusions: list(d.exclusions).map(trimmed).filter(Boolean),
 
+    /**
+     * HOW THIS PRICE WAS ARRIVED AT, where the tool worked it out.
+     *
+     * Internal. It never reaches draftToQuoteSource() and so never reaches a
+     * customer — what NAC's cost and margin were is NAC's business. It is kept
+     * so a figure can be explained in a month's time without rebuilding it
+     * from memory, and it is NOT what the quote goes out at: the price is
+     * whatever is in the price box, typed or filled.
+     */
+    pricedBy: d.pricedBy && typeof d.pricedBy === 'object' ? {
+      method: trimmed(d.pricedBy.method) || null,
+      costExGst: money(d.pricedBy.costExGst),
+      feeExGst: money(d.pricedBy.feeExGst),
+      at: trimmed(d.pricedBy.at) || null
+    } : null,
+
     /** Optional upgrades offered ON THIS QUOTE, chosen from the library. */
     selectedUpgradeIds: list(d.selectedUpgradeIds).map(trimmed).filter(Boolean),
     /** How many sensors are offered, where the controller takes them. */

@@ -295,7 +295,9 @@ details summary{cursor:pointer;font-weight:650;color:var(--navy);padding:8px 0;m
     <section class="card">
       <h2>Systems <small>one, or several for the customer to choose between</small></h2>
       <div class="rows" id="systems"></div>
-      <div class="bar"><button class="btn" id="addSys">Add a system</button></div>
+      <div class="bar"><button class="btn" id="addSys">Add a system</button>
+        <button class="btn primary" id="workOutPrice" type="button">Work out the price</button></div>
+      <div id="priceWork"></div>
     </section>
 
     <section class="card">
@@ -312,7 +314,8 @@ details summary{cursor:pointer;font-weight:650;color:var(--navy);padding:8px 0;m
       <h2>Installation scope <small>the counts you took on site</small></h2>
       <div class="grid">
         <div class="f"><label for="outlets">Supply outlets</label>
-          <input id="outlets" type="number" min="0" step="1"></div>
+          <input id="outlets" type="number" min="0" step="1">
+          <span class="hint" id="outlethint"></span></div>
         <div class="f"><label for="returns">Return air grilles</label>
           <input id="returns" type="number" min="0" step="1"></div>
         <div class="f"><label for="zones">Zones</label>
@@ -443,6 +446,8 @@ import {
 } from '/designer/engines/quote-draft.mjs';
 import { buildPresentation } from '/designer/engines/presentation.mjs';
 import { ZONE_CONTROLLERS } from '/designer/engines/catalogue.mjs';
+import { outletsByZone } from '/designer/engines/outlet-plan.mjs';
+import { priceFromCosts } from '/designer/engines/quote-pricing.mjs';
 import { selectZoneController } from '/designer/engines/equipment.mjs';
 import { renderPresentationHtml } from '/designer/ui/presentation-html.mjs';
 import { planToReadableImage } from '/designer/ui/image.mjs';
@@ -1015,10 +1020,24 @@ function renameZone(i, next) {
   draft.scope.zonesChosen = true;
 }
 
+/** The outlet count for every room and zone, by NAC's own rule. */
+function outletPlan() {
+  const rooms = (draft.scope.conditionedRooms || []).map(r => {
+    // The area comes off the plan step where a room was read or measured
+    // there; the scope row carries the name, the zone and any typed count.
+    const measured = (draft.rooms || []).find(x =>
+      String(x.label || '').toLowerCase() === String(r.label || '').toLowerCase());
+    return { label: r.label, zone: r.zone, outlets: r.outlets,
+             areaSqM: measured?.measurement?.areaSqM ?? measured?.areaSqM ?? null };
+  });
+  return outletsByZone(rooms, zoneList());
+}
+
 function drawZones() {
   const host = $('#zonelist');
   host.textContent = '';
   const zs = zoneList();
+  const plan = outletPlan();
   if (!zs.length) {
     host.appendChild(el('div', { class: 'hint',
       text: 'No zones yet. Add one for each zone the customer will be able to switch '
@@ -1036,10 +1055,21 @@ function drawZones() {
     });
     const inZone = draft.scope.conditionedRooms
       .filter(r => sameZone(r.zone, name)).map(r => r.label).filter(Boolean);
+    // ── HOW MANY OUTLETS THIS ZONE TAKES ──────────────────────────────
+    //
+    // Nick, 7 November 2026: "Hasn't calculated how many outlets per zone."
+    // NAC's own published rule, applied per room and added up here: one
+    // outlet, a second once the room is over the split size for its type.
+    const z = plan.zones[i] || null;
+    const outletsHere = z
+      ? z.outlets + ' outlet' + (z.outlets === 1 ? '' : 's')
+        + (z.unsized ? ' (' + z.unsized + ' room(s) with no size \u2014 check)' : '')
+      : '';
     host.appendChild(el('div', { class: 'zonerow' }, [
       field('Zone ' + (i + 1), nameInput),
       el('span', { class: 'hint in',
-        text: inZone.length ? inZone.join(', ') : 'No rooms in this zone yet' }),
+        text: (inZone.length ? inZone.join(', ') : 'No rooms in this zone yet')
+          + (outletsHere ? ' \u2014 ' + outletsHere : '') }),
       el('button', { class: 'btn danger', type: 'button', text: 'Remove',
         onclick: () => {
           // The rooms are NOT deleted with it. They come out of the zone and
@@ -1095,6 +1125,35 @@ function drawRooms() {
  * the thing beside it is a field that eventually will. With no list it is an
  * ordinary number and the quick way through is untouched.
  */
+/**
+ * The total outlet count, worked out rather than typed.
+ *
+ * It does not overwrite a number the estimator entered. It says what the rule
+ * makes it, and offers to use that.
+ */
+function drawOutletHint() {
+  const host = $('#outlethint');
+  if (!host) return;
+  host.textContent = '';
+  const plan = outletPlan();
+  if (!plan.zones.length && !plan.unzoned.rooms.length) {
+    host.textContent = 'Add the rooms below and this is worked out for you.';
+    return;
+  }
+  const typed = draft.scope.outletCount;
+  const agrees = typed !== null && typed !== undefined && Number(typed) === plan.total;
+  host.appendChild(document.createTextNode(
+    'NAC\u2019s rule makes it ' + plan.total
+    + (plan.unsized ? ' (' + plan.unsized + ' room(s) have no size on file)' : '')
+    + (agrees ? ' \u2014 which is what is entered.' : '. ')));
+  if (!agrees) {
+    host.appendChild(el('button', {
+      class: 'btn small', type: 'button', text: 'Use ' + plan.total,
+      onclick: () => { draft.scope.outletCount = plan.total; mark(); draw(); }
+    }));
+  }
+}
+
 function drawZoneCount() {
   const zs = zoneList();
   const chosen = draft.scope.zonesChosen === true && zs.length > 0;
@@ -1535,7 +1594,7 @@ function draw() {
   $('#incl').value = draft.inclusions.join('\n');
   $('#excl').value = draft.exclusions.join('\n');
   $('#intro').value = draft.intro || '';
-  drawSystems(); drawZones(); drawRooms(); drawZoneCount();
+  drawSystems(); drawZones(); drawRooms(); drawZoneCount(); drawOutletHint();
   drawController(); drawUpgrades(); drawTotal();
   drawAllowanceButtons(); drawFirmness(); drawChecks();
   drawSteps();
@@ -1601,6 +1660,91 @@ $('#addSys').addEventListener('click', () => {
 $('#addRoom').addEventListener('click', () => {
   draft.scope.conditionedRooms.push({}); mark(); draw();
 });
+/**
+ * ── WORK OUT THE PRICE ────────────────────────────────────────────────────
+ *
+ * Nick, 7 November 2026: "I need it to create pricing for me based on all the
+ * prices I have given you."
+ *
+ * NAC's declared method, on NAC's own numbers: what the job costs to buy and
+ * do, plus the job fee, then GST. Every line is shown with where it came from,
+ * because a price an estimator cannot check is a price he cannot defend at a
+ * kitchen table.
+ *
+ * It fills the box. It does not lock it: a typed price always wins.
+ */
+$('#workOutPrice').addEventListener('click', () => {
+  const host = $('#priceWork');
+  host.textContent = '';
+  const sys = chosenSystem(draft) || draft.systems[0] || null;
+  const plan = outletPlan();
+  const r = priceFromCosts(draft, {
+    settings, system: sys,
+    outlets: draft.scope.outletCount ?? plan.total
+  });
+
+  const card = el('div', { class: 'card inner' });
+  card.appendChild(el('h3', { text: 'What this job costs NAC, and what it sells for' }));
+
+  if (r.lines.length) {
+    const t = el('table', { class: 'grid' });
+    const body = el('tbody');
+    for (const l of r.lines) {
+      body.appendChild(el('tr', {}, [
+        el('th', { scope: 'row', text: l.label }),
+        el('td', { class: 'hint', text: l.source || '' }),
+        el('td', { text: '$' + l.exGst.toFixed(2) })
+      ]));
+    }
+    if (r.ok) {
+      body.appendChild(el('tr', {}, [
+        el('th', { scope: 'row', text: 'Job cost' }), el('td', {}),
+        el('td', { text: '$' + r.costExGst.toFixed(2) })]));
+      body.appendChild(el('tr', {}, [
+        el('th', { scope: 'row', text: 'Job fee \u2014 NAC\u2019s margin' }),
+        el('td', { class: 'hint', text: 'Settings' }),
+        el('td', { text: '$' + r.feeExGst.toFixed(2) })]));
+      body.appendChild(el('tr', {}, [
+        el('th', { scope: 'row', text: 'GST' }), el('td', {}),
+        el('td', { text: '$' + r.gst.toFixed(2) })]));
+    }
+    t.appendChild(body);
+    card.appendChild(el('div', { class: 'tablewrap' }, [t]));
+  }
+
+  for (const note of r.notes) {
+    card.appendChild(el('div', { class: 'chk ok' },
+      [el('b', { text: '\u2713' }), el('span', { text: note })]));
+  }
+  // What it will not price, and why. Never treated as zero.
+  for (const m of r.missing) {
+    card.appendChild(el('div', { class: 'chk bad' },
+      [el('b', { text: '\u00d7' }), el('span', { text: m.label + ' \u2014 ' + m.why })]));
+  }
+
+  if (r.ok && sys) {
+    const useIt = el('button', { class: 'btn primary', type: 'button',
+      text: 'Use $' + r.sellIncGst.toLocaleString() + ' including GST',
+      onclick: () => {
+        sys.priceIncGst = r.sellIncGst;
+        // What it was built from, kept against the job so the figure can be
+        // explained later without rebuilding it from memory.
+        sys.supplierCost = sys.supplierCost ?? null;
+        draft.pricedBy = { method: r.mode, costExGst: r.costExGst,
+                           feeExGst: r.feeExGst, at: new Date().toISOString() };
+        mark(); draw();
+        flash('ok', 'Price set from NAC\u2019s cost-plus-fee method. '
+          + 'Change it if this job is not a standard one.');
+      } });
+    card.appendChild(el('div', { class: 'bar' }, [useIt]));
+  } else {
+    card.appendChild(el('p', { class: 'note',
+      text: 'Set the missing figures on the Settings screen and press this again, '
+        + 'or type the price yourself \u2014 a price you enter is always what goes out.' }));
+  }
+  host.appendChild(card);
+});
+
 $('#addZone').addEventListener('click', () => {
   const zs = zoneList();
   // A placeholder NAME, not a placeholder zone: it is on the quote because
