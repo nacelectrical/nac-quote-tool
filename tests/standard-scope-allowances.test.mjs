@@ -18,7 +18,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { standardScope, SHIPPED_STANDARD_SCOPE, normaliseAllowance, allowancesFor }
+import { standardScope, SHIPPED_STANDARD_SCOPE, SHIPPED_QUALIFICATIONS,
+         normaliseAllowance, allowancesFor }
   from '../designer/engines/presentation-content.mjs';
 import { firmnessOf } from '../designer/engines/option-pricing.mjs';
 
@@ -31,18 +32,78 @@ test('a library nobody has opened behaves exactly as the builder used to', () =>
   assert.equal(s.isShipped, true);
 });
 
-test('the shipped wording is the wording the builder had hard-coded', () => {
-  // If somebody changes the engine's list without changing this, a NAC quote
-  // quietly starts promising something different.
-  assert.deepEqual([...SHIPPED_STANDARD_SCOPE.inclusions], [
-    'Supply and install of the system above',
-    'All ductwork, supply outlets and return air grilles',
-    'Electrical connection to an existing suitable circuit',
-    'Commissioning, balancing and handover',
-    'Removal of all installation waste'
-  ]);
-  assert.equal(SHIPPED_STANDARD_SCOPE.exclusions.length, 4);
-  assert.ok(SHIPPED_STANDARD_SCOPE.exclusions.some(x => /asbestos/i.test(x)));
+test('the shipped wording is NAC\u2019s own, off NAC\u2019s own quotation', () => {
+  // Nick, 7 November 2026, sending quotation NAC-2611-LEW: "I need these
+  // inclusions on here ... so I don't have to include everyone."
+  //
+  // What shipped before was five lines written as a placeholder — true as far
+  // as they went, and nothing like the scope NAC actually quotes. If somebody
+  // changes this list without changing this test, a NAC quote quietly starts
+  // promising something different.
+  const inc = SHIPPED_STANDARD_SCOPE.inclusions;
+  const exc = SHIPPED_STANDARD_SCOPE.exclusions;
+
+  // The lines that carry the trade: the ones a customer is actually buying
+  // and the ones that get argued about.
+  for (const must of [
+    /supply and installation of the ducted system/i,
+    /complete new ductwork/i,
+    /return air grille/i,
+    /zone motors and dampers/i,
+    /refrigeration pipework/i,
+    /condensate drainage/i,
+    /weatherproof isolating switch/i,
+    /nitrogen pressure test, vacuum, charge/i,
+    /ARCtick licensed refrigerant handling/i,
+    /making good of all wall and ceiling penetrations/i,
+    /warranty registration/i,
+    /handover walkthrough/i
+  ]) {
+    assert.ok(inc.some(x => must.test(x)), 'the standard inclusions lost ' + must);
+  }
+  assert.ok(inc.length >= 14, 'only ' + inc.length + ' inclusions');
+
+  for (const must of [
+    /bathroom, ensuite, WC, laundry and linen/i,   // and it matches the room rule
+    /asbestos/i,
+    /switchboard/i,
+    /painting, cornice, plaster/i,
+    /concrete slabs or pads/i,
+    /any work not expressly listed/i
+  ]) {
+    assert.ok(exc.some(x => must.test(x)), 'the standard exclusions lost ' + must);
+  }
+  assert.ok(exc.length >= 8, 'only ' + exc.length + ' exclusions');
+
+  // ── AND NOT ONE CUSTOMER'S HOUSE ────────────────────────────────────
+  //
+  // The quotation these came from was for a particular place: an office that
+  // was not on the system, a courtyard, a duct run to a far wing, and five
+  // zones. A STANDARD list carrying one customer's floor plan is not a
+  // standard list — it is a promise about somebody else's house.
+  const all = [...inc, ...exc].join(' | ');
+  for (const leaked of [/courtyard/i, /\bthe office\b/i, /far wing/i,
+                        /master suite/i, /five zones/i, /16 kW/i]) {
+    assert.ok(!leaked.test(all), 'one job\u2019s detail is in the standard list: ' + leaked);
+  }
+});
+
+test('the standing qualifications are there, and are conditions not scope', () => {
+  // On NAC-2611-LEW these sit beside the warranty and payment terms. Each one
+  // closes a hole that otherwise opens on site.
+  const ids = SHIPPED_QUALIFICATIONS.map(q => q.id);
+  assert.deepEqual(ids.sort(),
+    ['model_numbers', 'roof_access', 'sizing', 'zones_layout']);
+  for (const q of SHIPPED_QUALIFICATIONS) {
+    assert.ok(q.heading && q.heading.length > 2, 'a qualification with no heading');
+    assert.ok(q.body && q.body.length > 60, q.id + ' says too little to be useful');
+  }
+  // The two that matter most: nothing is ordered before the site measure, and
+  // a substitute model costs the customer nothing.
+  assert.match(SHIPPED_QUALIFICATIONS.find(q => q.id === 'sizing').body,
+    /before anything is ordered/i);
+  assert.match(SHIPPED_QUALIFICATIONS.find(q => q.id === 'model_numbers').body,
+    /no additional cost/i);
 });
 
 test('Nick’s wording wins outright', () => {

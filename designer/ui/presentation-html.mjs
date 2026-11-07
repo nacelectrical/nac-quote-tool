@@ -718,6 +718,30 @@ function warrantyHtml(p) {
       '<div><dt>' + esc(i.title) + '</dt><dd>' + esc(i.detail) + '</dd></div>').join('') + '</dl>');
 }
 
+/**
+ * THE CONDITIONS THE PRICE IS GIVEN UNDER.
+ *
+ * Nick, 7 November 2026, sending quotation NAC-2611-LEW: "I need these
+ * inclusions on here and layout to be similar to these."
+ *
+ * On that document these are a section of their own beside the warranty and
+ * payment terms — model numbers confirmed at order, capacity confirmed at site
+ * measure, the zone layout indicative until then, roof access assumed. Each
+ * one closes a hole that otherwise opens on site, and a customer who read it
+ * on the proposal they signed is not surprised by it.
+ *
+ * The same labelled blocks the warranty uses, because that is the layout the
+ * quotation uses for exactly this.
+ */
+function qualificationsHtml(p) {
+  const qs = p.qualifications || [];
+  if (!qs.length) return '';
+  return sect('conditions', 'Conditions of this quotation',
+    '<dl class="facts wide">' + qs.map(q =>
+      '<div><dt>' + esc(q.title) + '</dt><dd>' + esc(q.detail) + '</dd></div>').join('')
+    + '</dl>');
+}
+
 function acceptHtml(p) {
   const a = p.acceptance;
   const total = p.investment ? moneyRound(p.investment.totalIncGst) : '';
@@ -883,6 +907,7 @@ export function renderPresentationHtml(presentation, opts = {}) {
     + investmentHtml(p)
     + when(!print, optionsHtml(p))
     + warrantyHtml(p)
+    + qualificationsHtml(p)
     + when(!print, acceptHtml(p))
     + when(!print, printBarHtml(p))
     + footerHtml(p);

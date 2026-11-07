@@ -33,7 +33,8 @@ import {
   selectReviews, selectInstallations, publicReview, publicInstallation,
   equipmentImagesFor, publicImageRef, publicImageSrcset,
   resolveInclusions, resolveUpgrades, normaliseTrust, trustFacts, brochuresFor,
-  ownWorkGallery, upgradeImageFor, optionImageFor, controllerImageFor
+  ownWorkGallery, upgradeImageFor, optionImageFor, controllerImageFor,
+  SHIPPED_QUALIFICATIONS
 } from './presentation-content.mjs';
 
 const str = (v) => (v === null || v === undefined) ? '' : String(v);
@@ -963,6 +964,16 @@ function investmentSection(d, ctx) {
  * the gate before this runs; anything that still reads as unfilled is dropped
  * here rather than printed.
  */
+/** NAC's standing qualifications, as stored or as shipped. */
+function qualificationsFor(content) {
+  const stored = content && content.qualifications;
+  const list = Array.isArray(stored) ? stored : SHIPPED_QUALIFICATIONS;
+  return list
+    .map(q => ({ id: trimmed(q?.id), title: trimmed(q?.heading || q?.title),
+                 detail: trimmed(q?.body || q?.detail) }))
+    .filter(q => q.title && q.detail);
+}
+
 function warrantySection(ctx) {
   const t = normaliseTrust(ctx.trust);
   const care = ctx.aftercare || {};
@@ -1311,6 +1322,17 @@ export function buildPresentation({
       };
     }),
     warranty: warrantySection(ctx),
+    // ── THE CONDITIONS THE PRICE IS GIVEN UNDER ───────────────────────────
+    //
+    // Nick, 7 November 2026, sending quotation NAC-2611-LEW. On that document
+    // these sit beside the warranty and payment terms, and each one closes a
+    // hole that otherwise opens on site: a model that is out of stock, a
+    // capacity the site measure changes, a roof space the duct will not go
+    // through, a zone layout drawn off a floor plan.
+    //
+    // NAC's words. A quote carries them unless NAC has replaced them, and an
+    // empty stored list is a decision to carry none.
+    qualifications: qualificationsFor(content),
     acceptance: {
       canAccept: status !== 'accepted' && status !== 'declined' && status !== 'revoked' && !expired,
       accepted: status === 'accepted',
