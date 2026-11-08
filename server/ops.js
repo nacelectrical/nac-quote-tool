@@ -591,6 +591,110 @@ async function opApprovedLink(ctx) {
   } };
 }
 
+/**
+ * ── WHAT IS AT EACH STAGE, FOR THE ASSISTANT'S BRIEFING ──────────────────
+ *
+ * Nick, 8 November 2026, on where the one dashboard should live.
+ *
+ * The ops assistant (nacelectrical/nac-ops-assistant) already builds the daily
+ * briefing — it has the ServiceM8, Xero and Podium connectors, the push
+ * notifications and a freshness model that refuses to say "nothing to do"
+ * unless every source behind a section is fresh. It is the right place for the
+ * one operating picture.
+ *
+ * What it cannot see is everything BEFORE a job exists: drafts being worked
+ * on, quotes waiting on Nick's approval, issued revisions nobody has answered,
+ * acceptances that have not become jobs. Those live in this application's
+ * database and always will, because this application owns them.
+ *
+ * So this is the join: ONE read-only operation the assistant polls, answering
+ * in the stage vocabulary both sides can share. It is deliberately a summary
+ * and not a data dump —
+ *
+ *   · NO internal costs, margins, supplier prices or pricing method. The
+ *     assistant has no business with NAC's commercial workings and the
+ *     customer-facing total is the only money here.
+ *   · NO customer contact details. The assistant reaches customers through
+ *     Podium and ServiceM8, where their details already are.
+ *   · Counts are NULL when a source could not be read, never 0 — the same
+ *     rule the assistant's own briefing applies, so an unreadable source
+ *     cannot become "nothing to do" on either side of the join.
+ */
+async function opQuoteBoard(ctx) {
+  const { key, body } = ctx;
+  const asked = Number(body && body.limit);
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), 200) : 50;
+  const wf = await import('../designer/engines/workflow.mjs');
+
+  // Issued and accepted, out of the frozen records. A read failure is NOT an
+  // empty list: it is reported as unreadable and the assistant's section goes
+  // stale rather than quiet.
+  let issued = null;
+  try {
+    const r = await supa('/rest/v1/nac_quote_issues?select=token,design_id,quote_rev,'
+      + 'status,issued_at,expires_at,responded_at,data&order=issued_at.desc&limit=200',
+      { key });
+    if (Array.isArray(r.body)) {
+      issued = r.body.map(row => {
+        const d = row.data || {};
+        const a = d.acceptance || null;
+        return {
+          token: row.token, designId: row.design_id,
+          revision: Number(row.quote_rev || 1),
+          status: row.status,
+          customerName: (d.customer || {}).name || null,
+          siteAddress: (d.job || {}).siteAddress || null,
+          issuedAt: row.issued_at, expiresAt: row.expires_at,
+          acceptedAt: a ? a.acceptedAt || null : null,
+          acceptedBy: a ? a.customerName || null : null,
+          quotedTotalIncGst: d.totalIncGst ?? null,
+          acceptedTotalIncGst: a ? a.totalIncGst ?? null : null,
+          viewCount: d.viewCount ?? 0
+        };
+      });
+    }
+  } catch (e) { issued = null; }
+
+  const board = wf.dashboard({ issued, drafts: null, enquiries: null,
+                               handovers: null, approvals: null });
+
+  const strip = (rows) => rows.map(r => ({
+    ref: r.id, stage: r.kind, name: r.name, site: r.detail || null,
+    ageDays: r.ageDays ?? null,
+    totalIncGst: r.totalIncGst ?? null,
+    totalSource: r.totalSource ?? null,
+    action: r.action || null
+  }));
+
+  const panel = (p) => ({
+    available: p.available,
+    // THE COUNT IS THE TRUE TOTAL, always. `limit` truncates the list it
+    // returns and never the number: a briefing that says "3 quotes waiting"
+    // because the page size was 3 is a briefing that under-reports the week.
+    count: p.count,                       // null when unreadable. Never 0 for unknown.
+    items: p.available ? strip(p.rows.slice(0, limit)) : [],
+    truncated: p.available ? p.rows.length > limit : false
+  });
+
+  return { status: 200, body: {
+    generatedAt: board.generatedAt,
+    source: 'NAC quote tool. Issued revisions and acceptance records only.',
+    stages: {
+      awaitingResponse: panel(board.panels.awaiting),
+      accepted: panel(board.panels.accepted)
+    },
+    // Drafts and approvals are deliberately absent until this surface is
+    // live: they are the most sensitive thing here, and shipping a field the
+    // assistant cannot yet be trusted with is how it ends up relied upon.
+    notYetExposed: ['draftsInProgress', 'awaitingOwnerApproval', 'handovers'],
+    money: {
+      awaitingResponseIncGst: board.money.issuedIncGst,
+      acceptedIncGst: board.money.acceptedIncGst,
+      note: board.money.source
+    }
+  } };
+}
+
 async function opStatus(ctx) {
   const { key, body } = ctx;
   const quoteId = trimmed(body.quoteId);
@@ -668,6 +772,7 @@ const HANDLERS = {
   'quote.request_approval': opRequestApproval,
   'quote.approved_link': opApprovedLink,
   'quote.status': opStatus,
+  'quote.board': opQuoteBoard,
   'booking.create_task': opBookingTask
 };
 

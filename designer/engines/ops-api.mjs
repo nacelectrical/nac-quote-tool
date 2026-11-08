@@ -118,6 +118,28 @@ export const OPERATIONS = Object.freeze({
     takes: ['quoteId'],
     returns: ['status', 'revision', 'selections', 'totalIncGst', 'events']
   },
+  /**
+   * The quote-stage board, for the assistant's daily briefing.
+   *
+   * The ops assistant owns the one operating picture — it has the ServiceM8,
+   * Xero and Podium connectors and the push notifications. What it cannot see
+   * is everything before a job exists. This is that, in the stage vocabulary
+   * both sides share.
+   *
+   * Read only, and a SUMMARY: no internal costs, no margins, no supplier
+   * prices, no customer contact details. Counts come back null when a source
+   * could not be read, never 0, so an unreadable source cannot turn into
+   * "nothing to do" on the assistant's board either.
+   */
+  'quote.board': {
+    scope: SCOPES.QUOTE_READ, mutates: false,
+    summary: 'What is at each quote stage: issued and awaiting a response, and accepted.',
+    // `limit` is how many items per stage to return. The COUNTS are always
+    // the true totals — truncating a list must never truncate the number, or
+    // a briefing quietly under-reports the week.
+    takes: ['limit'],
+    returns: ['stages', 'money', 'notYetExposed', 'generatedAt']
+  },
   'booking.create_task': {
     scope: SCOPES.BOOKING_WRITE, mutates: true,
     summary: 'Open the booking and deposit task after an acceptance.',
