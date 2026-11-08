@@ -455,7 +455,7 @@ import { presentationPrintHtml } from '/designer/ui/presentation-pdf.mjs';
 import { seedTermsAndConditions, seedTrust, standardScope, allowancesFor,
          controllerImageFor, imagePublishable, IMAGE_ROLES }
   from '/designer/engines/presentation-content.mjs';
-import { saveDesign, loadDesign, getJson, SETTINGS_KEYS, loadNacBrands }
+import { saveDesign, loadDesign, getJson, SETTINGS_KEYS, loadNacBrands, loadIntakeDraft }
   from '/designer/engines/store.mjs';
 import { listCustomers, listJobs, saveCustomer, saveJob }
   from '/designer/engines/crm-store.mjs';
@@ -522,7 +522,33 @@ let dirty = false;
 let APPROVED_PRICES = [];
 
 // ── LOAD ───────────────────────────────────────────────────────────────────
+/**
+ * WHAT THIS USER MAY DO, ASKED OF THE SERVER.
+ *
+ * Nick, 8 November 2026: "The inspection reported that every signed-in user
+ * could see costs and margins."
+ *
+ * This is NOT the control. The control is the row-level policy on nac_settings
+ * (designer/roles-rls.sql) and the capability check on /api/quote-issue — both
+ * of which apply whatever this page believes, because the page can be edited
+ * in a console and the policy cannot. This is so the screen can EXPLAIN itself
+ * to a technician instead of showing them a pricing panel full of blanks that
+ * will not save.
+ *
+ * An unreachable /api/whoami leaves `me` null and the screen behaves as it did
+ * before: the server still refuses what it refuses. A permission check that
+ * fails closed in the BROWSER would stop the crew working over a dropped
+ * request, which is the wrong failure.
+ */
+let me = null;
+const iCan = (capability) => !me || (me.capabilities || []).includes(capability);
+
 async function boot() {
+  try {
+    const r = await fetch('/api/whoami', { headers: staffHeaders(), cache: 'no-store' });
+    if (r.ok) me = await r.json();
+  } catch (e) { me = null; }
+
   // The same key the issue endpoint reads server-side, so the preview is
   // built against the commercial terms the server will use.
   try {
@@ -549,10 +575,121 @@ async function boot() {
       flash('bad', 'That job is a duct design, not a quote-only draft. '
         + 'Open it in the designer.');
     }
+  } else {
+    // ── OPENING ON A CUSTOMER'S OWN ENQUIRY ─────────────────────────────
+    //
+    // The intake's notification has always sent a link of the form
+    // /quote-builder.html?intake=NAC-SMITH-1762567890123, and this screen
+    // ignored the parameter completely: the link opened a blank new quote and
+    // the estimator re-keyed the customer's name, their address and their
+    // phone number off the email, then asked them to send the plan again.
+    //
+    // `loadIntakeDraft()` in store.mjs has existed and been under test the
+    // whole time. Nothing called it. This calls it.
+    const intake = params.get('intake');
+    if (intake) await seedFromEnquiry(intake);
   }
   if (!draft.systems.length) draft.systems = [{ id: 'sys-1' }];
   if (!draft.scope.conditionedRooms.length) draft.scope.conditionedRooms = [{}];
   draw();
+}
+
+/**
+ * Start a quote from the enquiry the customer sent.
+ *
+ * NOTHING IS INVENTED. Everything seeded here was typed by the customer or
+ * proposed by the intake assistant, and the two are kept apart on screen:
+ *
+ *   · the customer's own details go straight in, because they are the
+ *     customer's own details;
+ *   · the intake's suggested systems go in WITH NO PRICE. The draft gate then
+ *     requires a price before the quote can be issued, which is correct — the
+ *     intake assistant has never seen NAC's cost list and must not look like
+ *     it has priced anything;
+ *   · the sizing pack goes in as a NOTE, labelled a draft note, because it was
+ *     read off a photograph of a plan before anybody went to the property.
+ *
+ * It never blocks. An enquiry that cannot be read leaves a blank quote and
+ * says so, which is exactly what the estimator has today.
+ */
+async function seedFromEnquiry(enquiryId) {
+  let intake = null;
+  try { intake = await loadIntakeDraft(enquiryId); } catch (e) { intake = null; }
+  if (!intake) {
+    flash('bad', 'Enquiry ' + enquiryId + ' could not be read, so this is a blank '
+      + 'quote. Enter the customer\u2019s details by hand.');
+    return;
+  }
+
+  draft.enquiryId = enquiryId;
+  draft.customer = {
+    ...draft.customer,
+    name: intake.customer.name || draft.customer.name || '',
+    phone: intake.customer.phone || draft.customer.phone || '',
+    email: intake.customer.email || draft.customer.email || '',
+    address: intake.customer.address || draft.customer.address || ''
+  };
+  draft.siteAddress = draft.siteAddress || intake.customer.address || '';
+  draft.jobDescription = draft.jobDescription || intake.jobDescription || '';
+
+  // The intake's suggested units, with the price left empty on purpose.
+  const proposed = (intake.intakeOptions || [])
+    .filter(o => o && (o._brand || o._model || o.name))
+    .map((o, i) => ({
+      id: 'sys-' + (i + 1),
+      brand: o._brand || '',
+      model: o._model || '',
+      capacityKw: o._kw ?? null,
+      priceIncGst: null
+    }));
+  if (proposed.length) draft.systems = proposed;
+
+  // What the customer sent, kept against the job so it is one tap away.
+  draft.enquiry = {
+    id: enquiryId,
+    planUrl: intake.planUrl || null,
+    photoUrls: intake.photoUrls || [],
+    pack: intake.intakePack || null,
+    loadedAt: new Date().toISOString()
+  };
+
+  // ── THE PLAN ──────────────────────────────────────────────────────────
+  //
+  // The reader needs the IMAGE, not a link to it: planToReadableImage draws
+  // into a canvas, and a canvas fed a cross-origin URL is tainted and cannot
+  // be read back. So the file is fetched and turned into a data URL here,
+  // which is exactly what an upload from the file picker produces.
+  //
+  // If that fails — the bucket is private, the network is poor, CORS says no —
+  // the plan step shows the link instead and the estimator uploads it the
+  // ordinary way. An automated step with no manual path is a step that
+  // eventually blocks somebody on a roof.
+  if (intake.planUrl) {
+    try {
+      const r = await fetch(intake.planUrl, { mode: 'cors' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error('could not be decoded'));
+        fr.readAsDataURL(blob);
+      });
+      draft.plan = { src: dataUrl, mediaType: blob.type || 'image/jpeg',
+                     name: 'Customer floor plan', page: 1 };
+      flash('ok', 'Opened ' + (intake.customer.name || 'this enquiry')
+        + ' with their floor plan loaded. Read the rooms off it, or enter them by hand.');
+    } catch (e) {
+      flash('warn', 'Opened ' + (intake.customer.name || 'this enquiry')
+        + '. Their floor plan could not be loaded automatically (' + e.message
+        + ') \u2014 the link is on the floor plan step.');
+    }
+  } else {
+    flash('ok', 'Opened ' + (intake.customer.name || 'this enquiry')
+      + '. No floor plan came with it.');
+  }
+
+  dirty = true;
 }
 
 // ── THE STEPS ──────────────────────────────────────────────────────────────
@@ -1573,7 +1710,12 @@ function drawChecks() {
       [el('b', { text: '✓' }), el('span', { text: 'Everything this quote needs is here. '
         + 'The publish gate runs again on the server when you issue it.' })]));
   }
-  $('#issue').disabled = !g.ok;
+  // The gate decides whether the OFFER may go out; the capability decides
+  // whether THIS USER may send it. The server enforces both and refuses with
+  // `role_not_permitted`; this keeps the button honest.
+  $('#issue').disabled = !g.ok || !iCan('issue_quote');
+  $('#issue').title = iCan('issue_quote') ? ''
+    : 'Issuing a quote commits NAC to a price, so it is the owner\u2019s to send.';
 }
 
 function draw() {
@@ -1676,6 +1818,24 @@ $('#addRoom').addEventListener('click', () => {
 $('#workOutPrice').addEventListener('click', () => {
   const host = $('#priceWork');
   host.textContent = '';
+
+  // ── A TECHNICIAN IS TOLD, NOT LEFT GUESSING ──────────────────────────
+  //
+  // With the role policy applied, a technician's browser cannot read
+  // nac_settings at all, so `settings` falls back to what shipped with the
+  // application and this panel would price a job off the APPLICATION's job
+  // fee. That is worse than refusing: the figure would look like NAC's.
+  if (!iCan('view_internal_pricing')) {
+    host.appendChild(el('div', { class: 'card inner' }, [
+      el('h3', { text: 'The suggested price is the owner\u2019s to work out' }),
+      el('p', { class: 'note', text: 'It is built from NAC\u2019s cost prices, the job fee '
+        + 'and the installation allowances, which your account cannot see. Everything '
+        + 'else on this quote is yours as normal \u2014 and a price typed into the system '
+        + 'above still works.' })
+    ]));
+    return;
+  }
+
   const sys = chosenSystem(draft) || draft.systems[0] || null;
   const plan = outletPlan();
   const r = priceFromCosts(draft, {
@@ -1738,9 +1898,15 @@ $('#workOutPrice').addEventListener('click', () => {
       } });
     card.appendChild(el('div', { class: 'bar' }, [useIt]));
   } else {
-    card.appendChild(el('p', { class: 'note',
-      text: 'Set the missing figures on the Settings screen and press this again, '
-        + 'or type the price yourself \u2014 a price you enter is always what goes out.' }));
+    // "The Settings screen" was not a screen until 8 November: proposalAllowance
+    // and jobFee appeared in no page in the application, so this sentence
+    // pointed at nothing and the refusal above was permanent. It is a link now.
+    card.appendChild(el('p', { class: 'note' }, [
+      document.createTextNode('Enter the missing figures on '),
+      el('a', { href: '/settings.html', text: 'the pricing setup screen' }),
+      document.createTextNode(' and press this again, or type the price yourself '
+        + '\u2014 a price you enter is always what goes out.')
+    ]));
   }
   host.appendChild(card);
 });
@@ -1862,8 +2028,42 @@ async function persist() {
     ...(draft.jobRef ? { jobRef: draft.jobRef } : {}),
     status: draft.status || 'draft'
   });
-  if (r.synced) { dirty = false; }
+  if (r.synced) { dirty = false; await linkEnquiry(); }
   return r;
+}
+
+/**
+ * Join the enquiry to the assessment that came out of it.
+ *
+ * This is the link that was missing: an enquiry nobody could follow to its
+ * quote, and a quote nobody could trace back to the enquiry that started it.
+ * Written server-side, once, after the draft has actually reached the
+ * database — linking an enquiry to a draft that only exists on this iPad
+ * would point at nothing.
+ *
+ * It NEVER blocks or warns on a quiet failure. A 409 means the enquiry is
+ * already linked to a different design, which is worth seeing; anything else
+ * is bookkeeping and the estimator is mid-quote.
+ */
+let enquiryLinked = false;
+async function linkEnquiry() {
+  if (!draft.enquiryId || enquiryLinked) return;
+  try {
+    const r = await fetch('/api/enquiries', {
+      method: 'POST',
+      headers: staffHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ id: draft.enquiryId, link: { designId: draft.id } })
+    });
+    if (r.ok) { enquiryLinked = true; return; }
+    if (r.status === 409) {
+      const out = await r.json().catch(() => ({}));
+      const c = (out.conflicts || [])[0];
+      flash('warn', 'Saved. Enquiry ' + draft.enquiryId + ' is already linked to '
+        + (c ? c.existing : 'another job') + ', so it was left alone. Nothing was '
+        + 'overwritten.');
+      enquiryLinked = true;
+    }
+  } catch (e) { /* bookkeeping never stops a quote being saved */ }
 }
 
 $('#save').addEventListener('click', async () => {

@@ -1,4 +1,32 @@
 // NAC — Intake form submission handler.
+//
+// ── WHAT CHANGED, 8 November 2026 ───────────────────────────────────────────
+//
+// This wrote the customer's phone number, their address and the whole AI
+// sizing pack into the free-text `notes` column of a row in nac_quotes — the
+// QUOTE table — because when it was written there was nowhere else to put
+// them. Nothing could read an enquiry back as a record, so the dashboard's
+// enquiry panel said "could not be read".
+//
+// It now ALSO writes a proper enquiry row. Both writes happen, and the old one
+// is unchanged:
+//
+//   · nac_enquiries  the enquiry as a record, with the links that let it be
+//                    followed to its assessment and its quote.
+//   · nac_quotes     exactly as before, byte for byte, so admin.html,
+//                    sign.html, the designer's intake handoff and every record
+//                    NAC already has keep working.
+//
+// The two share an id, so they are provably the same enquiry.
+//
+// NEITHER WRITE IS ALLOWED TO LOSE A LEAD. A customer has just filled in a
+// form and uploaded their floor plan; if the enquiry table does not exist yet
+// the submission must still succeed on the paths that do. Each is reported
+// separately and the refusal at the foot of this file fires only when NOTHING
+// durable took it.
+import { enquiryFromIntake, toRow as enquiryRow }
+  from '../designer/engines/enquiry.mjs';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
@@ -124,6 +152,24 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
   var flag = flagMatch ? flagMatch[1].trim() : 'None';
 
   let saved = false, notified = false, saveError = null, notifyError = null;
+  let enquiryStored = false, enquiryError = null;
+
+  // ── THE ENQUIRY, AS A RECORD ──────────────────────────────────────────
+  //
+  // Built before either write so the same object is the source of both the id
+  // and the fields. /api/upload labels the floor plan `plan` and the site
+  // pictures `photo`, which is how the plan is picked out of the list.
+  const photoUrls = Array.isArray(b.photoUrls) ? b.photoUrls : [];
+  const planUrl = photoUrls.find(function (u) {
+    var decoded = u;
+    try { decoded = decodeURIComponent(u); } catch (e) { /* use the raw form */ }
+    return /\/plan-/.test(decoded);
+  }) || null;
+
+  const enquiry = enquiryFromIntake(b, {
+    id: qid, pack: pack, planUrl: planUrl,
+    photoUrls: photoUrls.filter(function (u) { return u !== planUrl; })
+  });
 
   try {
     const notifyRes = await fetch(NOTIFY, {
@@ -158,6 +204,30 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
 
   try {
     if (!SUPA) {
+      enquiryError = 'SUPABASE_KEY is not configured on the server';
+    } else {
+      const enqRes = await fetch(SUPA_URL + '/rest/v1/nac_enquiries', {
+        method: 'POST',
+        headers: { 'apikey': SUPA, 'Authorization': 'Bearer ' + SUPA,
+                   'Content-Type': 'application/json',
+                   'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([enquiryRow(enquiry)])
+      });
+      enquiryStored = enqRes.ok;
+      if (!enquiryStored) {
+        // A 404 here is the table not existing yet, which is a deployment step
+        // and NOT a fault in the submission. Named as such so a log reader can
+        // tell the two apart.
+        enquiryError = enqRes.status === 404
+          ? 'nac_enquiries does not exist yet — apply designer/enquiries-handovers-schema.sql'
+          : 'enquiry write returned ' + enqRes.status + ' ' +
+            (await enqRes.text().catch(() => '')).slice(0, 200);
+      }
+    }
+  } catch (e) { enquiryError = 'enquiry write failed: ' + e.message; }
+
+  try {
+    if (!SUPA) {
       saveError = 'SUPABASE_KEY is not configured on the server';
     } else {
       const saveRes = await fetch(SUPA_URL + '/rest/v1/nac_quotes', {
@@ -185,22 +255,29 @@ NOTES:           [2-4 short bullet lines max — anything the quoter needs to kn
   // The customer has just filled in a form and uploaded their floor plan. If
   // NEITHER durable path took it, telling them "thanks, we'll be in touch" is a
   // lie — nobody at NAC will ever see this lead. Say so, so they can ring.
-  if (!saved && !notified) {
-    console.error('[intake-submit] nothing recorded for', qid, '|', saveError, '|', notifyError);
+  if (!saved && !notified && !enquiryStored) {
+    console.error('[intake-submit] nothing recorded for', qid, '|', saveError, '|',
+                  notifyError, '|', enquiryError);
     return res.status(502).json({
       error: 'We could not record your details. Please call NAC on 0427 101 685 — ' +
              'nothing has been lost on your end, but we have not received it.',
-      quoteId: qid, saved: false, notified: false,
-      detail: [saveError, notifyError].filter(Boolean).join(' / ')
+      quoteId: qid, enquiryId: qid, saved: false, notified: false, enquiryStored: false,
+      detail: [saveError, notifyError, enquiryError].filter(Boolean).join(' / ')
     });
   }
 
   // One path succeeded. Report exactly which, so a half-failure is visible in
   // the logs and to the caller rather than reading as a clean success.
-  if (!saved || !notified) {
+  if (!saved || !notified || !enquiryStored) {
     console.warn('[intake-submit]', qid, 'saved=' + saved, 'notified=' + notified,
-                 '|', saveError || '', notifyError || '');
+                 'enquiry=' + enquiryStored, '|', saveError || '', notifyError || '',
+                 enquiryError || '');
   }
-  return res.status(200).json({ ok: true, quoteId: qid, saved: saved, notified: notified,
-                                warning: saved && notified ? null : (saveError || notifyError) });
+  return res.status(200).json({ ok: true, quoteId: qid,
+                                /** The same id. One enquiry, two rows, both findable. */
+                                enquiryId: qid,
+                                saved: saved, notified: notified,
+                                enquiryStored: enquiryStored,
+                                warning: saved && notified && enquiryStored
+                                  ? null : (saveError || notifyError || enquiryError) });
 }

@@ -395,6 +395,39 @@ export function planStep(ctx) {
     }
   });
 
+  /**
+   * WHAT THE CUSTOMER THEMSELVES SENT.
+   *
+   * Set when this quote was opened on an enquiry (`?intake=`). The builder
+   * tries to load the plan into the step automatically; this is the manual
+   * path for when it cannot — a private bucket, a poor signal, a browser that
+   * refuses the cross-origin read. Nick's rule: every automated feature needs
+   * a manual fallback, because the estimator must never be blocked.
+   *
+   * It is shown whether or not the automatic load worked, because an estimator
+   * standing in the house wants the customer's own photographs either way.
+   */
+  const fromCustomer = (() => {
+    const e = draft.enquiry;
+    if (!e || (!e.planUrl && !(e.photoUrls || []).length)) return null;
+    const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener', text });
+    const kids = [h('p', { class: 'hint', text: 'Sent with enquiry ' + (e.id || '') + '.' })];
+    if (e.planUrl) {
+      kids.push(h('div', {}, [link(e.planUrl, 'Open the floor plan they uploaded')]));
+      if (!(plan && plan.src)) {
+        kids.push(h('div', { class: 'chk warn' }, [h('b', { text: '!' }), h('span', {
+          text: 'It is not loaded into this step yet. Open it, save it to this device, '
+            + 'and upload it above — then the rooms can be read off it.' })]));
+      }
+    }
+    (e.photoUrls || []).forEach((u, i) =>
+      kids.push(h('div', {}, [link(u, 'Site photograph ' + (i + 1))])));
+    return h('section', { class: 'card' }, [
+      h('h2', {}, [document.createTextNode('What the customer sent')]),
+      h('div', {}, kids)
+    ]);
+  })();
+
   return h('div', { class: 'col' }, [
     h('section', { class: 'card' }, [
       h('h2', {}, [document.createTextNode('Floor plan '),
@@ -410,6 +443,8 @@ export function planStep(ctx) {
       plan && plan.notes && plan.notes.length ? h('div', {}, plan.notes.map(t =>
         h('div', { class: 'chk warn' }, [h('b', { text: '!' }), h('span', { text: t })]))) : null
     ].filter(Boolean)),
+
+    fromCustomer,
 
     h('section', { class: 'card' }, [
       h('h2', {}, [document.createTextNode('How the scale is known')]),
@@ -432,7 +467,7 @@ export function planStep(ctx) {
     ]),
 
     sizingPanel(draft, settings, onChange)
-  ]);
+  ].filter(Boolean));
 }
 
 export default { planStep, roomsFromObservations, readFileAsDataUri, planTypeOk, PLAN_TYPES };

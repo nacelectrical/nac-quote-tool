@@ -24,7 +24,16 @@ function res() {
 const BODY = { client: 'Test Customer', phone: '0400000000', address: '1 Test St',
                planBase64: 'AAAA', planMediaType: 'image/png' };
 
-async function run(label, { anthropic = 'k', supaKey = 'k', notifyStatus = 200, saveStatus = 201, saveThrows = false, notifyThrows = false }) {
+async function run(label, { anthropic = 'k', supaKey = 'k', notifyStatus = 200,
+                            saveStatus = 201, saveThrows = false, notifyThrows = false,
+                            // ── THE THIRD DURABLE PATH, ADDED 8 November 2026 ──
+                            // The submission now also writes a row to
+                            // nac_enquiries. It is a separate fate from the
+                            // nac_quotes write and has to be stubbed as one, or
+                            // the "nothing was recorded" case cannot be
+                            // reached: the enquiry write would succeed and the
+                            // handler would be right to report a success.
+                            enquiryStatus = 201, enquiryThrows = false }) {
   process.env.ANTHROPIC_API_KEY = anthropic;
   if (supaKey) process.env.SUPABASE_KEY = supaKey; else delete process.env.SUPABASE_KEY;
   globalThis.fetch = async (url, opts) => {
@@ -37,6 +46,11 @@ async function run(label, { anthropic = 'k', supaKey = 'k', notifyStatus = 200, 
     if (u.includes('webhook-trigger') || u.includes('leadconnectorhq')) {
       if (notifyThrows) throw new Error('network down');
       return { ok: notifyStatus < 400, status: notifyStatus, text: async () => '' };
+    }
+    if (u.includes('nac_enquiries')) {
+      if (enquiryThrows) throw new Error('connection reset');
+      return { ok: enquiryStatus < 400, status: enquiryStatus,
+               text: async () => 'db said no' };
     }
     if (u.includes('nac_quotes')) {
       if (saveThrows) throw new Error('connection reset');
@@ -87,8 +101,8 @@ test('the notification failing does not invalidate a saved quote', async () => {
 });
 
 test('when NOTHING recorded the submission, the customer is told', async () => {
-  for (const opts of [{ saveStatus: 500, notifyStatus: 500 },
-                      { saveThrows: true, notifyThrows: true }]) {
+  for (const opts of [{ saveStatus: 500, notifyStatus: 500, enquiryStatus: 500 },
+                      { saveThrows: true, notifyThrows: true, enquiryThrows: true }]) {
     const r = await run('both-fail', opts);
     assert.equal(r.code, 502, 'must not be a 200');
     assert.equal(r.body.saved, false);
@@ -97,4 +111,46 @@ test('when NOTHING recorded the submission, the customer is told', async () => {
     assert.match(r.body.error, /call NAC/);
     assert.ok(r.body.detail, 'the reason must be reported');
   }
+});
+
+// ── THE ENQUIRY ROW ────────────────────────────────────────────────────────
+
+test('the submission also lands as an enquiry record, under the same id', async () => {
+  // It used to be a paragraph of text in the notes column of a QUOTE row.
+  // Both writes happen now, and they share an id so they are provably the
+  // same enquiry.
+  const r = await run('enquiry', {});
+  assert.equal(r.code, 200);
+  assert.equal(r.body.enquiryStored, true);
+  assert.equal(r.body.enquiryId, r.body.quoteId,
+    'one enquiry, two rows, findable from either');
+});
+
+test('an enquiry table that does not exist yet does not fail the submission', async () => {
+  // nac_enquiries ships in a migration that has NOT been applied. A customer
+  // mid-form must not be told to ring because of an outstanding deployment
+  // step: the other two paths still took the lead.
+  const r = await run('absent', { enquiryStatus: 404 });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.enquiryStored, false);
+  assert.equal(r.body.saved, true);
+  assert.match(String(r.body.warning), /enquiries-handovers-schema\.sql/);
+});
+
+test('an enquiry recorded is enough on its own — the lead is not lost', async () => {
+  // The quote row rejected and the webhook down, and the enquiry written. That
+  // IS a recorded lead: Nick can see it on the board. Telling the customer to
+  // ring would be wrong.
+  const r = await run('enquiry-only', { saveStatus: 500, notifyStatus: 500 });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.enquiryStored, true);
+  assert.equal(r.body.saved, false);
+  assert.equal(r.body.notified, false);
+  assert.ok(r.body.warning, 'and the half-failure is still reported');
+});
+
+test('a missing SUPABASE_KEY stops the enquiry write too, and says so', async () => {
+  const r = await run('nokey', { supaKey: null });
+  assert.equal(r.body.enquiryStored, false);
+  assert.equal(r.body.saved, false);
 });

@@ -46,8 +46,15 @@ const n = (v) => {
 };
 const money = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
 
-/** The allowances, in the order they read on the Settings screen. */
-const ALLOWANCES = Object.freeze([
+/**
+ * The allowances, in the order they read on the Settings screen.
+ *
+ * Exported by name as well as on the default, so /settings.html and
+ * tests/pricing-setup.test.mjs build their field list from the list the engine
+ * actually prices from. A screen with its own hand-typed copy is a screen that
+ * ends up missing a field nobody can enter.
+ */
+export const ALLOWANCES = Object.freeze([
   ['ductwork', 'Ductwork'],
   ['returns', 'Return air'],
   ['plenums', 'Plenums'],
@@ -210,4 +217,122 @@ export function priceFromCosts(draft, opts = {}) {
   };
 }
 
-export default { priceFromCosts, ALLOWANCES };
+/**
+ * ── WHAT NAC HAS TO ENTER BEFORE THIS CAN PRICE ANYTHING ──────────────────
+ *
+ * `priceFromCosts` refuses, correctly, when the allowances are unset — and
+ * until 8 November there was NOWHERE TO SET THEM. `proposalAllowance` and
+ * `jobFee` appeared in no screen in the application: the fields shipped null
+ * on purpose and the only way to fill them in was to write to the database by
+ * hand. So the engine was right, the refusal was right, and the refusal was
+ * permanent.
+ *
+ * This is the same check the pricing engine applies, asked ahead of time and
+ * against the settings alone, so /settings.html can list the exact inputs
+ * still needed before any job is open.
+ *
+ * ABSENT AND ZERO ARE STILL DIFFERENT. A `0` somebody typed is a decision —
+ * NAC carries no plenum allowance, say — and counts as set. A null is
+ * nobody's decision and counts as missing.
+ *
+ * ── A SHIPPED DEFAULT IS NOT NAC'S FIGURE ─────────────────────────────────
+ *
+ * `jobFee` ships as 6000 in DEFAULT_SETTINGS and the allowances ship as null.
+ * Null is honest; 6000 is not, because nobody can say whether NAC agreed to it
+ * or whether it was a plausible-looking number put there to make the maths
+ * run. It is exactly the hazard quote-gate.mjs already names about placeholder
+ * rates: "a placeholder costs something plausible, which is what makes it
+ * dangerous — the quote adds up and the margin is fiction."
+ *
+ * So pass `stored` — the record NAC actually saved, before it is merged over
+ * the shipped defaults — and every field says which of the two it came from.
+ * A figure NAC has never saved is reported `unconfirmed` and the screen asks
+ * for it to be confirmed rather than quietly pricing with it.
+ *
+ * @param {object} settings  the merged settings record
+ * @param {object} opts      { stored } the saved override, unmerged
+ * @returns {{ok, missing, unconfirmed, set, fields, blocks}}
+ */
+export function pricingSetupStatus(settings = {}, opts = {}) {
+  const c = (settings && settings.commercial) || {};
+  const a = c.proposalAllowance || {};
+  const savedC = ((opts.stored || {}).commercial) || {};
+  const savedA = savedC.proposalAllowance || {};
+
+  const fields = [];
+  const push = (key, label, value, unit, required, why, savedValue) => {
+    const isSet = n(value) !== null;
+    // Saved by NAC means the key is PRESENT in the stored record. A saved
+    // null is still a decision about nothing, so `undefined` is the test and
+    // not falsiness — 0 is a figure somebody entered.
+    const saved = savedValue !== undefined;
+    fields.push({
+      key, label, value: n(value), unit, set: isSet, required, why,
+      source: saved ? 'nac' : (isSet ? 'shipped_default' : 'not_set'),
+      /** Set, but on a number that shipped with the application. */
+      unconfirmed: isSet && !saved
+    });
+  };
+
+  push('gstRate', 'GST rate', c.gstRate, 'fraction', true,
+       'Ships at 0.10, which is the Australian rate. Confirm it and it stops being '
+       + 'a default.', savedC.gstRate);
+  push('jobFee', 'Job fee', c.jobFee, 'dollars', true,
+       'On NAC’s cost-plus-fee method the fee IS the margin, so without it there '
+       + 'is no price to work out.', savedC.jobFee);
+
+  for (const [key, label] of ALLOWANCES) {
+    push('proposalAllowance.' + key, label, a[key], 'dollars per job', false,
+         'What this part of the installation is worth before anybody has measured it.',
+         savedA[key]);
+  }
+  push('proposalAllowance.perOutlet', 'Per supply outlet', a.perOutlet,
+       'dollars per outlet', false, 'Added for each outlet on the job.', savedA.perOutlet);
+  push('proposalAllowance.perZone', 'Per motorised zone', a.perZone,
+       'dollars per zone', false, 'Added for each zone on the job.', savedA.perZone);
+  push('proposalAllowance.contingencyPct', 'Contingency', a.contingencyPct,
+       'percent', false, 'A percentage on top of the job cost. Optional.',
+       savedA.contingencyPct);
+
+  const anyAllowance = [...ALLOWANCES.map(([k]) => a[k]),
+                        a.perOutlet, a.perZone].some(v => n(v) !== null);
+
+  const missing = [];
+  if (n(c.jobFee) === null) {
+    missing.push({ key: 'jobFee', label: 'Job fee',
+      why: 'The fee is the margin on NAC’s method. Nothing can be priced without it.' });
+  }
+  if (!anyAllowance) {
+    missing.push({ key: 'proposalAllowance', label: 'Installation allowances',
+      why: 'Not one is set. Until at least one is entered this cannot say what a job '
+        + 'costs to install, and a job priced as though the ductwork were free is a '
+        + 'job priced at a loss.' });
+  }
+
+  return {
+    ok: missing.length === 0,
+    missing,
+    /**
+     * Figures that are in force but came from the application rather than
+     * from NAC. Not an error and not a blocker — a number that works. Just
+     * one nobody has stood behind, which is worth saying out loud before it
+     * is printed on a customer's quote.
+     */
+    unconfirmed: fields.filter(f => f.unconfirmed)
+      .map(f => ({ key: f.key, label: f.label, value: f.value })),
+    set: fields.filter(f => f.set).map(f => f.key),
+    fields,
+    /**
+     * What stays blocked while anything above is missing. NOT the draft: a
+     * draft saves regardless, and so does an assessment, because an estimator
+     * must never be stopped from recording what they found on site.
+     */
+    blocks: missing.length === 0 ? [] : [
+      'The suggested price on the Systems step ("Work out the price").',
+      'Nothing else. Drafts, assessments, room measurements and the sizing all '
+        + 'save as normal, and a price typed by hand still works and still issues.'
+    ]
+  };
+}
+
+export default { priceFromCosts, pricingSetupStatus, ALLOWANCES };

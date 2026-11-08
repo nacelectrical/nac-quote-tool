@@ -73,6 +73,14 @@ function saveDraft(draft) {
 async function setup(over = {}) {
   reset();
   process.env.SUPABASE_KEY = 'test-service-key';
+  // ── THE OWNER, FOR THE ISSUE GATE ────────────────────────────────────────
+  //
+  // Added 8 November 2026. Issuing a customer quote now needs the ISSUE_QUOTE
+  // capability rather than only a sign-in: the thing being approved is a price
+  // and the approval is Nick's by his own rule. This suite acts as the owner,
+  // so it names the signed-in account in the deployment allowlist — the same
+  // one variable production needs set.
+  process.env.NAC_OWNER_EMAILS = 'nick@nacelectrical.com.au';
   globalThis.fetch = async (url, opts) => {
     const auth = (opts && opts.headers && opts.headers.Authorization) || '';
     if (!String(url).includes('/auth/v1/user')) {

@@ -29,10 +29,18 @@ const SUPA_URL = 'https://icnznjhwybryizbdqrgx.supabase.co';
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imljbnpuamh3eWJyeWl6YmRxcmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjIxMDksImV4cCI6MjA5ODIzODEwOX0.Y1URSkilExecDYF1ux2q7Xnk0I5ooDjREK0DD9Ae9nw';
 
 /**
+ * The VERIFIED Supabase user behind this request, in full.
+ *
+ * `signedInStaff` below returns only an identity string, which is all four of
+ * its callers ever needed. The role model needs `app_metadata` as well — the
+ * one part of a Supabase user a user cannot write about themselves — so it
+ * reads the whole object through here rather than fetching /auth/v1/user a
+ * second time with its own copy of the rules.
+ *
  * @param {object} req
- * @returns {Promise<string|null>} the signed-in staff member, or null
+ * @returns {Promise<object|null>} the Supabase user, or null
  */
-async function signedInStaff(req) {
+async function signedInUser(req) {
   const headers = req && req.headers ? req.headers : {};
   const auth = headers.authorization || headers.Authorization || '';
   const token = /^Bearer\s+(.+)$/i.exec(auth);
@@ -46,10 +54,19 @@ async function signedInStaff(req) {
     });
     if (!r.ok) return null;
     const user = await r.json().catch(() => null);
-    return user && user.id ? (user.email || user.id) : null;
+    return user && user.id ? user : null;
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * @param {object} req
+ * @returns {Promise<string|null>} the signed-in staff member, or null
+ */
+async function signedInStaff(req) {
+  const user = await signedInUser(req);
+  return user ? (user.email || user.id) : null;
 }
 
 /**
@@ -66,4 +83,4 @@ async function requireStaff(req, res, what = 'this') {
   return null;
 }
 
-module.exports = { signedInStaff, requireStaff, ANON_KEY };
+module.exports = { signedInUser, signedInStaff, requireStaff, ANON_KEY };

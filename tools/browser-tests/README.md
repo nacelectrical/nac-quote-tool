@@ -26,6 +26,8 @@ node tools/browser-tests/setup-page.mjs             # /setup.html, all branches
 node tools/browser-tests/home-screen.mjs            # installed on a home screen: no browser around it
 node tools/browser-tests/plan-step.mjs              # floor plan + rooms: labels, reading, sizing
 node tools/browser-tests/dashboard.mjs              # the board: unavailable is not zero
+node tools/browser-tests/pricing-setup.mjs          # the allowances: units, GST, validation, owner only
+node tools/browser-tests/roles-ui.mjs               # the quote screen as a technician vs an owner
 node tools/browser-tests/material-rates.mjs         # every rate is enterable and persists
 node tools/page-health.mjs                          # every page: console + network errors
 node tools/pdf-render.mjs <file.pdf> 1,2             # look at a generated PDF

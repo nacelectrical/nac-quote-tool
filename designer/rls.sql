@@ -26,6 +26,23 @@
 -- Create NAC staff in Authentication → Users (or invite by email). Any
 -- authenticated user is treated as NAC staff; there is no second tier, because
 -- NAC is one team and inventing roles nobody asked for would be guesswork.
+--
+-- ⚠ SUPERSEDED FOR nac_settings, 8 November 2026.
+--
+-- NAC has now asked for the second tier. "Any authenticated user is treated as
+-- NAC staff" is exactly the finding: every signed-in account could read
+-- nac_settings, which holds the supplier cost prices, the job fee — the margin
+-- on NAC's method — and the installation allowances.
+--
+-- designer/roles-schema.sql adds the role table and designer/roles-rls.sql
+-- replaces the nac_settings policy below with one gated on nac_is_owner().
+-- APPLY THOSE TWO, IN THAT ORDER, AFTER THIS FILE. The policy created here is
+-- dropped by name there, so running this file afterwards would quietly reopen
+-- the cost prices.
+--
+-- Everything else in this file still stands: designs, quotes and the
+-- customer's own anonymous read and accept are unchanged, because a technician
+-- has to be able to do the work.
 
 -- ── nac_settings: prices and settings. Staff only. ─────────────────────────
 alter table public.nac_settings enable row level security;

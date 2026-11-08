@@ -409,6 +409,28 @@ export function normaliseQuoteDraft(input = {}) {
     jobRef: trimmed(d.jobRef) || null,
 
     /**
+     * THE ENQUIRY THIS ASSESSMENT CAME OUT OF.
+     *
+     * Added 8 November 2026, and the reason it had to be is instructive: the
+     * builder sets it when the quote is opened on `?intake=<id>`, then calls
+     * `normaliseQuoteDraft` on the way to the database — which dropped it. So
+     * the link survived until the first save and no further, and after a
+     * reload there was nothing left to join the enquiry to.
+     *
+     * `enquiry` keeps WHAT THE CUSTOMER SENT — the plan and the photographs —
+     * so the floor plan step can offer them whether or not the automatic load
+     * worked. It is not the assessment and does not become one.
+     */
+    enquiryId: trimmed(d.enquiryId) || null,
+    enquiry: d.enquiry && trimmed(d.enquiry.id) ? {
+      id: trimmed(d.enquiry.id),
+      planUrl: trimmed(d.enquiry.planUrl) || null,
+      photoUrls: list(d.enquiry.photoUrls).map(trimmed).filter(Boolean),
+      pack: trimmed(d.enquiry.pack) || null,
+      loadedAt: trimmed(d.enquiry.loadedAt) || null
+    } : null,
+
+    /**
      * A PROVISIONAL ESTIMATE RATHER THAN A FIXED PRICE.
      *
      * Different promises, and a customer reading the second as the first is

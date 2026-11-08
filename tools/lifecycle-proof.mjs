@@ -55,6 +55,10 @@ function call(handler, { method = 'GET', query = {}, body = null, headers = {} }
 const stop = await startRest();
 reset();
 process.env.SUPABASE_KEY = 'test-service-key';
+// Issuing a quote needs the ISSUE_QUOTE capability as of 8 November 2026, not
+// only a sign-in. This proof runs as the owner, so it names the signed-in
+// account in the allowlist — the same one variable production needs set.
+process.env.NAC_OWNER_EMAILS = 'nick@nacelectrical.com.au';
 globalThis.fetch = async (url) => String(url).includes('/auth/v1/user')
   ? { ok: true, json: async () => ({ id: 'u1', email: 'nick@nacelectrical.com.au' }) }
   : { ok: false, status: 404, json: async () => ({}) };

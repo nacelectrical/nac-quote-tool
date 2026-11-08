@@ -105,6 +105,7 @@
     <a href="/quote-builder.html">New quote</a>
     <a href="/quotes.html">All quotes</a>
     <a href="/quote-presentation.html">Content</a>
+    <a href="/settings.html">Pricing setup</a>
   </div>
 </header>
 
@@ -117,6 +118,7 @@
 <script type="module">
 import { requireSignIn } from '/designer/auth.mjs';
 import { dashboard } from '/designer/engines/workflow.mjs';
+import { openEnquiries } from '/designer/engines/enquiry.mjs';
 
 // Customer names, addresses and prices. The same gate as every internal screen.
 await requireSignIn({ pageName: 'the job board' });
@@ -158,22 +160,34 @@ async function read(url, pick) {
 }
 
 async function load() {
-  const [issued, ops] = await Promise.all([
+  // ── ENQUIRIES AND HANDOVERS ARE WIRED NOW ─────────────────────────────
+  //
+  // Until 8 November both were passed as null, because neither had an
+  // endpoint: the enquiry panel said "could not be read" — honestly, and
+  // uselessly — and a prepared handover had nowhere to live at all.
+  //
+  // `read()` still returns NULL on any failure and never [], so a panel whose
+  // source did not answer still says so rather than looking settled. That is
+  // the one rule this board is built on and wiring a source up does not
+  // relax it: /api/enquiries answers `available: false` with a null count when
+  // it could not read, and /api/handover does the same when its table has not
+  // been created yet.
+  const [issued, ops, enquiries, handovers] = await Promise.all([
     read('/api/quote-list?limit=200', b => b.quotes),
-    read('/api/ops-activity', b => b.approvals)
+    read('/api/ops-activity', b => b.approvals),
+    read('/api/enquiries?limit=200', b => b.available ? b.enquiries : null),
+    read('/api/handover?limit=200', b => b.available ? b.handovers : null)
   ]);
 
-  // ── WHAT IS NOT WIRED YET, SAID PLAINLY ───────────────────────────────
-  //
-  // Enquiries and handovers have no endpoint of their own yet. They are
-  // passed as null rather than as [], so their panels read "could not be
-  // read" instead of "nothing to do" — which is the truth, and is the
-  // difference between a board you can trust and one you cannot.
+  // The board asks for enquiries in its own shape — the fields it needs to
+  // say what is missing — and `openEnquiries` is the one place that mapping
+  // lives, so the panel and the ops surface agree about which enquiries are
+  // still open.
   const board = dashboard({
     issued,
     drafts: null,
-    enquiries: null,
-    handovers: null,
+    enquiries: openEnquiries(enquiries),
+    handovers,
     approvals: ops,
     integrations: await connections()
   });
@@ -299,7 +313,9 @@ async function connections() {
   await probe('Ops assistant surface', '/api/ops-activity');
   // Stated, not probed: saying "not connected" needs no network call, and
   // pretending to test something that has no credentials would be theatre.
-  out.push({ name: 'ServiceM8', state: 'off', detail: 'Not connected — handovers stay local' });
+  out.push({ name: 'ServiceM8', state: 'off',
+             detail: 'Not connected. Handovers are prepared and stored here and are '
+               + 'never shown as synced.' });
   out.push({ name: 'Xero', state: 'off', detail: 'Not connected — deposits entered by hand' });
   out.push({ name: 'Podium', state: 'off', detail: 'API details pending' });
   return out;

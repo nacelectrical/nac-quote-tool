@@ -57,7 +57,15 @@ function supa(path, { method = 'GET', key, body = null, prefer = null } = {}) {
   });
 }
 
-/** NAC staff only. Issuing a quote is not something a link can do. */
+/**
+ * The local sign-in check this file used before roles existed.
+ *
+ * Kept because `ANON_KEY` and `SUPA_URL` above are used elsewhere in the file
+ * and because deleting a working verification in the same change that adds a
+ * stricter one is two changes. The handler no longer calls it: it goes through
+ * server/roles.js, which verifies the same token the same way and then asks
+ * what the user is allowed to do.
+ */
 async function signedInStaff(req) {
   const auth = req.headers?.authorization || req.headers?.Authorization || '';
   const token = /^Bearer\s+(.+)$/i.exec(auth)?.[1];
@@ -106,11 +114,22 @@ module.exports = async function handler(req, res) {
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
 
-  const issuedBy = await signedInStaff(req);
-  if (!issuedBy) {
-    return res.status(401).json({ error: 'sign_in_required',
-      message: 'NAC staff sign-in is required to issue a quote.' });
-  }
+  // ── SIGNED IN, AND ENTITLED TO COMMIT NAC TO A PRICE ──────────────────────
+  //
+  // Added 8 November 2026. Being signed in used to be enough, which meant any
+  // member of staff could put a priced, legally-weighted offer in front of a
+  // customer in NAC's name. Issuing is now the ISSUE_QUOTE capability — owners
+  // and admins — because the approval is Nick's by his own rule and the thing
+  // being approved is a price.
+  //
+  // A technician is NOT blocked from the work: they build the draft, run the
+  // sizing and prepare the handover. They cannot be the one who sends it.
+  const { requireCapability } = require('./roles.js');
+  const { CAPABILITIES } = await import('../designer/engines/roles.mjs');
+  const who = await requireCapability(req, res, CAPABILITIES.ISSUE_QUOTE,
+    'issuing a customer quote');
+  if (!who) return;
+  const issuedBy = who.email;
 
   const KEY = process.env.SUPABASE_KEY;
   if (!KEY) return res.status(500).json({ error: 'server_not_configured' });

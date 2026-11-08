@@ -81,11 +81,30 @@ This is the honest centre of the report.
 | **Ops assistant surface** | `/api/ops`, 12 operations, per-key scopes, idempotency on writes, refusals logged. Answers **503 on every operation** because `NAC_OPS_KEYS` is unset. No key has been issued. |
 | **Xero** | Not present at all. Deposits are entered by hand. |
 | **`designer/ops-integration-schema.sql`** | Additive, and **not applied**. |
-| **Handover → ServiceM8** | Handovers are prepared and stored locally. `sync.state` is `prepared`; it never claims to be synced. |
+| **Handover → ServiceM8** | ~~Handovers are prepared and stored locally.~~ **This line was wrong — see the correction below.** |
 
 Required server configuration (names only): `SUPABASE_KEY`, `ANTHROPIC_API_KEY`,
 `NAC_OPS_KEYS`, `SERVICEM8_API_KEY`, `GHL_API_KEY`, `GHL_LOCATION_ID`,
 `NAC_NOTIFY_WEBHOOK`, `NAC_PUBLIC_BASE_URL`.
+
+### Correction, 8 November 2026 — "stored locally" was wrong
+
+Section 3 above said handovers were *"prepared and stored locally"*, and
+section 4 said *"Handovers have no endpoint. `engines/handover.mjs` builds and
+validates them; nothing persists or lists them yet."*
+
+**Both cannot be true, and the second one was.** `handover.mjs` is a pure
+function: give it a frozen issued record and it returns a handover object.
+Nothing called it. There was no table, no endpoint and no row, and
+`/dashboard.html` passed `handovers: null` to the board — which correctly
+reported the source as unreadable.
+
+"Stored locally" was wrong in the flattering direction. It reads as "stored,
+just not synced yet", when the truth was "not stored". The engine was right,
+its tests were right, and the thing was unreachable from the application.
+
+That is fixed: `nac_handovers`, `/api/handover`, and the duplicate rule in the
+database. See the delivery note in `docs/deployment-and-inputs.md`.
 
 **I cannot see the production Vercel environment from the development sandbox** —
 outbound traffic to `vercel.app` and `supabase.co` is blocked here. So: which of those are
@@ -96,21 +115,44 @@ needs checking in the Vercel dashboard, and it is a deployment action, not a cod
 
 ## 4. What actually needs building
 
-In the order I would do it.
+In the order I would do it. **All five were built on 8 November** — the status
+line under each says what the finding turned out to be, which in two cases was
+not what I wrote here.
 
 1. **Enquiries have no store of their own.** `api/intake-submit.js` writes to `nac_quotes`;
    the board reads nothing, so its enquiry panel says "could not be read" — honestly, but
    uselessly. *Smallest useful change in the project.*
+   → **Built.** `nac_enquiries`, `/api/enquiries`, and the old records read in
+   place out of the intake notes rather than migrated. And a second finding I
+   had missed: the intake's own `?intake=` link into the quote screen **did
+   nothing** — the screen ignored the parameter, so every enquiry was re-keyed
+   by hand off the email. `loadIntakeDraft()` had existed and been under test
+   the whole time with no caller.
 2. **Drafts and pending approvals are not on the board.** The engine supports them; no
    endpoint lists drafts with their gate state.
+   → **Built**, on `quote.board`, additively. Blocker **codes** only: the gate's
+   messages carry money.
 3. **Handovers have no endpoint.** `engines/handover.mjs` builds and validates them; nothing
    persists or lists them yet.
+   → **Correct, and it contradicted section 3.** See the correction above.
+   Built: `nac_handovers`, `/api/handover`, duplicate-safe on an acceptance
+   retry in the endpoint *and* in the database.
 4. **The pricing engine needs NAC's allowances.** `engines/quote-pricing.mjs` assembles a
    price from the costs already on file and *refuses* while the installation allowances are
    unset — which is correct, and means it prices nothing today. One session on the Settings
    screen unblocks it.
+   → **Wrong about the cause.** There was no Settings screen to have a session
+   on. `proposalAllowance` and `jobFee` appeared in **no** `.html` file in the
+   repository, so the refusal was permanent and the engine priced nothing,
+   ever. `/settings.html` is that screen. The figures are still NAC's to
+   supply — see `docs/deployment-and-inputs.md`.
 5. **Technician permissions are not enforced.** Every signed-in user sees costs and margins.
    Owner/technician separation is specified and not built.
+   → **Built**, in three places: the row-level policy on `nac_settings` (which
+   is the only real control, because the browser reads that table directly),
+   the capability check on `/api/quote-issue`, and the screens. Who is an owner
+   is **not** decided in code — it is configuration, and it is a deployment
+   prerequisite.
 
 ---
 

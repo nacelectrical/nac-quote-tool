@@ -34,7 +34,10 @@ const ROUTES = {
   'servicem8-testjob': () => import('../server/servicem8-testjob.js'),
   'ops': () => import('../server/ops.js'),
   'quote-outreach': () => import('../server/quote-outreach.js'),
-  'ops-activity': () => import('../server/ops-activity.js')
+  'ops-activity': () => import('../server/ops-activity.js'),
+  'enquiries': () => import('../server/enquiries.js'),
+  'handover': () => import('../server/handover.js'),
+  'whoami': () => import('../server/whoami.js')
 };
 
 function requestedName(req) {

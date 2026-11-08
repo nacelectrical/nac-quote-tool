@@ -408,6 +408,15 @@ end
 $sweep$;
 
 -- ── nac_settings: prices and settings. Staff only. ─────────────────────────
+--
+-- ⚠ SUPERSEDED, 8 November 2026. The policy created below gives EVERY signed-in
+-- account the cost prices, the job fee (which is the margin) and the
+-- installation allowances. That is the finding designer/roles-rls.sql closes.
+--
+-- If you re-run this file after applying designer/roles-rls.sql, this section
+-- reopens them: it drops `nac_settings_owner_all` in the sweep above and
+-- recreates `nac_settings_staff_all` here. So after running this file, apply
+-- designer/roles-schema.sql and then designer/roles-rls.sql again.
 alter table public.nac_settings enable row level security;
 
 -- (The sweep above already removed every policy here. These are kept so the

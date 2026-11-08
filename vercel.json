@@ -48,6 +48,18 @@
     {
       "source": "/api/servicem8-selftest",
       "destination": "/api/selftest?nac_fn=servicem8"
+    },
+    {
+      "source": "/api/enquiries",
+      "destination": "/api/quote?nac_fn=enquiries"
+    },
+    {
+      "source": "/api/handover",
+      "destination": "/api/quote?nac_fn=handover"
+    },
+    {
+      "source": "/api/whoami",
+      "destination": "/api/quote?nac_fn=whoami"
     }
   ],
   "functions": {
@@ -55,6 +67,9 @@
       "includeFiles": "designer/engines/**"
     },
     "api/selftest.js": {
+      "includeFiles": "designer/engines/**"
+    },
+    "api/intake-submit.js": {
       "includeFiles": "designer/engines/**"
     }
   },

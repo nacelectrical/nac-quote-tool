@@ -198,23 +198,43 @@ const jsonLit = (v) => '$nacjson$' + JSON.stringify(v) + '$nacjson$';
 // the endpoint handles that rather than only the happy path.
 const TABLES = new Set(['nac_designs', 'nac_quote_issues', 'nac_presentation_content',
                         'nac_settings', 'nac_customers', 'nac_jobs',
-                        'nac_integration_calls']);
+                        'nac_integration_calls', 'nac_enquiries', 'nac_handovers',
+                        'nac_staff_roles', 'nac_quotes']);
 const JSONB = {
   nac_quote_issues: new Set(['data']),
   nac_presentation_content: new Set(['data']),
-  nac_integration_calls: new Set(['result', 'refusals'])
+  nac_integration_calls: new Set(['result', 'refusals']),
+  nac_enquiries: new Set(['assessment', 'photo_urls']),
+  nac_handovers: new Set(['data'])
 };
 /** What `Prefer: resolution=merge-duplicates` conflicts on, per table. */
 const PK = { nac_quote_issues: 'token', nac_designs: 'id', nac_customers: 'id',
-             nac_jobs: 'id', nac_integration_calls: 'id' };
+             nac_jobs: 'id', nac_integration_calls: 'id', nac_enquiries: 'id',
+             nac_handovers: 'id', nac_staff_roles: 'user_email', nac_quotes: 'id' };
 
 function parseFilters(params) {
   const where = [];
   for (const [k, v] of params) {
     if (['select', 'limit', 'order', 'offset'].includes(k)) continue;
+    const col = '"' + k.replace(/"/g, '') + '"';
+
+    // ── `like` HAS TO BE REAL TOO ──────────────────────────────────────
+    //
+    // /api/enquiries reads the pre-table enquiries with
+    // `notes=like.INTAKE DRAFT*`, doing the filtering in the database rather
+    // than pulling every quote NAC has ever written across the wire. A shim
+    // that ignored the filter would return every row and the suite would pass
+    // while the endpoint was selecting the whole table.
+    const like = /^(like|ilike)\.(.*)$/s.exec(v);
+    if (like) {
+      where.push(col + ' ' + (like[1] === 'like' ? 'like' : 'ilike') + ' '
+        + q(like[2].replace(/\*/g, '%')));
+      continue;
+    }
+
     const m = /^(eq|neq)\.(.*)$/s.exec(v);
     if (!m) continue;
-    where.push('"' + k.replace(/"/g, '') + '" ' + (m[1] === 'eq' ? '=' : '<>') + ' ' + q(m[2]));
+    where.push(col + ' ' + (m[1] === 'eq' ? '=' : '<>') + ' ' + q(m[2]));
   }
   return where;
 }
@@ -368,5 +388,7 @@ export async function startRest() {
 /** Empty every table, so each suite starts from a known database. */
 export function reset() {
   sql('truncate public.nac_quote_issues, public.nac_designs, '
-    + 'public.nac_presentation_content, public.nac_settings');
+    + 'public.nac_presentation_content, public.nac_settings, '
+    + 'public.nac_quotes, public.nac_enquiries, public.nac_handovers, '
+    + 'public.nac_staff_roles');
 }

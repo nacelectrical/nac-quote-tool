@@ -126,6 +126,14 @@ const APPROVER = 'nick@nacelectrical.com.au';
 async function setup() {
   reset();
   process.env.SUPABASE_KEY = 'test-service-key';
+  // ── THE OWNER, FOR THE ISSUE GATE ────────────────────────────────────────
+  //
+  // Added 8 November 2026. Issuing a customer quote now needs the ISSUE_QUOTE
+  // capability rather than only a sign-in: the thing being approved is a price
+  // and the approval is Nick's by his own rule. This suite acts as the owner,
+  // so it names the signed-in account in the deployment allowlist — the same
+  // one variable production needs set.
+  process.env.NAC_OWNER_EMAILS = 'nick@nacelectrical.com.au';
   // ── THE BOOKING KEY IS THE TEST'S, NOT THE MACHINE'S ────────────────────
   //
   // These assert that an acceptance survives ServiceM8 being unavailable, and

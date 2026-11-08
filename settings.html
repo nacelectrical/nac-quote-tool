@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<!--
+  NAC — PRICING SETUP
+
+  Nick, 8 November 2026: "Inspect the installation allowances required by the
+  pricing engine. Provide clear Settings fields with units, GST treatment and
+  validation."
+
+  WHY THIS SCREEN DID NOT EXIST, WHICH IS THE WHOLE POINT OF IT
+
+  designer/engines/quote-pricing.mjs has been able to price a job from NAC's
+  own numbers since 7 November. It refuses while the installation allowances
+  are unset — correctly, because `Number(null)` is 0 and a job priced as though
+  the ductwork were free is a job priced at a loss.
+
+  And `proposalAllowance` and `jobFee` appeared in NO SCREEN in the
+  application. Searching every .html file for either name returned nothing.
+  The fields shipped null on purpose, the engine refused on purpose, and the
+  only way to fill them in was to write JSON into the database by hand. So the
+  refusal was permanent and the pricing engine priced nothing, ever.
+
+  This is the missing half: the fields, with their units, their GST treatment
+  and validation that will not let a loss through.
+
+  TWO THINGS IT WILL NOT DO
+
+  1. It will not invent a figure. Every field here is NAC's own commercial
+     number and arrives empty. Where a number DID ship with the application —
+     the job fee ships at 6000 — it is shown as unconfirmed until Nick saves
+     it himself, because a plausible default is more dangerous than a blank.
+
+  2. It will not block the work. Drafts, assessments, room measurements and
+     the sizing all save with none of this set, and a price typed by hand
+     still issues. What is blocked is the SUGGESTED price, and the screen says
+     so in those words.
+
+  OWNERS ONLY. These are the cost prices, the margin and the allowances. The
+  gate is /api/whoami for the screen and the row-level policy in
+  designer/roles-rls.sql for the data — the policy is the control, this is the
+  courtesy of being told why.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pricing setup — NAC</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NAC Quotes">
+<meta name="theme-color" content="#0c0c24">
+<style>
+  :root{--navy:#0c0c24;--ink:#1c1c22;--grey:#6b6b76;--line:#e2e2e8;--bg:#f4f5f8;
+        --yellow:#F5C200;--blue:#2B6CB8;--ok:#2f8f4e;--warn:#b07d00;--bad:#c0392b;
+        --card:#fff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+  header{background:var(--navy);color:#fff;padding:14px 16px;
+         padding-top:calc(14px + env(safe-area-inset-top))}
+  header h1{font-size:19px;letter-spacing:-.01em}
+  header h1 b{color:var(--yellow)}
+  header p{color:#aeb4c8;font-size:13px;margin-top:2px}
+  .nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .nav a{background:#fff;color:var(--navy);text-decoration:none;font-weight:600;
+         font-size:14px;padding:8px 12px;border-radius:8px;min-height:40px;
+         display:inline-flex;align-items:center}
+  .wrap{max-width:860px;margin:0 auto;padding:16px;
+        padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;
+          margin-bottom:14px;overflow:hidden}
+  section>h2{font-size:15px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  section>h2 small{display:block;font-weight:400;color:var(--grey);font-size:13px;
+                   margin-top:2px}
+  .body{padding:14px}
+  .grid{display:grid;gap:12px}
+  @media(min-width:620px){.grid{grid-template-columns:1fr 1fr}}
+  .f label{display:block;font-size:13.5px;font-weight:650;margin-bottom:4px}
+  .f .unit{color:var(--grey);font-weight:400}
+  .f input,.f select{width:100%;font:inherit;padding:11px 12px;min-height:44px;
+                     border:1px solid var(--line);border-radius:9px;background:#fff;
+                     color:var(--ink)}
+  .f input:focus,.f select:focus{outline:2px solid var(--blue);outline-offset:1px}
+  .f input[aria-invalid="true"]{border-color:var(--bad);background:#fdf5f4}
+  .f .hint{display:block;font-size:12.5px;color:var(--grey);margin-top:4px}
+  .f .hint.err{color:var(--bad);font-weight:600}
+  .f .hint.flag{color:var(--warn);font-weight:600}
+  .chk{display:flex;gap:9px;align-items:flex-start;font-size:14px;padding:10px 12px;
+       border-radius:9px;margin-top:10px}
+  .chk b{flex:0 0 auto;font-size:13px;line-height:1.45}
+  .chk.ok{background:#eff8f1;color:#226437} .chk.warn{background:#fdf8ef;color:#6f5100}
+  .chk.bad{background:#fdf0ee;color:#8f2a1e}
+  .btn{font:inherit;font-weight:650;padding:11px 16px;min-height:44px;border-radius:10px;
+       border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  .btn.primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .bar{position:sticky;bottom:0;background:#fffffff2;backdrop-filter:blur(6px);
+       border-top:1px solid var(--line);padding:12px 16px;
+       padding-bottom:calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;
+       flex-wrap:wrap;align-items:center}
+  /* `display:flex` above beats the browser's own `[hidden]{display:none}`, so
+     the save bar stayed on screen for a technician even though the page had
+     hidden it. Found by tools/browser-tests/pricing-setup.mjs. */
+  .bar[hidden]{display:none}
+  .bar .msg{font-size:13.5px}
+  .bar .msg.ok{color:var(--ok)} .bar .msg.bad{color:var(--bad)}
+  .note{color:var(--grey);font-size:14px}
+  dl.facts{font-size:14px}
+  dl.facts dt{font-weight:650;margin-top:8px}
+  dl.facts dd{color:var(--grey)}
+</style>
+</head>
+<body>
+<header>
+  <h1><b>NAC</b> — Pricing setup</h1>
+  <p id="who">Checking your access…</p>
+  <div class="nav">
+    <a href="/dashboard.html">Today</a>
+    <a href="/quote-builder.html">New quote</a>
+    <a href="/quotes.html">All quotes</a>
+  </div>
+</header>
+
+<div class="wrap" id="wrap">
+  <section><h2>Loading</h2><div class="body note">Reading the saved settings…</div></section>
+</div>
+<div class="bar" id="bar" hidden>
+  <button class="btn primary" id="save" type="button">Save these figures</button>
+  <span class="msg" id="msg"></span>
+</div>
+
+<script type="module">
+import { requireSignIn } from '/designer/auth.mjs';
+import { getJson, setSetting, SETTINGS_KEYS, lastStorageError } from '/designer/engines/store.mjs';
+import { DEFAULT_SETTINGS, mergeSettings } from '/designer/engines/settings.mjs';
+import { pricingSetupStatus } from '/designer/engines/quote-pricing.mjs';
+
+await requireSignIn({ pageName: 'the pricing setup' });
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, kids = []) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v);
+  }
+  for (const c of [].concat(kids)) if (c) n.appendChild(c);
+  return n;
+};
+
+function staffHeaders() {
+  let token = null;
+  try { token = JSON.parse(localStorage.getItem('nac_session_v1') || 'null')?.access_token; }
+  catch (e) { token = null; }
+  return token ? { Authorization: 'Bearer ' + token } : {};
+}
+
+/**
+ * ── THE ACCESS CHECK ──────────────────────────────────────────────────────
+ *
+ * Asked of the SERVER, which verifies the session against Supabase and reads
+ * the role from configuration the browser never sees. It is not the control —
+ * the row-level policy on nac_settings is, and it applies whatever this page
+ * believes — but it is what lets the page explain itself instead of showing a
+ * form full of blanks that will not save.
+ */
+async function whoami() {
+  try {
+    const r = await fetch('/api/whoami', { headers: staffHeaders(), cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+const CAP = 'view_internal_pricing';
+
+const me = await whoami();
+
+if (!me) {
+  $('who').textContent = 'Your access could not be checked.';
+  $('wrap').textContent = '';
+  $('wrap').appendChild(el('section', {}, [
+    el('h2', { text: 'Your access could not be checked' }),
+    el('div', { class: 'body' }, [
+      el('p', { class: 'note', text: 'The server did not answer, so this screen will '
+        + 'not show NAC’s cost prices. Nothing is wrong with the figures — they '
+        + 'have not been read. Try again, and if it keeps happening the pricing '
+        + 'settings can still be reached from the quote screen.' })
+    ])
+  ]));
+} else if (!(me.capabilities || []).includes(CAP)) {
+  // ── A TECHNICIAN, TOLD WHY ──────────────────────────────────────────
+  $('who').textContent = me.email
+    ? me.email + ' — ' + (me.role || 'no role') : 'Signed in';
+  $('wrap').textContent = '';
+  $('wrap').appendChild(el('section', {}, [
+    el('h2', {}, [document.createTextNode('Restricted to the business owner'),
+      el('small', { text: 'Everything else on the job is yours as normal.' })]),
+    el('div', { class: 'body' }, [
+      el('div', { class: 'chk warn' }, [el('b', { text: '!' }), el('span', {
+        text: me.rolesConfigured
+          ? 'This screen holds NAC’s supplier cost prices, the job fee — which is '
+            + 'the margin — and the installation allowances. Your account is a '
+            + (me.role || 'technician') + ', so it is closed to you. Ask Nick.'
+          : 'No owner has been configured on this deployment yet, so the pricing '
+            + 'figures are closed to everybody including the owner. This is a '
+            + 'one-off setup step: NAC_OWNER_EMAILS has to be set in the server '
+            + 'environment, or an owner row added to nac_staff_roles.' })]),
+      el('p', { class: 'note', text: 'What you can still do: take an enquiry, upload a '
+        + 'floor plan, measure the rooms, run the preliminary sizing, record site '
+        + 'checks, prepare a handover and confirm that the equipment is on site and '
+        + 'the date is agreed. None of that is restricted.' })
+    ])
+  ]));
+} else {
+  await ownerScreen();
+}
+
+async function ownerScreen() {
+  $('who').textContent = (me.email || 'Signed in') + ' — ' + me.role
+    + (me.rolesConfigured ? '' : ' (roles not configured)');
+
+  // The STORED record and the MERGED record are both needed, and the
+  // difference between them is the point: a figure present in `stored` is
+  // NAC's, and a figure that only exists after the merge came from the
+  // application. The screen says which.
+  let stored = {};
+  try { stored = await getJson(SETTINGS_KEYS.hvacSettings, {}) || {}; }
+  catch (e) { stored = {}; }
+  const settings = mergeSettings(DEFAULT_SETTINGS, stored);
+
+  // Working copy. Nothing is written until Save.
+  const work = {
+    gstRate: settings.commercial?.gstRate ?? null,
+    jobFee: settings.commercial?.jobFee ?? null,
+    jobFeeExGst: settings.commercial?.jobFeeExGst !== false,
+    allowance: { ...(settings.commercial?.proposalAllowance || {}) }
+  };
+  const savedKeys = {
+    gstRate: stored.commercial?.gstRate !== undefined,
+    jobFee: stored.commercial?.jobFee !== undefined,
+    allowance: { ...(stored.commercial?.proposalAllowance || {}) }
+  };
+
+  const errors = new Map();
+
+  /**
+   * ── VALIDATION ────────────────────────────────────────────────────────
+   *
+   * An empty box is NOT zero and is allowed: it means not set, which the
+   * pricing engine reports as not set and refuses to price around. What is
+   * refused is a figure that cannot be true — a negative allowance, a
+   * contingency over 100%, text where a number belongs — because each of
+   * those produces a price that is wrong rather than absent.
+   */
+  function validate(key, raw, { min = 0, max = null, label }) {
+    const t = String(raw ?? '').trim();
+    if (t === '') { errors.delete(key); return null; }           // not set
+    const v = Number(t);
+    if (!Number.isFinite(v)) {
+      errors.set(key, label + ' has to be a number, or empty for not set.');
+      return undefined;                                          // invalid
+    }
+    if (v < min) { errors.set(key, label + ' cannot be less than ' + min + '.'); return undefined; }
+    if (max !== null && v > max) {
+      errors.set(key, label + ' cannot be more than ' + max + '.'); return undefined;
+    }
+    errors.delete(key);
+    return v;
+  }
+
+  function moneyField(key, label, unit, value, wasSaved, hint, onInput) {
+    const input = el('input', { type: 'number', inputmode: 'decimal', step: '0.01',
+                                min: '0', id: 'f_' + key.replace(/\W/g, '_') });
+    input.value = value === null || value === undefined ? '' : String(value);
+    const err = el('span', { class: 'hint' });
+    const flag = (value !== null && value !== undefined && !wasSaved)
+      ? el('span', { class: 'hint flag',
+            text: 'This figure shipped with the application. Save to confirm it is NAC’s.' })
+      : null;
+    input.addEventListener('input', () => {
+      const out = onInput(input.value);
+      const bad = errors.has(key);
+      input.setAttribute('aria-invalid', bad ? 'true' : 'false');
+      err.className = 'hint' + (bad ? ' err' : '');
+      err.textContent = bad ? errors.get(key) : '';
+      redrawStatus();
+      return out;
+    });
+    return el('div', { class: 'f' }, [
+      el('label', { for: input.id }, [
+        document.createTextNode(label + ' '),
+        el('span', { class: 'unit', text: unit })
+      ]),
+      input, err, flag,
+      hint ? el('span', { class: 'hint', text: hint }) : null
+    ]);
+  }
+
+  // ── GST AND THE FEE ─────────────────────────────────────────────────
+  const gstPct = el('input', { type: 'number', inputmode: 'decimal', step: '0.1',
+                               min: '0', max: '100', id: 'f_gst' });
+  gstPct.value = work.gstRate === null ? '' : String(Math.round(work.gstRate * 1000) / 10);
+  const gstErr = el('span', { class: 'hint' });
+  gstPct.addEventListener('input', () => {
+    const v = validate('gstRate', gstPct.value, { min: 0, max: 100, label: 'The GST rate' });
+    work.gstRate = v === undefined ? work.gstRate : (v === null ? null : v / 100);
+    const bad = errors.has('gstRate');
+    gstPct.setAttribute('aria-invalid', bad ? 'true' : 'false');
+    gstErr.className = 'hint' + (bad ? ' err' : '');
+    gstErr.textContent = bad ? errors.get('gstRate') : '';
+    redrawStatus();
+  });
+
+  const feeBasis = el('select', { id: 'f_feebasis' });
+  feeBasis.appendChild(el('option', { value: 'ex', text: 'Excluding GST — GST is added on top' }));
+  feeBasis.appendChild(el('option', { value: 'inc', text: 'Including GST — the fee already has GST in it' }));
+  feeBasis.value = work.jobFeeExGst ? 'ex' : 'inc';
+  feeBasis.addEventListener('change', () => {
+    work.jobFeeExGst = feeBasis.value === 'ex';
+    redrawStatus();
+  });
+
+  const feeSection = el('section', {}, [
+    el('h2', {}, [document.createTextNode('GST and the job fee'),
+      el('small', { text: 'On NAC’s method the fee is the margin: job cost + fee, then GST.' })]),
+    el('div', { class: 'body' }, [
+      el('div', { class: 'grid' }, [
+        el('div', { class: 'f' }, [
+          el('label', { for: 'f_gst' }, [document.createTextNode('GST rate '),
+            el('span', { class: 'unit', text: '(percent)' })]),
+          gstPct, gstErr,
+          savedKeys.gstRate ? null : el('span', { class: 'hint flag',
+            text: 'Shipped at 10%. Save to confirm it.' }),
+          el('span', { class: 'hint', text: 'Stored as a fraction — 10% is saved as 0.1.' })
+        ]),
+        moneyField('jobFee', 'Job fee', '(dollars per job)', work.jobFee, savedKeys.jobFee,
+          'What NAC makes on the job. It covers labour, overhead and profit together, '
+          + 'and it is the only margin in the method — nothing else here is marked up.',
+          (raw) => {
+            const v = validate('jobFee', raw, { min: 0, label: 'The job fee' });
+            if (v !== undefined) work.jobFee = v;
+          }),
+        el('div', { class: 'f' }, [
+          el('label', { for: 'f_feebasis' }, [document.createTextNode('That fee is '),
+            el('span', { class: 'unit', text: '(GST treatment)' })]),
+          feeBasis,
+          el('span', { class: 'hint', text: 'Get this wrong by one step and every quote '
+            + 'is out by 10%, so it is asked rather than assumed.' })
+        ])
+      ])
+    ])
+  ]);
+
+  // ── THE ALLOWANCES ──────────────────────────────────────────────────
+  const PER_JOB = [
+    ['ductwork', 'Ductwork', 'Supply ductwork, insulation, flexible and takeoffs.'],
+    ['returns', 'Return air', 'Grilles, boxes and the run back to the unit.'],
+    ['plenums', 'Plenums', 'Fabricated supply and return plenums.'],
+    ['electrical', 'Electrical', 'Isolator, cabling and connection.'],
+    ['refrigeration', 'Refrigeration', 'Paircoil, gas, vacuum and commissioning.'],
+    ['condensate', 'Condensate', 'Drain, insulation, tray or pump.'],
+    ['labour', 'Installation labour', 'Only where labour is not already inside the job fee.'],
+    ['roofAccess', 'Roof access and site difficulty', 'Roof space, access, and awkward sites.'],
+    ['flat', 'One flat installation allowance', 'The original single figure. Use this '
+      + 'INSTEAD of the breakdown above if that is how NAC prices, not as well as it.']
+  ];
+
+  const allowanceBody = el('div', { class: 'body' }, [
+    el('div', { class: 'chk warn' }, [el('b', { text: '!' }), el('span', {
+      text: 'Every box here is empty on purpose. These are NAC’s own figures and '
+        + 'nobody else can supply them. An empty box means NOT SET and the pricing '
+        + 'engine refuses rather than treating it as free — a 0 you type is a '
+        + 'decision and is honoured as zero.' })]),
+    el('div', { class: 'grid' }, PER_JOB.map(([key, label, hint]) =>
+      moneyField('al_' + key, label, '(dollars per job)', work.allowance[key],
+        savedKeys.allowance[key] !== undefined, hint,
+        (raw) => {
+          const v = validate('al_' + key, raw, { min: 0, label: label });
+          if (v !== undefined) work.allowance[key] = v;
+        })))
+  ]);
+
+  const perCountBody = el('div', { class: 'body' }, [
+    el('div', { class: 'grid' }, [
+      moneyField('al_perOutlet', 'Per supply outlet', '(dollars per outlet)',
+        work.allowance.perOutlet, savedKeys.allowance.perOutlet !== undefined,
+        'Multiplied by the outlet count on the job. The outlet count is worked out '
+        + 'from NAC’s own rule on the scope step.',
+        (raw) => {
+          const v = validate('al_perOutlet', raw, { min: 0, label: 'The per-outlet allowance' });
+          if (v !== undefined) work.allowance.perOutlet = v;
+        }),
+      moneyField('al_perZone', 'Per motorised zone', '(dollars per zone)',
+        work.allowance.perZone, savedKeys.allowance.perZone !== undefined,
+        'Multiplied by the number of zones.',
+        (raw) => {
+          const v = validate('al_perZone', raw, { min: 0, label: 'The per-zone allowance' });
+          if (v !== undefined) work.allowance.perZone = v;
+        })
+    ]),
+    el('div', { class: 'grid' }, [
+      (() => {
+        const input = el('input', { type: 'number', inputmode: 'decimal', step: '0.1',
+                                    min: '0', max: '100', id: 'f_cont' });
+        input.value = work.allowance.contingencyPct ?? '';
+        const err = el('span', { class: 'hint' });
+        input.addEventListener('input', () => {
+          const v = validate('al_contingencyPct', input.value,
+            { min: 0, max: 100, label: 'The contingency' });
+          if (v !== undefined) work.allowance.contingencyPct = v;
+          const bad = errors.has('al_contingencyPct');
+          input.setAttribute('aria-invalid', bad ? 'true' : 'false');
+          err.className = 'hint' + (bad ? ' err' : '');
+          err.textContent = bad ? errors.get('al_contingencyPct') : '';
+          redrawStatus();
+        });
+        return el('div', { class: 'f' }, [
+          el('label', { for: 'f_cont' }, [document.createTextNode('Contingency '),
+            el('span', { class: 'unit', text: '(percent of job cost)' })]),
+          input, err,
+          el('span', { class: 'hint', text: 'Added to the job cost before the fee. '
+            + 'Optional — leave it empty if NAC does not carry one.' })
+        ]);
+      })()
+    ])
+  ]);
+
+  // ── WHAT IS STILL MISSING ───────────────────────────────────────────
+  const statusSection = el('section', {}, [
+    el('h2', {}, [document.createTextNode('What the pricing engine still needs'),
+      el('small', { text: 'Recomputed as you type. Nothing is saved until you press Save.' })]),
+    el('div', { class: 'body', id: 'statusBody' })
+  ]);
+
+  function currentSettings() {
+    return mergeSettings(DEFAULT_SETTINGS, {
+      commercial: {
+        gstRate: work.gstRate, jobFee: work.jobFee, jobFeeExGst: work.jobFeeExGst,
+        proposalAllowance: work.allowance
+      }
+    });
+  }
+  function currentStored() {
+    // What WOULD be saved. Used so the unconfirmed flags update live.
+    return { commercial: { gstRate: work.gstRate, jobFee: work.jobFee,
+                           jobFeeExGst: work.jobFeeExGst,
+                           proposalAllowance: work.allowance } };
+  }
+
+  function redrawStatus() {
+    const host = $('statusBody');
+    if (!host) return;
+    host.textContent = '';
+    const st = pricingSetupStatus(currentSettings(), { stored });
+
+    if (errors.size) {
+      for (const [, message] of errors) {
+        host.appendChild(el('div', { class: 'chk bad' },
+          [el('b', { text: '×' }), el('span', { text: message })]));
+      }
+    }
+
+    if (st.ok) {
+      host.appendChild(el('div', { class: 'chk ok' }, [el('b', { text: '✓' }),
+        el('span', { text: 'Everything the engine needs is set. It can suggest a price '
+          + 'on the Systems step of any quote.' })]));
+    } else {
+      for (const m of st.missing) {
+        host.appendChild(el('div', { class: 'chk bad' }, [el('b', { text: '×' }),
+          el('span', { text: m.label + ' — ' + m.why })]));
+      }
+    }
+
+    for (const u of st.unconfirmed) {
+      host.appendChild(el('div', { class: 'chk warn' }, [el('b', { text: '!' }),
+        el('span', { text: u.label + ' is in force at ' + u.value + ', but that figure '
+          + 'shipped with the application and NAC has never saved it. Press Save to '
+          + 'confirm it, or change it first.' })]));
+    }
+
+    host.appendChild(el('dl', { class: 'facts' }, [
+      el('dt', { text: 'What is blocked while something is missing' }),
+      ...(st.blocks.length
+        ? st.blocks.map(b => el('dd', { text: b }))
+        : [el('dd', { text: 'Nothing.' })])
+    ]));
+
+    host.appendChild(el('p', { class: 'note',
+      text: 'Equipment cost is not set here. It comes off the price list per job — '
+        + 'the MMEM trade cost on the brand, or a figure typed on the quote — and the '
+        + 'quote screen says which it used.' }));
+  }
+
+  $('wrap').textContent = '';
+  $('wrap').appendChild(statusSection);
+  $('wrap').appendChild(feeSection);
+  $('wrap').appendChild(el('section', {}, [
+    el('h2', {}, [document.createTextNode('Installation allowances'),
+      el('small', { text: 'What the installation is worth before anybody has measured '
+        + 'a duct. A proposal quotes this.' })]),
+    allowanceBody
+  ]));
+  $('wrap').appendChild(el('section', {}, [
+    el('h2', {}, [document.createTextNode('Allowances that scale with the job'),
+      el('small', { text: 'Added on top of the per-job figures above.' })]),
+    perCountBody
+  ]));
+  redrawStatus();
+  $('bar').hidden = false;
+
+  // ── SAVE ────────────────────────────────────────────────────────────
+  //
+  // A LOCAL WRITE IS NOT A SAVE. store.setSetting writes localStorage first so
+  // an iPad on a bad signal never loses the work, and returns true only when
+  // the DATABASE accepted it. Reporting the local write as saved is how a
+  // figure that only exists on one device becomes the price on a quote from
+  // another.
+  $('save').addEventListener('click', async () => {
+    const msg = $('msg');
+    if (errors.size) {
+      msg.className = 'msg bad';
+      msg.textContent = 'Fix the fields marked in red first.';
+      return;
+    }
+    $('save').disabled = true;
+    msg.className = 'msg';
+    msg.textContent = 'Saving…';
+
+    // Merged over whatever else is in the stored record — this screen owns the
+    // commercial pricing fields and must not drop the load, airflow or content
+    // settings that live in the same key.
+    const next = {
+      ...stored,
+      commercial: { ...(stored.commercial || {}), ...currentStored().commercial }
+    };
+    const ok = await setSetting(SETTINGS_KEYS.hvacSettings, JSON.stringify(next));
+    $('save').disabled = false;
+
+    if (ok) {
+      stored = next;
+      msg.className = 'msg ok';
+      msg.textContent = 'Saved to the database. These are NAC’s figures now.';
+      redrawStatus();
+    } else {
+      msg.className = 'msg bad';
+      msg.textContent = 'NOT saved to the database (' + (lastStorageError()
+        || 'unknown reason') + '). It is on this device only — do not rely on it.';
+    }
+  });
+}
+</script>
+</body>
+</html>

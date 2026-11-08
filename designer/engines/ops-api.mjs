@@ -138,7 +138,18 @@ export const OPERATIONS = Object.freeze({
     // the true totals — truncating a list must never truncate the number, or
     // a briefing quietly under-reports the week.
     takes: ['limit'],
-    returns: ['stages', 'money', 'notYetExposed', 'generatedAt']
+    // ── ADDITIVE, 8 November 2026 ───────────────────────────────────────
+    // `sources` was added beside the existing four. Nothing was renamed and
+    // nothing changed meaning: `stages.awaitingResponse` and `stages.accepted`
+    // are field for field what they were, `money` still counts only issued
+    // revisions and acceptances, and `notYetExposed` is still an array — now
+    // an empty one, because the four stages it named are exposed.
+    //
+    // The new stages are `enquiries`, `draftsInProgress`,
+    // `awaitingOwnerApproval` and `handovers`. Each is the same panel shape
+    // as the original two: { available, count, items, truncated }, count null
+    // when the source could not be read.
+    returns: ['stages', 'money', 'notYetExposed', 'generatedAt', 'sources']
   },
   'booking.create_task': {
     scope: SCOPES.BOOKING_WRITE, mutates: true,

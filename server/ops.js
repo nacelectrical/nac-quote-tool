@@ -620,6 +620,69 @@ async function opApprovedLink(ctx) {
  *     rule the assistant's own briefing applies, so an unreadable source
  *     cannot become "nothing to do" on either side of the join.
  */
+/**
+ * THE DRAFTS, FOR THE BOARD.
+ *
+ * `loadDraft` reads one. This reads the list, and it is deliberately the same
+ * parse (`parseDesign`) and the same gate (`quoteDraftGate`) the single-quote
+ * operations use — a second opinion about whether a draft is ready to issue is
+ * how a board and a screen end up disagreeing in front of a customer.
+ *
+ * @returns {Promise<Array|null>} null when nac_designs could not be read. The
+ *   table is OPTIONAL (designer/schema.sql) and genuinely absent on a project
+ *   that never created it, which is also null here: unknown, not none. A board
+ *   that showed "no drafts" because the table was missing would be reporting a
+ *   deployment gap as a quiet morning.
+ */
+async function listDrafts(key, draftMod, limit = 200) {
+  let rows = null;
+  try {
+    const r = await supa('/rest/v1/nac_designs?select=id,design,updated_at,customer_name'
+      + '&order=updated_at.desc&limit=' + limit, { key });
+    if (Array.isArray(r.body)) rows = r.body;
+  } catch (e) { rows = null; }
+  if (rows === null) return null;
+
+  const content = await loadContent(key);
+  const upgrades = content.upgrades || [];
+
+  const out = [];
+  for (const row of rows) {
+    const design = parseDesign(row);
+    if (!design) continue;               // a row holding nothing readable
+    if (design.issuedAt) continue;       // already out; the issued panel has it
+    let gate = null;
+    try { gate = draftMod.quoteDraftGate(design, { upgrades }); } catch (e) { gate = null; }
+    out.push({
+      id: row.id,
+      customerName: trimmed(design.customer?.name) || trimmed(row.customer_name) || null,
+      siteAddress: trimmed(design.siteAddress) || trimmed(design.job?.siteAddress) || null,
+      updatedAt: row.updated_at || designUpdatedAt(row),
+      approvedBy: trimmed(design.approvedBy) || null,
+      gate
+    });
+  }
+  return out;
+}
+
+/**
+ * A BLOCKER MESSAGE IS NOT FOR AN INTEGRATION.
+ *
+ * The gate's messages are written for an estimator and several of them carry
+ * money: "3 line(s) are on rates that shipped with the application, worth
+ * $1,240.00", "no cost on file for…". Those are NAC's internal figures and
+ * quote.board promises not to carry them, so the board sends the CODES and the
+ * count and no prose at all.
+ *
+ * Codes are a closed vocabulary (DRAFT_BLOCK in quote-draft.mjs), so the
+ * assistant can still say "waiting on equipment selection" without this
+ * endpoint ever having shipped a dollar sign.
+ */
+function blockerCodes(gate) {
+  if (!gate || !Array.isArray(gate.blockers)) return [];
+  return [...new Set(gate.blockers.map(b => trimmed(b && b.code)).filter(Boolean))];
+}
+
 async function opQuoteBoard(ctx) {
   const { key, body } = ctx;
   const asked = Number(body && body.limit);
@@ -629,6 +692,32 @@ async function opQuoteBoard(ctx) {
   // Issued and accepted, out of the frozen records. A read failure is NOT an
   // empty list: it is reported as unreadable and the assistant's section goes
   // stale rather than quiet.
+  // ── EVERY SOURCE, EACH ALLOWED TO FAIL ON ITS OWN ─────────────────────
+  //
+  // Read together, because the board is a snapshot and five sequential round
+  // trips make it five different moments. Each is allowed to come back null
+  // and only that stage reports itself unavailable; one unreadable table does
+  // not take the whole board down, and does not turn into a zero.
+  const draftMod = await import('../designer/engines/quote-draft.mjs');
+  const enquiriesMod = require('./enquiries.js');
+  const handoverSrv = require('./handover.js');
+  const handoverMod = await import('../designer/engines/handover.mjs');
+
+  const [draftsRes, enquiriesRes, handoversRes] = await Promise.all([
+    listDrafts(key, draftMod, 200).catch(() => null),
+    enquiriesMod.collect(key, 200).catch(() => ({ available: false })),
+    handoverSrv.readAll(key, 200).catch(() => ({ state: 'failed', rows: [] }))
+  ]);
+
+  const enquiryMod = await import('../designer/engines/enquiry.mjs');
+  const enquiries = (enquiriesRes && enquiriesRes.available)
+    ? enquiryMod.openEnquiries(enquiriesRes.enquiries) : null;
+
+  // A table that does not exist yet is NOT an empty list of handovers. It is a
+  // deployment step, and until it is taken nothing can be stored, so the
+  // honest answer is unknown.
+  const handovers = (handoversRes && handoversRes.state === 'ok') ? handoversRes.rows : null;
+
   let issued = null;
   try {
     const r = await supa('/rest/v1/nac_quote_issues?select=token,design_id,quote_rev,'
@@ -655,8 +744,8 @@ async function opQuoteBoard(ctx) {
     }
   } catch (e) { issued = null; }
 
-  const board = wf.dashboard({ issued, drafts: null, enquiries: null,
-                               handovers: null, approvals: null });
+  const board = wf.dashboard({ issued, drafts: draftsRes, enquiries,
+                               handovers, approvals: null });
 
   const strip = (rows) => rows.map(r => ({
     ref: r.id, stage: r.kind, name: r.name, site: r.detail || null,
@@ -676,21 +765,102 @@ async function opQuoteBoard(ctx) {
     truncated: p.available ? p.rows.length > limit : false
   });
 
+  // ── DRAFTS AND APPROVALS, WITHOUT THE PROSE ───────────────────────────
+  //
+  // The gate's blocker MESSAGES stay here. Several carry money — "worth
+  // $1,240.00 of placeholder rates" — and this surface promises not to carry
+  // NAC's internal figures. The codes are a closed vocabulary and say enough.
+  const draftRow = (r) => ({
+    ref: r.id, stage: r.stage, name: r.name, site: r.detail || null,
+    ageDays: r.ageDays ?? null,
+    blockerCount: Array.isArray(r.blockers) ? r.blockers.length : null,
+    action: r.action || null
+  });
+  const draftPanel = (pnl, codesById) => ({
+    available: pnl.available,
+    count: pnl.count,
+    items: pnl.available ? pnl.rows.slice(0, limit).map(r => ({
+      ...draftRow(r), blockers: codesById.get(r.id) || []
+    })) : [],
+    truncated: pnl.available ? pnl.rows.length > limit : false
+  });
+  const codesById = new Map((draftsRes || []).map(d => [d.id, blockerCodes(d.gate)]));
+
+  // ── HANDOVERS ─────────────────────────────────────────────────────────
+  //
+  // `stage` is the whole point of exposing them: prepared, ready for
+  // scheduling, pending sync, synced, failed. A handover is NEVER reported as
+  // synced without a ServiceM8 job id — handoverStage() re-checks that on the
+  // way out, so a hand-edited row cannot show as booked here either.
+  const handoverPanel = {
+    available: handovers !== null,
+    count: handovers === null ? null : handovers.length,
+    items: handovers === null ? [] : handovers.slice(0, limit).map(h => ({
+      ref: h.id,
+      quoteToken: h.quoteToken || null,
+      revision: h.revision ?? null,
+      stage: handoverMod.handoverStage(h),
+      name: (h.customer || {}).name || null,
+      site: (h.property || {}).siteAddress || null,
+      readyToBook: h.readyToBook === true,
+      /** The three facts, by state only. No sources, no notes, no amounts. */
+      deposit: (h.deposit || {}).state || null,
+      equipment: (h.equipment || {}).state || null,
+      scheduling: (h.scheduling || {}).state || null,
+      outstandingCount: Array.isArray(h.outstanding) ? h.outstanding.length : null,
+      externalId: (h.sync || {}).externalId || null
+    })),
+    truncated: handovers === null ? false : handovers.length > limit
+  };
+
   return { status: 200, body: {
     generatedAt: board.generatedAt,
-    source: 'NAC quote tool. Issued revisions and acceptance records only.',
+    source: 'NAC quote tool. Enquiries, drafts, issued revisions, acceptances '
+      + 'and handovers.',
     stages: {
+      // ── THE TWO THE ASSISTANT IS ALREADY BUILT AGAINST ──────────────
+      // Unchanged, field for field. The assistant is implementing this
+      // contract right now and a rename here would break it mid-build.
       awaitingResponse: panel(board.panels.awaiting),
-      accepted: panel(board.panels.accepted)
+      accepted: panel(board.panels.accepted),
+
+      // ── ADDED 8 November 2026. PURELY ADDITIVE. ─────────────────────
+      // Nick: "Make draft and awaiting-review stages available through
+      // quote.board." A consumer that does not know these keys reads the two
+      // above exactly as before.
+      enquiries: panel(board.panels.enquiries),
+      draftsInProgress: draftPanel(board.panels.preparing, codesById),
+      awaitingOwnerApproval: draftPanel(board.panels.forApproval, codesById),
+      handovers: handoverPanel
     },
-    // Drafts and approvals are deliberately absent until this surface is
-    // live: they are the most sensitive thing here, and shipping a field the
-    // assistant cannot yet be trusted with is how it ends up relied upon.
-    notYetExposed: ['draftsInProgress', 'awaitingOwnerApproval', 'handovers'],
+    /**
+     * Still here, and now empty.
+     *
+     * It is kept rather than removed because the assistant may already be
+     * reading it, and an array that goes from three names to none is a
+     * readable answer. The approval DECISION stays in this application: there
+     * is no approve operation on this surface and no key can be issued for
+     * one.
+     */
+    notYetExposed: [],
     money: {
+      // Unchanged. Issued and accepted only — a draft total is a number
+      // somebody is still typing, and an enquiry has no number at all.
       awaitingResponseIncGst: board.money.issuedIncGst,
       acceptedIncGst: board.money.acceptedIncGst,
       note: board.money.source
+    },
+    /**
+     * WHICH SOURCES ANSWERED. The per-stage `available` flag already says it,
+     * but a briefing that has to explain itself to Nick is better off naming
+     * the gap than reporting six stages of silence.
+     */
+    sources: {
+      issued: issued !== null ? 'ok' : 'unreadable',
+      drafts: draftsRes !== null ? 'ok' : 'unreadable',
+      enquiries: enquiries !== null ? 'ok' : 'unreadable',
+      handovers: handovers !== null ? 'ok'
+        : (handoversRes && handoversRes.state === 'absent' ? 'not_created' : 'unreadable')
     }
   } };
 }

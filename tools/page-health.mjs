@@ -9,7 +9,11 @@
 
 import { chromium } from 'playwright';
 const EXE='/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const PAGES=['index.html','admin.html','quotes.html','quote-builder.html','intake.html','next.html','sign.html','splits.html','NAC — Your Ducted AC Details.html'];
+const PAGES=['index.html','admin.html','quotes.html','quote-builder.html','intake.html',
+             'next.html','sign.html','splits.html','NAC — Your Ducted AC Details.html',
+             // Added as they were built. A screen nobody checks is a screen
+             // whose first console error is found by Nick on an iPad.
+             'dashboard.html','settings.html','quote-presentation.html','setup.html'];
 const b=await chromium.launch({executablePath:EXE,args:['--no-sandbox']});
 for (const page of PAGES) {
   const p=await b.newPage({viewport:{width:1400,height:900}});

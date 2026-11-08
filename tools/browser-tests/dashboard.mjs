@@ -35,9 +35,41 @@ const QUOTES = [
 
 const browser = await chromium.launch({ executablePath: EXE, args: ['--no-sandbox'] });
 
-async function open({ quotesOk = true, device = { width: 390, height: 844 } } = {}) {
+/**
+ * The enquiries and handovers the board now reads.
+ *
+ * Both had no endpoint until 8 November and were passed as null. They are real
+ * sources now, so the stub has to answer them — and has to be able to answer
+ * them BADLY, because "the source did not answer" is the state this whole
+ * suite exists to check.
+ */
+const ENQUIRIES = [
+  { id: 'NAC-NEWLEAD-1', customer: { name: 'New Lead', phone: '0400 000 111', email: null },
+    site: { address: '3 Example Pde, Testville' }, receivedAt: '2026-11-07T22:00:00Z',
+    state: 'new', planUrl: 'https://x.invalid/plan-a.pdf', photoUrls: [],
+    assessment: null, links: { designId: null, quoteId: null, issuedToken: null,
+                               legacyQuoteId: null }, missing: [] },
+  // No way to contact them. The board has to say what is missing.
+  { id: 'NAC-NOCONTACT-1', customer: { name: 'No Contact', phone: null, email: null },
+    site: { address: null }, receivedAt: '2026-11-08T01:00:00Z', state: 'new',
+    planUrl: null, photoUrls: [], assessment: null,
+    links: { designId: null, quoteId: null, issuedToken: null, legacyQuoteId: null },
+    missing: [] }
+];
+
+const HANDOVERS = [
+  { id: 'q3:1', quoteToken: 'q3', revision: 1, state: 'prepared',
+    customer: { name: 'Jane Doe' }, property: { siteAddress: '2 Beach Rd' },
+    deposit: { state: 'unknown' }, equipment: { state: 'unknown' },
+    scheduling: { state: 'unknown' },
+    outstanding: ['Deposit received — not checked', 'Equipment available — not checked'],
+    readyToBook: false, sync: { state: 'prepared', externalId: null } }
+];
+
+async function open({ quotesOk = true, enquiriesOk = true, handoversOk = true,
+                      device = { width: 390, height: 844 } } = {}) {
   const ctx = await browser.newContext({ viewport: device, deviceScaleFactor: 2 });
-  await ctx.addInitScript(({ quotes, ok }) => {
+  await ctx.addInitScript(({ quotes, ok, enquiries, enqOk, handovers, hoOk }) => {
     localStorage.setItem('nac_session_v1', JSON.stringify({
       access_token: 't', refresh_token: 'r',
       user: { email: 'nick@nacelectrical.com.au' },
@@ -51,10 +83,22 @@ async function open({ quotesOk = true, device = { width: 390, height: 844 } } = 
         return ok ? J({ quotes }) : J({ error: 'read_failed' }, 502);
       }
       if (s.includes('/api/ops-activity')) return J({ approvals: [] });
+      if (s.includes('/api/enquiries')) {
+        // available:false with a null count is what the endpoint really sends
+        // when it could not read. It must NOT become an empty list here.
+        return enqOk ? J({ ok: true, available: true, count: enquiries.length, enquiries })
+                     : J({ ok: false, available: false, count: null, enquiries: null }, 502);
+      }
+      if (s.includes('/api/handover')) {
+        return hoOk ? J({ ok: true, available: true, count: handovers.length, handovers })
+                    : J({ ok: true, available: false, count: null, handovers: null,
+                          error: 'handovers_table_missing' });
+      }
       if (s.includes('/rest/v1/') || s.includes('/auth/v1/')) return J([]);
       return real(u, o);
     };
-  }, { quotes: QUOTES, ok: quotesOk });
+  }, { quotes: QUOTES, ok: quotesOk, enquiries: ENQUIRIES, enqOk: enquiriesOk,
+       handovers: HANDOVERS, hoOk: handoversOk });
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', e => errs.push('pageerror: ' + e.message));
@@ -65,7 +109,7 @@ async function open({ quotesOk = true, device = { width: 390, height: 844 } } = 
 }
 
 // ── THE RULE THAT MATTERS ──────────────────────────────────────────────────
-const bad = await open({ quotesOk: false });
+const bad = await open({ quotesOk: false, enquiriesOk: false, handoversOk: false });
 await step('A SOURCE THAT FAILED DOES NOT READ AS "nothing to do"', async () => {
   const text = await bad.page.textContent('body');
   if (!/could not be read/i.test(text)) {
@@ -117,6 +161,33 @@ await step('what needs Nick says WHY for each item', async () => {
   // q1 was issued 2+ weeks ago with no views; q3 is accepted with no handover.
   if (!/no answer|Accepted, and no handover/i.test(needs)) {
     throw new Error('no reasons given: ' + needs.replace(/\s+/g, ' ').slice(0, 200));
+  }
+});
+
+await step('enquiries are listed, with what each one is missing', async () => {
+  // The panel said "could not be read" until 8 November, because there was no
+  // endpoint. Honest, and useless.
+  const text = await good.page.textContent('body');
+  if (!text.includes('New enquiries')) throw new Error('no enquiry panel');
+  if (!text.includes('New Lead')) throw new Error('the enquiry was not listed');
+  if (!/Start the assessment/i.test(text)) {
+    throw new Error('a complete enquiry should offer the next action');
+  }
+  if (!/Fill in[^<]*site address/i.test(text)) {
+    throw new Error('an incomplete enquiry has to say what is missing: '
+      + text.replace(/\s+/g, ' ').slice(0, 400));
+  }
+});
+
+await step('an accepted job shows what its handover is still waiting on', async () => {
+  const text = await good.page.textContent('body');
+  if (!/2 thing\(s\) before it can be booked/.test(text)) {
+    throw new Error('the handover state did not reach the accepted panel: '
+      + text.replace(/\s+/g, ' ').slice(0, 400));
+  }
+  // And acceptance alone must never read as booked.
+  if (/Ready to book/i.test(text)) {
+    throw new Error('an accepted job with an unchecked deposit was shown as ready');
   }
 });
 
