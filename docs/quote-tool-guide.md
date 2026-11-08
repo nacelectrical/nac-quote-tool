@@ -260,6 +260,29 @@ under it, and the page it opens on**. Those come from the manifest as it was
 that day. If you ever want a different start page or the icon changes, that is
 when you delete it and add it back.
 
+## The board
+
+**`/dashboard.html`** is where to start the day. It shows, in this order:
+
+- **Needs you** — what is waiting on your decision, each with a reason.
+- **Waiting for your approval** — drafts that pass their own checks.
+- **Issued, awaiting a response** — with how long ago and whether it has been
+  opened.
+- **Accepted, awaiting the next action** — and what is outstanding before the
+  job can be booked.
+- **New enquiries** and **quotes being prepared**.
+- **Connections** — four states, not three: connected, configured but
+  untested, not connected, and failed.
+
+Two rules it follows, and they are the reason it can be trusted:
+
+- **Unavailable is not zero.** A panel whose source could not be read says so
+  in those words. It never shows an empty list, because an empty list reads as
+  "nothing to do" and that is a different fact from "I could not look".
+- **A figure needs a source.** The only money on the board comes from issued
+  revisions and acceptance records — both frozen, both written by the server.
+  Drafts are not counted: a draft total is a number somebody is still typing.
+
 ## What the tool will not do
 
 Worth knowing, because each of these is deliberate:

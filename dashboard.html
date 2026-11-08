@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<!--
+  NAC — THE BOARD
+
+  Nick, 8 November 2026: "an internal dashboard showing new enquiries and
+  missing information, quotes being prepared or waiting for approval, issued
+  quotes awaiting a response, accepted jobs awaiting the next action, tasks and
+  decisions requiring my attention, and integration connection status."
+
+  Every record this reads already existed. What there was no such thing as was
+  a view across them: the builder knew about drafts, the portal knew about
+  issued quotes, the ops surface knew about approvals, and nothing could say
+  "this job is here, and the next move is yours."
+
+  TWO RULES, AND THEY ARE THE REASON THIS SCREEN CAN BE TRUSTED
+
+  1. UNAVAILABLE IS NOT ZERO. A panel whose source could not be read says so,
+     in those words. It never shows an empty list, because an empty list reads
+     as "nothing to do" and that is a different fact from "I could not look".
+
+  2. A FIGURE NEEDS A SOURCE. The only money here comes from issued revisions
+     and acceptance records — both frozen, both server-written — and each total
+     says which. Drafts are not counted: a draft total is a number somebody is
+     still typing.
+
+  Staff only, behind the same sign-in as every other internal screen.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Today — NAC</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NAC Quotes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0c0c24">
+<style>
+  :root{--navy:#0c0c24;--ink:#1c1c22;--grey:#6b6b76;--line:#e2e2e8;--bg:#f4f5f8;
+        --yellow:#F5C200;--blue:#2B6CB8;--ok:#2f8f4e;--warn:#b07d00;--bad:#c0392b;
+        --card:#fff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+  header{background:var(--navy);color:#fff;padding:14px 16px;
+         padding-top:calc(14px + env(safe-area-inset-top))}
+  header h1{font-size:19px;letter-spacing:-.01em}
+  header h1 b{color:var(--yellow)}
+  header p{color:#aeb4c8;font-size:13px;margin-top:2px}
+  .nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .nav a{background:#fff;color:var(--navy);text-decoration:none;font-weight:600;
+         font-size:14px;padding:8px 12px;border-radius:8px;min-height:40px;
+         display:inline-flex;align-items:center}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px;
+        padding-bottom:calc(32px + env(safe-area-inset-bottom))}
+  .money{display:grid;gap:12px;grid-template-columns:1fr 1fr;margin-bottom:16px}
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .fig b{display:block;font-size:22px;letter-spacing:-.02em}
+  .fig span{display:block;font-size:12px;color:var(--grey);margin-top:2px}
+  .fig .src{font-size:11px;color:var(--grey);margin-top:6px}
+  .fig.none b{color:var(--grey);font-weight:600;font-size:17px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;
+          margin-bottom:14px;overflow:hidden}
+  section>h2{font-size:15px;padding:12px 14px;border-bottom:1px solid var(--line);
+             display:flex;align-items:center;gap:8px}
+  .pill{background:var(--navy);color:#fff;border-radius:999px;font-size:12px;
+        padding:2px 9px;font-weight:700}
+  .pill.zero{background:#e9ecf2;color:var(--grey)}
+  .pill.unknown{background:#fdf1e3;color:var(--warn)}
+  .row{padding:12px 14px;border-bottom:1px solid var(--line);display:block;
+       text-decoration:none;color:inherit}
+  .row:last-child{border-bottom:0}
+  .row:active{background:#f7f8fb}
+  .row .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .row .name{font-weight:650}
+  .row .amt{font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}
+  .row .det{color:var(--grey);font-size:13.5px;margin-top:2px}
+  .row .act{font-size:13px;margin-top:6px;color:var(--blue);font-weight:600}
+  .row .why{font-size:13px;margin-top:4px;color:var(--warn);font-weight:600}
+  .row ul{margin:6px 0 0 16px;font-size:13px;color:var(--grey)}
+  .note{padding:14px;color:var(--grey);font-size:14px}
+  .note.unknown{color:var(--warn);background:#fdf8ef}
+  .conn{display:flex;gap:10px;align-items:center;padding:11px 14px;
+        border-bottom:1px solid var(--line);font-size:14px}
+  .conn:last-child{border-bottom:0}
+  .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:var(--grey)}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)}
+  .dot.bad{background:var(--bad)} .dot.off{background:#c9ccd6}
+  .conn .st{margin-left:auto;font-size:12.5px;color:var(--grey);text-align:right}
+  @media(min-width:760px){
+    .money{grid-template-columns:repeat(4,1fr)}
+    .board{display:grid;gap:14px;grid-template-columns:1fr 1fr;align-items:start}
+    section{margin-bottom:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><b>NAC</b> — Today</h1>
+  <p id="when">Loading…</p>
+  <div class="nav">
+    <a href="/quote-builder.html">New quote</a>
+    <a href="/quotes.html">All quotes</a>
+    <a href="/quote-presentation.html">Content</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="money" id="money"></div>
+  <div id="needs"></div>
+  <div class="board" id="board"></div>
+</div>
+
+<script type="module">
+import { requireSignIn } from '/designer/auth.mjs';
+import { dashboard } from '/designer/engines/workflow.mjs';
+
+// Customer names, addresses and prices. The same gate as every internal screen.
+await requireSignIn({ pageName: 'the job board' });
+
+function staffHeaders(extra = {}) {
+  let token = null;
+  try { token = JSON.parse(localStorage.getItem('nac_session_v1') || 'null')?.access_token; }
+  catch (e) { token = null; }
+  return { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...extra };
+}
+
+const el = (tag, attrs = {}, kids = []) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (v !== null && v !== undefined && v !== false) n.setAttribute(k, v);
+  }
+  for (const c of [].concat(kids)) if (c) n.appendChild(c);
+  return n;
+};
+const money = (v) => '$' + Number(v).toLocaleString('en-AU', { maximumFractionDigits: 0 });
+
+/**
+ * Read one source. A failure returns NULL, never [].
+ *
+ * This is the whole "unavailable is not zero" rule, in one function. An empty
+ * array means the source answered and had nothing; null means it did not
+ * answer, and the panel says so instead of looking settled.
+ */
+async function read(url, pick) {
+  try {
+    const r = await fetch(url, { headers: staffHeaders(), cache: 'no-store' });
+    if (!r.ok) return null;
+    const body = await r.json();
+    const rows = pick(body);
+    return Array.isArray(rows) ? rows : null;
+  } catch (e) { return null; }
+}
+
+async function load() {
+  const [issued, ops] = await Promise.all([
+    read('/api/quote-list?limit=200', b => b.quotes),
+    read('/api/ops-activity', b => b.approvals)
+  ]);
+
+  // ── WHAT IS NOT WIRED YET, SAID PLAINLY ───────────────────────────────
+  //
+  // Enquiries and handovers have no endpoint of their own yet. They are
+  // passed as null rather than as [], so their panels read "could not be
+  // read" instead of "nothing to do" — which is the truth, and is the
+  // difference between a board you can trust and one you cannot.
+  const board = dashboard({
+    issued,
+    drafts: null,
+    enquiries: null,
+    handovers: null,
+    approvals: ops,
+    integrations: await connections()
+  });
+
+  document.getElementById('when').textContent =
+    'As at ' + new Date(board.generatedAt).toLocaleString('en-AU');
+  drawMoney(board.money);
+  drawPanel(document.getElementById('needs'), board.panels.needsNick, true);
+  const host = document.getElementById('board');
+  host.textContent = '';
+  for (const key of ['forApproval', 'awaiting', 'accepted', 'enquiries',
+                     'preparing', 'integrations']) {
+    const s = el('div');
+    drawPanel(s, board.panels[key], false, key === 'integrations');
+    host.appendChild(s);
+  }
+}
+
+function drawMoney(m) {
+  const host = document.getElementById('money');
+  host.textContent = '';
+  const fig = (value, label, source, counted) => {
+    // null is "could not read", and it does not get to look like $0.
+    if (value === null) {
+      return el('div', { class: 'fig none' }, [
+        el('b', { text: 'Not available' }),
+        el('span', { text: label }),
+        el('div', { class: 'src', text: 'The source could not be read just now.' })]);
+    }
+    return el('div', { class: 'fig' }, [
+      el('b', { text: money(value) }),
+      el('span', { text: label }),
+      el('div', { class: 'src', text: counted + ' with a figure · ' + source })]);
+  };
+  host.appendChild(fig(m.issuedIncGst, 'Issued, awaiting an answer',
+    'issued revisions', m.issuedCounted ?? 0));
+  host.appendChild(fig(m.acceptedIncGst, 'Accepted',
+    'acceptance records', m.acceptedCounted ?? 0));
+}
+
+function drawPanel(host, panel, highlight, isConnections) {
+  host.textContent = '';
+  const sec = el('section');
+  const pillClass = !panel.available ? 'pill unknown'
+    : (panel.count === 0 ? 'pill zero' : 'pill');
+  sec.appendChild(el('h2', {}, [
+    el('span', { text: panel.title }),
+    el('span', { class: pillClass, text: panel.available ? String(panel.count) : '?' })
+  ]));
+
+  if (!panel.available) {
+    sec.appendChild(el('p', { class: 'note unknown',
+      text: 'Could not be read just now, so this is not "nothing to do" — it is '
+        + 'unknown. Check the connection below.' }));
+    host.appendChild(sec);
+    return;
+  }
+  if (!panel.rows.length) {
+    sec.appendChild(el('p', { class: 'note', text: panel.empty }));
+    host.appendChild(sec);
+    return;
+  }
+  for (const r of panel.rows) {
+    if (isConnections) { sec.appendChild(connRow(r)); continue; }
+    const row = el(r.href ? 'a' : 'div', { class: 'row', ...(r.href ? { href: r.href } : {}) });
+    row.appendChild(el('div', { class: 'top' }, [
+      el('span', { class: 'name', text: r.name }),
+      r.totalIncGst !== null && r.totalIncGst !== undefined
+        ? el('span', { class: 'amt', text: money(r.totalIncGst) }) : null
+    ]));
+    if (r.detail) row.appendChild(el('div', { class: 'det', text: r.detail }));
+    if (r.ageDays !== null && r.ageDays !== undefined) {
+      row.appendChild(el('div', { class: 'det',
+        text: r.ageDays === 0 ? 'Today' : r.ageDays + ' day(s) ago' }));
+    }
+    if (r.missing && r.missing.length) {
+      row.appendChild(el('ul', {}, r.missing.map(m => el('li', { text: 'Missing: ' + m }))));
+    }
+    if (r.outstanding && r.outstanding.length) {
+      row.appendChild(el('ul', {}, r.outstanding.map(m => el('li', { text: m }))));
+    }
+    if (r.blockers && r.blockers.length) {
+      row.appendChild(el('ul', {}, r.blockers.slice(0, 3).map(m => el('li', { text: m }))));
+    }
+    if (highlight && r.why) row.appendChild(el('div', { class: 'why', text: r.why }));
+    if (r.action) row.appendChild(el('div', { class: 'act', text: r.action + ' →' }));
+    sec.appendChild(row);
+  }
+  host.appendChild(sec);
+}
+
+function connRow(c) {
+  const cls = { connected: 'ok', configured: 'warn', failed: 'bad', off: 'off' }[c.state] || 'off';
+  return el('div', { class: 'conn' }, [
+    el('span', { class: 'dot ' + cls }),
+    el('span', { text: c.name }),
+    el('span', { class: 'st', text: c.detail })
+  ]);
+}
+
+/**
+ * CONNECTION STATUS, IN FOUR STATES AND NOT THREE.
+ *
+ * Nick asked for connected-and-verified, configured-but-untested, not
+ * connected, and failed. The difference that matters is the middle one: a
+ * credential being present is not the same as it having worked, and a board
+ * that shows a green light for "configured" is a board that lies on the day it
+ * matters most.
+ */
+async function connections() {
+  const out = [];
+  const probe = async (name, url, note) => {
+    try {
+      const r = await fetch(url, { headers: staffHeaders(), cache: 'no-store' });
+      if (r.ok) return out.push({ name, state: 'connected', detail: 'Answered just now' });
+      if (r.status === 401 || r.status === 403) {
+        return out.push({ name, state: 'failed', detail: 'Refused (' + r.status + ')' });
+      }
+      out.push({ name, state: 'failed', detail: 'HTTP ' + r.status });
+    } catch (e) { out.push({ name, state: 'failed', detail: 'No answer' }); }
+  };
+  await probe('Quote records', '/api/quote-list?limit=1');
+  await probe('Ops assistant surface', '/api/ops-activity');
+  // Stated, not probed: saying "not connected" needs no network call, and
+  // pretending to test something that has no credentials would be theatre.
+  out.push({ name: 'ServiceM8', state: 'off', detail: 'Not connected — handovers stay local' });
+  out.push({ name: 'Xero', state: 'off', detail: 'Not connected — deposits entered by hand' });
+  out.push({ name: 'Podium', state: 'off', detail: 'API details pending' });
+  return out;
+}
+
+load().catch(e => {
+  document.getElementById('when').textContent = 'Could not load the board: ' + e.message;
+});
+</script>
+</body>
+</html>
